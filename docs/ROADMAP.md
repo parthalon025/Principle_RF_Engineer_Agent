@@ -1,0 +1,11 @@
+# Roadmap
+
+0.1: calculations, Touchstone, database, MCP, principal agent, tests
+0.2: knowledge ingestion, component database, decision records, verification
+0.3: NEC2++, antenna templates, automated sweeps
+0.4: openEMS, full-wave extraction, optimization
+0.5: HFSS/PyAEDT, licensed-worker execution, project archival
+0.6: measurement adapters, VNA correlation, SCPI policy engine
+0.7: Monte Carlo/tolerance analysis, design history, failure-case retrieval
+1.0: repeatable design workflows, evaluation benchmark, audited provenance,
+     controlled autonomous iteration

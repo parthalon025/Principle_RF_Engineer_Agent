@@ -1,0 +1,67 @@
+# Principle_RF_Engineer_Agent
+
+## What this is
+
+An agent intended to act as a principal-level RF (radio-frequency) engineer:
+reviewing designs, running RF engineering calculations, and answering
+questions the way a senior RF engineer would. The repo now contains an
+initial reference implementation (see `README.md` for the layout and quick
+start) alongside the process scaffolding (issue tracker, triage labels,
+domain-doc conventions) installed via the Matt Pocock Claude Code skills.
+
+## Surface and scope (as implemented)
+
+- **Surface**: a Python application — an `openai-agents` SDK agent
+  (`agent/main.py`) with a principal-engineer system prompt
+  (`prompts/principal_engineer.md`), backed by deterministic RF tools
+  (`rf_tools/`) and an equivalent standalone MCP server (`mcp_server/`)
+  exposing the same tools for other MCP clients.
+- **Core capabilities implemented so far**: wavelength, VSWR, return loss,
+  cascaded gain, cascaded noise figure (Friis), and Touchstone (`.sNp`)
+  network analysis (port count, frequency range, S11/S21 extrema). See
+  `docs/ROADMAP.md` for the much larger list of RF functions (S/Z/Y/ABCD
+  conversions, stability/noise/gain circles, matching networks, link
+  budget, IP2/IP3/P1dB, etc.) still to be added.
+- **Inputs**: plain numeric parameters for calculations; local Touchstone
+  files for network analysis. Datasheets, schematics, and simulator inputs
+  (NEC2++/openEMS/HFSS job files) are handled by the simulation adapters in
+  `simulation/` but the adapters themselves are thin (NEC2++/openEMS shell
+  out to the real tool via `subprocess`; HFSS is an intentionally
+  unimplemented boundary pending a licensed AEDT host — see
+  `simulation/hfss.py`).
+- **Correctness bar**: the design principle is that the LLM is never
+  trusted to do RF arithmetic itself — it calls a deterministic tool
+  (`rf_tools/calculations.py`, `rf_tools/touchstone.py`) and every
+  significant result carries a `provenance` tag (`MEASURED`, `SIMULATED`,
+  `CALCULATED`, `MANUFACTURER-SPECIFIED`, `LITERATURE-SUPPORTED`,
+  `INFERRED`, `ASSUMED`, `UNKNOWN`). `tests/` currently covers the
+  calculation and Touchstone-analysis functions; there is no verification
+  corpus yet for the simulator adapters or the agent's end-to-end behavior.
+
+## What's still open
+
+This is a foundation, not a finished system. `docs/BUILD_PLAN.md` and
+`docs/ROADMAP.md` lay out the build order (deterministic math → Touchstone
+→ knowledge base → simulators → measurement correlation → optimization).
+Notably not yet implemented: the RF knowledge base / pgvector ingestion
+pipeline (schema exists in `db/schema.sql`, no ingestion code yet),
+component/manufacturer intelligence, antenna geometry generators, HFSS/ADS
+adapters, instrument (VISA/SCPI) integration, and simulation/measurement
+correlation. Treat anything not listed under "implemented" above as not
+yet built, regardless of what the docs describe as the eventual system.
+
+Originally tracked as a `needs-info` scope question in issue #3; that issue
+is resolved by this implementation landing — see the PR that introduced it
+for history.
+
+## Vocabulary
+
+- **Provenance**: the evidence class of a stated RF result — see the list
+  above. Never state a value without one once the agent produces it.
+- **Evidence hierarchy**: measured > validated simulation > deterministic
+  calculation > manufacturer spec > authoritative reference > internal
+  engineering history > general web material > LLM inference. Higher wins
+  when evidence conflicts.
+
+`/domain-modeling` should keep extending this section as more terms and
+decisions get resolved (see `docs/agents/domain.md`).
