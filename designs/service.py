@@ -9,9 +9,9 @@ instead of letting them cross the tool boundary as a raw stack trace --
 "a dangling reference is rejected with a structured error naming the
 offending block" (#17 acceptance criteria).
 
-Only `create_design` is in scope for this ticket; `record_decision`,
-`verify_requirement`, and `read_design` (#16's other tool entry points)
-are #18-#21's job.
+`create_design` (#17) and `record_engineering_result` (#19) are in scope
+here; `record_decision`, `verify_requirement`, and `read_design` (#16's
+other tool entry points) are #18/#20/#21's job.
 """
 
 from __future__ import annotations
@@ -73,3 +73,39 @@ def create_design(
         "revision": row["revision"],
         "design_status": row["status"],
     }
+
+
+def record_engineering_result(
+    design_id: int,
+    tool_name: str,
+    value: Any,
+    tool_version: str | None = None,
+) -> dict[str, Any]:
+    """Record one `engineering_results` row for a calculation/Touchstone/
+    simulation tool's own run against `design_id` (ticket #19). Owns the
+    connection lifecycle the same way `create_design` does, so every
+    `calculate_*`/`analyze_touchstone_file` tool wrapper in `agent/main.py`/
+    `mcp_server/server.py` can call this directly instead of managing a
+    connection itself. See `designs.db.record_engineering_result` for the
+    full write-path contract (`provenance` looked up from `tool_name`,
+    `confidence` always `NULL`). Returns just the new row's id -- wrappers
+    merge `{"engineering_result_id": ...}` into their own `recorded_as`
+    field, they don't need the rest of the row back.
+    """
+    conn = db.get_connection()
+    try:
+        row = db.record_engineering_result(
+            conn,
+            design_id=design_id,
+            tool_name=tool_name,
+            value=value,
+            tool_version=tool_version,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {"engineering_result_id": row["id"]}

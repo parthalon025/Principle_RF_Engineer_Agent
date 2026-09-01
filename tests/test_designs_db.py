@@ -1,6 +1,6 @@
 import pytest
 
-from designs.db import DanglingComponentReferenceError, create_design
+from designs.db import DanglingComponentReferenceError, create_design, record_engineering_result
 from designs.validation import InvalidRequirementsError
 from knowledge.db import upsert_component
 
@@ -144,6 +144,57 @@ def test_create_design_reports_multiple_offending_blocks(db_conn):
         )
     offending_blocks = {o["block"] for o in exc_info.value.offending}
     assert offending_blocks == {"lna", "mixer"}
+
+
+def _make_design(db_conn, design_key="ER-DES"):
+    row = create_design(
+        db_conn,
+        design_key=design_key,
+        name="Engineering Result Fixture Design",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    return row["id"]
+
+
+def test_record_engineering_result_writes_one_row_with_expected_fields(db_conn):
+    design_id = _make_design(db_conn, design_key="ER-DES-1")
+    row = record_engineering_result(
+        db_conn,
+        design_id=design_id,
+        tool_name="calculate_vswr",
+        value=2.0,
+    )
+
+    assert row["design_id"] == design_id
+    assert row["result_type"] == "calculate_vswr"
+    assert row["name"] == "calculate_vswr"
+    assert row["value"] == 2.0
+    assert row["provenance"] == "CALCULATED"
+    assert row["tool_name"] == "calculate_vswr"
+    assert row["tool_version"] is None
+    assert row["confidence"] is None
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM engineering_results WHERE design_id = %s", (design_id,)
+        )
+        (count,) = cur.fetchone()
+    assert count == 1
+
+
+def test_record_engineering_result_stores_dict_value_as_jsonb(db_conn):
+    design_id = _make_design(db_conn, design_key="ER-DES-2")
+    payload = {"noise_factor": 1.5, "noise_figure_db": 1.76, "provenance": "CALCULATED"}
+    row = record_engineering_result(
+        db_conn,
+        design_id=design_id,
+        tool_name="calculate_noise_figure",
+        value=payload,
+    )
+    assert row["value"] == payload
+    assert row["provenance"] == "CALCULATED"
 
 
 def test_create_design_rejects_malformed_requirements_and_writes_nothing(db_conn):

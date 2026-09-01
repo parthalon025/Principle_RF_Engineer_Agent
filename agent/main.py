@@ -5,6 +5,7 @@ from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
 from designs.service import create_design as _create_design
+from designs.service import record_engineering_result as _record_engineering_result
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -27,47 +28,102 @@ SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
 
 
 @function_tool
-def calculate_wavelength(frequency_hz: float) -> float:
-    """Calculate free-space wavelength in meters for a given frequency in Hz."""
-    return wavelength(frequency_hz)
+def calculate_wavelength(frequency_hz: float, design_id: int | None = None) -> float | dict:
+    """Calculate free-space wavelength in meters for a given frequency in Hz.
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = wavelength(frequency_hz)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_wavelength", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_vswr(reflection_coefficient_magnitude: float) -> float:
-    """Calculate VSWR from the magnitude of the reflection coefficient (|Gamma|)."""
-    return vswr_from_gamma(reflection_coefficient_magnitude)
+def calculate_vswr(
+    reflection_coefficient_magnitude: float, design_id: int | None = None
+) -> float | dict:
+    """Calculate VSWR from the magnitude of the reflection coefficient (|Gamma|).
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = vswr_from_gamma(reflection_coefficient_magnitude)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_vswr", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_return_loss(reflection_coefficient_magnitude: float) -> float:
-    """Calculate return loss in dB from the magnitude of the reflection coefficient (|Gamma|)."""
-    return return_loss_db(reflection_coefficient_magnitude)
+def calculate_return_loss(
+    reflection_coefficient_magnitude: float, design_id: int | None = None
+) -> float | dict:
+    """Calculate return loss in dB from the magnitude of the reflection coefficient (|Gamma|).
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = return_loss_db(reflection_coefficient_magnitude)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_return_loss", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_cascade_gain(gains_db: list[float]) -> float:
-    """Calculate the total cascaded gain in dB for a chain of stage gains in dB."""
-    return cascade_gain_db(gains_db)
+def calculate_cascade_gain(gains_db: list[float], design_id: int | None = None) -> float | dict:
+    """Calculate the total cascaded gain in dB for a chain of stage gains in dB.
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = cascade_gain_db(gains_db)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_cascade_gain", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_noise_figure(noise_factors: list[float], gains_linear: list[float]) -> dict:
+def calculate_noise_figure(
+    noise_factors: list[float], gains_linear: list[float], design_id: int | None = None
+) -> dict:
     """Calculate cascaded noise factor and noise figure (Friis equation) for a chain of
-    stages, given each stage's linear noise factor and linear gain."""
+    stages, given each stage's linear noise factor and linear gain. Pass design_id to
+    also record this result as an engineering_results row against that design; the
+    return value then gains a recorded_as field naming the new row's id."""
     f_total = friis_noise_factor(noise_factors, gains_linear)
-    return {
+    result = {
         "noise_factor": f_total,
         "noise_figure_db": noise_factor_to_db(f_total),
         "provenance": "CALCULATED",
     }
+    if design_id is not None:
+        result["recorded_as"] = _record_engineering_result(
+            design_id=design_id, tool_name="calculate_noise_figure", value=result
+        )
+    return result
 
 
 @function_tool
-def analyze_touchstone_file(path: str) -> dict:
+def analyze_touchstone_file(path: str, design_id: int | None = None) -> dict:
     """Analyze a local Touchstone network file (.sNp) and return port count, frequency
-    range, and S11/S21 extrema."""
+    range, and S11/S21 extrema. Pass design_id to also record this result as an
+    engineering_results row against that design; the return value then gains a
+    recorded_as field naming the new row's id."""
     result = analyze_touchstone(path)
     result["provenance"] = "CALCULATED"
+    if design_id is not None:
+        result["recorded_as"] = _record_engineering_result(
+            design_id=design_id, tool_name="analyze_touchstone_file", value=result
+        )
     return result
 
 
