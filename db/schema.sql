@@ -120,5 +120,11 @@ ON document_chunks USING hnsw (embedding_local vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS documents_metadata_gin
 ON documents USING gin (metadata);
 
+-- Ticket #10: lexical full-text search over chunk content, alongside the
+-- two semantic (embedding) indexes above. `search_knowledge` queries this
+-- via `plainto_tsquery`/`ts_rank`.
+CREATE INDEX IF NOT EXISTS document_chunks_content_fts_gin
+ON document_chunks USING gin (to_tsvector('english', content));
+
 CREATE INDEX IF NOT EXISTS designs_requirements_gin
 ON designs USING gin (requirements);

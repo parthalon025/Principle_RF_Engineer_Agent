@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
+from knowledge.search import search_knowledge as _search_knowledge
 from rf_tools.calculations import (
     cascade_gain_db,
     friis_noise_factor,
@@ -109,6 +110,17 @@ def read_document(document_id: int) -> dict:
     return _read_document(document_id)
 
 
+@function_tool
+def search_knowledge(query_text: str, document_id: int | None = None, limit: int = 20) -> list:
+    """Search the knowledge base for query_text and return one ranked list of chunk
+    matches, each tagged with its match_type ("semantic_external", "semantic_local",
+    or "lexical"). Defaults to ACTIVE documents only; pass document_id to search a
+    specific document/revision (including a SUPERSEDED one) instead. Ordered by
+    authority_rank first, then each match's own native score -- never a single
+    blended score across match types."""
+    return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -123,6 +135,7 @@ principal = Agent(
         ingest_document,
         index_document,
         read_document,
+        search_knowledge,
     ],
 )
 
