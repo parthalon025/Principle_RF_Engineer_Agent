@@ -96,13 +96,46 @@ for history.
   `circulator_isolator`, `switch`, `antenna`, `connector_cable`, or
   `passive_component`.
 - **Design**: a `designs` row — a named, revisioned unit of engineering work
-  (`design_key`, `name`, `revision`, `status`) that `requirements`,
-  `architecture`, engineering results, decisions, and verification all hang
-  off of via `design_id`. `architecture` is a functional-block map,
-  `{block_name: {component_id, role, ...}}`, where `component_id` is a real
-  foreign reference into `components` — never a free-text part number —
-  so a design's evidence trail can be traced from a functional block to the
-  exact orderable part backing it.
+  (`design_key`, `name`, `revision`, `status` — `DRAFT` or `ACTIVE` for now;
+  a release-terminal state is deferred to whichever future ticket implements
+  `manufacturing_release`) that `requirements`, `architecture`, engineering
+  results, decisions, and verification all hang off of via `design_id`.
+  `requirements` is `{requirement_id: {requirement: <text>, ...}}`, keyed
+  the same way `verification_items.requirement_id` references it.
+  `architecture` is a functional-block map,
+  `{block_name: {component_id, role, ...}}`, where `component_id` is a real,
+  write-time-validated foreign reference into `components` — never a
+  free-text part number — so a design's evidence trail can be traced from a
+  functional block to the exact orderable part backing it (see
+  `docs/adr/0006`).
+- **Engineering result**: an `engineering_results` row, recorded
+  automatically as a side effect whenever a calculation/Touchstone/
+  simulation tool runs with a `design_id` supplied — never a separate,
+  rememberable logging step. Its `provenance` is a static per-tool-category
+  mapping (`calculate_*`/Touchstone analysis → `CALCULATED`,
+  `run_nec`/`run_openems`/`run_hfss` → `SIMULATED`), not caller-supplied.
+  `confidence` is `NULL` for deterministic calculations — a meaningful
+  signal only for simulation convergence or extraction ambiguity, not for
+  arithmetic that's either right or an exception.
+- **Decision record**: a `decision_records` row logging a judgment-laden
+  design choice between real alternatives (contrast **Engineering result**,
+  which is a mechanical readout with no judgment in it). Unlike component
+  extraction (ADR-0003) or engineering results, logging one is an agent
+  judgment call, not a structural trigger — there's no physical-plausibility
+  check standing in for "was this the right trade-off" the way `UNKNOWN`
+  substitutes for a human on a bad datasheet read. Every decision starts
+  `approval_status = 'PENDING'`; see `docs/adr/0005` for what that gate
+  does and does not yet do. `record_key` (globally unique) follows
+  `{design_key}-{slug}`; reusing one is rejected with a pointer to the
+  existing record, same dedup-and-point-back shape as `ingest_document`'s
+  checksum check.
+- **Verification item**: a `verification_items` row tracking one
+  requirement's status (`NOT VERIFIED` default, `PASS`/`FAIL`/`MARGINAL`),
+  auto-created per key in a design's `requirements` at design-creation time
+  so every stated requirement is guaranteed a row, but populated only by an
+  explicit `verify_requirement` call — never inferred by matching an
+  `engineering_results` name against a `requirement_id`, since a wrong
+  automatic match would be a silently wrong verification.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).
