@@ -4,7 +4,7 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
-from designs.service import create_design
+from designs.service import create_design, read_design
 
 load_dotenv()
 
@@ -84,3 +84,34 @@ def test_create_design_with_malformed_requirements_returns_structured_error(clea
     finally:
         conn.close()
     assert count == 0
+
+
+def test_read_design_returns_not_found_for_nonexistent_id():
+    result = read_design(999_999)
+    assert result == {"status": "not_found", "design_id": 999_999}
+
+
+def test_read_design_returns_full_payload_for_created_design(cleanup_designs):
+    requirements = {"REQ-1": {"requirement": "Gain >= 20 dB."}}
+    created = create_design(
+        design_key="SVC-DES-READ-1",
+        name="Service Read Design",
+        revision="A",
+        requirements=requirements,
+        architecture={},
+    )
+    cleanup_designs.append(created["design_id"])
+
+    result = read_design(created["design_id"])
+
+    assert result["design_id"] == created["design_id"]
+    assert result["design_key"] == "SVC-DES-READ-1"
+    assert result["name"] == "Service Read Design"
+    assert result["revision"] == "A"
+    assert result["status"] == "DRAFT"
+    assert result["requirements"] == requirements
+    assert result["architecture"] == {}
+    assert result["engineering_results"] == []
+    assert result["decision_records"] == []
+    assert len(result["verification_items"]) == 1
+    assert result["verification_items"][0]["requirement_id"] == "REQ-1"
