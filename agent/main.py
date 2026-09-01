@@ -4,6 +4,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
+from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from rf_tools.calculations import (
@@ -99,6 +100,18 @@ def index_document(document_id: int, requested_backend: str | None = None) -> di
     return _index_document(document_id=document_id, requested_backend=requested_backend)
 
 
+@function_tool
+def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
+    """Extract structured component specifications from a stored datasheet/application_note
+    and upsert a components row per part, keyed by (manufacturer, part_number). Runs
+    automatically, no confirmation step. Each specification field carries its own
+    provenance (MANUFACTURER-SPECIFIED/INFERRED/UNKNOWN) and, if it fails its category's
+    physical-plausibility bound, a validation_error. SENSITIVE/RESTRICTED documents always
+    use the self-hosted backend, with no fallback to the external API; requesting
+    "external" for one raises. A non-datasheet/application_note document is a no-op."""
+    return _extract_components(document_id=document_id, requested_backend=requested_backend)
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -112,6 +125,7 @@ principal = Agent(
         analyze_touchstone_file,
         ingest_document,
         index_document,
+        extract_components,
     ],
 )
 

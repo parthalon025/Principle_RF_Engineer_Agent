@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 
+from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from rf_tools.calculations import (
@@ -85,6 +86,15 @@ def index_document(document_id: int, requested_backend: str | None = None) -> di
     """Embed a stored document's chunks and write the vectors. SENSITIVE/RESTRICTED
     documents always use the self-hosted backend, no fallback to external."""
     return _index_document(document_id=document_id, requested_backend=requested_backend)
+
+
+@mcp.tool()
+def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
+    """Extract structured component specifications from a stored datasheet/application_note
+    and upsert a components row per part. Runs automatically, no confirmation step.
+    SENSITIVE/RESTRICTED documents always use the self-hosted backend, no fallback to
+    external."""
+    return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
 if __name__ == "__main__":

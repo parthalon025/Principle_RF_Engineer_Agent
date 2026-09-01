@@ -1,9 +1,10 @@
 """Shared types for the knowledge-ingestion package.
 
 Ticket #8 defined `SourceType`, `Classification`, and the draft dataclasses
-that move data between the parse -> chunk -> store stages. Ticket #9 (this
-change) adds `Backend`. A later ticket (#4 component extraction) will add
-`ComponentCategory` — leave room, don't build that yet.
+that move data between the parse -> chunk -> store stages. Ticket #9 added
+`Backend`. Ticket #11 (component extraction) adds `ComponentCategory` — the
+per-category specification field/unit schema itself lives in
+`knowledge/component_schema.py`, not here.
 """
 
 from __future__ import annotations
@@ -39,6 +40,24 @@ class Backend(StrEnum):
 
     LOCAL = "local"
     EXTERNAL = "external"
+
+
+class ComponentCategory(StrEnum):
+    """Fixed classification of a component (CONTEXT.md: Category) -- determines
+    which specification fields `components.specifications` is expected to
+    carry. Field names and units per category live in
+    `knowledge/component_schema.py`."""
+
+    AMPLIFIER = "amplifier"
+    FILTER = "filter"
+    MIXER = "mixer"
+    ATTENUATOR = "attenuator"
+    COUPLER_SPLITTER = "coupler_splitter"
+    CIRCULATOR_ISOLATOR = "circulator_isolator"
+    SWITCH = "switch"
+    ANTENNA = "antenna"
+    CONNECTOR_CABLE = "connector_cable"
+    PASSIVE_COMPONENT = "passive_component"
 
 
 class DocumentStatus(StrEnum):

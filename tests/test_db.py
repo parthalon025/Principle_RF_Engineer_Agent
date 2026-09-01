@@ -6,6 +6,7 @@ from knowledge.db import (
     find_document_by_checksum,
     insert_chunks,
     insert_document,
+    upsert_component,
 )
 from knowledge.models import ChunkDraft, Classification, DocumentDraft, SourceType
 
@@ -152,3 +153,64 @@ def test_insert_chunks_with_empty_list_is_a_noop(db_conn):
     draft = _draft(checksum_sha256="2" * 64)
     doc_row = insert_document(db_conn, draft, authority_rank=20)
     assert insert_chunks(db_conn, doc_row["id"], []) == 0
+
+
+def test_upsert_component_inserts_new_row(db_conn):
+    draft = _draft(checksum_sha256="3" * 64)
+    doc_row = insert_document(db_conn, draft, authority_rank=20)
+
+    specs = {"gain_db": {"value": 20.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}}
+    row = upsert_component(
+        db_conn,
+        manufacturer="Acme RF",
+        part_number="ACM-AMP-100",
+        category="amplifier",
+        specifications=specs,
+        datasheet_document_id=doc_row["id"],
+    )
+
+    assert row["manufacturer"] == "Acme RF"
+    assert row["part_number"] == "ACM-AMP-100"
+    assert row["category"] == "amplifier"
+    assert row["specifications"] == specs
+    assert row["datasheet_document_id"] == doc_row["id"]
+
+
+def test_upsert_component_updates_on_matching_manufacturer_and_part_number(db_conn):
+    draft = _draft(checksum_sha256="4" * 64)
+    doc_row = insert_document(db_conn, draft, authority_rank=20)
+
+    first_specs = {
+        "gain_db": {"value": 20.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}
+    }
+    first = upsert_component(
+        db_conn,
+        manufacturer="Acme RF",
+        part_number="ACM-AMP-200",
+        category="amplifier",
+        specifications=first_specs,
+        datasheet_document_id=doc_row["id"],
+    )
+
+    second_specs = {
+        "gain_db": {"value": 21.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}
+    }
+    second = upsert_component(
+        db_conn,
+        manufacturer="Acme RF",
+        part_number="ACM-AMP-200",
+        category="amplifier",
+        specifications=second_specs,
+        datasheet_document_id=doc_row["id"],
+    )
+
+    assert second["id"] == first["id"]
+    assert second["specifications"] == second_specs
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM components WHERE manufacturer = %s AND part_number = %s",
+            ("Acme RF", "ACM-AMP-200"),
+        )
+        (count,) = cur.fetchone()
+    assert count == 1
