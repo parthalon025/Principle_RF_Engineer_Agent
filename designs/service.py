@@ -21,6 +21,14 @@ collision handling, always-`PENDING` `approval_status`). Reusing an
 existing `record_key` returns a structured `status`-tagged result pointing
 at the existing row instead of raising.
 
+`record_engineering_result` (ticket #19) records one `engineering_results`
+row for a calculation/Touchstone/simulation tool's own run against
+`design_id`. Owns the connection lifecycle the same way `create_design`
+does, so every `calculate_*`/`analyze_touchstone_file` tool wrapper in
+`agent/main.py`/`mcp_server/server.py` can call this directly instead of
+managing a connection itself. Not itself an agent-exposed tool -- called
+internally by those wrappers.
+
 `verify_requirement` (ticket #21) explicitly records verification of one
 requirement. See `designs.db.verify_requirement` for the full write-path
 contract (targets exactly one row via `(design_id, requirement_id)`, full
@@ -29,7 +37,8 @@ An unknown `(design_id, requirement_id)` pair or an invalid `status`
 returns a structured `status`-tagged result instead of raising --
 "verifying an unknown requirement_id is rejected cleanly" (#21's).
 
-All four of #16's tool entry points are now implemented here.
+All four of #16's tool entry points, plus the internal #19 recording
+function, are now implemented here.
 """
 
 from __future__ import annotations
@@ -170,6 +179,42 @@ def record_decision(
         "record_key": row["record_key"],
         "approval_status": row["approval_status"],
     }
+
+
+def record_engineering_result(
+    design_id: int,
+    tool_name: str,
+    value: Any,
+    tool_version: str | None = None,
+) -> dict[str, Any]:
+    """Record one `engineering_results` row for a calculation/Touchstone/
+    simulation tool's own run against `design_id` (ticket #19). Owns the
+    connection lifecycle the same way `create_design` does, so every
+    `calculate_*`/`analyze_touchstone_file` tool wrapper in `agent/main.py`/
+    `mcp_server/server.py` can call this directly instead of managing a
+    connection itself. See `designs.db.record_engineering_result` for the
+    full write-path contract (`provenance` looked up from `tool_name`,
+    `confidence` always `NULL`). Returns just the new row's id -- wrappers
+    merge `{"engineering_result_id": ...}` into their own `recorded_as`
+    field, they don't need the rest of the row back.
+    """
+    conn = db.get_connection()
+    try:
+        row = db.record_engineering_result(
+            conn,
+            design_id=design_id,
+            tool_name=tool_name,
+            value=value,
+            tool_version=tool_version,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {"engineering_result_id": row["id"]}
 
 
 def verify_requirement(

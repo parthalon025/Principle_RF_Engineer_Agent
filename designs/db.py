@@ -7,9 +7,9 @@ connection and never commit it themselves -- the caller (production:
 `agent/main.py` / `mcp_server/server.py`'s tool wrappers; tests: the
 `db_conn` fixture) owns the transaction boundary.
 
-`create_design` (#17), `read_design` (#18), `record_decision` (#20), and
-`verify_requirement` (#21) are in scope here -- `record_engineering_result`
-(#16's remaining `designs/db.py` function) belongs to #19.
+`create_design` (#17), `read_design` (#18), `record_decision` (#20),
+`record_engineering_result` (#19), and `verify_requirement` (#21) are all
+in scope here -- every `designs/db.py` function #16 called for.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from designs.models import DesignStatus, VerificationStatus
+from designs.provenance import provenance_for_tool
 from designs.validation import (
     _iter_component_refs,
     extract_component_refs,
@@ -447,4 +448,54 @@ def verify_requirement(
     if row is None:
         raise UnknownVerificationItemError(design_id, requirement_id)
 
+    return row
+
+
+def record_engineering_result(
+    conn: psycopg.Connection,
+    design_id: int,
+    tool_name: str,
+    value: Any,
+    tool_version: str | None = None,
+) -> dict[str, Any]:
+    """Insert one `engineering_results` row for a calculation/Touchstone/
+    simulation tool run against `design_id` (ticket #19; CONTEXT.md:
+    Engineering result).
+
+    `result_type` and `name` are both the tool's own name (`tool_name`) --
+    this ticket's wrappers have no separate human-supplied label to give
+    `name`, so it mirrors `result_type` rather than inventing one.
+    `provenance` is never caller-supplied: it's looked up from `tool_name`
+    via `designs.provenance.provenance_for_tool`, which raises `ValueError`
+    for a tool with no mapping. `confidence` is always `NULL` -- deterministic
+    calculations don't carry a confidence signal (CONTEXT.md). `value` is
+    stored as-is via `Json`, so it accepts either a bare JSON scalar (a
+    `calculate_vswr`-style tool returning a plain float) or a JSON object
+    (a `calculate_noise_figure`/`analyze_touchstone_file`-style tool
+    returning a dict) -- whatever the tool's own return payload is.
+
+    Same transaction-boundary contract as `create_design`: takes an
+    already-open connection and never commits it itself.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            INSERT INTO engineering_results
+                (design_id, result_type, name, value, provenance, tool_name, tool_version,
+                 confidence)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)
+            RETURNING *
+            """,
+            (
+                design_id,
+                tool_name,
+                tool_name,
+                Json(value),
+                provenance_for_tool(tool_name),
+                tool_name,
+                tool_version,
+            ),
+        )
+        row = cur.fetchone()
+        assert row is not None
     return row

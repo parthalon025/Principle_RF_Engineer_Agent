@@ -4,7 +4,13 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
-from designs.service import create_design, read_design, record_decision, verify_requirement
+from designs.service import (
+    create_design,
+    read_design,
+    record_decision,
+    record_engineering_result,
+    verify_requirement,
+)
 
 load_dotenv()
 
@@ -116,6 +122,37 @@ def test_record_decision_with_reused_record_key_returns_structured_error(cleanup
     assert result["status"] == "record_key_collision"
     assert result["existing_decision_id"] == first["decision_id"]
     assert "SVC-DES-DEC-2-topology" in result["message"]
+
+
+def test_record_engineering_result_returns_engineering_result_id(cleanup_designs):
+    design = create_design(
+        design_key="SVC-ER-1",
+        name="Engineering Result Service Fixture",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    cleanup_designs.append(design["design_id"])
+
+    result = record_engineering_result(
+        design_id=design["design_id"],
+        tool_name="calculate_wavelength",
+        value=0.1,
+    )
+
+    assert isinstance(result["engineering_result_id"], int)
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT design_id, provenance, confidence FROM engineering_results WHERE id = %s",
+                (result["engineering_result_id"],),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    assert row == (design["design_id"], "CALCULATED", None)
 
 
 def test_create_design_with_malformed_requirements_returns_structured_error(cleanup_designs):
