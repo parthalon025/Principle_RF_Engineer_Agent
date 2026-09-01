@@ -1,3 +1,12 @@
+-- Templated, not directly valid SQL: `${EMBEDDING_DIM_EXTERNAL}` and
+-- `${EMBEDDING_DIM_LOCAL}` below are substituted from those env vars
+-- (default 1536 each) before this file is applied. Apply it via
+-- `uv run python db/apply_schema.py` (reads DATABASE_URL same as the rest
+-- of the app) rather than `psql -f` directly. `docker compose up postgres`
+-- does its own equivalent substitution at container-init time (see
+-- docker-compose.yml / db/docker-init.sh) so a fresh container picks up
+-- the same env vars.
+
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -26,9 +35,16 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     page_number INTEGER,
     section TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    embedding vector(1536),
+    embedding vector(${EMBEDDING_DIM_EXTERNAL}),
     UNIQUE(document_id, chunk_index)
 );
+
+-- embedding_local (ticket #9 / ADR-0004): a second, independently-dimensioned
+-- vector column for chunks embedded via the self-hosted backend. Nullable,
+-- same as `embedding` -- a chunk has at most one of the two populated,
+-- whichever backend actually embedded it (knowledge/index.py).
+ALTER TABLE document_chunks
+    ADD COLUMN IF NOT EXISTS embedding_local vector(${EMBEDDING_DIM_LOCAL});
 
 CREATE TABLE IF NOT EXISTS components (
     id BIGSERIAL PRIMARY KEY,
@@ -97,6 +113,9 @@ CREATE TABLE IF NOT EXISTS decision_records (
 
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw
 ON document_chunks USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS document_chunks_embedding_local_hnsw
+ON document_chunks USING hnsw (embedding_local vector_cosine_ops);
 
 CREATE INDEX IF NOT EXISTS documents_metadata_gin
 ON documents USING gin (metadata);

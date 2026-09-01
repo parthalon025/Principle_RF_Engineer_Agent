@@ -1,9 +1,9 @@
 """Shared types for the knowledge-ingestion package.
 
-Ticket #8 (this file) defines `SourceType`, `Classification`, and the draft
-dataclasses that move data between the parse -> chunk -> store stages.
-Later tickets (#2 indexing, #4 component extraction) extend this module
-with `Backend` and `ComponentCategory` — leave room, don't build those yet.
+Ticket #8 defined `SourceType`, `Classification`, and the draft dataclasses
+that move data between the parse -> chunk -> store stages. Ticket #9 (this
+change) adds `Backend`. A later ticket (#4 component extraction) will add
+`ComponentCategory` — leave room, don't build that yet.
 """
 
 from __future__ import annotations
@@ -29,6 +29,16 @@ class Classification(StrEnum):
     INTERNAL = "INTERNAL"
     SENSITIVE = "SENSITIVE"
     RESTRICTED = "RESTRICTED"
+
+
+class Backend(StrEnum):
+    """An embedding/LLM backend, identified by which base URL/key pair it
+    resolves to (ADR-0004) -- not by deployment location. `LOCAL` covers any
+    org-controlled self-hosted instance (on-prem or rented GPU infra);
+    `EXTERNAL` is OpenAI's own hosted API."""
+
+    LOCAL = "local"
+    EXTERNAL = "external"
 
 
 class DocumentStatus(StrEnum):

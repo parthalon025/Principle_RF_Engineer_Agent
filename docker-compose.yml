@@ -6,11 +6,16 @@ services:
       POSTGRES_DB: rfengineer
       POSTGRES_USER: rf
       POSTGRES_PASSWORD: rf_dev_password
+      # Read from the host/.env at `docker compose` invocation time; default
+      # to 1536 (matches knowledge/embedding.py's own env-var defaults).
+      EMBEDDING_DIM_EXTERNAL: ${EMBEDDING_DIM_EXTERNAL:-1536}
+      EMBEDDING_DIM_LOCAL: ${EMBEDDING_DIM_LOCAL:-1536}
     ports:
       - "5432:5432"
     volumes:
       - rf_pgdata:/var/lib/postgresql/data
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql.template:ro
+      - ./db/docker-init.sh:/docker-entrypoint-initdb.d/001_schema.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rf -d rfengineer"]
       interval: 5s

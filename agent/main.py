@@ -4,6 +4,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
+from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from rf_tools.calculations import (
     cascade_gain_db,
@@ -78,6 +79,17 @@ def ingest_document(file_path: str, source_type: str, license: str, classificati
     )
 
 
+@function_tool
+def index_document(document_id: int, requested_backend: str | None = None) -> dict:
+    """Embed a stored document's chunks and write the vectors to the knowledge base.
+    SENSITIVE/RESTRICTED documents always use the self-hosted backend, with no
+    fallback to the external API; requesting "external" for one raises. PUBLIC/
+    INTERNAL documents honor an explicit requested_backend ("local"/"external") or
+    fall back to the configured default, and fall back from local to external if
+    the self-hosted backend is briefly unreachable."""
+    return _index_document(document_id=document_id, requested_backend=requested_backend)
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -90,6 +102,7 @@ principal = Agent(
         calculate_noise_figure,
         analyze_touchstone_file,
         ingest_document,
+        index_document,
     ],
 )
 

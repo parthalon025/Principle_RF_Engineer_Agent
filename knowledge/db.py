@@ -13,10 +13,14 @@ import os
 from typing import Any
 
 import psycopg
+from pgvector.psycopg import register_vector
+from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from knowledge.models import ChunkDraft, DocumentDraft, DocumentStatus
+
+_EMBEDDING_COLUMNS = {"embedding", "embedding_local"}
 
 
 class DuplicateDocumentError(Exception):
@@ -134,6 +138,54 @@ def insert_document(
 
     assert new_row is not None
     return new_row
+
+
+def get_document(conn: psycopg.Connection, document_id: int) -> dict[str, Any] | None:
+    """Fetch a `documents` row by id, or None if it doesn't exist."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT * FROM documents WHERE id = %s", (document_id,))
+        return cur.fetchone()
+
+
+def get_chunks(conn: psycopg.Connection, document_id: int) -> list[dict[str, Any]]:
+    """Fetch `document_chunks` rows for a document, in chunk order."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT id, chunk_index, content FROM document_chunks "
+            "WHERE document_id = %s ORDER BY chunk_index",
+            (document_id,),
+        )
+        return cur.fetchall()
+
+
+def write_chunk_embeddings(
+    conn: psycopg.Connection,
+    column: str,
+    chunk_ids: list[int],
+    vectors: list[list[float]],
+) -> int:
+    """Write embedding vectors into `column` ("embedding" or
+    "embedding_local") for the given chunk ids. `column` is chosen by the
+    caller from whichever backend actually produced `vectors` (ticket #9) --
+    not from the document's classification alone. Returns the number of
+    rows updated.
+    """
+    if column not in _EMBEDDING_COLUMNS:
+        raise ValueError(f"Not an embedding column: {column!r}")
+    if len(chunk_ids) != len(vectors):
+        raise ValueError("chunk_ids and vectors must have equal length")
+    if not chunk_ids:
+        return 0
+
+    register_vector(conn)
+    query = sql.SQL("UPDATE document_chunks SET {col} = %s WHERE id = %s").format(
+        col=sql.Identifier(column)
+    )
+    with conn.cursor() as cur:
+        cur.executemany(
+            query, [(vector, chunk_id) for chunk_id, vector in zip(chunk_ids, vectors, strict=True)]
+        )
+    return len(chunk_ids)
 
 
 def insert_chunks(conn: psycopg.Connection, document_id: int, chunks: list[ChunkDraft]) -> int:

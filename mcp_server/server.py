@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 
+from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from rf_tools.calculations import (
     cascade_gain_db,
@@ -68,6 +69,13 @@ def ingest_document(file_path: str, source_type: str, license: str, classificati
         license=license,
         classification=classification,
     )
+
+
+@mcp.tool()
+def index_document(document_id: int, requested_backend: str | None = None) -> dict:
+    """Embed a stored document's chunks and write the vectors. SENSITIVE/RESTRICTED
+    documents always use the self-hosted backend, no fallback to external."""
+    return _index_document(document_id=document_id, requested_backend=requested_backend)
 
 
 if __name__ == "__main__":
