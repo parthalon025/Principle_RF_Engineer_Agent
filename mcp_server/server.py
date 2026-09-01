@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 
+from designs.service import create_design as _create_design
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -114,6 +115,31 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     SENSITIVE/RESTRICTED documents always use the self-hosted backend, no fallback to
     external."""
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
+
+
+@mcp.tool()
+def create_design(
+    design_key: str,
+    name: str,
+    revision: str,
+    requirements: dict,
+    architecture: dict,
+) -> dict:
+    """Start a new design: a designs row with design_key, name, revision,
+    requirements, and architecture, starting in DRAFT status. requirements
+    must be a dict keyed by requirement_id, each value carrying a
+    'requirement' text field; one verification_items row is auto-created
+    per key, all starting NOT VERIFIED. Every component_id referenced
+    anywhere in architecture must already exist in components -- a
+    dangling reference is rejected with a structured error naming the
+    offending block, never silently written."""
+    return _create_design(
+        design_key=design_key,
+        name=name,
+        revision=revision,
+        requirements=requirements,
+        architecture=architecture,
+    )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
+from designs.service import create_design as _create_design
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -134,6 +135,38 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
+# strict_mode=False: `requirements`/`architecture` are genuinely free-form
+# JSON (arbitrary requirement_id keys; architecture shape isn't fixed by
+# this ticket) -- the SDK's default strict-schema mode rejects an open
+# `dict` parameter outright (`additionalProperties` must be false), which
+# a fixed schema can't express here without inventing structure this
+# ticket doesn't define.
+@function_tool(strict_mode=False)
+def create_design(
+    design_key: str,
+    name: str,
+    revision: str,
+    requirements: dict,
+    architecture: dict,
+) -> dict:
+    """Start a new design: a designs row with design_key, name, revision,
+    requirements, and architecture, starting in DRAFT status. requirements
+    must be a dict keyed by requirement_id, each value carrying a
+    'requirement' text field; one verification_items row is auto-created
+    per key, all starting NOT VERIFIED, so no stated requirement can end up
+    with no verification row. Every component_id referenced anywhere in
+    architecture must already exist in components -- a dangling reference
+    is rejected with a structured error naming the offending block, never
+    silently written."""
+    return _create_design(
+        design_key=design_key,
+        name=name,
+        revision=revision,
+        requirements=requirements,
+        architecture=architecture,
+    )
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -150,6 +183,7 @@ principal = Agent(
         read_document,
         search_knowledge,
         extract_components,
+        create_design,
     ],
 )
 
