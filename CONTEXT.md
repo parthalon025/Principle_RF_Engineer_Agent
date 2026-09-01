@@ -57,11 +57,25 @@ for history.
 ## Vocabulary
 
 - **Provenance**: the evidence class of a stated RF result — see the list
-  above. Never state a value without one once the agent produces it.
+  above. Never state a value without one once the agent produces it. A
+  knowledge-base chunk cited by the agent inherits its provenance from the
+  source document's **source type**: `datasheet`/`application_note` →
+  `MANUFACTURER-SPECIFIED`; `standard`/`textbook`/`paper` →
+  `LITERATURE-SUPPORTED`.
 - **Evidence hierarchy**: measured > validated simulation > deterministic
   calculation > manufacturer spec > authoritative reference > internal
   engineering history > general web material > LLM inference. Higher wins
   when evidence conflicts.
+- **Source type**: the classification of an ingested knowledge document —
+  `datasheet`, `application_note`, `standard`, `textbook`, or `paper`.
+  Fixed at ingest time; determines the document's default provenance and
+  authority rank.
+- **Authority rank**: a per-document integer position in the evidence
+  hierarchy, defaulted from source type (datasheet/application_note sit at
+  the manufacturer-spec tier; standard/textbook/paper sit at the
+  authoritative-reference tier) and overridable per document. Knowledge
+  retrieval sorts by authority rank before match score, so higher-tier
+  evidence surfaces first when sources conflict.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).
