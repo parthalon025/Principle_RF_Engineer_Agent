@@ -96,10 +96,14 @@ for history.
   `circulator_isolator`, `switch`, `antenna`, `connector_cable`, or
   `passive_component`.
 - **Design**: a `designs` row — a named, revisioned unit of engineering work
-  (`design_key`, `name`, `revision`, `status` — `DRAFT` or `ACTIVE` for now;
-  a release-terminal state is deferred to whichever future ticket implements
-  `manufacturing_release`) that `requirements`, `architecture`, engineering
-  results, decisions, and verification all hang off of via `design_id`.
+  (`design_key`, `name`, `revision`, `status`) that `requirements`,
+  `architecture`, engineering results, decisions, and verification all hang
+  off of via `design_id`. `status` is `docs/OPERATIONS.md`'s existing
+  workflow lifecycle, not a value set invented for this feature area:
+  `DRAFT → ANALYSIS → SIMULATION → OPTIMIZATION → VERIFICATION →
+  CONDITIONAL-PASS/PASS/FAIL/BLOCKED → RELEASED`, where `RELEASED` already
+  requires human approval (see `docs/adr/0007`). A design is created in
+  `DRAFT`; nothing yet builds the transitions between the other states.
   `requirements` is `{requirement_id: {requirement: <text>, ...}}`, keyed
   the same way `verification_items.requirement_id` references it.
   `architecture` is a functional-block map,

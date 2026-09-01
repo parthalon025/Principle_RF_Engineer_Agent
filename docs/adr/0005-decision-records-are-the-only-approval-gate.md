@@ -22,7 +22,9 @@ auto-approve "was this the right trade-off" the way `UNKNOWN` auto-flags a
 negative noise figure. So `decision_records.approval_required` defaults
 `true` and every new decision starts `approval_status = 'PENDING'`, meant to
 eventually block `manufacturing_release` (an existing `tool_policy.yaml`
-entry, not yet implemented).
+entry, not yet implemented) — which is also `designs.status`'s existing
+`RELEASED` state, per `docs/OPERATIONS.md`'s workflow lifecycle and
+`docs/adr/0007`.
 
 ## Consequences
 
