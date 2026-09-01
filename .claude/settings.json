@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f docs/agents/issue-tracker.md ] || jq -n '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:\"This repository has the Matt Pocock engineering skills installed under .claude/skills/, but this repo has not been configured for them yet. Before other work this session, run the setup-matt-pocock-skills skill (invoke /setup-matt-pocock-skills) to configure the issue tracker, triage labels, and domain-doc layout the other skills depend on.\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}
