@@ -194,6 +194,107 @@ def write_chunk_embeddings(
     return len(chunk_ids)
 
 
+def _document_scope_clause(document_id: int | None) -> tuple[str, Any]:
+    """The `document_id`-pin-vs-ACTIVE-default WHERE fragment shared by
+    `search_lexical` and `search_semantic` (ticket #10): `document_id` given
+    -> only that document's chunks, any status; `document_id` None -> only
+    `ACTIVE` documents' chunks (ADR-0002). Returns (sql_fragment, param)."""
+    if document_id is not None:
+        return "dc.document_id = %s", document_id
+    return "d.status = %s", DocumentStatus.ACTIVE.value
+
+
+def search_lexical(
+    conn: psycopg.Connection,
+    query_text: str,
+    *,
+    document_id: int | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Full-text search `document_chunks.content` against `query_text`
+    (`plainto_tsquery('english', ...)`, ranked by `ts_rank`, backed by the
+    `document_chunks_content_fts_gin` index -- ticket #10).
+
+    `document_id` is None (default): only chunks of `ACTIVE` documents are
+    searched. `document_id` given: only that document's chunks are searched,
+    regardless of its status -- pinning a specific document/revision id can
+    retrieve a SUPERSEDED one (ADR-0002). Results are ordered by `ts_rank`
+    descending; `search_knowledge` (knowledge/search.py) is responsible for
+    the final authority-rank-first ordering across match types.
+    """
+    scope_clause, scope_param = _document_scope_clause(document_id)
+    where = ["to_tsvector('english', dc.content) @@ plainto_tsquery('english', %s)", scope_clause]
+    where_params: list[Any] = [query_text, scope_param]
+
+    query = f"""
+        SELECT
+            dc.id AS chunk_id, dc.document_id, dc.chunk_index, dc.content,
+            dc.page_number, dc.section,
+            d.title AS document_title, d.authority_rank, d.status,
+            ts_rank(to_tsvector('english', dc.content), plainto_tsquery('english', %s)) AS score
+        FROM document_chunks dc
+        JOIN documents d ON d.id = dc.document_id
+        WHERE {" AND ".join(where)}
+        ORDER BY score DESC
+        LIMIT %s
+    """
+    # Placeholder order top-to-bottom: the SELECT's own ts_rank(%s), then
+    # each of `where_params` in the order they were appended, then LIMIT.
+    params = [query_text, *where_params, limit]
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
+
+
+def search_semantic(
+    conn: psycopg.Connection,
+    column: str,
+    query_embedding: list[float],
+    *,
+    document_id: int | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Nearest-neighbor search of `column` ("embedding" or "embedding_local")
+    against `query_embedding` via pgvector cosine distance, backed by that
+    column's HNSW index (ticket #10). `score` is `1 - cosine_distance` (1.0
+    = identical direction), so higher is better, matching `search_lexical`'s
+    `ts_rank` convention of higher-is-better -- callers must not compare the
+    two numbers to each other (no score fusion -- ticket #10).
+
+    Only chunks where `column IS NOT NULL` are eligible -- a chunk embedded
+    via the other backend, or not yet indexed at all, is silently absent
+    rather than an error. `document_id` behaves as in `search_lexical`.
+    """
+    if column not in _EMBEDDING_COLUMNS:
+        raise ValueError(f"Not an embedding column: {column!r}")
+
+    scope_clause, scope_param = _document_scope_clause(document_id)
+    where = [f"dc.{column} IS NOT NULL", scope_clause]
+    where_params: list[Any] = [scope_param]
+
+    register_vector(conn)
+    query = sql.SQL(
+        """
+        SELECT
+            dc.id AS chunk_id, dc.document_id, dc.chunk_index, dc.content,
+            dc.page_number, dc.section,
+            d.title AS document_title, d.authority_rank, d.status,
+            1 - (dc.{col} <=> %s::vector) AS score
+        FROM document_chunks dc
+        JOIN documents d ON d.id = dc.document_id
+        WHERE {where}
+        ORDER BY dc.{col} <=> %s::vector ASC
+        LIMIT %s
+        """
+    ).format(col=sql.Identifier(column), where=sql.SQL(" AND ".join(where)))
+    # Placeholder order top-to-bottom: the SELECT's own similarity %s, then
+    # each of `where_params`, then ORDER BY's distance %s, then LIMIT.
+    params = [query_embedding, *where_params, query_embedding, limit]
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
+
+
 def insert_chunks(conn: psycopg.Connection, document_id: int, chunks: list[ChunkDraft]) -> int:
     """Bulk-insert chunk drafts for a document. Returns the number inserted.
     Embeddings are left NULL -- populating them is ticket #2's concern."""
