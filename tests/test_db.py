@@ -4,6 +4,7 @@ from knowledge.db import (
     DuplicateDocumentError,
     InvalidSupersessionError,
     find_document_by_checksum,
+    get_chunk_details,
     insert_chunks,
     insert_document,
 )
@@ -152,3 +153,29 @@ def test_insert_chunks_with_empty_list_is_a_noop(db_conn):
     draft = _draft(checksum_sha256="2" * 64)
     doc_row = insert_document(db_conn, draft, authority_rank=20)
     assert insert_chunks(db_conn, doc_row["id"], []) == 0
+
+
+def test_get_chunk_details_includes_page_number_and_section_in_order(db_conn):
+    draft = _draft(checksum_sha256="9" * 64)
+    doc_row = insert_document(db_conn, draft, authority_rank=20)
+    chunks = [
+        ChunkDraft(chunk_index=1, content="second", section="B", page_number=2),
+        ChunkDraft(chunk_index=0, content="first", section="A", page_number=1),
+    ]
+    insert_chunks(db_conn, doc_row["id"], chunks)
+
+    details = get_chunk_details(db_conn, doc_row["id"])
+
+    assert [d["chunk_index"] for d in details] == [0, 1]
+    assert details[0]["content"] == "first"
+    assert details[0]["section"] == "A"
+    assert details[0]["page_number"] == 1
+    assert details[1]["content"] == "second"
+    assert details[1]["section"] == "B"
+    assert details[1]["page_number"] == 2
+
+
+def test_get_chunk_details_with_no_chunks_returns_empty_list(db_conn):
+    draft = _draft(checksum_sha256="aa" + "1" * 62)
+    doc_row = insert_document(db_conn, draft, authority_rank=20)
+    assert get_chunk_details(db_conn, doc_row["id"]) == []

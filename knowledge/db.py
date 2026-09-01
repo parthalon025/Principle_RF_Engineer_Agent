@@ -164,6 +164,21 @@ def get_chunks(conn: psycopg.Connection, document_id: int) -> list[dict[str, Any
         return cur.fetchall()
 
 
+def get_chunk_details(conn: psycopg.Connection, document_id: int) -> list[dict[str, Any]]:
+    """Fetch `document_chunks` rows for a document in chunk order, including
+    `page_number` and `section` (ticket #13's `read_document`). Kept separate
+    from `get_chunks` -- whose narrower column list (ticket #9) still serves
+    `knowledge.index`'s embedding pass -- rather than widening that function's
+    columns underneath its existing caller."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT id, chunk_index, content, page_number, section FROM document_chunks "
+            "WHERE document_id = %s ORDER BY chunk_index",
+            (document_id,),
+        )
+        return cur.fetchall()
+
+
 def write_chunk_embeddings(
     conn: psycopg.Connection,
     column: str,
