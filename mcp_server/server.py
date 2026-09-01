@@ -1,3 +1,5 @@
+from typing import Any
+
 from mcp.server.fastmcp import FastMCP
 
 from designs.service import create_design as _create_design
@@ -149,8 +151,8 @@ def verify_requirement(
     requirement_id: str,
     method: str,
     status: str,
-    expected: object | None = None,
-    actual: object | None = None,
+    expected: Any = None,
+    actual: Any = None,
     evidence_uri: str | None = None,
     notes: str | None = None,
 ) -> dict:

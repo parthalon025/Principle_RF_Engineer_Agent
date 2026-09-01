@@ -242,7 +242,7 @@ def verify_requirement(
             """,
             (
                 method,
-                VerificationStatus(status).value,
+                status,
                 Json(expected) if expected is not None else None,
                 Json(actual) if actual is not None else None,
                 evidence_uri,
