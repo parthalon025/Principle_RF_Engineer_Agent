@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.read import read_document as _read_document
 from rf_tools.calculations import (
     cascade_gain_db,
     friis_noise_factor,
@@ -99,6 +100,15 @@ def index_document(document_id: int, requested_backend: str | None = None) -> di
     return _index_document(document_id=document_id, requested_backend=requested_backend)
 
 
+@function_tool
+def read_document(document_id: int) -> dict:
+    """Fetch a stored document's full metadata (title, source_type, license, classification,
+    authority_rank, status, revision, supersedes_document_id, publication date, author) plus
+    its chunks (content, page number, section) in order. Returns a not-found result rather
+    than raising if document_id doesn't exist."""
+    return _read_document(document_id)
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -112,6 +122,7 @@ principal = Agent(
         analyze_touchstone_file,
         ingest_document,
         index_document,
+        read_document,
     ],
 )
 

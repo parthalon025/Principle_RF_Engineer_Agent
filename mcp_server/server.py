@@ -2,6 +2,7 @@ from mcp.server.fastmcp import FastMCP
 
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.read import read_document as _read_document
 from rf_tools.calculations import (
     cascade_gain_db,
     friis_noise_factor,
@@ -85,6 +86,14 @@ def index_document(document_id: int, requested_backend: str | None = None) -> di
     """Embed a stored document's chunks and write the vectors. SENSITIVE/RESTRICTED
     documents always use the self-hosted backend, no fallback to external."""
     return _index_document(document_id=document_id, requested_backend=requested_backend)
+
+
+@mcp.tool()
+def read_document(document_id: int) -> dict:
+    """Fetch a stored document's full metadata plus its chunks (content, page number,
+    section) in order. Returns a not-found result rather than raising if document_id
+    doesn't exist."""
+    return _read_document(document_id)
 
 
 if __name__ == "__main__":
