@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 
 from designs.service import create_design as _create_design
+from designs.service import record_decision as _record_decision
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -139,6 +140,36 @@ def create_design(
         revision=revision,
         requirements=requirements,
         architecture=architecture,
+    )
+
+
+@mcp.tool()
+def record_decision(
+    design_id: int,
+    record_key: str,
+    decision: str,
+    alternatives: list,
+    rationale: str,
+    evidence: list,
+    approval_required: bool = True,
+) -> dict:
+    """Log a judgment-laden design choice -- a decision between real
+    alternatives, distinct from a mechanical calculation -- with its
+    rationale and evidence. Always an explicit agent judgment call, never
+    triggered automatically by an architecture change. record_key follows
+    '{design_key}-{slug}' and must be globally unique; reusing one is
+    rejected with a structured error pointing at the existing record,
+    never silently overwritten. Every new decision starts
+    approval_status='PENDING' -- this does not yet block anything (no
+    manufacturing_release tool or review UI exists)."""
+    return _record_decision(
+        design_id=design_id,
+        record_key=record_key,
+        decision=decision,
+        alternatives=alternatives,
+        rationale=rationale,
+        evidence=evidence,
+        approval_required=approval_required,
     )
 
 

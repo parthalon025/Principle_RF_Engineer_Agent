@@ -4,7 +4,7 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
-from designs.service import create_design
+from designs.service import create_design, record_decision
 
 load_dotenv()
 
@@ -62,6 +62,60 @@ def test_create_design_with_dangling_component_id_returns_structured_error(clean
     finally:
         conn.close()
     assert count == 0
+
+
+def _make_design(cleanup_designs, design_key):
+    result = create_design(
+        design_key=design_key,
+        name="Decision Host Design",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    cleanup_designs.append(result["design_id"])
+    return result["design_id"]
+
+
+def test_record_decision_returns_recorded_status_and_pending_approval(cleanup_designs):
+    design_id = _make_design(cleanup_designs, "SVC-DES-DEC-1")
+    result = record_decision(
+        design_id=design_id,
+        record_key="SVC-DES-DEC-1-topology",
+        decision="Used a pi-network instead of an L-network.",
+        alternatives=["L-network"],
+        rationale="Pi-network gives an extra degree of freedom for Q.",
+        evidence=[],
+    )
+
+    assert result["status"] == "recorded"
+    assert result["record_key"] == "SVC-DES-DEC-1-topology"
+    assert result["approval_status"] == "PENDING"
+    assert "decision_id" in result
+
+
+def test_record_decision_with_reused_record_key_returns_structured_error(cleanup_designs):
+    design_id = _make_design(cleanup_designs, "SVC-DES-DEC-2")
+    first = record_decision(
+        design_id=design_id,
+        record_key="SVC-DES-DEC-2-topology",
+        decision="Used a pi-network instead of an L-network.",
+        alternatives=[],
+        rationale="Pi-network gives an extra degree of freedom for Q.",
+        evidence=[],
+    )
+
+    result = record_decision(
+        design_id=design_id,
+        record_key="SVC-DES-DEC-2-topology",
+        decision="Used an L-network instead, on reconsideration.",
+        alternatives=[],
+        rationale="Changed our minds.",
+        evidence=[],
+    )
+
+    assert result["status"] == "record_key_collision"
+    assert result["existing_decision_id"] == first["decision_id"]
+    assert "SVC-DES-DEC-2-topology" in result["message"]
 
 
 def test_create_design_with_malformed_requirements_returns_structured_error(cleanup_designs):

@@ -82,6 +82,80 @@ def _find_dangling_component_refs(
     ]
 
 
+class RecordKeyCollisionError(Exception):
+    """Raised by `record_decision` when `record_key` is already in use.
+    Carries the existing row so the caller can point at it instead of
+    silently overwriting -- the same dedup-and-point-back shape as
+    `knowledge.db.insert_document`'s `DuplicateDocumentError`."""
+
+    def __init__(self, record_key: str, existing: dict[str, Any]):
+        self.record_key = record_key
+        self.existing = existing
+        super().__init__(f"record_key already in use: {record_key!r} (id={existing['id']})")
+
+
+def find_decision_by_record_key(
+    conn: psycopg.Connection, record_key: str
+) -> dict[str, Any] | None:
+    """Return the `decision_records` row with this `record_key`, if any --
+    `record_key` is globally unique (`db/schema.sql`), so at most one row
+    can ever match."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT * FROM decision_records WHERE record_key = %s", (record_key,))
+        return cur.fetchone()
+
+
+def record_decision(
+    conn: psycopg.Connection,
+    design_id: int,
+    record_key: str,
+    decision: str,
+    alternatives: list[Any],
+    rationale: str,
+    evidence: list[Any],
+    approval_required: bool = True,
+) -> dict[str, Any]:
+    """Insert a new `decision_records` row, always starting
+    `approval_status = 'PENDING'` (docs/adr/0005: recording a decision is
+    always an agent judgment call, never a structural trigger -- unlike
+    `engineering_results`/`verification_items`, nothing here infers a
+    decision from a calculation or architecture change).
+
+    `record_key` is globally unique. Reusing one already in use raises
+    `RecordKeyCollisionError` carrying the existing row -- never silently
+    overwritten -- mirroring `knowledge.db.insert_document`'s
+    checksum-based dedup-and-point-back.
+    """
+    existing = find_decision_by_record_key(conn, record_key)
+    if existing is not None:
+        raise RecordKeyCollisionError(record_key, existing)
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            INSERT INTO decision_records
+                (design_id, record_key, decision, alternatives, rationale,
+                 evidence, approval_required, approval_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                design_id,
+                record_key,
+                decision,
+                Json(alternatives),
+                rationale,
+                Json(evidence),
+                approval_required,
+                "PENDING",
+            ),
+        )
+        row = cur.fetchone()
+        assert row is not None
+
+    return row
+
+
 def create_design(
     conn: psycopg.Connection,
     design_key: str,
