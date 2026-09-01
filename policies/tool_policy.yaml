@@ -21,6 +21,7 @@ simulation_auto:
 ingestion_auto:
   - ingest_document
   - index_document
+  - extract_components
 
 approval_required:
   - run_hfss

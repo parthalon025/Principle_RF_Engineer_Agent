@@ -2,16 +2,23 @@
 
 Per CONTEXT.md: datasheet/application_note sit at the manufacturer-spec
 tier; standard/textbook/paper sit at the authoritative-reference tier.
-Component-field provenance (ticket #4) belongs in a separate function
-added here later, not in this ticket's scope.
+
+Ticket #11 adds `component_field_provenance`: the analogous pure mapping for
+one extracted component specification field's provenance, from its
+extraction confidence and whether it passed `knowledge.validation`'s
+physical-plausibility bound (ADR-0003).
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from knowledge.models import SourceType
 
 MANUFACTURER_SPECIFIED = "MANUFACTURER-SPECIFIED"
 LITERATURE_SUPPORTED = "LITERATURE-SUPPORTED"
+INFERRED = "INFERRED"
+UNKNOWN = "UNKNOWN"
 
 _SOURCE_TYPE_TIER: dict[SourceType, str] = {
     SourceType.DATASHEET: MANUFACTURER_SPECIFIED,
@@ -36,3 +43,22 @@ def provenance_tier_for(source_type: SourceType) -> str:
 def default_authority_rank(source_type: SourceType) -> int:
     """Return the default `documents.authority_rank` for a source type."""
     return _TIER_AUTHORITY_RANK[provenance_tier_for(source_type)]
+
+
+def component_field_provenance(
+    extraction_confidence: Literal["high", "low"], physically_valid: bool
+) -> str:
+    """Return the provenance tag for one extracted `components.specifications`
+    field (ADR-0003, CONTEXT.md: Provenance).
+
+    `physically_valid=False` always yields `UNKNOWN`, regardless of
+    `extraction_confidence` -- a bound violation (e.g. a negative noise
+    figure) is not something a confident read can override, since there's no
+    human review step to adjudicate the two signals against each other.
+    Otherwise, `"high"` confidence yields `MANUFACTURER_SPECIFIED` (a clean,
+    unambiguous read) and `"low"` yields `INFERRED` (an ambiguous or
+    low-confidence read).
+    """
+    if not physically_valid:
+        return UNKNOWN
+    return MANUFACTURER_SPECIFIED if extraction_confidence == "high" else INFERRED

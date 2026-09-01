@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 
+from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
@@ -104,6 +105,15 @@ def search_knowledge(query_text: str, document_id: int | None = None, limit: int
     Defaults to ACTIVE documents only; pass document_id to search a specific
     document/revision (including a SUPERSEDED one) instead."""
     return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
+
+
+@mcp.tool()
+def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
+    """Extract structured component specifications from a stored datasheet/application_note
+    and upsert a components row per part. Runs automatically, no confirmation step.
+    SENSITIVE/RESTRICTED documents always use the self-hosted backend, no fallback to
+    external."""
+    return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
 if __name__ == "__main__":

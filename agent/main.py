@@ -4,6 +4,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
+from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
@@ -121,6 +122,18 @@ def search_knowledge(query_text: str, document_id: int | None = None, limit: int
     return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
 
 
+@function_tool
+def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
+    """Extract structured component specifications from a stored datasheet/application_note
+    and upsert a components row per part, keyed by (manufacturer, part_number). Runs
+    automatically, no confirmation step. Each specification field carries its own
+    provenance (MANUFACTURER-SPECIFIED/INFERRED/UNKNOWN) and, if it fails its category's
+    physical-plausibility bound, a validation_error. SENSITIVE/RESTRICTED documents always
+    use the self-hosted backend, with no fallback to the external API; requesting
+    "external" for one raises. A non-datasheet/application_note document is a no-op."""
+    return _extract_components(document_id=document_id, requested_backend=requested_backend)
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -136,6 +149,7 @@ principal = Agent(
         index_document,
         read_document,
         search_knowledge,
+        extract_components,
     ],
 )
 

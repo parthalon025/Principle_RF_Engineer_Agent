@@ -310,6 +310,41 @@ def search_semantic(
         return cur.fetchall()
 
 
+def upsert_component(
+    conn: psycopg.Connection,
+    manufacturer: str | None,
+    part_number: str,
+    category: str,
+    specifications: dict[str, Any],
+    datasheet_document_id: int | None,
+) -> dict[str, Any]:
+    """Insert or update a `components` row keyed by the exact orderable part
+    code -- `UNIQUE(manufacturer, part_number)` (ticket #11, CONTEXT.md:
+    Component). A conflict on that pair overwrites `category`,
+    `specifications`, and `datasheet_document_id` wholesale: `extract_components`
+    always re-extracts every field a category schema defines from the latest
+    datasheet read, so there's no per-field merge with whatever was stored
+    before -- the newest extraction simply replaces it.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            INSERT INTO components (
+                manufacturer, part_number, category, specifications, datasheet_document_id
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (manufacturer, part_number) DO UPDATE SET
+                category = EXCLUDED.category,
+                specifications = EXCLUDED.specifications,
+                datasheet_document_id = EXCLUDED.datasheet_document_id
+            RETURNING *
+            """,
+            (manufacturer, part_number, category, Json(specifications), datasheet_document_id),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    return row
+
+
 def insert_chunks(conn: psycopg.Connection, document_id: int, chunks: list[ChunkDraft]) -> int:
     """Bulk-insert chunk drafts for a document. Returns the number inserted.
     Embeddings are left NULL -- populating them is ticket #2's concern."""
