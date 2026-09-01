@@ -95,6 +95,14 @@ for history.
   `filter`, `mixer`, `attenuator`, `coupler_splitter`,
   `circulator_isolator`, `switch`, `antenna`, `connector_cable`, or
   `passive_component`.
+- **Design**: a `designs` row — a named, revisioned unit of engineering work
+  (`design_key`, `name`, `revision`, `status`) that `requirements`,
+  `architecture`, engineering results, decisions, and verification all hang
+  off of via `design_id`. `architecture` is a functional-block map,
+  `{block_name: {component_id, role, ...}}`, where `component_id` is a real
+  foreign reference into `components` — never a free-text part number —
+  so a design's evidence trail can be traced from a functional block to the
+  exact orderable part backing it.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).
