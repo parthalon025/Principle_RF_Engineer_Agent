@@ -5,6 +5,7 @@ from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
 from designs.service import create_design as _create_design
+from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
@@ -168,6 +169,16 @@ def create_design(
     )
 
 
+@function_tool
+def read_design(design_id: int) -> dict:
+    """Fetch a stored design's full payload: design_key, name, revision, status,
+    requirements, architecture (every component_id resolved inline to its
+    manufacturer/part_number, not left as a bare id), and all engineering_results,
+    decision_records (with approval_status), and verification_items rows. Returns
+    a not-found result rather than raising if design_id doesn't exist."""
+    return _read_design(design_id)
+
+
 # strict_mode=False: `alternatives`/`evidence` are free-form JSON lists
 # (each entry's shape isn't fixed by this ticket), same reasoning as
 # create_design's requirements/architecture above.
@@ -218,6 +229,7 @@ principal = Agent(
         search_knowledge,
         extract_components,
         create_design,
+        read_design,
         record_decision,
     ],
 )

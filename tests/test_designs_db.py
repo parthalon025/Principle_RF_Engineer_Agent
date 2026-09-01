@@ -1,9 +1,11 @@
 import pytest
+from psycopg.types.json import Json
 
 from designs.db import (
     DanglingComponentReferenceError,
     RecordKeyCollisionError,
     create_design,
+    read_design,
     record_decision,
 )
 from designs.validation import InvalidRequirementsError
@@ -178,6 +180,110 @@ def test_create_design_rejects_malformed_requirements_and_writes_nothing(db_conn
         cur.execute("SELECT count(*) FROM designs WHERE design_key = %s", ("DES-8",))
         (count,) = cur.fetchone()
     assert count == 0
+
+
+# --- read_design -----------------------------------------------------
+
+
+def test_read_design_returns_none_for_nonexistent_id(db_conn):
+    assert read_design(db_conn, 999_999) is None
+
+
+def test_read_design_returns_design_fields_and_empty_related_lists(db_conn):
+    requirements = _requirements("REQ-1", "REQ-2")
+    created = create_design(
+        db_conn,
+        design_key="DES-READ-1",
+        name="Read Me Design",
+        revision="B",
+        requirements=requirements,
+        architecture={},
+    )
+
+    result = read_design(db_conn, created["id"])
+
+    assert result["design_id"] == created["id"]
+    assert result["design_key"] == "DES-READ-1"
+    assert result["name"] == "Read Me Design"
+    assert result["revision"] == "B"
+    assert result["status"] == "DRAFT"
+    assert result["requirements"] == requirements
+    assert result["architecture"] == {}
+    assert result["engineering_results"] == []
+    assert result["decision_records"] == []
+    assert len(result["verification_items"]) == 2
+    assert {vi["requirement_id"] for vi in result["verification_items"]} == {"REQ-1", "REQ-2"}
+
+
+def test_read_design_resolves_component_id_to_manufacturer_and_part_number(db_conn):
+    component_id = _make_component(db_conn, part_number="ACM-AMP-READ")
+    created = create_design(
+        db_conn,
+        design_key="DES-READ-2",
+        name="Read Architecture Design",
+        revision="A",
+        requirements={},
+        architecture={"lna": {"component_id": component_id, "gain_db": 20}},
+    )
+
+    result = read_design(db_conn, created["id"])
+
+    assert result["architecture"] == {
+        "lna": {
+            "component_id": component_id,
+            "gain_db": 20,
+            "manufacturer": "Acme RF",
+            "part_number": "ACM-AMP-READ",
+        }
+    }
+
+
+def test_read_design_includes_engineering_results_and_decision_records(db_conn):
+    """#19's writer function (record_engineering_result) isn't implemented in
+    this worktree yet -- its row is inserted directly to exercise
+    read_design's aggregation of a table it doesn't own writing to;
+    decision_records is exercised via the real record_decision (#20)."""
+    created = create_design(
+        db_conn,
+        design_key="DES-READ-3",
+        name="Read Results And Decisions Design",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    design_id = created["id"]
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO engineering_results "
+            "(design_id, result_type, name, value, provenance) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (design_id, "gain", "Cascade Gain", Json({"value": 12.0, "unit": "dB"}), "CALCULATED"),
+        )
+    record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DEC-1",
+        decision="Use Acme LNA",
+        alternatives=[],
+        rationale="Best noise figure available.",
+        evidence=[],
+    )
+
+    result = read_design(db_conn, design_id)
+
+    assert len(result["engineering_results"]) == 1
+    er = result["engineering_results"][0]
+    assert er["result_type"] == "gain"
+    assert er["name"] == "Cascade Gain"
+    assert er["value"] == {"value": 12.0, "unit": "dB"}
+    assert er["provenance"] == "CALCULATED"
+
+    assert len(result["decision_records"]) == 1
+    dr = result["decision_records"][0]
+    assert dr["record_key"] == "DEC-1"
+    assert dr["decision"] == "Use Acme LNA"
+    assert dr["approval_status"] == "PENDING"
 
 
 # --- record_decision -----------------------------------------------------

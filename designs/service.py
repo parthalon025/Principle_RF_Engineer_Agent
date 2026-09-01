@@ -1,4 +1,5 @@
-"""Thin orchestration: validate -> write -> translate exceptions.
+"""Thin orchestration: validate -> write -> translate exceptions (and,
+for reads, fetch -> translate a miss).
 
 `create_design` is what gets wrapped as the `create_design` tool in
 `agent/main.py` and `mcp_server/server.py` (ticket #17), mirroring
@@ -9,9 +10,20 @@ instead of letting them cross the tool boundary as a raw stack trace --
 "a dangling reference is rejected with a structured error naming the
 offending block" (#17 acceptance criteria).
 
-`create_design` and `record_decision` are in scope for this ticket set;
-`verify_requirement` and `read_design` (#16's other tool entry points) are
-#18/#21's job.
+`read_design` (ticket #18) is the `read_design` tool's backing function,
+mirroring `knowledge/read.py`'s `read_document`: owns the connection
+lifecycle and turns a missing id into a structured `not_found` result
+instead of `None` crossing the tool boundary.
+
+`record_decision` (ticket #20) logs a judgment-laden design decision. See
+`designs.db.record_decision` for the full write-path contract (`record_key`
+collision handling, always-`PENDING` `approval_status`). Reusing an
+existing `record_key` returns a structured `status`-tagged result pointing
+at the existing row instead of raising.
+
+`create_design`, `read_design`, and `record_decision` are in scope for this
+ticket set; `verify_requirement` (#16's other tool entry point) is #21's
+job.
 """
 
 from __future__ import annotations
@@ -73,6 +85,29 @@ def create_design(
         "revision": row["revision"],
         "design_status": row["status"],
     }
+
+
+def read_design(design_id: int) -> dict[str, Any]:
+    """Fetch a stored design's full payload: `design_key`/`name`/`revision`/
+    `status`, its `requirements`, its `architecture` (`component_id`
+    references resolved inline to `manufacturer`/`part_number`), and all of
+    its `engineering_results`/`decision_records`/`verification_items` rows.
+    See `designs.db.read_design` for the aggregation itself.
+
+    A nonexistent `design_id` returns `{"status": "not_found", "design_id":
+    design_id}` rather than raising or leaking a DB exception (matching
+    `knowledge.read.read_document`'s existing not-found pattern).
+    """
+    conn = db.get_connection()
+    try:
+        result = db.read_design(conn, design_id)
+    finally:
+        conn.close()
+
+    if result is None:
+        return {"status": "not_found", "design_id": design_id}
+
+    return result
 
 
 def record_decision(

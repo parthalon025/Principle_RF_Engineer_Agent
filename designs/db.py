@@ -7,13 +7,15 @@ connection and never commit it themselves -- the caller (production:
 `agent/main.py` / `mcp_server/server.py`'s tool wrappers; tests: the
 `db_conn` fixture) owns the transaction boundary.
 
-Only `create_design` is in scope for this ticket -- `record_engineering_result`,
-`record_decision`, `verify_requirement`, and `read_design` (#16's other
-`designs/db.py` functions) belong to #18-#21.
+`create_design` (#17) and `read_design` (#18) are in scope here --
+`record_engineering_result`, `record_decision`, and `verify_requirement`
+(#16's other `designs/db.py` functions) belong to #19-#21.
 """
 
 from __future__ import annotations
 
+import copy
+import datetime
 import os
 from typing import Any
 
@@ -241,3 +243,118 @@ def create_design(
             )
 
     return design_row
+
+
+def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | None:
+    """Fetch a design plus everything hung off it in one payload (ticket
+    #18): its `requirements`/`architecture` (every `component_id`
+    referenced in `architecture` resolved inline to its `manufacturer`/
+    `part_number`, not left as a bare id), and all of its
+    `engineering_results`, `decision_records`, and `verification_items`
+    rows. This is the one human-visible surface for the whole #16 feature
+    area -- everything else (#17/#19/#20/#21) is write-only until this
+    exists.
+
+    Returns None if no `designs` row matches `design_id` -- mirrors
+    `knowledge.db.get_document`'s not-found signal rather than raising or
+    returning an empty/ambiguous payload. A design with none of
+    `engineering_results`/`decision_records` populated yet (both still
+    possible before #19/#20 land) comes back with those as empty lists,
+    never an error -- nothing here assumes any of the three related tables
+    holds rows for this design.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT * FROM designs WHERE id = %s", (design_id,))
+        design_row = cur.fetchone()
+    if design_row is None:
+        return None
+
+    architecture = _resolve_architecture_components(conn, design_row["architecture"])
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT id, result_type, name, value, provenance, source_uri, tool_name, "
+            "tool_version, model_revision, confidence, created_at "
+            "FROM engineering_results WHERE design_id = %s ORDER BY id",
+            (design_id,),
+        )
+        engineering_results = cur.fetchall()
+
+        cur.execute(
+            "SELECT id, record_key, decision, alternatives, rationale, evidence, "
+            "approval_required, approval_status, created_at "
+            "FROM decision_records WHERE design_id = %s ORDER BY id",
+            (design_id,),
+        )
+        decision_records = cur.fetchall()
+
+        cur.execute(
+            "SELECT id, requirement_id, requirement, method, expected, actual, status, "
+            "evidence_uri, notes "
+            "FROM verification_items WHERE design_id = %s ORDER BY id",
+            (design_id,),
+        )
+        verification_items = cur.fetchall()
+
+    return {
+        "design_id": design_row["id"],
+        "design_key": design_row["design_key"],
+        "name": design_row["name"],
+        "revision": design_row["revision"],
+        "status": design_row["status"],
+        "requirements": design_row["requirements"],
+        "architecture": architecture,
+        "engineering_results": [_serialize_row(r) for r in engineering_results],
+        "decision_records": [_serialize_row(r) for r in decision_records],
+        "verification_items": verification_items,
+    }
+
+
+def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of `row` with any `datetime`/`date` values (e.g.
+    `created_at`) converted to ISO-8601 strings, so `read_design`'s payload
+    is JSON-serializable end to end -- matches `knowledge.read.read_document`'s
+    existing `publication_date.isoformat()` handling."""
+    return {
+        key: value.isoformat() if isinstance(value, (datetime.date, datetime.datetime)) else value
+        for key, value in row.items()
+    }
+
+
+def _resolve_architecture_components(
+    conn: psycopg.Connection, architecture: dict[str, Any]
+) -> dict[str, Any]:
+    """Return a deep copy of `architecture` with every `component_id`
+    reference (`designs.validation.extract_component_refs`'s walk) augmented
+    inline with the referenced component's `manufacturer`/`part_number`,
+    fetched in one query -- so a caller sees a resolved reference, not a
+    bare id (#18 acceptance criteria). A `component_id` with no matching
+    `components` row (shouldn't happen behind `create_design`'s own
+    existence check, but nothing here re-enforces it) resolves to
+    `manufacturer`/`part_number` of None rather than raising.
+    """
+    component_ids = extract_component_refs(architecture)
+    if not component_ids:
+        return copy.deepcopy(architecture)
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT id, manufacturer, part_number FROM components WHERE id = ANY(%s)",
+            (list(set(component_ids)),),
+        )
+        resolved = {row["id"]: row for row in cur.fetchall()}
+
+    def _walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            new_node = {key: _walk(value) for key, value in node.items()}
+            component_id = node.get("component_id")
+            if isinstance(component_id, int) and not isinstance(component_id, bool):
+                match = resolved.get(component_id)
+                new_node["manufacturer"] = match["manufacturer"] if match else None
+                new_node["part_number"] = match["part_number"] if match else None
+            return new_node
+        if isinstance(node, list):
+            return [_walk(item) for item in node]
+        return node
+
+    return _walk(architecture)
