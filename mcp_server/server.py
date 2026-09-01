@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 
 from designs.service import create_design as _create_design
+from designs.service import verify_requirement as _verify_requirement
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -139,6 +140,37 @@ def create_design(
         revision=revision,
         requirements=requirements,
         architecture=architecture,
+    )
+
+
+@mcp.tool()
+def verify_requirement(
+    design_id: int,
+    requirement_id: str,
+    method: str,
+    status: str,
+    expected: object | None = None,
+    actual: object | None = None,
+    evidence_uri: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Explicitly record verification of one requirement on a design:
+    updates its verification_items row (auto-created by create_design)
+    with method, status, expected, actual, evidence_uri, and notes.
+    status must be one of NOT VERIFIED/PASS/FAIL/MARGINAL. Verification is
+    always this explicit call -- never inferred by matching an
+    engineering_results name against a requirement_id. A requirement_id
+    with no matching row on this design_id is rejected with a structured
+    error rather than creating a stray row."""
+    return _verify_requirement(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        method=method,
+        status=status,
+        expected=expected,
+        actual=actual,
+        evidence_uri=evidence_uri,
+        notes=notes,
     )
 
 

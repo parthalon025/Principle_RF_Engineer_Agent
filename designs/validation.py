@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from designs.models import VerificationStatus
+
 
 class InvalidRequirementsError(ValueError):
     """Raised by `validate_requirements` when `requirements` is not a dict
@@ -47,6 +49,25 @@ def validate_requirements(requirements: Any) -> None:
                 f"requirements[{requirement_id!r}] is missing a non-empty 'requirement' "
                 "text field"
             )
+
+
+class InvalidVerificationStatusError(ValueError):
+    """Raised by `verify_requirement` when `status` is not one of
+    `VerificationStatus`'s four values (NOT VERIFIED/PASS/FAIL/MARGINAL)."""
+
+
+def validate_verification_status(status: Any) -> None:
+    """Validate that `status` is one of `VerificationStatus`'s legal
+    values. Raises `InvalidVerificationStatusError` naming the offending
+    value and the legal set; returns nothing when `status` is valid.
+    """
+    try:
+        VerificationStatus(status)
+    except ValueError as exc:
+        legal = ", ".join(v.value for v in VerificationStatus)
+        raise InvalidVerificationStatusError(
+            f"status must be one of {legal}, got {status!r}"
+        ) from exc
 
 
 def _iter_component_refs(node: Any, block: str | None = None) -> list[tuple[str, int]]:

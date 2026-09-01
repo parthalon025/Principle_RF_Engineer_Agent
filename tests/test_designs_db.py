@@ -1,7 +1,12 @@
 import pytest
 
-from designs.db import DanglingComponentReferenceError, create_design
-from designs.validation import InvalidRequirementsError
+from designs.db import (
+    DanglingComponentReferenceError,
+    UnknownVerificationItemError,
+    create_design,
+    verify_requirement,
+)
+from designs.validation import InvalidRequirementsError, InvalidVerificationStatusError
 from knowledge.db import upsert_component
 
 
@@ -161,3 +166,144 @@ def test_create_design_rejects_malformed_requirements_and_writes_nothing(db_conn
         cur.execute("SELECT count(*) FROM designs WHERE design_key = %s", ("DES-8",))
         (count,) = cur.fetchone()
     assert count == 0
+
+
+def test_verify_requirement_updates_the_single_row(db_conn):
+    design = create_design(
+        db_conn,
+        design_key="DES-VERIFY-1",
+        name="Verify Design",
+        revision="A",
+        requirements=_requirements("REQ-1", "REQ-2"),
+        architecture={},
+    )
+
+    row = verify_requirement(
+        db_conn,
+        design_id=design["id"],
+        requirement_id="REQ-1",
+        method="Bench measurement with VNA",
+        status="PASS",
+        expected={"gain_db": 20.0},
+        actual={"gain_db": 20.3},
+        evidence_uri="s3://evidence/req-1.csv",
+        notes="Measured at room temperature.",
+    )
+
+    assert row["design_id"] == design["id"]
+    assert row["requirement_id"] == "REQ-1"
+    assert row["method"] == "Bench measurement with VNA"
+    assert row["status"] == "PASS"
+    assert row["expected"] == {"gain_db": 20.0}
+    assert row["actual"] == {"gain_db": 20.3}
+    assert row["evidence_uri"] == "s3://evidence/req-1.csv"
+    assert row["notes"] == "Measured at room temperature."
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM verification_items WHERE design_id = %s AND requirement_id = %s",
+            (design["id"], "REQ-2"),
+        )
+        (other_status,) = cur.fetchone()
+    assert other_status == "NOT VERIFIED"
+
+
+def test_verify_requirement_rejects_unknown_requirement_id_without_creating_a_row(db_conn):
+    design = create_design(
+        db_conn,
+        design_key="DES-VERIFY-2",
+        name="Verify Unknown Design",
+        revision="A",
+        requirements=_requirements("REQ-1"),
+        architecture={},
+    )
+
+    with pytest.raises(UnknownVerificationItemError) as exc_info:
+        verify_requirement(
+            db_conn,
+            design_id=design["id"],
+            requirement_id="REQ-DOES-NOT-EXIST",
+            method="Bench measurement",
+            status="PASS",
+        )
+    assert exc_info.value.design_id == design["id"]
+    assert exc_info.value.requirement_id == "REQ-DOES-NOT-EXIST"
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM verification_items WHERE design_id = %s",
+            (design["id"],),
+        )
+        (count,) = cur.fetchone()
+    assert count == 1
+
+
+def test_verify_requirement_rejects_unknown_design_id_without_creating_a_row(db_conn):
+    with pytest.raises(UnknownVerificationItemError) as exc_info:
+        verify_requirement(
+            db_conn,
+            design_id=999_999_999,
+            requirement_id="REQ-1",
+            method="Bench measurement",
+            status="PASS",
+        )
+    assert exc_info.value.design_id == 999_999_999
+    assert exc_info.value.requirement_id == "REQ-1"
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM verification_items WHERE design_id = %s",
+            (999_999_999,),
+        )
+        (count,) = cur.fetchone()
+    assert count == 0
+
+
+@pytest.mark.parametrize("status", ["NOT VERIFIED", "PASS", "FAIL", "MARGINAL"])
+def test_verify_requirement_accepts_each_status_value(db_conn, status):
+    design = create_design(
+        db_conn,
+        design_key=f"DES-VERIFY-STATUS-{status.replace(' ', '_')}",
+        name="Verify Status Design",
+        revision="A",
+        requirements=_requirements("REQ-1"),
+        architecture={},
+    )
+
+    row = verify_requirement(
+        db_conn,
+        design_id=design["id"],
+        requirement_id="REQ-1",
+        method="Bench measurement",
+        status=status,
+    )
+
+    assert row["status"] == status
+
+
+def test_verify_requirement_rejects_invalid_status_without_writing(db_conn):
+    design = create_design(
+        db_conn,
+        design_key="DES-VERIFY-BAD-STATUS",
+        name="Verify Bad Status Design",
+        revision="A",
+        requirements=_requirements("REQ-1"),
+        architecture={},
+    )
+
+    with pytest.raises(InvalidVerificationStatusError):
+        verify_requirement(
+            db_conn,
+            design_id=design["id"],
+            requirement_id="REQ-1",
+            method="Bench measurement",
+            status="SORT-OF-PASSED",
+        )
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM verification_items WHERE design_id = %s AND requirement_id = %s",
+            (design["id"], "REQ-1"),
+        )
+        (status,) = cur.fetchone()
+    assert status == "NOT VERIFIED"

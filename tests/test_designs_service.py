@@ -4,7 +4,7 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
-from designs.service import create_design
+from designs.service import create_design, verify_requirement
 
 load_dotenv()
 
@@ -84,3 +84,79 @@ def test_create_design_with_malformed_requirements_returns_structured_error(clea
     finally:
         conn.close()
     assert count == 0
+
+
+def test_verify_requirement_returns_verified_status_and_updated_fields(cleanup_designs):
+    design = create_design(
+        design_key="SVC-DES-VERIFY-1",
+        name="Verify via Service",
+        revision="A",
+        requirements={"REQ-1": {"requirement": "Gain >= 20 dB."}},
+        architecture={},
+    )
+    cleanup_designs.append(design["design_id"])
+
+    result = verify_requirement(
+        design_id=design["design_id"],
+        requirement_id="REQ-1",
+        method="Bench measurement with VNA",
+        status="PASS",
+        expected={"gain_db": 20.0},
+        actual={"gain_db": 20.3},
+        evidence_uri="s3://evidence/req-1.csv",
+        notes="Measured at room temperature.",
+    )
+
+    assert result["status"] == "verified"
+    assert result["design_id"] == design["design_id"]
+    assert result["requirement_id"] == "REQ-1"
+    assert result["verification_status"] == "PASS"
+    assert result["method"] == "Bench measurement with VNA"
+    assert result["expected"] == {"gain_db": 20.0}
+    assert result["actual"] == {"gain_db": 20.3}
+    assert result["evidence_uri"] == "s3://evidence/req-1.csv"
+    assert result["notes"] == "Measured at room temperature."
+
+
+def test_verify_requirement_with_unknown_requirement_id_returns_structured_error(
+    cleanup_designs,
+):
+    design = create_design(
+        design_key="SVC-DES-VERIFY-2",
+        name="Verify Unknown via Service",
+        revision="A",
+        requirements={"REQ-1": {"requirement": "Gain >= 20 dB."}},
+        architecture={},
+    )
+    cleanup_designs.append(design["design_id"])
+
+    result = verify_requirement(
+        design_id=design["design_id"],
+        requirement_id="REQ-DOES-NOT-EXIST",
+        method="Bench measurement",
+        status="PASS",
+    )
+
+    assert result["status"] == "unknown_requirement"
+    assert "REQ-DOES-NOT-EXIST" in result["message"]
+
+
+def test_verify_requirement_with_invalid_status_returns_structured_error(cleanup_designs):
+    design = create_design(
+        design_key="SVC-DES-VERIFY-3",
+        name="Verify Bad Status via Service",
+        revision="A",
+        requirements={"REQ-1": {"requirement": "Gain >= 20 dB."}},
+        architecture={},
+    )
+    cleanup_designs.append(design["design_id"])
+
+    result = verify_requirement(
+        design_id=design["design_id"],
+        requirement_id="REQ-1",
+        method="Bench measurement",
+        status="SORT-OF-PASSED",
+    )
+
+    assert result["status"] == "invalid_status"
+    assert "SORT-OF-PASSED" in result["message"]

@@ -7,6 +7,7 @@ read_only:
 
 design_tracking:
   - create_design
+  - verify_requirement
 
 calculation:
   - calculate_vswr

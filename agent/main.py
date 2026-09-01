@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
+from typing import Any
 
 from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
 from designs.service import create_design as _create_design
+from designs.service import verify_requirement as _verify_requirement
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -167,6 +169,42 @@ def create_design(
     )
 
 
+# strict_mode=False: `expected`/`actual` are free-form JSON evidence values
+# (a number, a dict of measured quantities, whatever the verification
+# method produced) -- same open-schema reason as `create_design` above.
+@function_tool(strict_mode=False)
+def verify_requirement(
+    design_id: int,
+    requirement_id: str,
+    method: str,
+    status: str,
+    expected: Any = None,
+    actual: Any = None,
+    evidence_uri: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Explicitly record verification of one requirement on a design:
+    updates its verification_items row (auto-created by create_design) with
+    method, status, expected, actual, evidence_uri, and notes. status must
+    be one of NOT VERIFIED/PASS/FAIL/MARGINAL. Verification is always this
+    explicit call -- never inferred by matching an engineering_results name
+    against a requirement_id, since a wrong automatic guess would produce a
+    silently wrong verification. A requirement_id with no matching row on
+    this design_id is rejected with a structured error rather than
+    creating a stray row. Folding a FAIL into any approval/release gate is
+    out of scope here; this only records the status."""
+    return _verify_requirement(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        method=method,
+        status=status,
+        expected=expected,
+        actual=actual,
+        evidence_uri=evidence_uri,
+        notes=notes,
+    )
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -184,6 +222,7 @@ principal = Agent(
         search_knowledge,
         extract_components,
         create_design,
+        verify_requirement,
     ],
 )
 
