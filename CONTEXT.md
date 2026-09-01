@@ -61,7 +61,13 @@ for history.
   knowledge-base chunk cited by the agent inherits its provenance from the
   source document's **source type**: `datasheet`/`application_note` →
   `MANUFACTURER-SPECIFIED`; `standard`/`textbook`/`paper` →
-  `LITERATURE-SUPPORTED`.
+  `LITERATURE-SUPPORTED`. An automatically extracted **component**
+  specification field is `MANUFACTURER-SPECIFIED` when the extraction was
+  unambiguous, `INFERRED` when the read was ambiguous or low-confidence,
+  and `UNKNOWN` when it violates a physical-plausibility bound (e.g. a
+  negative noise figure) regardless of the extractor's own confidence —
+  there is no human review step, so provenance and physical bounds are the
+  only signal a downstream user gets that a value should be double-checked.
 - **Evidence hierarchy**: measured > validated simulation > deterministic
   calculation > manufacturer spec > authoritative reference > internal
   engineering history > general web material > LLM inference. Higher wins
@@ -76,6 +82,19 @@ for history.
   authoritative-reference tier) and overridable per document. Knowledge
   retrieval sorts by authority rank before match score, so higher-tier
   evidence surfaces first when sources conflict.
+- **Component**: one exact orderable manufacturer part (package and
+  tape-and-reel suffix included — a different package is a different
+  component, not a variant of the same row), identified by
+  `(manufacturer, part_number)`. Its specifications are extracted
+  automatically from its datasheet, per field, each carrying its own
+  provenance, unit, test condition, and source chunk/page reference.
+  _Avoid_: Part, SKU — those don't carry the exact-orderable-code
+  distinction this term does.
+- **Category**: the fixed classification of a component that determines
+  which specification fields it's expected to have — `amplifier`,
+  `filter`, `mixer`, `attenuator`, `coupler_splitter`,
+  `circulator_isolator`, `switch`, `antenna`, `connector_cable`, or
+  `passive_component`.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).
