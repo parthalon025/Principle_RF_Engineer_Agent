@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 
+from knowledge.ingest import ingest_document as _ingest_document
 from rf_tools.calculations import (
     cascade_gain_db,
     friis_noise_factor,
@@ -56,6 +57,17 @@ def analyze_touchstone_file(path: str) -> dict:
     result = analyze_touchstone(path)
     result["provenance"] = "CALCULATED"
     return result
+
+
+@mcp.tool()
+def ingest_document(file_path: str, source_type: str, license: str, classification: str) -> dict:
+    """Parse a datasheet/standard/textbook/paper PDF via docling, chunk it, and store it."""
+    return _ingest_document(
+        file_path=file_path,
+        source_type=source_type,
+        license=license,
+        classification=classification,
+    )
 
 
 if __name__ == "__main__":

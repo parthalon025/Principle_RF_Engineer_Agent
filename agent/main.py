@@ -4,6 +4,7 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
+from knowledge.ingest import ingest_document as _ingest_document
 from rf_tools.calculations import (
     cascade_gain_db,
     friis_noise_factor,
@@ -65,6 +66,18 @@ def analyze_touchstone_file(path: str) -> dict:
     return result
 
 
+@function_tool
+def ingest_document(file_path: str, source_type: str, license: str, classification: str) -> dict:
+    """Parse a datasheet/standard/textbook/paper PDF via docling, chunk it, and store it
+    in the knowledge base. source_type, license, and classification are all mandatory."""
+    return _ingest_document(
+        file_path=file_path,
+        source_type=source_type,
+        license=license,
+        classification=classification,
+    )
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -76,6 +89,7 @@ principal = Agent(
         calculate_cascade_gain,
         calculate_noise_figure,
         analyze_touchstone_file,
+        ingest_document,
     ],
 )
 

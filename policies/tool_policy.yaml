@@ -18,6 +18,9 @@ simulation_auto:
   - run_openems
   - run_qucs
 
+ingestion_auto:
+  - ingest_document
+
 approval_required:
   - run_hfss
   - run_ads
