@@ -4,6 +4,11 @@ from pathlib import Path
 from agents import Agent, Runner, function_tool
 from dotenv import load_dotenv
 
+from knowledge.extract import extract_components as _extract_components
+from knowledge.index import index_document as _index_document
+from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.read import read_document as _read_document
+from knowledge.search import search_knowledge as _search_knowledge
 from rf_tools.calculations import (
     cascade_gain_db,
     friis_noise_factor,
@@ -65,6 +70,70 @@ def analyze_touchstone_file(path: str) -> dict:
     return result
 
 
+@function_tool
+def ingest_document(
+    file_path: str,
+    source_type: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Parse a datasheet/standard/textbook/paper PDF via docling, chunk it, and store it
+    in the knowledge base. source_type, license, and classification are all mandatory.
+    Pass supersedes_document_id to declare this upload a newer revision of that document
+    (never inferred from title); omit it for a plain new, independent document."""
+    return _ingest_document(
+        file_path=file_path,
+        source_type=source_type,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@function_tool
+def index_document(document_id: int, requested_backend: str | None = None) -> dict:
+    """Embed a stored document's chunks and write the vectors to the knowledge base.
+    SENSITIVE/RESTRICTED documents always use the self-hosted backend, with no
+    fallback to the external API; requesting "external" for one raises. PUBLIC/
+    INTERNAL documents honor an explicit requested_backend ("local"/"external") or
+    fall back to the configured default, and fall back from local to external if
+    the self-hosted backend is briefly unreachable."""
+    return _index_document(document_id=document_id, requested_backend=requested_backend)
+
+
+@function_tool
+def read_document(document_id: int) -> dict:
+    """Fetch a stored document's full metadata (title, source_type, license, classification,
+    authority_rank, status, revision, supersedes_document_id, publication date, author) plus
+    its chunks (content, page number, section) in order. Returns a not-found result rather
+    than raising if document_id doesn't exist."""
+    return _read_document(document_id)
+
+
+@function_tool
+def search_knowledge(query_text: str, document_id: int | None = None, limit: int = 20) -> list:
+    """Search the knowledge base for query_text and return one ranked list of chunk
+    matches, each tagged with its match_type ("semantic_external", "semantic_local",
+    or "lexical"). Defaults to ACTIVE documents only; pass document_id to search a
+    specific document/revision (including a SUPERSEDED one) instead. Ordered by
+    authority_rank first, then each match's own native score -- never a single
+    blended score across match types."""
+    return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
+
+
+@function_tool
+def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
+    """Extract structured component specifications from a stored datasheet/application_note
+    and upsert a components row per part, keyed by (manufacturer, part_number). Runs
+    automatically, no confirmation step. Each specification field carries its own
+    provenance (MANUFACTURER-SPECIFIED/INFERRED/UNKNOWN) and, if it fails its category's
+    physical-plausibility bound, a validation_error. SENSITIVE/RESTRICTED documents always
+    use the self-hosted backend, with no fallback to the external API; requesting
+    "external" for one raises. A non-datasheet/application_note document is a no-op."""
+    return _extract_components(document_id=document_id, requested_backend=requested_backend)
+
+
 principal = Agent(
     name="Principal RF Engineer",
     model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
@@ -76,6 +145,11 @@ principal = Agent(
         calculate_cascade_gain,
         calculate_noise_figure,
         analyze_touchstone_file,
+        ingest_document,
+        index_document,
+        read_document,
+        search_knowledge,
+        extract_components,
     ],
 )
 

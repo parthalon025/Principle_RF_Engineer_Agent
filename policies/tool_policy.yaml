@@ -18,6 +18,11 @@ simulation_auto:
   - run_openems
   - run_qucs
 
+ingestion_auto:
+  - ingest_document
+  - index_document
+  - extract_components
+
 approval_required:
   - run_hfss
   - run_ads

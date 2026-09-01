@@ -1,5 +1,10 @@
 from mcp.server.fastmcp import FastMCP
 
+from knowledge.extract import extract_components as _extract_components
+from knowledge.index import index_document as _index_document
+from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.read import read_document as _read_document
+from knowledge.search import search_knowledge as _search_knowledge
 from rf_tools.calculations import (
     cascade_gain_db,
     friis_noise_factor,
@@ -56,6 +61,59 @@ def analyze_touchstone_file(path: str) -> dict:
     result = analyze_touchstone(path)
     result["provenance"] = "CALCULATED"
     return result
+
+
+@mcp.tool()
+def ingest_document(
+    file_path: str,
+    source_type: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Parse a datasheet/standard/textbook/paper PDF via docling, chunk it, and store it.
+    Pass supersedes_document_id to declare this upload a newer revision of that document
+    (never inferred from title); omit it for a plain new, independent document."""
+    return _ingest_document(
+        file_path=file_path,
+        source_type=source_type,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def index_document(document_id: int, requested_backend: str | None = None) -> dict:
+    """Embed a stored document's chunks and write the vectors. SENSITIVE/RESTRICTED
+    documents always use the self-hosted backend, no fallback to external."""
+    return _index_document(document_id=document_id, requested_backend=requested_backend)
+
+
+@mcp.tool()
+def read_document(document_id: int) -> dict:
+    """Fetch a stored document's full metadata plus its chunks (content, page number,
+    section) in order. Returns a not-found result rather than raising if document_id
+    doesn't exist."""
+    return _read_document(document_id)
+
+
+@mcp.tool()
+def search_knowledge(query_text: str, document_id: int | None = None, limit: int = 20) -> list:
+    """Search the knowledge base and return one ranked list of chunk matches, each
+    tagged with its match_type ("semantic_external", "semantic_local", or "lexical").
+    Defaults to ACTIVE documents only; pass document_id to search a specific
+    document/revision (including a SUPERSEDED one) instead."""
+    return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
+
+
+@mcp.tool()
+def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
+    """Extract structured component specifications from a stored datasheet/application_note
+    and upsert a components row per part. Runs automatically, no confirmation step.
+    SENSITIVE/RESTRICTED documents always use the self-hosted backend, no fallback to
+    external."""
+    return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ dependencies = [
   "pgvector>=0.3",
   "python-dotenv>=1.0",
   "rich>=13.9",
+  "docling>=2.124.0",
 ]
 
 [dependency-groups]
@@ -29,7 +30,7 @@ dev = [
 package = true
 
 [tool.setuptools.packages.find]
-include = ["agent", "rf_tools", "mcp_server", "simulation"]
+include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
