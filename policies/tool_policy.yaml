@@ -1,0 +1,35 @@
+read_only:
+  - search_knowledge
+  - read_document
+  - read_design
+  - read_touchstone
+  - analyze_touchstone
+
+calculation:
+  - calculate_vswr
+  - calculate_return_loss
+  - calculate_wavelength
+  - calculate_noise_figure
+  - calculate_link_budget
+  - calculate_ip3
+
+simulation_auto:
+  - run_nec
+  - run_openems
+  - run_qucs
+
+approval_required:
+  - run_hfss
+  - run_ads
+  - modify_controlled_design
+  - change_instrument_configuration
+  - start_rf_transmission
+  - change_calibration_state
+  - manufacturing_release
+
+blocked_by_default:
+  - arbitrary_shell
+  - arbitrary_network_request
+  - delete_design
+  - delete_measurement
+  - procurement
