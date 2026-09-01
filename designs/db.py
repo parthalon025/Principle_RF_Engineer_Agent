@@ -7,9 +7,9 @@ connection and never commit it themselves -- the caller (production:
 `agent/main.py` / `mcp_server/server.py`'s tool wrappers; tests: the
 `db_conn` fixture) owns the transaction boundary.
 
-`create_design` (#17) and `read_design` (#18) are in scope here --
-`record_engineering_result`, `record_decision`, and `verify_requirement`
-(#16's other `designs/db.py` functions) belong to #19-#21.
+`create_design` (#17), `read_design` (#18), `record_decision` (#20), and
+`verify_requirement` (#21) are in scope here -- `record_engineering_result`
+(#16's remaining `designs/db.py` function) belongs to #19.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from designs.validation import (
     _iter_component_refs,
     extract_component_refs,
     validate_requirements,
+    validate_verification_status,
 )
 
 
@@ -358,3 +359,92 @@ def _resolve_architecture_components(
         return node
 
     return _walk(architecture)
+
+
+class UnknownVerificationItemError(Exception):
+    """Raised by `verify_requirement` when no `verification_items` row
+    exists for the given `(design_id, requirement_id)` pair -- a typoed or
+    made-up `requirement_id`, or a `design_id` that doesn't exist. The
+    `UNIQUE(design_id, requirement_id)` constraint added in #17 means at
+    most one row could ever match, so "no row matched" is unambiguous
+    rather than an update-vs-insert judgment call: nothing is written, and
+    no stray row is ever created for an unrecognized `requirement_id`.
+    """
+
+    def __init__(self, design_id: int, requirement_id: str):
+        self.design_id = design_id
+        self.requirement_id = requirement_id
+        super().__init__(
+            f"no verification_items row for design_id={design_id}, "
+            f"requirement_id={requirement_id!r} -- requirement_id must match "
+            "one of the design's original requirements keys"
+        )
+
+
+def verify_requirement(
+    conn: psycopg.Connection,
+    design_id: int,
+    requirement_id: str,
+    method: str,
+    status: str,
+    expected: Any = None,
+    actual: Any = None,
+    evidence_uri: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Explicitly record verification of one requirement, updating the
+    single `verification_items` row auto-created for it by `create_design`
+    (#17).
+
+    - Targets exactly one row via the `(design_id, requirement_id)`
+      `UNIQUE` constraint (#17) -- an `UPDATE ... WHERE design_id = %s AND
+      requirement_id = %s`, never an insert. No row matches ->
+      `UnknownVerificationItemError`, naming both ids; nothing is written
+      and no stray row is created.
+    - `status` must be one of `VerificationStatus`'s four values (NOT
+      VERIFIED/PASS/FAIL/MARGINAL) -- checked before the database is
+      touched, raising `designs.validation.InvalidVerificationStatusError`
+      on anything else.
+    - This call is always explicit. Verification is never inferred by
+      matching an `engineering_results.name` against a `requirement_id` --
+      a wrong automatic guess would produce a silently wrong verification
+      (#21). Folding a `FAIL` into any approval/release gate is out of
+      scope here (#16); this only records the status.
+    - Every field this function accepts (`method`/`status`/`expected`/
+      `actual`/`evidence_uri`/`notes`) is set on every call -- a full
+      replace of the row's mutable columns, not a partial patch, so the
+      row after the call reflects exactly what was passed, never a stale
+      value from an earlier call left untouched by omission.
+    """
+    validate_verification_status(status)
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            UPDATE verification_items
+            SET method = %s,
+                status = %s,
+                expected = %s,
+                actual = %s,
+                evidence_uri = %s,
+                notes = %s
+            WHERE design_id = %s AND requirement_id = %s
+            RETURNING *
+            """,
+            (
+                method,
+                status,
+                Json(expected) if expected is not None else None,
+                Json(actual) if actual is not None else None,
+                evidence_uri,
+                notes,
+                design_id,
+                requirement_id,
+            ),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        raise UnknownVerificationItemError(design_id, requirement_id)
+
+    return row

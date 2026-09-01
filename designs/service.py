@@ -1,14 +1,14 @@
 """Thin orchestration: validate -> write -> translate exceptions (and,
 for reads, fetch -> translate a miss).
 
-`create_design` is what gets wrapped as the `create_design` tool in
-`agent/main.py` and `mcp_server/server.py` (ticket #17), mirroring
+`create_design` (ticket #17) is what gets wrapped as the `create_design`
+tool in `agent/main.py` and `mcp_server/server.py`, mirroring
 `knowledge/ingest.py`'s `ingest_document`: owns the connection lifecycle so
-the two tool wrappers don't each have to duplicate it, and turns
-`designs.db`'s typed exceptions into a structured, `status`-tagged result
-instead of letting them cross the tool boundary as a raw stack trace --
-"a dangling reference is rejected with a structured error naming the
-offending block" (#17 acceptance criteria).
+the tool wrappers don't each have to duplicate it, and turns `designs.db`'s
+typed exceptions into a structured, `status`-tagged result instead of
+letting them cross the tool boundary as a raw stack trace -- "a dangling
+reference is rejected with a structured error naming the offending block"
+(#17 acceptance criteria).
 
 `read_design` (ticket #18) is the `read_design` tool's backing function,
 mirroring `knowledge/read.py`'s `read_document`: owns the connection
@@ -21,9 +21,15 @@ collision handling, always-`PENDING` `approval_status`). Reusing an
 existing `record_key` returns a structured `status`-tagged result pointing
 at the existing row instead of raising.
 
-`create_design`, `read_design`, and `record_decision` are in scope for this
-ticket set; `verify_requirement` (#16's other tool entry point) is #21's
-job.
+`verify_requirement` (ticket #21) explicitly records verification of one
+requirement. See `designs.db.verify_requirement` for the full write-path
+contract (targets exactly one row via `(design_id, requirement_id)`, full
+replace of the row's mutable columns, always explicit -- never inferred).
+An unknown `(design_id, requirement_id)` pair or an invalid `status`
+returns a structured `status`-tagged result instead of raising --
+"verifying an unknown requirement_id is rejected cleanly" (#21's).
+
+All four of #16's tool entry points are now implemented here.
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ from __future__ import annotations
 from typing import Any
 
 from designs import db
-from designs.validation import InvalidRequirementsError
+from designs.validation import InvalidRequirementsError, InvalidVerificationStatusError
 
 
 def create_design(
@@ -163,4 +169,64 @@ def record_decision(
         "design_id": row["design_id"],
         "record_key": row["record_key"],
         "approval_status": row["approval_status"],
+    }
+
+
+def verify_requirement(
+    design_id: int,
+    requirement_id: str,
+    method: str,
+    status: str,
+    expected: Any = None,
+    actual: Any = None,
+    evidence_uri: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Explicitly record verification of one requirement. See
+    `designs.db.verify_requirement` for the full write-path contract
+    (targets exactly one row via `(design_id, requirement_id)`, full
+    replace of the row's mutable columns, always explicit -- never
+    inferred). An unknown `(design_id, requirement_id)` pair or an invalid
+    `status` returns a structured `status`-tagged result instead of
+    raising, so the caller -- human or agent -- gets a message it can act
+    on rather than a stack trace; a write that fails for any other reason
+    still raises.
+    """
+    conn = db.get_connection()
+    try:
+        try:
+            row = db.verify_requirement(
+                conn,
+                design_id=design_id,
+                requirement_id=requirement_id,
+                method=method,
+                status=status,
+                expected=expected,
+                actual=actual,
+                evidence_uri=evidence_uri,
+                notes=notes,
+            )
+        except InvalidVerificationStatusError as exc:
+            conn.rollback()
+            return {"status": "invalid_status", "message": str(exc)}
+        except db.UnknownVerificationItemError as exc:
+            conn.rollback()
+            return {"status": "unknown_requirement", "message": str(exc)}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "status": "verified",
+        "design_id": row["design_id"],
+        "requirement_id": row["requirement_id"],
+        "verification_status": row["status"],
+        "method": row["method"],
+        "expected": row["expected"],
+        "actual": row["actual"],
+        "evidence_uri": row["evidence_uri"],
+        "notes": row["notes"],
     }

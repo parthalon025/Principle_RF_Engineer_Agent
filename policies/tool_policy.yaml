@@ -8,6 +8,7 @@ read_only:
 design_tracking:
   - create_design
   - record_decision
+  - verify_requirement
 
 calculation:
   - calculate_vswr
