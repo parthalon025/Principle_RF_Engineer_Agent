@@ -30,7 +30,7 @@ dev = [
 package = true
 
 [tool.setuptools.packages.find]
-include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge"]
+include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "designs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
