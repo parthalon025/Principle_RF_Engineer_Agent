@@ -155,19 +155,56 @@ def test_reingesting_identical_file_is_rejected_and_returns_existing_id(
     assert count == 1
 
 
-def test_ingesting_newer_revision_supersedes_prior(tmp_path, cleanup_documents):
-    rev_a_dir = tmp_path / "rev_a"
-    rev_b_dir = tmp_path / "rev_b"
-    rev_a_dir.mkdir()
-    rev_b_dir.mkdir()
-    # Same filename (-> same derived title) in different directories, with
-    # different content (-> different checksum): this is what makes the
-    # second ingest a "newer revision" of the first under this ticket's
-    # (title, source_type) revision-matching rule.
-    pdf_a = rev_a_dir / "power_amp.pdf"
-    pdf_b = rev_b_dir / "power_amp.pdf"
+def test_ingesting_newer_revision_supersedes_prior_when_explicitly_declared(
+    tmp_path, cleanup_documents
+):
+    """ADR-0002: supersession is a human-declared claim (`supersedes_document_id`),
+    never inferred from title or filename -- these two PDFs deliberately have
+    unrelated titles/filenames to prove that."""
+    pdf_a = tmp_path / "power_amp_datasheet_2023.pdf"
+    pdf_b = tmp_path / "totally_different_filename.pdf"
     _write_pdf(pdf_a, ["Power Amp Rev A", "Gain: 18 dB."])
-    _write_pdf(pdf_b, ["Power Amp Rev B", "Gain: 19 dB, improved linearity."])
+    _write_pdf(pdf_b, ["Power Amp Rev B -- Improved", "Gain: 19 dB, improved linearity."])
+
+    first = ingest_document(
+        file_path=str(pdf_a),
+        source_type="datasheet",
+        license="manufacturer-datasheet",
+        classification="PUBLIC",
+    )
+    cleanup_documents.append(first["document_id"])
+
+    second = ingest_document(
+        file_path=str(pdf_b),
+        source_type="datasheet",
+        license="manufacturer-datasheet",
+        classification="PUBLIC",
+        supersedes_document_id=first["document_id"],
+    )
+    cleanup_documents.append(second["document_id"])
+
+    assert second["status"] == "ingested"
+    assert second["supersedes_document_id"] == first["document_id"]
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM documents WHERE id = %s", (first["document_id"],))
+            (prior_status,) = cur.fetchone()
+    finally:
+        conn.close()
+    assert prior_status == "SUPERSEDED"
+
+
+def test_ingesting_unrelated_document_with_matching_title_does_not_supersede(
+    tmp_path, cleanup_documents
+):
+    """A coincidentally-matching title must never trigger supersession on its
+    own -- only an explicit `supersedes_document_id` does (ADR-0002)."""
+    pdf_a = tmp_path / "first.pdf"
+    pdf_b = tmp_path / "second.pdf"
+    _write_pdf(pdf_a, ["Shared Title", "Some content."])
+    _write_pdf(pdf_b, ["Shared Title", "Unrelated different content."])
 
     first = ingest_document(
         file_path=str(pdf_a),
@@ -185,17 +222,25 @@ def test_ingesting_newer_revision_supersedes_prior(tmp_path, cleanup_documents):
     )
     cleanup_documents.append(second["document_id"])
 
-    assert second["status"] == "ingested"
-    assert second["supersedes_document_id"] == first["document_id"]
+    assert second["supersedes_document_id"] is None
 
-    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT status FROM documents WHERE id = %s", (first["document_id"],))
-            (prior_status,) = cur.fetchone()
-    finally:
-        conn.close()
-    assert prior_status == "SUPERSEDED"
+
+def test_ingest_with_invalid_supersession_target_returns_structured_error(
+    tmp_path, cleanup_documents
+):
+    pdf_path = tmp_path / "orphan_revision.pdf"
+    _write_pdf(pdf_path, ["Orphan Revision", "Gain: 10 dB."])
+
+    result = ingest_document(
+        file_path=str(pdf_path),
+        source_type="datasheet",
+        license="manufacturer-datasheet",
+        classification="PUBLIC",
+        supersedes_document_id=999_999,
+    )
+
+    assert result["status"] == "invalid_supersession"
+    assert result["supersedes_document_id"] == 999_999
 
 
 def test_extraction_failure_still_writes_document_with_zero_chunks(tmp_path, cleanup_documents):

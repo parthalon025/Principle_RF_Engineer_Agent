@@ -68,14 +68,23 @@ def analyze_touchstone_file(path: str) -> dict:
 
 
 @function_tool
-def ingest_document(file_path: str, source_type: str, license: str, classification: str) -> dict:
+def ingest_document(
+    file_path: str,
+    source_type: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
     """Parse a datasheet/standard/textbook/paper PDF via docling, chunk it, and store it
-    in the knowledge base. source_type, license, and classification are all mandatory."""
+    in the knowledge base. source_type, license, and classification are all mandatory.
+    Pass supersedes_document_id to declare this upload a newer revision of that document
+    (never inferred from title); omit it for a plain new, independent document."""
     return _ingest_document(
         file_path=file_path,
         source_type=source_type,
         license=license,
         classification=classification,
+        supersedes_document_id=supersedes_document_id,
     )
 
 

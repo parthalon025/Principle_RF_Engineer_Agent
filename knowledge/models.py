@@ -83,7 +83,15 @@ class ChunkDraft:
 
 @dataclass(frozen=True)
 class DocumentDraft:
-    """Document-level metadata gathered before a `documents` row is written."""
+    """Document-level metadata gathered before a `documents` row is written.
+
+    `supersedes_document_id`, if given, is a human-declared claim -- "this
+    upload is a newer revision of that document" -- never inferred (ADR-0002:
+    inferring supersession from title/metadata matching was considered and
+    rejected as fragile and silently wrong when it fails). Omitted means the
+    upload is a plain new, independent document, full stop, regardless of
+    what it's titled.
+    """
 
     title: str
     source_type: SourceType
@@ -94,3 +102,4 @@ class DocumentDraft:
     author: str | None = None
     revision: str | None = None
     metadata: dict = field(default_factory=dict)
+    supersedes_document_id: int | None = None

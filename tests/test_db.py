@@ -2,6 +2,7 @@ import pytest
 
 from knowledge.db import (
     DuplicateDocumentError,
+    InvalidSupersessionError,
     find_document_by_checksum,
     insert_chunks,
     insert_document,
@@ -51,12 +52,17 @@ def test_insert_document_rejects_identical_checksum(db_conn):
     assert exc_info.value.document_id == first["id"]
 
 
-def test_insert_document_supersedes_prior_active_revision(db_conn):
+def test_insert_document_supersedes_when_explicitly_declared(db_conn):
     rev_a = _draft(title="XYZ Amplifier", checksum_sha256="d" * 64, revision="A")
     first = insert_document(db_conn, rev_a, authority_rank=20)
     assert first["status"] == "ACTIVE"
 
-    rev_b = _draft(title="XYZ Amplifier", checksum_sha256="e" * 64, revision="B")
+    rev_b = _draft(
+        title="XYZ Amplifier",
+        checksum_sha256="e" * 64,
+        revision="B",
+        supersedes_document_id=first["id"],
+    )
     second = insert_document(db_conn, rev_b, authority_rank=20)
 
     assert second["supersedes_document_id"] == first["id"]
@@ -68,14 +74,49 @@ def test_insert_document_supersedes_prior_active_revision(db_conn):
     assert prior_status == "SUPERSEDED"
 
 
-def test_insert_document_does_not_supersede_different_title(db_conn):
-    doc1 = _draft(title="Part One", checksum_sha256="f" * 64)
+def test_insert_document_never_infers_supersession_from_title(db_conn):
+    """ADR-0002: a shared title alone must never trigger supersession --
+    only an explicit `supersedes_document_id` does."""
+    doc1 = _draft(title="Same Title", checksum_sha256="f" * 64)
     insert_document(db_conn, doc1, authority_rank=20)
 
-    doc2 = _draft(title="Part Two", checksum_sha256="0" * 64)
+    doc2 = _draft(title="Same Title", checksum_sha256="0" * 64)
     row2 = insert_document(db_conn, doc2, authority_rank=20)
 
     assert row2["supersedes_document_id"] is None
+
+
+def test_insert_document_rejects_nonexistent_supersession_target(db_conn):
+    draft = _draft(checksum_sha256="3" * 64, supersedes_document_id=999_999)
+    with pytest.raises(InvalidSupersessionError) as exc_info:
+        insert_document(db_conn, draft, authority_rank=20)
+    assert exc_info.value.document_id == 999_999
+
+
+def test_insert_document_rejects_superseding_a_superseded_document(db_conn):
+    rev_a = _draft(checksum_sha256="4" * 64)
+    first = insert_document(db_conn, rev_a, authority_rank=20)
+    rev_b = _draft(checksum_sha256="5" * 64, supersedes_document_id=first["id"])
+    insert_document(db_conn, rev_b, authority_rank=20)
+
+    rev_c = _draft(checksum_sha256="6" * 64, supersedes_document_id=first["id"])
+    with pytest.raises(InvalidSupersessionError):
+        insert_document(db_conn, rev_c, authority_rank=20)
+
+
+def test_insert_document_rejects_source_type_mismatch_on_supersession(db_conn):
+    standard = _draft(
+        checksum_sha256="7" * 64, source_type=SourceType.STANDARD, title="Some Standard"
+    )
+    first = insert_document(db_conn, standard, authority_rank=20)
+
+    textbook = _draft(
+        checksum_sha256="8" * 64,
+        source_type=SourceType.TEXTBOOK,
+        supersedes_document_id=first["id"],
+    )
+    with pytest.raises(InvalidSupersessionError):
+        insert_document(db_conn, textbook, authority_rank=20)
 
 
 def test_insert_chunks_stores_content_and_positions(db_conn):

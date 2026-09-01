@@ -34,6 +34,18 @@ class DuplicateDocumentError(Exception):
         super().__init__(f"document with this checksum already exists: id={document_id}")
 
 
+class InvalidSupersessionError(Exception):
+    """Raised by `insert_document` when `draft.supersedes_document_id` does
+    not point at a document that can actually be superseded: it doesn't
+    exist, isn't ACTIVE (already superseded, or superseded by something
+    else), or is a different `source_type`."""
+
+    def __init__(self, document_id: int, reason: str):
+        self.document_id = document_id
+        self.reason = reason
+        super().__init__(f"cannot supersede document_id={document_id}: {reason}")
+
+
 def get_connection() -> psycopg.Connection:
     """Open a new connection using DATABASE_URL from the environment."""
     return psycopg.connect(os.environ["DATABASE_URL"])
@@ -58,29 +70,6 @@ def find_document_by_checksum(
         return cur.fetchone()
 
 
-def _find_active_revision(
-    conn: psycopg.Connection, title: str, source_type: str, exclude_checksum: str
-) -> dict[str, Any] | None:
-    """Find the ACTIVE document a newer revision would supersede: same
-    title and source_type, different content. Matching on (title,
-    source_type) is this ticket's revision-detection rule -- there is no
-    separate "same logical document" identifier yet."""
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
-            """
-            SELECT * FROM documents
-            WHERE status = %s
-              AND source_type = %s
-              AND lower(title) = lower(%s)
-              AND checksum_sha256 IS DISTINCT FROM %s
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (DocumentStatus.ACTIVE.value, source_type, title, exclude_checksum),
-        )
-        return cur.fetchone()
-
-
 def insert_document(
     conn: psycopg.Connection, draft: DocumentDraft, authority_rank: int
 ) -> dict[str, Any]:
@@ -88,21 +77,38 @@ def insert_document(
 
     - Same checksum already stored -> raises `DuplicateDocumentError`
       instead of inserting; no duplicate row is created.
-    - An ACTIVE document with the same (title, source_type) but a
-      different checksum exists -> treated as a newer revision: that row's
-      status flips to SUPERSEDED and the new row's `supersedes_document_id`
-      links to it, both in one transaction (ADR-0002).
-    - Otherwise -> a plain new ACTIVE row with no supersession.
+    - `draft.supersedes_document_id` set -> that document must exist, be
+      ACTIVE, and share this draft's `source_type`, or `InvalidSupersessionError`
+      is raised; otherwise its status flips to SUPERSEDED and the new row's
+      `supersedes_document_id` links to it, both in one transaction
+      (ADR-0002). This is a human-declared claim, never inferred from title
+      or any other metadata matching.
+    - `draft.supersedes_document_id` unset -> a plain new ACTIVE row, no
+      supersession, regardless of whether its title matches anything else
+      already stored.
     """
     existing = find_document_by_checksum(conn, draft.checksum_sha256)
     if existing is not None:
         raise DuplicateDocumentError(existing["id"], existing)
 
     with conn.transaction():
-        prior = _find_active_revision(
-            conn, draft.title, draft.source_type.value, draft.checksum_sha256
-        )
-        supersedes_id = prior["id"] if prior else None
+        supersedes_id = draft.supersedes_document_id
+        if supersedes_id is not None:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT * FROM documents WHERE id = %s", (supersedes_id,))
+                prior = cur.fetchone()
+            if prior is None:
+                raise InvalidSupersessionError(supersedes_id, "no such document")
+            if prior["status"] != DocumentStatus.ACTIVE.value:
+                raise InvalidSupersessionError(
+                    supersedes_id, f"not ACTIVE (status={prior['status']!r})"
+                )
+            if prior["source_type"] != draft.source_type.value:
+                raise InvalidSupersessionError(
+                    supersedes_id,
+                    f"source_type mismatch (target is {prior['source_type']!r}, "
+                    f"upload is {draft.source_type.value!r})",
+                )
 
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
@@ -130,10 +136,10 @@ def insert_document(
             )
             new_row = cur.fetchone()
 
-            if prior is not None:
+            if supersedes_id is not None:
                 cur.execute(
                     "UPDATE documents SET status = %s WHERE id = %s",
-                    (DocumentStatus.SUPERSEDED.value, prior["id"]),
+                    (DocumentStatus.SUPERSEDED.value, supersedes_id),
                 )
 
     assert new_row is not None

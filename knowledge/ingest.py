@@ -36,6 +36,7 @@ def ingest_document(
     source_type: str,
     license: str,
     classification: str,
+    supersedes_document_id: int | None = None,
 ) -> dict[str, Any]:
     """Parse, chunk, and store a datasheet/standard/textbook/paper PDF.
 
@@ -46,9 +47,16 @@ def ingest_document(
 
     Re-ingesting an identical file (matching checksum) is rejected and
     returns the existing document's id instead of creating a duplicate.
-    Ingesting a newer revision of an already-stored document (same title
-    and source_type, different content) creates a new row and flips the
-    prior row to SUPERSEDED (ADR-0002).
+
+    `supersedes_document_id`, if given, declares that this upload is a newer
+    revision of that specific document: the prior row flips to SUPERSEDED
+    and this new row links to it (ADR-0002). This is never inferred --
+    matching on title or any other metadata was considered and rejected as
+    fragile and silently wrong when it fails. Omit it and the upload is
+    always just a new, independent document, even if its title happens to
+    match something already stored. If the given id doesn't exist, isn't
+    ACTIVE, or is a different source_type, a structured error is returned
+    rather than silently ignored or applied anyway.
 
     If the file fails to parse, the `documents` row is still written, with
     `metadata.extraction_status = "failed"` and zero chunks, rather than
@@ -92,6 +100,7 @@ def ingest_document(
         checksum_sha256=checksum,
         source_uri=str(path.resolve()),
         metadata=metadata,
+        supersedes_document_id=supersedes_document_id,
     )
 
     conn = db.get_connection()
@@ -107,6 +116,13 @@ def ingest_document(
                     "A document with this exact content is already stored "
                     f"as document_id={exc.document_id}."
                 ),
+            }
+        except db.InvalidSupersessionError as exc:
+            conn.rollback()
+            return {
+                "status": "invalid_supersession",
+                "supersedes_document_id": exc.document_id,
+                "message": f"Cannot supersede document_id={exc.document_id}: {exc.reason}.",
             }
 
         inserted = db.insert_chunks(conn, row["id"], chunk_drafts)

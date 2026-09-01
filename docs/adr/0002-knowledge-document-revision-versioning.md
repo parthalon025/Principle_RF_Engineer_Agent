@@ -15,10 +15,24 @@ self-reference; ingesting a newer revision flips the prior row's status to
 `SUPERSEDED` and links it. `search_knowledge` defaults to `status =
 'ACTIVE'` documents unless a query pins a specific document/revision id.
 
+The link is set by the human uploading the document, not inferred: `ingest_document`
+takes an optional `supersedes_document_id` argument, and an upload without
+it is always a plain new, independent document, regardless of what it's
+titled. The first implementation of this ADR (ticket #8) shipped an
+automatic version instead — matching a new upload against an `ACTIVE`
+document with the same `(source_type, title)` — which reintroduced, at
+ingest time, exactly the title-matching inference this ADR already
+rejected below at query time. That was a bug, not a second decision:
+fixed directly rather than opened as a new ticket.
+
 ## Considered options
 
-Inferring the "current" revision at query time by grouping on
-`(title, manufacturer)` and taking the max `publication_date` — rejected
-as fragile: title strings get reformatted or typo'd between revisions, and
-the failure mode is silent (wrong revision surfaced, not an error). An
-explicit link set once at ingest time is cheap by comparison.
+Inferring the "current" revision (whether at query time, by grouping on
+`(title, manufacturer)` and taking the max `publication_date`, or at
+ingest time, by matching a new upload against an existing document's
+title) — rejected as fragile: title strings get reformatted, typo'd, or
+coincidentally shared between unrelated documents, and the failure mode is
+silent (wrong revision superseded or surfaced, not an error). An explicit
+link, declared once by the human who already knows what they're uploading
+a revision of, is cheap by comparison — the same explicit-over-inferred
+pattern already used for `classification`/`license` (ADR-0001).
