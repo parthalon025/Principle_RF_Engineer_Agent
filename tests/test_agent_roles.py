@@ -77,12 +77,13 @@ def test_principal_role_has_broad_access():
     # run_elmer_simulation tool added by issue #64, the run_ltspice_
     # simulation tool added by issue #59, the run_qucs_simulation tool added
     # by issue #58, the run_kicad_gerber2ems_simulation tool added by issue
-    # #65, plus 4 more
+    # #65, the run_ngspice_simulation and run_xyce_simulation tools added by
+    # issue #57, plus 4 more
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by ticket
     # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
     # non-principal specialist.
-    assert len(names) == 81
+    assert len(names) == 83
 
 
 def test_principal_module_alias_matches_registry():
@@ -311,6 +312,23 @@ def test_microwave_and_test_roles_get_ltspice_simulation():
     assert "run_ltspice_simulation" not in _tool_names(ROLES["systems"])
     assert "run_ltspice_simulation" not in _tool_names(ROLES["antenna"])
     assert "run_ltspice_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_microwave_and_test_roles_get_ngspice_and_xyce_simulation():
+    # issue #57: free/open circuit-level SPICE simulation of a matching
+    # network, filter, or amplifier sub-circuit is microwave/network-level
+    # component-analysis work, and (like run_nec2_simulation/
+    # run_openems_simulation/run_hfss_simulation) its SIMULATED-provenance
+    # result is something a measured result gets validated against in test
+    # engineering.
+    for tool_name in ("run_ngspice_simulation", "run_xyce_simulation"):
+        assert tool_name in _tool_names(ROLES["microwave"])
+        assert tool_name in _tool_names(ROLES["test"])
+        assert tool_name in _tool_names(ROLES["principal"])
+        # not systems/antenna/verification's job
+        assert tool_name not in _tool_names(ROLES["systems"])
+        assert tool_name not in _tool_names(ROLES["antenna"])
+        assert tool_name not in _tool_names(ROLES["verification"])
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

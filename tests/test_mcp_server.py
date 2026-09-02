@@ -125,11 +125,14 @@ def test_registered_tool_count_matches_old_plus_new():
     # (run_elmer_simulation) added by #64, plus 1 more
     # (run_ltspice_simulation) added by #59, plus 1 more
     # (run_qucs_simulation) added by #58, plus 1 more
-    # (run_kicad_gerber2ems_simulation) added by #65, plus 4 more
+    # (run_kicad_gerber2ems_simulation) added by #65, plus 2 more
+    # (run_ngspice_simulation, run_xyce_simulation) added by #57, plus 4 more
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by #67.
     expected = (
-        11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 4
+        11
+        + len(NEW_TOOL_NAMES)
+        + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 4
     )
     assert len(registered_names) == expected
 
@@ -155,6 +158,16 @@ def test_run_nec2_simulation_is_registered():
 def test_run_openems_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_openems_simulation" in registered_names
+
+
+def test_run_ngspice_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_ngspice_simulation" in registered_names
+
+
+def test_run_xyce_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_xyce_simulation" in registered_names
 
 
 def test_run_hfss_simulation_is_registered():
@@ -697,6 +710,92 @@ def test_run_openems_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["convergence"]["terminated_reason"] == "end_criteria"
     assert result["s_parameters"]["computed"] is False
     assert result["far_field"]["computed"] is False
+
+
+# ---------------------------------------------------------------------------
+# ngspice / Xyce circuit simulation (issue #57)
+#
+# Neither real binary is installed in this environment, so these exercise
+# only the MCP wrappers' call-through to simulation.ngspice/simulation.xyce
+# via a fake script pointed to by NGSPICE_BIN/XYCE_BIN -- same not-verified-
+# against-a-real-binary caveat as tests/test_ngspice.py/tests/test_xyce.py.
+# ---------------------------------------------------------------------------
+
+_MATCHING_NETWORK_JOB = {
+    "components": [
+        {"type": "L", "name": "L1", "n1": "in", "n2": "out", "value": 10e-9},
+        {"type": "C", "name": "C1", "n1": "out", "n2": "0", "value": 5e-12},
+        {"type": "V", "name": "V1", "n1": "in", "n2": "0", "dc": 0.0, "ac_mag": 1.0},
+    ],
+    "analysis": {
+        "type": "ac",
+        "sweep_type": "dec",
+        "points": 10,
+        "start_freq_hz": 1e8,
+        "stop_freq_hz": 1e10,
+    },
+    "outputs": ["v(out)"],
+}
+
+
+def _write_fake_ngspice(tmp_path: Path) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_ngspice.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "args = sys.argv[1:]\n"
+        "with open(args[2], 'w') as f:\n"
+        "    f.write('')\n"
+        "with open('ngspice_output.dat', 'w') as f:\n"
+        "    f.write('1e+08 2.0 0.0\\n1e+09 1.5 -0.5\\n')\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_ngspice_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_ngspice(tmp_path)
+    monkeypatch.setenv("NGSPICE_BIN", str(script))
+
+    result = server.run_ngspice_simulation(_MATCHING_NETWORK_JOB, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "ngspice"
+    assert result["scale_name"] == "frequency_hz"
+    assert result["values"]["v(out)"] == pytest.approx([[2.0, 0.0], [1.5, -0.5]])
+
+
+def _write_fake_xyce(tmp_path: Path) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_xyce.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "with open('xyce_output.csv', 'w') as f:\n"
+        "    f.write('FREQ,V(OUT)\\n100000000.0,2.0\\n1000000000.0,1.5\\n')\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_xyce_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_xyce(tmp_path)
+    monkeypatch.setenv("XYCE_BIN", str(script))
+    job = {**_MATCHING_NETWORK_JOB, "outputs": ["V(out)"]}
+
+    result = server.run_xyce_simulation(job, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "Xyce"
+    assert result["scale_name"] == "FREQ"
+    assert result["values"]["V(OUT)"] == pytest.approx([2.0, 1.5])
 
 
 # ---------------------------------------------------------------------------

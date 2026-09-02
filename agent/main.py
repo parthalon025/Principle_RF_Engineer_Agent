@@ -113,9 +113,11 @@ from simulation.kicad_gerber2ems import (
 )
 from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
+from simulation.ngspice import run_ngspice_simulation as _run_ngspice_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
 from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
+from simulation.xyce import run_xyce_simulation as _run_xyce_simulation
 
 load_dotenv()
 
@@ -1015,6 +1017,59 @@ def run_kicad_gerber2ems_simulation(board_file: str, config: dict, timeout_s: in
     )
 
 
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# job's shape (optional keys, variable-length components/raw_cards lists) doesn't fit
+# the SDK's strict-schema requirement -- see simulation.ngspice.generate_ngspice_netlist
+# for the accepted shape.
+def run_ngspice_simulation(job: dict, timeout_s: int = 600) -> dict:
+    """Simulate a matching network, filter, or amplifier bias/termination sub-circuit
+    with ngspice (a free/open circuit-level SPICE simulator, no paid ADS license
+    needed): generate a netlist from a structured job dict (R/L/C/V/I components,
+    optional "raw_cards" escape hatch for nonlinear devices/subcircuits, an
+    op/ac/tran "analysis", and node-voltage/branch-current "outputs" -- see
+    simulation.ngspice.generate_ngspice_netlist for the full shape), run it via
+    ngspice, and parse the requested outputs' AC (real/imag pairs vs. frequency),
+    TRAN (values vs. time), or OP data back out. Returns "SIMULATED" provenance.
+    IMPORTANT SCOPE LIMIT: S-parameters are NOT computed here -- stable ngspice has
+    no built-in S-parameter analysis; use run_xyce_simulation's native `.LIN`
+    S-parameter/Touchstone path for that need instead (see simulation/ngspice.py's
+    module docstring for why). Netlist/output format verified against the primary
+    ngspice manual (see simulation/ngspice.py's module docstring for the citation)
+    but NOT against a real ngspice binary -- none is installed in this environment;
+    treat any result as unverified end-to-end until it has been run against the
+    real tool at least once."""
+    return _run_ngspice_simulation(job=job, timeout_s=timeout_s)
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# job's shape (optional keys, variable-length components/ports/raw_cards lists)
+# doesn't fit the SDK's strict-schema requirement -- see
+# simulation.xyce.generate_xyce_netlist for the accepted shape.
+def run_xyce_simulation(job: dict, timeout_s: int = 600) -> dict:
+    """Simulate a matching network, filter, or amplifier bias/termination sub-circuit
+    with Xyce (Sandia's free/open parallel-capable circuit simulator, no paid ADS
+    license needed -- prefer this over run_ngspice_simulation for a larger circuit
+    or when real S-parameters are needed): generate a netlist from a structured job
+    dict (R/L/C/V/I components, optional "raw_cards" escape hatch for nonlinear
+    devices/subcircuits, an op/ac/tran "analysis", optional node-voltage/branch-
+    current "outputs", and optional "ports" -- see simulation.xyce.generate_xyce_netlist
+    for the full shape), run it via Xyce, and return the requested `.PRINT` outputs
+    (CSV columns vs. frequency/time) and/or, when "ports" are given (requires
+    analysis type "ac"), REAL S-parameters extracted via Xyce's native `.LIN` linear-
+    network analysis and exported to a genuine Touchstone file (surfaced as
+    "touchstone_file", integrating with correlate_simulated_and_measured the same way
+    simulation/hfss.py's and simulation/openems.py's computed=True S-parameters do).
+    Returns "SIMULATED" provenance. HONEST CONFIDENCE CAVEAT: the `.LIN` S-parameter
+    path is verified against Xyce's own primary Reference Guide but carries one extra
+    notch of uncertainty beyond this tool's `.AC`/`.TRAN`/`.PRINT` coverage -- see
+    simulation/xyce.py's module docstring "HONEST CONFIDENCE CAVEAT ON `.LIN`
+    SPECIFICALLY" for why. Format verified against the primary Xyce Reference Guide
+    (see simulation/xyce.py's module docstring for the citation) but NOT against a
+    real Xyce binary -- none is installed in this environment; treat any result as
+    unverified end-to-end until it has been run against the real tool at least once."""
+    return _run_xyce_simulation(job=job, timeout_s=timeout_s)
+
+
 # ---------------------------------------------------------------------------
 # VNA measurement (issue #43, Phase 10 ticket 1 of 2) -- deliberately TWO
 # separate tools, not one tool with an easily-flippable boolean parameter,
@@ -1907,6 +1962,8 @@ _ALL_TOOLS = [
     run_elmer_simulation,
     run_ltspice_simulation,
     run_kicad_gerber2ems_simulation,
+    run_ngspice_simulation,
+    run_xyce_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -2026,8 +2083,17 @@ ROLE_SPECS: list[RoleSpec] = [
             "against a vendor device-model library -- the lowest-priority, "
             "lowest-investment item in this repo's 'ADS alternative' batch "
             "(its value is vendor-model-library familiarity, not new "
-            "capability). Defer system-chain-level gain/link budgeting to "
-            "the systems role."
+            "capability). Also gets (issue #57) run_ngspice_simulation and "
+            "run_xyce_simulation -- free/open circuit-level SPICE "
+            "simulation of a matching network, filter, or amplifier bias/"
+            "termination sub-circuit (no paid ADS license needed); prefer "
+            "run_xyce_simulation over run_ngspice_simulation for a larger "
+            "circuit or when real S-parameters are needed (Xyce's native "
+            "`.LIN` analysis produces a genuine Touchstone file, subject to "
+            "its own honest confidence caveat -- see simulation/xyce.py's "
+            "module docstring; ngspice has no built-in S-parameter analysis "
+            "at all). Defer system-chain-level gain/link budgeting to the "
+            "systems role."
         ),
         tools=[
             calculate_vswr,
@@ -2056,6 +2122,8 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_l_network_match,
             run_qucs_simulation,
             run_ltspice_simulation,
+            run_ngspice_simulation,
+            run_xyce_simulation,
             search_knowledge,
         ],
     ),
@@ -2154,10 +2222,12 @@ ROLE_SPECS: list[RoleSpec] = [
             "native S-parameter/far-field/gain post-processing, see "
             "simulation/elmer.py), LTspice (run_ltspice_simulation, "
             "issue #59), Qucs-S/qucsator_rf circuit simulation "
-            "(run_qucs_simulation, issue #58), and (issue #65) gerber2ems "
+            "(run_qucs_simulation, issue #58), (issue #65) gerber2ems "
             "PCB signal-integrity (run_kicad_gerber2ems_simulation, trace "
             "impedance and via/stackup S-parameters from a real KiCad PCB "
-            "design) reference results to validate hardware against. Use "
+            "design), and (issue #57) ngspice/Xyce (run_ngspice_simulation, "
+            "run_xyce_simulation) circuit-level reference results to "
+            "validate hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -2214,6 +2284,8 @@ ROLE_SPECS: list[RoleSpec] = [
             run_elmer_simulation,
             run_ltspice_simulation,
             run_kicad_gerber2ems_simulation,
+            run_ngspice_simulation,
+            run_xyce_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

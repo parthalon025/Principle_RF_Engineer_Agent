@@ -100,9 +100,11 @@ from simulation.kicad_gerber2ems import (
 )
 from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
+from simulation.ngspice import run_ngspice_simulation as _run_ngspice_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
 from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
+from simulation.xyce import run_xyce_simulation as _run_xyce_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -889,6 +891,50 @@ def run_kicad_gerber2ems_simulation(board_file: str, config: dict, timeout_s: in
     return _run_kicad_gerber2ems_simulation(
         board_file=board_file, config=config, timeout_s=timeout_s
     )
+
+
+@mcp.tool()
+def run_ngspice_simulation(job: dict, timeout_s: int = 600) -> dict:
+    """Simulate a matching network, filter, or amplifier bias/termination sub-circuit
+    with ngspice (a free/open circuit-level SPICE simulator, no paid ADS license
+    needed): generate a netlist from a structured job dict (R/L/C/V/I components,
+    optional "raw_cards" escape hatch for nonlinear devices/subcircuits, an
+    op/ac/tran "analysis", and node-voltage/branch-current "outputs" -- see
+    simulation.ngspice.generate_ngspice_netlist for the full shape), run it via
+    ngspice, and parse the requested outputs' AC (real/imag pairs vs. frequency),
+    TRAN (values vs. time), or OP data back out. Returns "SIMULATED" provenance.
+    SCOPE LIMIT: S-parameters are NOT computed -- stable ngspice has no built-in
+    S-parameter analysis; use run_xyce_simulation's native `.LIN` S-parameter/
+    Touchstone path for that need instead. Netlist/output format verified against
+    the primary ngspice manual (see simulation/ngspice.py's module docstring for
+    the citation) but NOT against a real ngspice binary -- none is installed in
+    this environment."""
+    return _run_ngspice_simulation(job=job, timeout_s=timeout_s)
+
+
+@mcp.tool()
+def run_xyce_simulation(job: dict, timeout_s: int = 600) -> dict:
+    """Simulate a matching network, filter, or amplifier bias/termination sub-circuit
+    with Xyce (Sandia's free/open parallel-capable circuit simulator, no paid ADS
+    license needed -- prefer this over run_ngspice_simulation for a larger circuit or
+    when real S-parameters are needed): generate a netlist from a structured job dict
+    (R/L/C/V/I components, optional "raw_cards" escape hatch, an op/ac/tran
+    "analysis", optional node-voltage/branch-current "outputs", and optional "ports"
+    -- see simulation.xyce.generate_xyce_netlist for the full shape), run it via
+    Xyce, and return the requested `.PRINT` outputs (CSV columns vs. frequency/time)
+    and/or, when "ports" are given (requires analysis type "ac"), REAL S-parameters
+    extracted via Xyce's native `.LIN` linear-network analysis and exported to a
+    genuine Touchstone file (surfaced as "touchstone_file", integrating with
+    correlate_simulated_and_measured the same way simulation/hfss.py's and
+    simulation/openems.py's computed=True S-parameters do). Returns "SIMULATED"
+    provenance. HONEST CONFIDENCE CAVEAT: the `.LIN` S-parameter path is verified
+    against Xyce's own primary Reference Guide but carries one extra notch of
+    uncertainty beyond this tool's `.AC`/`.TRAN`/`.PRINT` coverage -- see
+    simulation/xyce.py's module docstring "HONEST CONFIDENCE CAVEAT ON `.LIN`
+    SPECIFICALLY" for why. Format verified against the primary Xyce Reference Guide
+    (see simulation/xyce.py's module docstring for the citation) but NOT against a
+    real Xyce binary -- none is installed in this environment."""
+    return _run_xyce_simulation(job=job, timeout_s=timeout_s)
 
 
 # ---------------------------------------------------------------------------

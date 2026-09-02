@@ -69,6 +69,8 @@ Optional:
   github.com/ra3xdh/qucsator_rf; the CLI binary this repo's
   `simulation/qucs.py` shells out to is named `qucsator_rf`, not the bare
   `qucsator` its upstream project is colloquially called)
+- ngspice
+- Xyce
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
@@ -122,6 +124,8 @@ Notable components:
 - Qucs-S / qucsator_rf: GPL-2.0-or-later (see docs/LICENSE_MATRIX.md for the primary-source verification)
 - Elmer (ElmerSolver core, incl. VectorHelmholtz): LGPL-2.1; ElmerGUI/ElmerGrid/ElmerParam: GPL-2.0
 - Gmsh: GPL-2.0-or-later
+- ngspice: New (3-clause) BSD core, plus per-subtree LGPL/LGPLv2.1/Public-Domain/custom-academic components -- see `docs/LICENSE_MATRIX.md`
+- Xyce: GPL-3.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - KiCad (application/kicad-cli): GPL-3.0-or-later
 - kicad-python: MIT
