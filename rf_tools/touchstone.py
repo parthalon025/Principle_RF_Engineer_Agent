@@ -188,3 +188,101 @@ def cascade_touchstone(paths: list[str]) -> rf.Network:
     for network in networks[1:]:
         result = result ** network
     return result
+
+
+def compare_touchstone(path_a: str, path_b: str) -> dict[str, Any]:
+    """Quantify how two Touchstone networks differ, per S-parameter.
+
+    Useful for comparing a simulated design against a measured prototype,
+    or one design revision against another -- anywhere the agent needs a
+    number for "how close is this" rather than a bare pass/fail.
+
+    The two networks may live on different frequency grids, so they are
+    first brought onto a common grid by reusing `interpolate_touchstone`
+    (rather than re-implementing interpolation here). The common grid is
+    chosen as follows: take the overlapping frequency range of both
+    networks (the highest of their two start frequencies to the lowest of
+    their two stop frequencies), then use whichever network has *fewer*
+    frequency points' own grid, restricted to that overlap. This avoids
+    extrapolating beyond either network's real data (matching
+    `interpolate_touchstone`'s own no-extrapolation contract) and avoids
+    inventing extra resolution by up-sampling the sparser network onto the
+    denser one's grid. Ties (equal point counts) fall back to `path_a`'s
+    grid. Networks with no overlapping frequency range raise `ValueError`.
+
+    For each S-parameter (`s11`, `s21`, ... -- `s{i+1}{j+1}` for an
+    n-port), the returned dict holds:
+      - `diff`: the per-frequency-point complex difference, `b - a`
+        (network B's S-parameter minus network A's).
+      - `magnitude_diff_db`: per-frequency-point difference in dB
+        magnitude, `20*log10(|b|) - 20*log10(|a|)`.
+      - `max_magnitude_diff_db`: the largest absolute dB magnitude
+        difference across the common grid.
+      - `rms_diff`: the RMS of `|diff|` across the common grid.
+      - `max_abs_diff`: the largest `|diff|` across the common grid.
+
+    Raises `ValueError` (naming both networks' port counts) if the two
+    networks have different numbers of ports -- checked before any
+    interpolation is attempted, since comparing across mismatched port
+    counts is meaningless.
+    """
+    network_a = _load_network(path_a)
+    network_b = _load_network(path_b)
+
+    if network_a.nports != network_b.nports:
+        raise ValueError(
+            f"network at {path_a!r} has {network_a.nports} ports but network "
+            f"at {path_b!r} has {network_b.nports} ports -- compare_touchstone "
+            "requires both networks to have the same number of ports"
+        )
+
+    f_a, f_b = network_a.f, network_b.f
+    overlap_min = max(float(f_a[0]), float(f_b[0]))
+    overlap_max = min(float(f_a[-1]), float(f_b[-1]))
+    if overlap_min > overlap_max:
+        raise ValueError(
+            f"networks at {path_a!r} ([{f_a[0]:g}, {f_a[-1]:g}] Hz) and "
+            f"{path_b!r} ([{f_b[0]:g}, {f_b[-1]:g}] Hz) do not share an "
+            "overlapping frequency range -- compare_touchstone cannot "
+            "interpolate them onto a common grid"
+        )
+
+    if len(f_a) <= len(f_b):
+        base_path, base_f = path_a, f_a
+    else:
+        base_path, base_f = path_b, f_b
+
+    common_freqs = base_f[(base_f >= overlap_min) & (base_f <= overlap_max)]
+    if common_freqs.size == 0:
+        raise ValueError(
+            f"no common frequency points found for {path_a!r} and {path_b!r} "
+            f"within their overlapping range [{overlap_min:g}, {overlap_max:g}] Hz"
+        )
+
+    ntwk_a = interpolate_touchstone(path_a, common_freqs.tolist())
+    ntwk_b = interpolate_touchstone(path_b, common_freqs.tolist())
+
+    nports = network_a.nports
+    result: dict[str, Any] = {
+        "ports": int(nports),
+        "common_frequencies_hz": common_freqs.tolist(),
+        "common_grid_source": base_path,
+    }
+
+    for i in range(nports):
+        for j in range(nports):
+            s_a = ntwk_a.s[:, i, j]
+            s_b = ntwk_b.s[:, i, j]
+            diff = s_b - s_a
+            mag_a_db = 20 * np.log10(np.maximum(np.abs(s_a), 1e-15))
+            mag_b_db = 20 * np.log10(np.maximum(np.abs(s_b), 1e-15))
+            magnitude_diff_db = mag_b_db - mag_a_db
+            result[f"s{i + 1}{j + 1}"] = {
+                "diff": diff,
+                "magnitude_diff_db": magnitude_diff_db,
+                "max_magnitude_diff_db": float(np.max(np.abs(magnitude_diff_db))),
+                "rms_diff": float(np.sqrt(np.mean(np.abs(diff) ** 2))),
+                "max_abs_diff": float(np.max(np.abs(diff))),
+            }
+
+    return result

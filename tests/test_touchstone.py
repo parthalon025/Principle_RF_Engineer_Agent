@@ -7,6 +7,7 @@ import skrf as rf
 from rf_tools.touchstone import (
     analyze_touchstone,
     cascade_touchstone,
+    compare_touchstone,
     deembed_touchstone,
     interpolate_touchstone,
 )
@@ -39,7 +40,7 @@ def _lossless_line_s21(freqs_hz: np.ndarray, length_m: float, er: float = 1.0) -
 
 
 def _write_matched_line_touchstone(
-    tmp_path: Path, freqs_hz: np.ndarray, length_m: float, er: float = 1.0
+    tmp_path: Path, freqs_hz: np.ndarray, length_m: float, er: float = 1.0, name: str = "line"
 ) -> Path:
     s = np.zeros((len(freqs_hz), 2, 2), dtype=complex)
     s21 = _lossless_line_s21(freqs_hz, length_m, er)
@@ -47,7 +48,7 @@ def _write_matched_line_touchstone(
     s[:, 0, 1] = s21
     freq = rf.Frequency.from_f(freqs_hz, unit="hz")
     ntwk = rf.Network(frequency=freq, s=s, z0=50)
-    path = tmp_path / "line.s2p"
+    path = tmp_path / f"{name}.s2p"
     ntwk.write_touchstone(path.with_suffix(""))
     return path
 
@@ -295,3 +296,106 @@ def test_cascade_touchstone_missing_file(tmp_path: Path):
 
     with pytest.raises(FileNotFoundError):
         cascade_touchstone([str(path_a), str(tmp_path / "missing.s2p")])
+
+
+def test_compare_touchstone_known_1db_difference_same_grid(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 5e9, 9)
+    atten_a_db = 3.0
+    atten_b_db = 4.0
+    a = _make_matched_attenuator(freqs_hz, atten_a_db)
+    b = _make_matched_attenuator(freqs_hz, atten_b_db)
+
+    path_a = _write_network(a, tmp_path, "cmp_atten_a")
+    path_b = _write_network(b, tmp_path, "cmp_atten_b")
+
+    result = compare_touchstone(str(path_a), str(path_b))
+
+    assert result["ports"] == 2
+    np.testing.assert_allclose(result["common_frequencies_hz"], freqs_hz, rtol=1e-9)
+
+    # S21 differs by exactly 1 dB (4 dB - 3 dB) at every frequency, hand-computable.
+    s21 = result["s21"]
+    np.testing.assert_allclose(s21["magnitude_diff_db"], -1.0, atol=1e-9)
+    assert s21["max_magnitude_diff_db"] == pytest.approx(1.0, abs=1e-9)
+
+    expected_s21_a = 10 ** (-atten_a_db / 20)
+    expected_s21_b = 10 ** (-atten_b_db / 20)
+    expected_abs_diff = abs(expected_s21_b - expected_s21_a)
+    assert s21["rms_diff"] == pytest.approx(expected_abs_diff, abs=1e-9)
+    assert s21["max_abs_diff"] == pytest.approx(expected_abs_diff, abs=1e-9)
+    np.testing.assert_allclose(
+        np.asarray(s21["diff"]), expected_s21_b - expected_s21_a, atol=1e-9
+    )
+
+    # Both attenuators are perfectly matched, so S11/S22 are identical (zero diff).
+    for key in ("s11", "s22"):
+        assert result[key]["rms_diff"] == pytest.approx(0.0, abs=1e-9)
+        assert result[key]["max_abs_diff"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_compare_touchstone_interpolates_onto_common_grid(tmp_path: Path):
+    length_a_m = 0.05
+    length_b_m = 0.06
+
+    f_a = np.linspace(1e9, 5e9, 9)  # sparse: 0.5 GHz spacing, 1-5 GHz
+    f_b = np.linspace(2e9, 4.5e9, 13)  # denser, different grid, narrower range
+
+    path_a = _write_matched_line_touchstone(tmp_path, f_a, length_a_m, name="line_a")
+    path_b = _write_matched_line_touchstone(tmp_path, f_b, length_b_m, name="line_b")
+
+    result = compare_touchstone(str(path_a), str(path_b))
+
+    # Common grid picks the sparser network's (a's) own points, restricted to the
+    # overlap of both ranges: [2 GHz, 4.5 GHz] out of a's 0.5 GHz-spaced grid.
+    expected_common_freqs = np.array([2e9, 2.5e9, 3e9, 3.5e9, 4e9, 4.5e9])
+    np.testing.assert_allclose(
+        result["common_frequencies_hz"], expected_common_freqs, rtol=1e-9
+    )
+
+    expected_s21_a = _lossless_line_s21(expected_common_freqs, length_a_m)
+    expected_s21_b = _lossless_line_s21(expected_common_freqs, length_b_m)
+    expected_diff = expected_s21_b - expected_s21_a
+
+    s21 = result["s21"]
+    np.testing.assert_allclose(np.asarray(s21["diff"]), expected_diff, atol=1e-9)
+    assert s21["rms_diff"] == pytest.approx(
+        float(np.sqrt(np.mean(np.abs(expected_diff) ** 2))), abs=1e-9
+    )
+    # Both lines are matched (S11 = S22 = 0), so those diffs are exactly zero.
+    assert result["s11"]["rms_diff"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_compare_touchstone_mismatched_port_count_raises_value_error(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 3e9, 3)
+    two_port = _make_matched_attenuator(freqs_hz, 3.0)
+    freq = rf.Frequency.from_f(freqs_hz, unit="hz")
+    one_port = rf.Network(frequency=freq, s=np.zeros((3, 1, 1), dtype=complex), z0=50)
+
+    two_port_path = _write_network(two_port, tmp_path, "cmp_two_port")
+    one_port_path = tmp_path / "cmp_one_port.s1p"
+    one_port.write_touchstone(one_port_path.with_suffix(""))
+
+    with pytest.raises(ValueError, match="ports"):
+        compare_touchstone(str(two_port_path), str(one_port_path))
+
+
+def test_compare_touchstone_no_overlapping_range_raises_value_error(tmp_path: Path):
+    freqs_hz_a = np.linspace(1e9, 2e9, 5)
+    freqs_hz_b = np.linspace(3e9, 4e9, 5)
+    a = _make_matched_attenuator(freqs_hz_a, 3.0)
+    b = _make_matched_attenuator(freqs_hz_b, 3.0)
+
+    path_a = _write_network(a, tmp_path, "cmp_no_overlap_a")
+    path_b = _write_network(b, tmp_path, "cmp_no_overlap_b")
+
+    with pytest.raises(ValueError, match="overlap"):
+        compare_touchstone(str(path_a), str(path_b))
+
+
+def test_compare_touchstone_missing_file(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 3e9, 3)
+    a = _make_matched_attenuator(freqs_hz, 3.0)
+    path_a = _write_network(a, tmp_path, "cmp_missing")
+
+    with pytest.raises(FileNotFoundError):
+        compare_touchstone(str(path_a), str(tmp_path / "missing.s2p"))
