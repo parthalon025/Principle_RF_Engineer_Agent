@@ -24,11 +24,13 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
   budget, IP2/IP3/P1dB, etc.) still to be added.
 - **Inputs**: plain numeric parameters for calculations; local Touchstone
   files for network analysis. Datasheets, schematics, and simulator inputs
-  (NEC2++/openEMS/HFSS job files) are handled by the simulation adapters in
-  `simulation/` but the adapters themselves are thin (NEC2++/openEMS shell
-  out to the real tool via `subprocess`; HFSS is an intentionally
-  unimplemented boundary pending a licensed AEDT host — see
-  `simulation/hfss.py`).
+  (NEC2++/openEMS/Palace/HFSS job files) are handled by the simulation
+  adapters in `simulation/` but the adapters themselves are thin (NEC2++/
+  openEMS/Palace shell out to the real tool via `subprocess`; HFSS is an
+  intentionally unimplemented boundary pending a licensed AEDT host — see
+  `simulation/hfss.py`). Palace (`simulation/palace.py`) is the only
+  adapter with native Floquet/periodic-boundary ports, for characterizing
+  a periodic metamaterial unit cell's actual electromagnetic behavior.
 - **Correctness bar**: the design principle is that the LLM is never
   trusted to do RF arithmetic itself — it calls a deterministic tool
   (`rf_tools/calculations.py`, `rf_tools/touchstone.py`) and every
