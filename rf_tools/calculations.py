@@ -295,3 +295,189 @@ def third_order_intermod_dbc(pout_dbm: float, oip3_dbm: float) -> float:
             "Output power must be below OIP3 for the third-order extrapolation to be valid."
         )
     return 2 * (oip3_dbm - pout_dbm)
+
+
+# --- Stability (Rollett K-factor and stability circles) ---
+
+
+def two_port_stability_delta(s_params: list[list[complex]] | np.ndarray) -> complex:
+    """The two-port determinant Delta = S11*S22 - S12*S21.
+
+    Delta feeds both the Rollett K-factor and the stability-circle formulas
+    below (Pozar, "Microwave Engineering"). |Delta| < 1 is one of the two
+    conditions (together with K > 1) required for unconditional stability.
+    """
+    s = _as_two_port(s_params, "S-parameter")
+    s11, s12, s21, s22 = s[0, 0], s[0, 1], s[1, 0], s[1, 1]
+    return complex(s11 * s22 - s12 * s21)
+
+
+def rollett_k_factor(s_params: list[list[complex]] | np.ndarray) -> float:
+    """The Rollett stability factor K for a two-port network's S-parameters.
+
+        K = (1 - |S11|^2 - |S22|^2 + |Delta|^2) / (2*|S12*S21|)
+
+    where Delta = S11*S22 - S12*S21 (see two_port_stability_delta). K alone
+    does not determine stability -- see stability_verdict, which also
+    requires |Delta| < 1.
+    """
+    s = _as_two_port(s_params, "S-parameter")
+    s11, s12, s21, s22 = s[0, 0], s[0, 1], s[1, 0], s[1, 1]
+    denom = 2 * abs(s12 * s21)
+    if denom == 0:
+        raise ValueError(
+            "Rollett K-factor is undefined when S12*S21 = 0 "
+            "(no forward/reverse coupling between the ports)."
+        )
+    delta = s11 * s22 - s12 * s21
+    k = (1 - abs(s11) ** 2 - abs(s22) ** 2 + abs(delta) ** 2) / denom
+    return float(k)
+
+
+def stability_verdict(s_params: list[list[complex]] | np.ndarray) -> str:
+    """Unconditional/conditional-stability verdict for a two-port network.
+
+    A network is unconditionally stable -- stable for *any* passive
+    source and load termination -- only when BOTH standard conditions
+    hold simultaneously (Rollett's criterion):
+
+        K > 1  AND  |Delta| < 1
+
+    Returns the literal string "unconditionally stable" when both hold,
+    otherwise "potentially unstable" -- meaning at least one region of
+    passive source/load impedances exists that can drive the network into
+    oscillation, even though specific terminations (see
+    input_stability_circle / output_stability_circle) may still be safe.
+    """
+    k = rollett_k_factor(s_params)
+    delta_mag = abs(two_port_stability_delta(s_params))
+    if k > 1 and delta_mag < 1:
+        return "unconditionally stable"
+    return "potentially unstable"
+
+
+def output_stability_circle(s_params: list[list[complex]] | np.ndarray) -> tuple[complex, float]:
+    """Output (load-plane) stability circle center and radius.
+
+    Returns (center, radius) for the locus of load reflection coefficients
+    Gamma_L that place the input reflection coefficient exactly on
+    |Gamma_in| = 1 -- the boundary between stable and potentially-unstable
+    load terminations (Pozar, "Microwave Engineering"):
+
+        Delta  = S11*S22 - S12*S21
+        C_out  = conj(S22 - Delta*conj(S11)) / (|S22|^2 - |Delta|^2)
+        R_out  = |S12*S21| / |S22|^2 - |Delta|^2|
+    """
+    s = _as_two_port(s_params, "S-parameter")
+    s11, s12, s21, s22 = s[0, 0], s[0, 1], s[1, 0], s[1, 1]
+    delta = s11 * s22 - s12 * s21
+    denom = abs(s22) ** 2 - abs(delta) ** 2
+    if denom == 0:
+        raise ValueError(
+            "Output stability circle is undefined when |S22|^2 = |Delta|^2."
+        )
+    center = np.conj(s22 - delta * np.conj(s11)) / denom
+    radius = abs(s12 * s21) / abs(denom)
+    return complex(center), float(radius)
+
+
+def input_stability_circle(s_params: list[list[complex]] | np.ndarray) -> tuple[complex, float]:
+    """Input (source-plane) stability circle center and radius.
+
+    Returns (center, radius) for the locus of source reflection
+    coefficients Gamma_S that place the output reflection coefficient
+    exactly on |Gamma_out| = 1. Mirrors output_stability_circle with
+    S11 and S22 swapped (Pozar, "Microwave Engineering"):
+
+        Delta = S11*S22 - S12*S21
+        C_in  = conj(S11 - Delta*conj(S22)) / (|S11|^2 - |Delta|^2)
+        R_in  = |S12*S21| / |S11|^2 - |Delta|^2|
+    """
+    s = _as_two_port(s_params, "S-parameter")
+    s11, s12, s21, s22 = s[0, 0], s[0, 1], s[1, 0], s[1, 1]
+    delta = s11 * s22 - s12 * s21
+    denom = abs(s11) ** 2 - abs(delta) ** 2
+    if denom == 0:
+        raise ValueError(
+            "Input stability circle is undefined when |S11|^2 = |Delta|^2."
+        )
+    center = np.conj(s11 - delta * np.conj(s22)) / denom
+    radius = abs(s12 * s21) / abs(denom)
+    return complex(center), float(radius)
+
+
+# --- Impedance matching ---
+
+
+def quarter_wave_transformer_impedance(z_source: float, z_load: float) -> float:
+    """Characteristic impedance of a quarter-wave (Q-wave) transformer.
+
+    Matches two *real* (resistive) impedances at the design frequency
+    where the transformer section is electrically one quarter-wavelength
+    long:
+
+        Z_transformer = sqrt(Z_source * Z_load)
+
+    This is the standard, well-defined case (Pozar, "Microwave
+    Engineering"); it is not valid for complex/reactive impedances -- use
+    l_network_match for a complex load instead.
+    """
+    if z_source <= 0:
+        raise ValueError("Source impedance must be positive.")
+    if z_load <= 0:
+        raise ValueError("Load impedance must be positive.")
+    return (z_source * z_load) ** 0.5
+
+
+def l_network_match(z_source: float, z_load: complex) -> list[tuple[float, float]]:
+    """Synthesize a lossless L-network matching z_load to a real z_source.
+
+    Standard two-solution L-network synthesis (Pozar, "Microwave
+    Engineering", sec. 5.1). Returns a list of one or two (X, B) pairs,
+    where X is a series reactance in ohms (positive = inductive,
+    negative = capacitive) and B is a shunt susceptance in siemens
+    (positive = capacitive, negative = inductive). Both pairs are valid,
+    independent solutions to the same matching problem (e.g. one may be
+    realizable with smaller/cheaper components at a given frequency); a
+    single solution is returned only when the two roots coincide exactly
+    (e.g. a purely resistive load already equal to z_source).
+
+    Topology is chosen from Re(z_load) relative to z_source, per Pozar:
+
+    - Re(z_load) >= z_source: the shunt element (B) connects directly
+      across the load, with the series element (X) between that node and
+      the source -- i.e. build the network load-to-source as
+      1/(1/z_load + jB) then + jX, and that total should equal z_source.
+    - Re(z_load) < z_source: the series element (X) connects directly to
+      the load, with the shunt element (B) between that node and the
+      source -- i.e. build the network load-to-source as
+      1/(1/(z_load + jX) + jB), and that total should equal z_source.
+
+    Raises ValueError if z_source or Re(z_load) is not positive (an L-network
+    matching a purely reactive or active/negative-resistance load is a
+    different problem, not covered here).
+    """
+    if z_source <= 0:
+        raise ValueError("Source impedance must be positive.")
+    zl = complex(z_load)
+    rl, xl = zl.real, zl.imag
+    if rl <= 0:
+        raise ValueError("Load resistance (real part of z_load) must be positive.")
+
+    solutions: list[tuple[float, float]] = []
+    if rl >= z_source:
+        denom = rl**2 + xl**2
+        discriminant = rl**2 + xl**2 - z_source * rl
+        sqrt_term = (rl / z_source) ** 0.5 * discriminant**0.5
+        gl = rl / denom
+        bl_prime = -xl / denom
+        for b in {(xl + sqrt_term) / denom, (xl - sqrt_term) / denom}:
+            x = (bl_prime + b) * z_source / gl
+            solutions.append((float(x), float(b)))
+    else:
+        discriminant = rl * (z_source - rl)
+        sqrt_term = discriminant**0.5
+        for x in {-xl + sqrt_term, -xl - sqrt_term}:
+            b = (xl + x) / (rl * z_source)
+            solutions.append((float(x), float(b)))
+    return solutions

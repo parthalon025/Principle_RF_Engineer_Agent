@@ -9,14 +9,21 @@ from rf_tools.calculations import (
     free_space_path_loss_db,
     friis_noise_factor,
     iip3_from_oip3_db,
+    input_stability_circle,
+    l_network_match,
     link_budget_margin_db,
     oip3_from_iip3_db,
+    output_stability_circle,
+    quarter_wave_transformer_impedance,
     return_loss_db,
+    rollett_k_factor,
     s_to_abcd,
     s_to_y,
     s_to_z,
+    stability_verdict,
     third_order_intermod_dbc,
     third_order_intermod_output_dbm,
+    two_port_stability_delta,
     vswr_from_gamma,
     wavelength,
     y_to_s,
@@ -408,3 +415,221 @@ def test_third_order_intermod_at_or_above_intercept_raises():
         third_order_intermod_output_dbm(30.0, 30.0)
     with pytest.raises(ValueError):
         third_order_intermod_dbc(35.0, 30.0)
+
+
+# --- Stability (Rollett K-factor and stability circles) ---
+#
+# rollett_k_factor / two_port_stability_delta / stability_verdict use the
+# standard Rollett criterion (K = (1-|S11|^2-|S22|^2+|Delta|^2)/(2|S12*S21|),
+# Delta = S11*S22-S12*S21, unconditional stability iff K>1 AND |Delta|<1;
+# Pozar, "Microwave Engineering"). Reference values below are computed
+# independently in each test from that same definitional formula (the
+# established pattern in this module -- see test_cascade_output_ip3_two_stage),
+# using S-parameter sets chosen to hit each branch of the verdict:
+#
+# - S=[[0,0.5],[0.5,0]]: a matched, reciprocal, purely-resistive-coupling
+#   network -- the textbook case of a network with no possible gain
+#   mechanism, whose K and Delta are simple enough to also hand-verify
+#   (K=(1+0.5^4)/(2*0.25)=2.125, Delta=-0.25).
+# - S11=0.3, S22=0.4, S12=0.05, S21=2.0: a generic gain-stage-shaped
+#   S-matrix (small input/output reflection, high forward gain, low
+#   reverse isolation) used for both K and the stability-circle checks,
+#   cross-validated against scikit-rf's independent stability/
+#   stability_circle implementation.
+# - S11=S22=0.5, S12=S21=1: |Delta|<1 but K<1 -- exercises the
+#   "potentially unstable" branch on the K condition alone.
+# - S11=S22=0, S12=S21=2: K>1 but |Delta|>=1 -- exercises the
+#   "potentially unstable" branch on the Delta condition alone, proving
+#   the verdict checks both conditions and not just K.
+
+
+def test_rollett_k_factor_and_delta_matched_reciprocal_network():
+    s = [[0, 0.5], [0.5, 0]]
+    assert two_port_stability_delta(s) == pytest.approx(-0.25)
+    assert rollett_k_factor(s) == pytest.approx(2.125)
+    assert stability_verdict(s) == "unconditionally stable"
+
+
+def test_rollett_k_factor_unconditionally_stable_generic():
+    s11, s12, s21, s22 = 0.3, 0.05, 2.0, 0.4
+    s = [[s11, s12], [s21, s22]]
+    delta = s11 * s22 - s12 * s21
+    denom = 2 * abs(s12 * s21)
+    expected_k = (1 - abs(s11) ** 2 - abs(s22) ** 2 + abs(delta) ** 2) / denom
+
+    assert two_port_stability_delta(s) == pytest.approx(delta)
+    assert rollett_k_factor(s) == pytest.approx(expected_k)
+    assert stability_verdict(s) == "unconditionally stable"
+
+
+def test_stability_verdict_potentially_unstable_low_k():
+    # |Delta| = 0.75 < 1, but K = 0.53125 < 1: fails the K condition alone.
+    s = [[0.5, 1.0], [1.0, 0.5]]
+    assert rollett_k_factor(s) == pytest.approx(0.53125)
+    assert abs(two_port_stability_delta(s)) < 1
+    assert stability_verdict(s) == "potentially unstable"
+
+
+def test_stability_verdict_potentially_unstable_high_delta():
+    # K = 2.125 > 1, but |Delta| = 4 >= 1: fails the Delta condition alone,
+    # proving the verdict is not just "K > 1".
+    s = [[0, 2.0], [2.0, 0]]
+    assert rollett_k_factor(s) > 1
+    assert abs(two_port_stability_delta(s)) == pytest.approx(4.0)
+    assert stability_verdict(s) == "potentially unstable"
+
+
+def test_rollett_k_factor_zero_coupling_raises():
+    with pytest.raises(ValueError):
+        rollett_k_factor([[0.5, 0], [0.9, 0.5]])
+
+
+def test_stability_circles_generic_hand_and_scikit_rf():
+    s11, s12, s21, s22 = 0.3, 0.05, 2.0, 0.4
+    s = [[s11, s12], [s21, s22]]
+    delta = s11 * s22 - s12 * s21
+
+    denom_out = abs(s22) ** 2 - abs(delta) ** 2
+    expected_center_out = complex(s22 - delta * s11).conjugate() / denom_out
+    expected_radius_out = abs(s12 * s21) / abs(denom_out)
+
+    denom_in = abs(s11) ** 2 - abs(delta) ** 2
+    expected_center_in = complex(s11 - delta * s22).conjugate() / denom_in
+    expected_radius_in = abs(s12 * s21) / abs(denom_in)
+
+    center_out, radius_out = output_stability_circle(s)
+    center_in, radius_in = input_stability_circle(s)
+
+    assert center_out == pytest.approx(expected_center_out)
+    assert radius_out == pytest.approx(expected_radius_out)
+    assert center_in == pytest.approx(expected_center_in)
+    assert radius_in == pytest.approx(expected_radius_in)
+
+    skrf = pytest.importorskip("skrf")
+    freq = skrf.Frequency(1, 1, 1, unit="ghz")
+    net = skrf.Network(frequency=freq, s=np.array([s], dtype=complex), z0=50.0)
+
+    assert rollett_k_factor(s) == pytest.approx(net.stability[0])
+
+    loci_out = net.stability_circle(target_port=1)[:, 0]
+    assert np.abs(loci_out - center_out) == pytest.approx(radius_out, abs=0.01)
+
+    loci_in = net.stability_circle(target_port=0)[:, 0]
+    assert np.abs(loci_in - center_in) == pytest.approx(radius_in, abs=0.01)
+
+
+def test_output_stability_circle_singular_raises():
+    # |S22|^2 == |Delta|^2 with S22=S12=S21=0: denominator is exactly zero.
+    with pytest.raises(ValueError):
+        output_stability_circle([[0.5, 0], [0, 0]])
+
+
+def test_input_stability_circle_singular_raises():
+    with pytest.raises(ValueError):
+        input_stability_circle([[0, 0], [0, 0.5]])
+
+
+# --- Impedance matching ---
+#
+# quarter_wave_transformer_impedance uses the standard real-impedance
+# quarter-wave transformer formula Z_t = sqrt(Z_source*Z_load) (Pozar).
+#
+# l_network_match uses the standard Pozar sec. 5.1 two-solution L-network
+# synthesis. Rather than re-deriving its closed-form output values, each
+# test case below independently verifies the *physical claim* the function
+# makes: that assembling the returned (X, B) pair into the L-network
+# topology its own docstring specifies (shunt-then-series for
+# Re(z_load) >= z_source, series-then-shunt otherwise) reduces the network's
+# input impedance to exactly z_source -- i.e. impedance-combination algebra
+# independent of the closed-form formula used to derive X and B. The two
+# all-real cases below (Z0=50, Zl=100 and Z0=50, Zl=25) were additionally
+# hand-verified against that same reconstruction offline with exact
+# fractions, so the expected (X, B) literals are known-good, not just
+# self-consistent.
+
+
+def _reconstruct_shunt_at_load_then_series(z_load: complex, x: float, b: float) -> complex:
+    y_shunt = 1 / z_load + 1j * b
+    z_after_shunt = 1 / y_shunt
+    return z_after_shunt + 1j * x
+
+
+def _reconstruct_series_at_load_then_shunt(z_load: complex, x: float, b: float) -> complex:
+    z_after_series = z_load + 1j * x
+    y_total = 1 / z_after_series + 1j * b
+    return 1 / y_total
+
+
+def test_quarter_wave_transformer_round_numbers():
+    assert quarter_wave_transformer_impedance(50.0, 200.0) == pytest.approx(100.0)
+
+
+def test_quarter_wave_transformer_invalid_inputs_raise():
+    with pytest.raises(ValueError):
+        quarter_wave_transformer_impedance(0.0, 200.0)
+    with pytest.raises(ValueError):
+        quarter_wave_transformer_impedance(-50.0, 200.0)
+    with pytest.raises(ValueError):
+        quarter_wave_transformer_impedance(50.0, 0.0)
+    with pytest.raises(ValueError):
+        quarter_wave_transformer_impedance(50.0, -200.0)
+
+
+def test_l_network_match_shunt_first_topology_real_load():
+    # Z0=50, Zl=100 (Rl > Z0): hand-verified exact solutions.
+    solutions = sorted(l_network_match(50.0, 100.0 + 0j), key=lambda pair: pair[0])
+    expected = [(-50.0, -0.01), (50.0, 0.01)]
+    assert len(solutions) == len(expected)
+    for (x, b), (expected_x, expected_b) in zip(solutions, expected, strict=True):
+        assert x == pytest.approx(expected_x)
+        assert b == pytest.approx(expected_b)
+        z_in = _reconstruct_shunt_at_load_then_series(100.0 + 0j, x, b)
+        assert z_in == pytest.approx(50.0 + 0j, abs=1e-9)
+
+
+def test_l_network_match_series_first_topology_real_load():
+    # Z0=50, Zl=25 (Rl < Z0): hand-verified exact solutions.
+    solutions = sorted(l_network_match(50.0, 25.0 + 0j), key=lambda pair: pair[0])
+    expected = [(-25.0, -0.02), (25.0, 0.02)]
+    assert len(solutions) == len(expected)
+    for (x, b), (expected_x, expected_b) in zip(solutions, expected, strict=True):
+        assert x == pytest.approx(expected_x)
+        assert b == pytest.approx(expected_b)
+        z_in = _reconstruct_series_at_load_then_shunt(25.0 + 0j, x, b)
+        assert z_in == pytest.approx(50.0 + 0j, abs=1e-9)
+
+
+def test_l_network_match_complex_load_reconstructs_to_source():
+    z0 = 50.0
+    z_load = 100.0 + 50.0j
+    solutions = l_network_match(z0, z_load)
+    assert len(solutions) == 2
+    for x, b in solutions:
+        z_in = _reconstruct_shunt_at_load_then_series(z_load, x, b)
+        assert z_in == pytest.approx(complex(z0), abs=1e-9)
+
+
+def test_l_network_match_boundary_rl_equals_z0_reconstructs_to_source():
+    # Rl == Z0 exactly, with a nonzero load reactance: still two distinct
+    # solutions (one of which is the trivial X=-Xl, B=0 cancellation).
+    z0 = 50.0
+    z_load = 50.0 + 30.0j
+    solutions = l_network_match(z0, z_load)
+    assert len(solutions) == 2
+    trivial = [pair for pair in solutions if pair[1] == pytest.approx(0.0, abs=1e-9)]
+    assert len(trivial) == 1
+    assert trivial[0][0] == pytest.approx(-30.0)
+    for x, b in solutions:
+        z_in = _reconstruct_shunt_at_load_then_series(z_load, x, b)
+        assert z_in == pytest.approx(complex(z0), abs=1e-9)
+
+
+def test_l_network_match_invalid_inputs_raise():
+    with pytest.raises(ValueError):
+        l_network_match(0.0, 100.0 + 0j)
+    with pytest.raises(ValueError):
+        l_network_match(-50.0, 100.0 + 0j)
+    with pytest.raises(ValueError):
+        l_network_match(50.0, 0.0 + 10j)
+    with pytest.raises(ValueError):
+        l_network_match(50.0, -10.0 + 10j)
