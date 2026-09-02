@@ -10,6 +10,8 @@ test_calculations.py and test_touchstone.py.
 """
 
 import asyncio
+import stat
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -119,8 +121,11 @@ def test_registered_tool_count_matches_old_plus_new():
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
-    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
+    # 1 more (run_qucs_simulation) added by #58.
+    assert len(registered_names) == (
+        11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1
+    )
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -141,6 +146,11 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_run_qucs_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_qucs_simulation" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
@@ -777,3 +787,80 @@ def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert Path(result["touchstone_file"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# Qucs-S simulation (issue #58)
+#
+# The real qucsator_rf binary is not installed in this environment, so this
+# exercises the MCP wrapper's call-through to simulation.qucs via a fake
+# "qucsator_rf" script pointed to by QUCSATOR_BIN -- same not-verified-
+# against-a-real-binary caveat as tests/test_qucs.py. The fake script writes
+# a synthetic Qucs dataset (native <Qucs Dataset> format) to the -o path,
+# matching how a real qucsator_rf -i/-o run would.
+# ---------------------------------------------------------------------------
+
+_FAKE_QUCS_DATASET = """<Qucs Dataset 0.0.19>
+<indep frequency 2>
+  +1.00000000000000000000e+09
+  +2.00000000000000000000e+09
+</indep>
+<dep S[1,1] frequency>
+  +1.00000000000000000000e-01
+  +5.00000000000000000000e-02-j2.00000000000000000000e-02
+</dep>
+<dep S[2,1] frequency>
+  +9.00000000000000000000e-01+j1.00000000000000000000e-02
+  +8.50000000000000000000e-01
+</dep>
+<dep S[1,2] frequency>
+  +9.00000000000000000000e-01+j1.00000000000000000000e-02
+  +8.50000000000000000000e-01
+</dep>
+<dep S[2,2] frequency>
+  +1.50000000000000000000e-01
+  +1.00000000000000000000e-01
+</dep>
+</Qucs Dataset>
+"""
+
+
+def _write_fake_qucsator(tmp_path: Path) -> Path:
+    script = tmp_path / "fake_qucsator_rf.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f'DATASET = """{_FAKE_QUCS_DATASET}"""\n'
+        "args = sys.argv[1:]\n"
+        'out_idx = args.index("-o")\n'
+        "outfile = args[out_idx + 1]\n"
+        'with open(outfile, "w") as f:\n'
+        "    f.write(DATASET)\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_qucs_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_qucsator(tmp_path)
+    monkeypatch.setenv("QUCSATOR_BIN", str(script))
+
+    circuit = {
+        "ports": [
+            {"node": "n1", "num": 1, "z_ohms": 50.0},
+            {"node": "n2", "num": 2, "z_ohms": 50.0},
+        ],
+        "components": [
+            {"type": "R", "name": "Rseries", "nodes": ["n1", "n2"], "properties": {"R": 10.0}}
+        ],
+    }
+    analysis = {"sweep_type": "lin", "start_hz": 1e9, "stop_hz": 2e9, "points": 2}
+    result = server.run_qucs_simulation(circuit, analysis, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "Qucs-S/qucsator"
+    assert result["status"] == "COMPLETED"
+    assert result["frequency_hz"] == pytest.approx([1e9, 2e9])
+    assert result["s_parameters"]["computed"] is True
+    assert set(result["s_parameters"]["values"]) == {"S11", "S12", "S21", "S22"}

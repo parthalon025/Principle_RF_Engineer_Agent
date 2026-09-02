@@ -103,6 +103,7 @@ from rf_tools.touchstone import (
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
+from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
 
 load_dotenv()
 
@@ -812,6 +813,38 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# circuit's shape (variable-length ports/components lists) does not fit the SDK's
+# strict-schema requirement.
+def run_qucs_simulation(
+    circuit: dict,
+    analysis: dict,
+    timeout_s: int = 600,
+) -> dict:
+    """Simulate a lumped RF/microwave circuit (a matching network, filter, or other
+    R/L/C/TLIN sub-circuit) with Qucs-S's qucsator_rf engine, the free alternative to
+    Keysight ADS's schematic-level circuit simulation this repo's README already
+    tracks the license for. Generates a native qucsator_rf netlist from structured
+    circuit/analysis input (one or more Pac ports plus optional R/L/C/TLIN components
+    -- see simulation.qucs.generate_qucs_netlist for the full shape), runs a native
+    multi-port `.SP` S-parameter analysis via the real `qucsator_rf` binary (a genuine
+    headless CLI with no GUI dependency -- confirmed against qucsator_rf's own source,
+    src/ucs.cpp's argv-parsing main()), and parses the full N-port S-parameter matrix
+    back out. Returns "SIMULATED" provenance. Use this over run_nec2_simulation/
+    run_openems_simulation for a lumped-element circuit rather than an antenna/EM
+    structure -- qucsator_rf's native spsolver is purpose-built for exactly this,
+    unlike a general SPICE simulator. Netlist/dataset format verified against
+    qucsator_rf's own primary source (see simulation/qucs.py's module docstring for
+    the full citation list) but NOT against a real qucsator_rf binary -- none is
+    installed in this environment; treat any result as unverified end-to-end until it
+    has been run against the real tool at least once."""
+    return _run_qucs_simulation(
+        circuit=circuit,
+        analysis=analysis,
+        timeout_s=timeout_s,
     )
 
 
@@ -1629,6 +1662,7 @@ _ALL_TOOLS = [
     run_nec2_simulation,
     run_openems_simulation,
     run_hfss_simulation,
+    run_qucs_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -1729,13 +1763,19 @@ ROLE_SPECS: list[RoleSpec] = [
             "network data, S/Z/Y/ABCD two-port parameter conversions, "
             "stability (K-factor, Delta, stability circles), impedance-"
             "matching synthesis (quarter-wave transformer, L-network), and "
-            "IP3/IM3 linearity. Defer system-chain-level gain/link budgeting "
-            "to the systems role."
+            "IP3/IM3 linearity. Also gets full lumped-circuit S-parameter "
+            "simulation via Qucs-S's qucsator_rf engine (run_qucs_"
+            "simulation, issue #58) -- the free alternative to Keysight "
+            "ADS's schematic-level circuit simulation, for a matching "
+            "network/filter/other R-L-C-TLIN sub-circuit beyond what the "
+            "deterministic conversion tools above cover directly. Defer "
+            "system-chain-level gain/link budgeting to the systems role."
         ),
         tools=[
             calculate_vswr,
             calculate_return_loss,
             calculate_noise_figure,
+            run_qucs_simulation,
             analyze_touchstone_file,
             convert_db_to_linear,
             convert_linear_to_db,
@@ -1822,9 +1862,11 @@ ROLE_SPECS: list[RoleSpec] = [
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
             "values, including SIMULATED-provenance NEC2++ "
-            "(run_nec2_simulation), openEMS (run_openems_simulation), and "
+            "(run_nec2_simulation), openEMS (run_openems_simulation), "
             "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. Use "
+            "only), and Qucs-S (run_qucs_simulation, issue #58 -- lumped-"
+            "circuit S-parameter results) reference results to validate "
+            "hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -1873,6 +1915,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_qucs_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

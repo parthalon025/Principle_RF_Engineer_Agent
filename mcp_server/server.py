@@ -90,6 +90,7 @@ from rf_tools.touchstone import (
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
+from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -701,6 +702,31 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@mcp.tool()
+def run_qucs_simulation(
+    circuit: dict,
+    analysis: dict,
+    timeout_s: int = 600,
+) -> dict:
+    """Simulate a lumped RF/microwave circuit (a matching network, filter, or other
+    R/L/C/TLIN sub-circuit) with Qucs-S's qucsator_rf engine, the free alternative to
+    Keysight ADS's schematic-level circuit simulation. Generates a native qucsator_rf
+    netlist from structured circuit/analysis input (one or more Pac ports plus
+    optional R/L/C/TLIN components -- see simulation.qucs.generate_qucs_netlist for
+    the full shape), runs a native multi-port `.SP` S-parameter analysis via the real
+    `qucsator_rf` binary (a genuine headless CLI, confirmed against qucsator_rf's own
+    source), and parses the full N-port S-parameter matrix back out. Returns
+    "SIMULATED" provenance. Netlist/dataset format verified against qucsator_rf's own
+    primary source (see simulation/qucs.py's module docstring for the full citation
+    list) but NOT against a real qucsator_rf binary -- none is installed in this
+    environment."""
+    return _run_qucs_simulation(
+        circuit=circuit,
+        analysis=analysis,
+        timeout_s=timeout_s,
     )
 
 

@@ -86,9 +86,12 @@ simulation_auto:
   # Non-destructive, sandboxed simulator runs -- safe to run without
   # approval. run_hfss_simulation is deliberately NOT here: it enforces
   # its own licensed-workstation confinement check (simulation/hfss.py)
-  # and is listed under approval_self_gated below instead.
+  # and is listed under approval_self_gated below instead. Qucs-S/
+  # qucsator_rf (like NEC2++/openEMS, unlike HFSS) is open-source
+  # (GPL-2.0) and has no licensing/workstation gate of its own.
   - run_nec2_simulation
   - run_openems_simulation
+  - run_qucs_simulation
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

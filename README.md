@@ -56,6 +56,9 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- Qucs-S (github.com/ra3xdh/qucs_s, qucsator_rf engine) -- lumped-circuit S-parameter
+  simulation, the free alternative to Keysight ADS's schematic-level circuit
+  simulation; manual source/binary install, no pyproject extra
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
