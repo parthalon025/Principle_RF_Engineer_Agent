@@ -60,3 +60,37 @@ above.
 Padding or projecting a local model's embedding to the external
 provider's 1536 dimension to reuse one column — rejected as unnecessary
 lossy indirection now that a second nullable column is cheap.
+
+## Amendment: extended to the agent's own reasoning model (2026-09-02)
+
+This ADR originally covered only the knowledge base's embedding
+(`document_chunks.embedding`/`.embedding_local`) and component-extraction
+calls. `agent/main.py`'s own reasoning/tool-calling loop (the
+`openai-agents` `Agent`/`Runner`) always went to OpenAI's paid API
+regardless of this ADR's `DEFAULT_LLM_BACKEND` setting, since that
+setting was never read anywhere in `agent/main.py`.
+
+`agent/main.py` now has its own, deliberately separate `LLM_PROVIDER`
+config (`openai`/`anthropic`/`local`) governing which provider answers
+the agent's reasoning — separate from `DEFAULT_LLM_BACKEND` because they
+answer different questions: `DEFAULT_LLM_BACKEND` is about a
+*document's* data-sensitivity classification (this ADR's trust-boundary
+reasoning above, which still applies unchanged to embeddings/extraction);
+`LLM_PROVIDER` is a capability/cost choice about who reasons on the
+user's behalf, with no per-document classification dimension. The
+`local` value uses the same self-hosted-instance trust model this ADR
+already established (a model the org controls the deployed instance of,
+data-retention terms and all) — reusing the same `docker-compose.yml`
+`ollama` service and `LOCAL_LLM_BASE_URL` config `DEFAULT_LLM_BACKEND`
+already pointed at, rather than a second, independently-configured local
+endpoint. `anthropic` is new: a second *paid, external* provider,
+alongside OpenAI — Anthropic's hosted API is exactly the same kind of
+"shared managed service the org doesn't control the data handling of"
+this ADR already gates as external for OpenAI, so it is available for
+`LLM_PROVIDER` (a capability choice, not a restricted-data one) but is
+never a legal target for `SENSITIVE`/`RESTRICTED` document processing —
+that gate remains `DEFAULT_LLM_BACKEND`'s alone.
+
+See `docs/FREE_AND_OPEN_SOURCE_TOOLING.md`'s "Self-hosted / free LLM &
+embedding backends" section for the tooling survey this amendment is
+based on, and issue #50 for the implementation.

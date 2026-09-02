@@ -18,6 +18,11 @@ dependencies = [
   "rich>=13.9",
   "docling>=2.124.0",
   "pyyaml>=6.0",
+  # LLM_PROVIDER=anthropic routing (agent/main.py) via openai-agents' own
+  # LiteLLM extension (agents.extensions.models.litellm_model.LitellmModel);
+  # free/OSS, no hardware requirement, so a hard dependency like
+  # openai-agents itself rather than an optional extra.
+  "litellm>=1.55",
 ]
 
 [project.optional-dependencies]

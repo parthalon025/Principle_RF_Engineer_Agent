@@ -6,10 +6,14 @@ services:
       POSTGRES_DB: rfengineer
       POSTGRES_USER: rf
       POSTGRES_PASSWORD: rf_dev_password
-      # Read from the host/.env at `docker compose` invocation time; default
-      # to 1536 (matches knowledge/embedding.py's own env-var defaults).
+      # Read from the host/.env at `docker compose` invocation time.
+      # EMBEDDING_DIM_LOCAL defaults to 1024 (BAAI/bge-m3's actual, fixed
+      # dense-embedding dimension -- see knowledge/embedding.py and
+      # docs/adr/0004-self-hosted-backend-for-restricted-data.md); it is NOT
+      # the same value as EMBEDDING_DIM_EXTERNAL by coincidence-of-defaults,
+      # they are two independent columns for two independent models.
       EMBEDDING_DIM_EXTERNAL: ${EMBEDDING_DIM_EXTERNAL:-1536}
-      EMBEDDING_DIM_LOCAL: ${EMBEDDING_DIM_LOCAL:-1536}
+      EMBEDDING_DIM_LOCAL: ${EMBEDDING_DIM_LOCAL:-1024}
     ports:
       - "5432:5432"
     volumes:
@@ -22,5 +26,35 @@ services:
       timeout: 5s
       retries: 20
 
+  # In plain terms: this is the free, self-hosted stand-in for the paid
+  # OpenAI API (docs/FREE_AND_OPEN_SOURCE_TOOLING.md, "Self-hosted / free
+  # LLM & embedding backends"). It serves both the agent's own reasoning
+  # (agent/main.py, LLM_PROVIDER=local) and the knowledge base's local
+  # embeddings/extraction (ADR-0004, DEFAULT_LLM_BACKEND=local) from one
+  # OpenAI-compatible HTTP API -- `docker compose up` brings this up
+  # alongside postgres, so nothing outside this repo needs to be running
+  # separately for the local path to work end to end.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uses the host's NVIDIA GPU when the NVIDIA Container Toolkit is
+    # installed (confirmed present on this workstation); Ollama itself
+    # falls back to CPU automatically if this reservation can't be
+    # satisfied on a given host, but on a host with no nvidia runtime
+    # registered at all, remove this block or `docker compose up` will
+    # fail to start this specific service.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
 volumes:
   rf_pgdata:
+  ollama_data:

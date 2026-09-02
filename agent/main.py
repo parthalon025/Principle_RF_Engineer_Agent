@@ -4,7 +4,16 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from agents import Agent, FunctionTool, Runner, function_tool
+from agents import (
+    Agent,
+    AsyncOpenAI,
+    FunctionTool,
+    Runner,
+    function_tool,
+    set_default_openai_api,
+    set_default_openai_client,
+    set_tracing_disabled,
+)
 from agents.run import RunResult
 from dotenv import load_dotenv
 
@@ -99,6 +108,75 @@ load_dotenv()
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "principal_engineer.md"
 SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Agent model provider interface (extends ADR-0004's self-hosted-backend
+# rationale from the knowledge base to the agent's own reasoning calls). In
+# plain terms: LLM_PROVIDER picks who answers the agent's tool-calling
+# loop -- "openai" (default, paid, OpenAI's API, unchanged prior
+# behavior), "anthropic" (paid, Claude via Anthropic's API), or "local"
+# (free, a self-hosted OpenAI-compatible server -- Ollama by default --
+# running on this machine, no per-token cost). This is deliberately a
+# SEPARATE knob from DEFAULT_LLM_BACKEND, which governs the knowledge
+# base's embedding/extraction calls (knowledge/embedding.py, knowledge/
+# extraction_llm.py) for data-sensitivity reasons (ADR-0004) -- provider
+# choice here is a capability/cost decision, not a data-handling one, so
+# the two are independently configurable. Adding another LiteLLM-routed
+# provider (Gemini, Mistral, etc. -- see https://docs.litellm.ai/docs/providers)
+# is a one-line addition to _LITELLM_PROVIDERS below, not new plumbing.
+# ---------------------------------------------------------------------------
+
+_LITELLM_PROVIDERS = {
+    # provider name -> (litellm model-string prefix, model env var, model
+    # env var default, API key env var)
+    "anthropic": ("anthropic", "ANTHROPIC_MODEL", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+}
+
+
+def _resolve_agent_model():
+    """Build the value to pass as every Agent's `model=`: a plain model-name
+    string for the "openai" (SDK default provider) and "local" (routed via
+    _configure_local_llm_backend's default client, below) providers, or a
+    `agents.extensions.models.litellm_model.LitellmModel` instance -- a
+    `Model` object, not a string -- for any LiteLLM-routed provider like
+    "anthropic". `Agent.model` accepts either (`str | Model`)."""
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    if provider in _LITELLM_PROVIDERS:
+        from agents.extensions.models.litellm_model import LitellmModel
+
+        prefix, model_env, model_default, key_env = _LITELLM_PROVIDERS[provider]
+        return LitellmModel(
+            model=f"{prefix}/{os.getenv(model_env, model_default)}",
+            api_key=os.getenv(key_env),
+        )
+    if provider == "local":
+        return os.getenv("LOCAL_AGENT_MODEL", "gpt-oss:20b")
+    return os.getenv("OPENAI_MODEL", "gpt-5.5")
+
+
+def _configure_local_llm_backend() -> None:
+    """When LLM_PROVIDER=local, point the SDK's default OpenAI-compatible
+    client at LOCAL_LLM_BASE_URL (Ollama by default) instead of OpenAI's
+    API, so a plain model-name string from _resolve_agent_model resolves
+    against the local server -- no per-Agent wiring needed. A no-op for
+    every other provider."""
+    if os.getenv("LLM_PROVIDER", "openai").lower() != "local":
+        return
+    base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
+    client = AsyncOpenAI(base_url=base_url, api_key=os.getenv("LOCAL_LLM_API_KEY") or "unused")
+    set_default_openai_client(client, use_for_tracing=False)
+    # Self-hosted OpenAI-compatible servers (Ollama, llama.cpp, LM Studio)
+    # implement the older /v1/chat/completions surface, not OpenAI's newer
+    # /v1/responses API that this SDK defaults to.
+    set_default_openai_api("chat_completions")
+    # No real OPENAI_API_KEY exists in this mode, so trace uploads to
+    # OpenAI's platform would only fail noisily -- turn tracing off rather
+    # than let every run attempt and fail one.
+    set_tracing_disabled(True)
+
+
+_configure_local_llm_backend()
 
 
 @function_tool
@@ -1836,7 +1914,7 @@ _SPECIALIST_KEYS = [key for key in _SPEC_BY_KEY if key != "principal"]
 ROLES: dict[str, Agent] = {
     key: Agent(
         name=_SPEC_BY_KEY[key].display_name,
-        model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
+        model=_resolve_agent_model(),
         instructions=f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_SPEC_BY_KEY[key].domain_note}",
         tools=list(_SPEC_BY_KEY[key].tools),
     )
@@ -1910,7 +1988,7 @@ DELEGATION_TOOLS: dict[str, FunctionTool] = {
 _principal_spec = _SPEC_BY_KEY["principal"]
 ROLES["principal"] = Agent(
     name=_principal_spec.display_name,
-    model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
+    model=_resolve_agent_model(),
     instructions=(
         f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_principal_spec.domain_note}"
         "\n\n## Delegating to specialists\n\n"
