@@ -1,43 +1,163 @@
+# Tool permission classification for every agent/MCP tool wired in
+# agent/main.py and mcp_server/server.py (kept in sync by construction --
+# both files register the same tool set). Enforced by orchestration/policy.py:
+#
+#   - blocked_by_default tools always refuse.
+#   - approval_required tools refuse unless a valid approval is presented
+#     (no such tool is implemented today -- see that category below).
+#   - every other category is documentation only; no runtime gate.
+#   - a tool NOT LISTED under any category here is refused too (fail
+#     closed) -- orchestration/policy.py.assert_all_tools_categorized()
+#     checks this at import time, in both agent/main.py and
+#     mcp_server/server.py, precisely so a newly added tool can't ship
+#     unguarded just because nobody remembered to update this file.
+#
+# `/grill-with-docs` on the RF tool orchestration flow (2026-09) found this
+# file badly out of date against the real tool names (run_hfss/run_nec/
+# run_openems/analyze_touchstone/calculate_link_budget/calculate_ip3 none
+# matched anything real; run_qucs/run_ads/modify_controlled_design/
+# change_instrument_configuration/start_rf_transmission/
+# change_calibration_state/read_touchstone/delete_design/delete_measurement/
+# procurement didn't exist as tools at all; the four measurement
+# approval-granting tools and the three design-loop tools weren't mentioned
+# anywhere) and rewrote it against the actual tool list.
+
 read_only:
+  # No side effects (no DB write, no I/O beyond reading a file/the
+  # knowledge base) -- covers pure queries and pure derived-data
+  # transforms (Touchstone interpolation/de-embedding/cascading/
+  # comparison produce new data but touch nothing external).
   - search_knowledge
+  - search_design_records
   - read_document
   - read_design
-  - read_touchstone
-  - analyze_touchstone
-
-design_tracking:
-  - create_design
-  - record_decision
-  - verify_requirement
+  - analyze_touchstone_file
+  - interpolate_touchstone_file
+  - deembed_touchstone_file
+  - cascade_touchstone_files
+  - compare_touchstone_files
 
 calculation:
+  # Deterministic, CALCULATED-provenance functions -- includes the unit
+  # converters and the one named optimization/correlation use case
+  # (optimize_patch_length_for_target_frequency,
+  # correlate_simulated_and_measured), which are themselves deterministic
+  # searches/comparisons over calculated values, not open-ended actions.
+  - calculate_wavelength
   - calculate_vswr
   - calculate_return_loss
-  - calculate_wavelength
+  - calculate_cascade_gain
   - calculate_noise_figure
-  - calculate_link_budget
-  - calculate_ip3
+  - convert_db_to_linear
+  - convert_linear_to_db
+  - convert_s_to_z
+  - convert_z_to_s
+  - convert_s_to_y
+  - convert_y_to_s
+  - convert_s_to_abcd
+  - convert_abcd_to_s
+  - calculate_free_space_path_loss
+  - calculate_link_budget_margin
+  - calculate_cascade_output_ip3
+  - calculate_oip3_from_iip3
+  - calculate_iip3_from_oip3
+  - calculate_third_order_intermod_output
+  - calculate_third_order_intermod_dbc
+  - calculate_stability_delta
+  - calculate_rollett_k_factor
+  - calculate_stability_verdict
+  - calculate_output_stability_circle
+  - calculate_input_stability_circle
+  - calculate_quarter_wave_transformer_impedance
+  - calculate_l_network_match
+  - calculate_patch_effective_permittivity
+  - calculate_patch_length_extension
+  - calculate_patch_resonant_frequency
+  - calculate_fractional_bandwidth_from_q
+  - calculate_quality_factor_from_fractional_bandwidth
+  - calculate_curvature_length_correction_factor
+  - calculate_curvature_shifted_resonant_frequency
+  - calculate_maxwell_garnett_effective_permeability
+  - calculate_aperture_gain
+  - correlate_simulated_and_measured
+  - optimize_patch_length_for_target_frequency
 
 simulation_auto:
-  - run_nec
-  - run_openems
-  - run_qucs
+  # Non-destructive, sandboxed simulator runs -- safe to run without
+  # approval. run_hfss_simulation is deliberately NOT here: it enforces
+  # its own licensed-workstation confinement check (simulation/hfss.py)
+  # and is listed under approval_self_gated below instead.
+  - run_nec2_simulation
+  - run_openems_simulation
+
+approval_self_gated:
+  # Real, currently-implemented tools that already refuse to act without
+  # their own independent gate -- measurement/base.py's ApprovalReceipt
+  # (the four measure_* tools) or simulation/hfss.py's workstation
+  # confinement check (run_hfss_simulation). Deliberately NOT listed under
+  # approval_required: this policy file adds no second gate on top of an
+  # already-working one -- see docs/adr's grilling notes and
+  # orchestration/policy.py's module docstring for why a blanket
+  # approval_required block would just double-gate (and, with no approval
+  # callback wired anywhere in this codebase, permanently break) a tool
+  # that already works correctly today.
+  - run_hfss_simulation
+  - measure_vna_s_parameters
+  - measure_spectrum_analyzer_trace
+  - set_signal_generator_output
+  - measure_power_meter_reading
+
+approval_workflow:
+  # Request-an-approval-receipt tools. These never touch an instrument or
+  # mutate state themselves -- they only ever decide whether to grant a
+  # receipt for one of the approval_self_gated tools above to consume, and
+  # (per measurement/base.py's own module docstring) always refuse today
+  # since no approval_callback is wired anywhere in this project's
+  # agent/MCP tool surface. Listed separately from approval_required
+  # because they are not the dangerous action being gated -- they're part
+  # of the gate itself.
+  - request_vna_measurement_approval
+  - request_spectrum_analyzer_measurement_approval
+  - request_signal_generator_output_approval
+  - request_power_meter_measurement_approval
 
 ingestion_auto:
   - ingest_document
   - index_document
   - extract_components
 
+design_tracking:
+  - create_design
+  - record_decision
+  - verify_requirement
+
+design_loop:
+  # The controlled design-iteration loop (orchestration/design_loop.py,
+  # issue #46). Its own ARCHITECTURE/MEASUREMENT/REDESIGN_DECISION gate is
+  # enforced internally by orchestration/approval.py, independently of
+  # this policy file -- this category is informational only, same as
+  # design_tracking.
+  - start_design_loop
+  - advance_design_loop_step
+  - inspect_design_loop_state
+
 approval_required:
-  - run_hfss
+  # Real gate, no exceptions -- but every entry here is a capability that
+  # does NOT exist as an implemented tool yet. Kept here (rather than
+  # deleted) so that if one is ever built, it starts gated by default
+  # instead of shipping unguarded because nobody remembered to add it.
+  # manufacturing_release never will exist as an autonomous action at all
+  # -- see orchestration/design_loop.py's "NO MANUFACTURING-RELEASE PATH"
+  # and docs/adr/0005.
   - run_ads
   - modify_controlled_design
-  - change_instrument_configuration
-  - start_rf_transmission
   - change_calibration_state
   - manufacturing_release
 
 blocked_by_default:
+  # None of these exist as implemented tools either -- blocked by
+  # non-existence today. Listed so a future proposal for any of them
+  # starts blocked, not allowed by omission.
   - arbitrary_shell
   - arbitrary_network_request
   - delete_design
