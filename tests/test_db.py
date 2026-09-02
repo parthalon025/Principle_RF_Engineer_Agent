@@ -5,6 +5,7 @@ from knowledge.db import (
     InvalidSupersessionError,
     find_document_by_checksum,
     get_chunk_details,
+    get_component,
     insert_chunks,
     insert_document,
     upsert_component,
@@ -241,3 +242,43 @@ def test_upsert_component_updates_on_matching_manufacturer_and_part_number(db_co
         )
         (count,) = cur.fetchone()
     assert count == 1
+
+
+def test_get_component_returns_none_when_absent(db_conn):
+    assert get_component(db_conn, "Acme RF", "NO-SUCH-PART") is None
+
+
+def test_get_component_returns_row_by_exact_manufacturer_and_part_number(db_conn):
+    specs = {"gain_db": {"value": 20.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}}
+    upsert_component(
+        db_conn,
+        manufacturer="Acme RF",
+        part_number="ACM-AMP-300",
+        category="amplifier",
+        specifications=specs,
+        datasheet_document_id=None,
+    )
+
+    found = get_component(db_conn, "Acme RF", "ACM-AMP-300")
+
+    assert found is not None
+    assert found["specifications"] == specs
+    assert found["category"] == "amplifier"
+
+
+def test_get_component_null_manufacturer_matches_null_manufacturer(db_conn):
+    """`IS NOT DISTINCT FROM` (not `=`) is what makes this possible -- a
+    plain `=` comparison would never match a NULL `manufacturer` column."""
+    upsert_component(
+        db_conn,
+        manufacturer=None,
+        part_number="ACM-AMP-400",
+        category="amplifier",
+        specifications={},
+        datasheet_document_id=None,
+    )
+
+    found = get_component(db_conn, None, "ACM-AMP-400")
+
+    assert found is not None
+    assert found["manufacturer"] is None

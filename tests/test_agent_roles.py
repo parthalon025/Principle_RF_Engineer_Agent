@@ -75,9 +75,12 @@ def test_principal_role_has_broad_access():
     # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
     # tool set, the run_openparem_simulation tool added by issue #62, the
     # run_elmer_simulation tool added by issue #64, the run_ltspice_
-    # simulation tool added by issue #59, plus 5 consult_<role>_role
-    # delegation tools (issue #35), one per non-principal specialist.
-    assert len(names) == 75
+    # simulation tool added by issue #59, plus 4 more
+    # (lookup_digikey_component, lookup_mouser_component,
+    # lookup_nexar_component, reconcile_component_sources) added by ticket
+    # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
+    # non-principal specialist.
+    assert len(names) == 79
 
 
 def test_principal_module_alias_matches_registry():
@@ -99,6 +102,23 @@ def test_systems_role_gets_calculations_and_knowledge_authoring():
     assert "analyze_touchstone_file" not in names
     # knowledge-auditing tool belongs to verification, not systems
     assert "extract_components" not in names
+
+
+def test_systems_role_gets_component_sourcing_tools():
+    # ticket #67: sourcing a datasheet straight from a distributor and
+    # reconciling it into one components row is the same knowledge-
+    # authoring concern as ingest_document/index_document.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_digikey_component" in names
+    assert "lookup_mouser_component" in names
+    assert "lookup_nexar_component" in names
+    assert "reconcile_component_sources" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "lookup_digikey_component" not in role_names
+        assert "lookup_mouser_component" not in role_names
+        assert "lookup_nexar_component" not in role_names
+        assert "reconcile_component_sources" not in role_names
 
 
 def test_microwave_role_gets_network_and_component_analysis():

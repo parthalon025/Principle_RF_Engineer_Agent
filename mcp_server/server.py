@@ -9,9 +9,15 @@ from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
 from designs.service import verify_requirement as _verify_requirement
+from knowledge.component_resolution import (
+    reconcile_components_from_matches as _reconcile_components_from_matches,
+)
+from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datasheet
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
+from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
@@ -1260,6 +1266,56 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     SENSITIVE/RESTRICTED documents always use the self-hosted backend, no fallback to
     external."""
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
+
+
+@mcp.tool()
+def lookup_digikey_component(part_number: str, license: str, classification: str) -> dict:
+    """Search Digi-Key's Product Information API v4 for part_number, download its
+    datasheet PDF, and ingest it via ingest_document (source_type='datasheet'),
+    unchanged. Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND
+    DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET are configured. Returns {"status":
+    "no_match" | "no_datasheet" | "ok", ...}; on "ok", manufacturer/
+    manufacturer_part_number are Digi-Key's own report of the part's identity, for
+    reconcile_component_sources to cross-check against Mouser's/Nexar's hit for the
+    same part. NOT run against the real API in this environment -- see
+    knowledge/digikey.py's module docstring."""
+    return _lookup_digikey_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def lookup_mouser_component(part_number: str, license: str, classification: str) -> dict:
+    """Same contract as lookup_digikey_component, against Mouser's Search API
+    (MOUSER_API_KEY). NOT run against the real API in this environment -- see
+    knowledge/mouser.py's module docstring."""
+    return _lookup_mouser_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def lookup_nexar_component(part_number: str, license: str, classification: str) -> dict:
+    """Same contract as lookup_digikey_component, against Nexar's GraphQL API
+    (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). NOT run against the real API
+    in this environment -- see knowledge/nexar.py's module docstring."""
+    return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def reconcile_component_sources(
+    matches: list[dict],
+    category: str,
+    datasheet_document_ids: dict[str, int] | None = None,
+) -> dict:
+    """Reconcile two or three distributor lookups (lookup_digikey_component/
+    lookup_mouser_component/lookup_nexar_component results for the SAME queried part
+    number) into ONE components row instead of a duplicate per distributor. Each
+    entry in matches needs at least "distributor" and "manufacturer_part_number"
+    (pass a lookup_* result's fields straight through). datasheet_document_ids
+    optionally maps distributor name -> the document_id its ingest produced.
+    category must be one of this repo's ten RF component categories -- never guessed
+    from a distributor's own catalog taxonomy. Runs automatically, no confirmation
+    step, same posture as extract_components."""
+    return _reconcile_components_from_matches(
+        matches=matches, category=category, datasheet_document_ids=datasheet_document_ids
+    )
 
 
 @mcp.tool()

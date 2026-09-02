@@ -26,6 +26,9 @@ Planning reference; not legal advice.
 | LTspice | Free-of-charge proprietary freeware -- Analog Devices "Click-Through Software License Agreement" (doc ID `20191031-LTS-CTSLA`, https://ltwiki.org/files/LTspiceHelp.chm/html/License.pdf, confirmed against Analog Devices' own license text). Non-exclusive, non-transferable, non-sublicensable internal-use grant (per-workstation, single concurrent user); explicitly prohibits reverse engineering/decompiling; carries a reciprocal patent-license-back clause to ADI. **Closed source -- NOT OSI-approved**, distinct from every other (open-source) tool in this batch. | Free to install and use, but a licensed-terms proprietary EULA, not an open-source license -- do not conflate with the GPL/BSD/MIT entries above. The only non-open-source item in this batch (issue #59); ngspice/Xyce/Qucs-S remain the preferred, fully open-source ADS-alternative targets. |
 | PostgreSQL | PostgreSQL License | Free |
 | pgvector | Permissive | Free |
+| Digi-Key Product Information API v4 | Free developer-account tier (self-service OAuth2 registration); proprietary API terms, not an OSI license | Free, no purchase; internal use of returned catalog/datasheet data subject to Digi-Key's own API terms |
+| Mouser Search API | Free with a registered API key; proprietary terms at mouser.com/en/apiterms/, not an OSI license | Free, no purchase; internal use subject to Mouser's own API terms |
+| Nexar API (Octopart data) | Free "Evaluation" tier (OAuth2 self-registration, capped ~1,000 matched parts); proprietary API terms, not an OSI license | Free, no purchase; higher volume needs a paid plan; internal use subject to Nexar's own API terms |
 | Manufacturer data | Varies | Internal use subject to source terms |
 | Books/papers | Varies | Internal use subject to organizational rights |
 | Standards | Varies | Many are copyrighted/licensed |

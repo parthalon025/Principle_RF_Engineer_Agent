@@ -22,9 +22,15 @@ from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
 from designs.service import verify_requirement as _verify_requirement
+from knowledge.component_resolution import (
+    reconcile_components_from_matches as _reconcile_components_from_matches,
+)
+from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datasheet
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
+from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
@@ -1354,6 +1360,74 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
+@function_tool
+def lookup_digikey_component(part_number: str, license: str, classification: str) -> dict:
+    """Search Digi-Key's Product Information API v4 for part_number, download its
+    datasheet PDF, and ingest it into the knowledge base (source_type='datasheet') via
+    ingest_document, unchanged. Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true
+    AND DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET are configured (see .env.example) --
+    this places a real, credentialed call to a third party. Returns {"status": "no_match"
+    | "no_datasheet" | "ok", ...}; on "ok", "manufacturer"/"manufacturer_part_number" are
+    Digi-Key's own report of the part's identity, for reconcile_component_sources to
+    cross-check against Mouser's/Nexar's hit for the same part. Digi-Key's real API
+    surface is verified against its own docs (see knowledge/digikey.py's module
+    docstring) but NOT run against the real API in this environment -- treat any result
+    as unverified end-to-end until it has been run against the real API at least once."""
+    return _lookup_digikey_datasheet(part_number, license=license, classification=classification)
+
+
+@function_tool
+def lookup_mouser_component(part_number: str, license: str, classification: str) -> dict:
+    """Same contract as lookup_digikey_component, against Mouser's Search API
+    (MOUSER_API_KEY). Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND
+    MOUSER_API_KEY is configured. Mouser's real API surface is corroborated from
+    third-party integrations (see knowledge/mouser.py's module docstring's honest
+    caveat -- Mouser's own Swagger spec sits behind a login wall) but NOT run against
+    the real API in this environment."""
+    return _lookup_mouser_datasheet(part_number, license=license, classification=classification)
+
+
+@function_tool
+def lookup_nexar_component(part_number: str, license: str, classification: str) -> dict:
+    """Same contract as lookup_digikey_component, against Nexar's GraphQL API
+    (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). Refuses to run unless
+    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND those credentials are configured. Nexar's
+    free "Evaluation" tier caps around 1,000 matched parts. Nexar's real API surface is
+    verified against its own docs (see knowledge/nexar.py's module docstring) but NOT
+    run against the real API in this environment."""
+    return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
+
+
+@function_tool(strict_mode=False)  # `matches` (a list of open-shaped distributor-hit
+# dicts) and `datasheet_document_ids` (an open string-keyed map) don't fit the SDK's
+# strict-schema requirement -- same rationale as create_design's `requirements`/
+# `architecture` below.
+def reconcile_component_sources(
+    matches: list[dict],
+    category: str,
+    datasheet_document_ids: dict[str, int] | None = None,
+) -> dict:
+    """Reconcile two or three distributor lookups (lookup_digikey_component/
+    lookup_mouser_component/lookup_nexar_component results for the SAME queried part
+    number) into ONE components row instead of a duplicate per distributor --
+    CONTEXT.md's Component identity, (manufacturer, part_number) with package/tape-
+    and-reel suffix included, decides what counts as "the same part." Each entry in
+    matches needs at least "distributor" and "manufacturer_part_number" (as returned
+    by the lookup_* tools -- pass those results' fields straight through, do not
+    reformat them). datasheet_document_ids optionally maps distributor name -> the
+    document_id its ingest produced, so the resulting row links back to a real
+    ingested datasheet; omitted or a group with no entry preserves whatever
+    datasheet_document_id (and specifications) the row already had, rather than
+    wiping either. category must be one of this repo's ten RF component categories
+    (amplifier, filter, mixer, attenuator, coupler_splitter, circulator_isolator,
+    switch, antenna, connector_cable, passive_component) -- never guessed from a
+    distributor's own, differently-shaped catalog taxonomy. Runs automatically, no
+    confirmation step, same posture as extract_components."""
+    return _reconcile_components_from_matches(
+        matches=matches, category=category, datasheet_document_ids=datasheet_document_ids
+    )
+
+
 # strict_mode=False: `requirements`/`architecture` are genuinely free-form
 # JSON (arbitrary requirement_id keys; architecture shape isn't fixed by
 # this ticket) -- the SDK's default strict-schema mode rejects an open
@@ -1624,9 +1698,14 @@ def inspect_design_loop_state(state: dict) -> dict:
 #   - systems:      link-level/systems-engineering concerns. Gets the
 #                   cascaded gain/noise-figure/link-budget/IP3 tools,
 #                   wavelength/electrical-size bookkeeping, the dB<->linear
-#                   unit converters those calculations lean on, plus the two
+#                   unit converters those calculations lean on, plus the
 #                   knowledge-base *authoring* tools (ingest_document,
-#                   index_document), since standing up the knowledge base for
+#                   index_document, and (ticket #67) lookup_digikey_component/
+#                   lookup_mouser_component/lookup_nexar_component/
+#                   reconcile_component_sources -- sourcing a datasheet
+#                   straight from a distributor and reconciling it into one
+#                   components row is the same authoring concern as manually
+#                   ingesting one), since standing up the knowledge base for
 #                   the team is systems-level work. Shares the cascaded-IP3/
 #                   IM3 tools with microwave -- linearity budgeting is both a
 #                   chain-level (systems) and single-stage (microwave)
@@ -1771,6 +1850,10 @@ _ALL_TOOLS = [
     search_knowledge,
     search_design_records,
     extract_components,
+    lookup_digikey_component,
+    lookup_mouser_component,
+    lookup_nexar_component,
+    reconcile_component_sources,
     create_design,
     read_design,
     record_decision,
@@ -1824,9 +1907,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "You focus on link-level and systems-engineering concerns: cascaded "
             "gain/noise-figure budgets, wavelength/electrical-size bookkeeping, "
             "and standing up the knowledge base (ingesting and indexing "
-            "documents) other roles rely on. Defer network-level S-parameter "
-            "detail to the microwave role and document auditing to the "
-            "verification role."
+            "documents, and sourcing component datasheets directly from "
+            "Digi-Key/Mouser/Nexar) other roles rely on. Defer network-level "
+            "S-parameter detail to the microwave role and document auditing to "
+            "the verification role."
         ),
         tools=[
             calculate_wavelength,
@@ -1846,6 +1930,10 @@ ROLE_SPECS: list[RoleSpec] = [
             ingest_document,
             index_document,
             search_knowledge,
+            lookup_digikey_component,
+            lookup_mouser_component,
+            lookup_nexar_component,
+            reconcile_component_sources,
         ],
     ),
     RoleSpec(
