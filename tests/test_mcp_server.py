@@ -119,8 +119,21 @@ def test_registered_tool_count_matches_old_plus_new():
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
-    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
+    # 4 more (lookup_digikey_component, lookup_mouser_component,
+    # lookup_nexar_component, reconcile_component_sources) added by #67.
+    assert (
+        len(registered_names)
+        == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 4
+    )
+
+
+def test_component_sourcing_tools_are_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "lookup_digikey_component" in registered_names
+    assert "lookup_mouser_component" in registered_names
+    assert "lookup_nexar_component" in registered_names
+    assert "reconcile_component_sources" in registered_names
 
 
 def test_correlate_simulated_and_measured_is_registered():

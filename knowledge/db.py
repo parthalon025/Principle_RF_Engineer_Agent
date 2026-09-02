@@ -370,6 +370,34 @@ def upsert_component(
     return row
 
 
+def get_component(
+    conn: psycopg.Connection, manufacturer: str | None, part_number: str
+) -> dict[str, Any] | None:
+    """Fetch a `components` row by its exact `(manufacturer, part_number)`
+    identity, or None if no such row exists yet.
+
+    `IS NOT DISTINCT FROM` (rather than `=`) on `manufacturer` is
+    deliberate: plain SQL `NULL = NULL` is never true, so a `=` comparison
+    would never find a row whose `manufacturer` is NULL even when
+    `manufacturer` here is also None -- `IS NOT DISTINCT FROM` treats two
+    NULLs as a match, matching how a caller reading "no manufacturer on
+    either side" would expect this lookup to behave.
+
+    Ticket #67's `knowledge.component_resolution.reconcile_components`
+    reads the existing row's `specifications` via this function before
+    calling `upsert_component`, so identity reconciliation -- which has no
+    per-field spec data of its own (that's `extract_components`'s job) --
+    never wipes specifications an earlier extraction already stored.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT * FROM components WHERE manufacturer IS NOT DISTINCT FROM %s "
+            "AND part_number = %s",
+            (manufacturer, part_number),
+        )
+        return cur.fetchone()
+
+
 def insert_chunks(conn: psycopg.Connection, document_id: int, chunks: list[ChunkDraft]) -> int:
     """Bulk-insert chunk drafts for a document. Returns the number inserted.
     Embeddings are left NULL -- populating them is ticket #2's concern."""
