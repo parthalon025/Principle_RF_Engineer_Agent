@@ -12,6 +12,8 @@ policies/tool_policy.yaml and the real tool lists agent/main.py and
 mcp_server/server.py register, with no fakes/stubs needed anywhere.
 """
 
+import asyncio
+
 import pytest
 
 import agent.main
@@ -63,5 +65,5 @@ def test_assert_all_tools_categorized_accepts_every_real_agent_tool():
 
 def test_assert_all_tools_categorized_accepts_every_real_mcp_tool():
     # Same regression-catching assertion for the other tool surface.
-    registered_names = [tool.name for tool in mcp_server.server.mcp._tool_manager.list_tools()]
+    registered_names = [tool.name for tool in asyncio.run(mcp_server.server.mcp.list_tools())]
     assert_all_tools_categorized(registered_names)

@@ -147,7 +147,7 @@ def test_every_registered_tool_is_categorized_in_tool_policy():
     # Mirrors the import-time assert_all_tools_categorized() call at the
     # bottom of mcp_server/server.py -- this test makes the same guarantee
     # explicit and independently re-checkable here.
-    registered_names = [t.name for t in server.mcp._tool_manager.list_tools()]
+    registered_names = [t.name for t in asyncio.run(server.mcp.list_tools())]
     assert_all_tools_categorized(registered_names)
 
 

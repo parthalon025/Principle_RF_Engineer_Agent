@@ -178,10 +178,15 @@ def _grant_and_advance(state: dict[str, Any], step: DesignStep, step_input: dict
     return advance_design_loop_step(state, step_input, approval=receipt.to_dict())
 
 
-def _drive_to_redesign_decision(state: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
+def _drive_to_redesign_decision(
+    state: dict[str, Any], tmp_path: Path, verification_status: str = "PASS"
+) -> dict[str, Any]:
     """Real ARCHITECTURE -> ... -> CORRELATION, leaving `state` positioned
     at REDESIGN_DECISION -- callers advance the final gated step themselves
-    with whatever next_action they're testing."""
+    with whatever next_action they're testing. `verification_status` lets
+    callers exercise design_loop.py's wider VERIFICATION_STATUSES
+    vocabulary (CONDITIONAL PASS/BLOCKED, not just designs.models.
+    VerificationStatus's own PASS/FAIL/MARGINAL/NOT VERIFIED)."""
     state = _grant_and_advance(
         state,
         DesignStep.ARCHITECTURE,
@@ -224,7 +229,7 @@ def _drive_to_redesign_decision(state: dict[str, Any], tmp_path: Path) -> dict[s
             "method": "analysis",
             "expected": 5.0,
             "actual": 5.2,
-            "status": "PASS",
+            "status": verification_status,
         },
     )
     # instrument_approval only needs to be PRESENT (_handle_measurement's
@@ -302,6 +307,37 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path,
 
     assert stored["verification_items"][0]["status"] == "PASS"
     assert stored["verification_items"][0]["method"] == "analysis"
+
+
+@pytest.mark.parametrize(
+    ("loop_status", "expected_designs_status"),
+    [("CONDITIONAL PASS", "MARGINAL"), ("BLOCKED", "FAIL")],
+)
+def test_flush_maps_verification_statuses_designs_models_does_not_accept(
+    cleanup_designs, tmp_path, monkeypatch, loop_status, expected_designs_status
+):
+    """design_loop.py's VERIFICATION_STATUSES accepts CONDITIONAL PASS/
+    BLOCKED, but designs.models.VerificationStatus doesn't -- a mismatch
+    the flush's own status-remapping (orchestration/tooling.py's
+    _VERIFICATION_STATUS_MAP) must reconcile, or every future flush for
+    this iteration would fail permanently (found in code review)."""
+    _patch_vna_transport(monkeypatch)
+    state = start_new_design_loop("TOOL-VSTAT", "Verification Status Map Test", "A", REQUIREMENTS)
+    cleanup_designs.append(state["design_id"])
+    design_id = state["design_id"]
+
+    state = _drive_to_redesign_decision(state, tmp_path, verification_status=loop_status)
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    assert state["completed"] is True  # the flush succeeded, not raised
+    stored = read_design(design_id)
+    assert stored["verification_items"][0]["status"] == expected_designs_status
+    assert loop_status in stored["verification_items"][0]["notes"]
 
 
 # ---------------------------------------------------------------------------

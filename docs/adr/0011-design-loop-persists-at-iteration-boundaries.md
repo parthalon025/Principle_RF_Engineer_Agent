@@ -17,11 +17,28 @@ calculation mid-iteration isn't itself a meaningful precedent record.
 Persisting only at final completion was rejected after considering that an
 abandoned loop (conversation ends mid-iteration, no `accept_design` ever
 reached) would otherwise leave *zero trace* of what was tried — including
-the `REDESIGN_DECISION` step's `rationale`, which is exactly the "what was
-tried and why it didn't work" data `search_design_records` exists to
-surface as precedent for future designs (CONTEXT.md: Design/decision
-record). Flushing at each iteration boundary means even an abandoned loop
-leaves a full record of every completed iteration.
+the `REDESIGN_DECISION` step's `rationale`, real "what was tried and why
+it didn't work" data. Flushing at each iteration boundary means even an
+abandoned loop leaves a full record of every completed iteration, readable
+back via `read_design`.
+
+**Correction (found during code review): this is NOT, by itself, precedent
+`search_design_records` can find.** An earlier draft of this ADR claimed
+flushed decisions would be "surfaced as precedent... by
+`search_design_records`" — wrong, and CONTEXT.md already said so before
+this ADR was written: `search_design_records` only searches `documents`
+rows ingested via `ingest_document` with `source_type=design_record`, and
+CONTEXT.md's own "Design/decision record" entry explicitly warns against
+conflating that ingested-document concept with the `decision_records`
+SQL table this ADR persists to ("_Avoid_: conflating with the
+`decision_records` table... a design/decision record is a separate,
+searchable knowledge-base document about a *past* design... not an
+approval workflow"). This persistence makes a loop's full history
+available to read (`read_design`) and gives a future human or agent real
+data to write an actual `design_record` document from — it does not, by
+itself, make that history searchable as precedent. Bridging the two
+(auto-ingesting a flushed loop's history as a searchable document) is a
+separate, not-yet-designed feature, not something this ADR builds.
 
 **Failure handling — fail loud.** If a flush fails (a step's action already
 ran, but writing it to the database errors), the transition is not treated

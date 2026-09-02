@@ -110,6 +110,28 @@ _ENGINEERING_RESULT_KINDS = frozenset(
     {"calculation", "simulation", "optimization", "measurement", "correlation"}
 )
 
+# design_loop.py's own VERIFICATION_STATUSES (verification/README.md's
+# vocabulary: PASS/CONDITIONAL PASS/FAIL/NOT VERIFIED/BLOCKED) is WIDER
+# than designs.models.VerificationStatus (NOT VERIFIED/PASS/FAIL/MARGINAL
+# -- CONTEXT.md's "Verification item"), a pre-existing mismatch this
+# module's flush is the first thing to actually exercise: a VERIFICATION
+# step recording "CONDITIONAL PASS" or "BLOCKED" is accepted by the loop's
+# own _handle_verification, but designs.db.verify_requirement would
+# reject it outright at the next flush -- permanently, since the decision
+# is already baked into the caller's held state by then, with no way to
+# retry past it. Reconciled here (not in design_loop.py, which stays
+# unaware of designs.models' narrower vocabulary) by mapping the two
+# extra values down to their closest designs.models equivalent, same
+# spirit as this module's REQUIREMENTS SHAPE reconciliation above:
+# CONDITIONAL PASS -> MARGINAL (passes with reservations), BLOCKED -> FAIL
+# (conservative -- an unresolved blocker is treated as a failure to
+# verify, not silently as a pass). The original design-loop status is
+# never silently lost: _flush_target_for appends it to `notes`.
+_VERIFICATION_STATUS_MAP = {
+    "CONDITIONAL PASS": "MARGINAL",
+    "BLOCKED": "FAIL",
+}
+
 
 class DesignLoopPersistenceError(RuntimeError):
     """Raised when a design-loop flush (docs/adr/0011) cannot be written --
@@ -157,15 +179,26 @@ def _flush_target_for(
             },
         )
     if decision.kind == "verification_record":
+        loop_status = decision.input["status"]
+        mapped_status = _VERIFICATION_STATUS_MAP.get(loop_status, loop_status)
+        notes = decision.input.get("notes")
+        if loop_status in _VERIFICATION_STATUS_MAP:
+            remap_note = (
+                f"design-loop status was {loop_status!r}, "
+                f"recorded here as {mapped_status!r} (see orchestration/tooling.py's "
+                "_VERIFICATION_STATUS_MAP)"
+            )
+            notes = f"{notes} -- {remap_note}" if notes else remap_note
         return _FlushTarget(
             designs_db.verify_requirement,
             {
                 "design_id": design_id,
                 "requirement_id": decision.input["requirement_id"],
                 "method": decision.input["method"],
-                "status": decision.input["status"],
+                "status": mapped_status,
                 "expected": decision.input.get("expected"),
                 "actual": decision.input.get("actual"),
+                "notes": notes,
             },
         )
     if decision.kind in _ENGINEERING_RESULT_KINDS:
@@ -199,9 +232,14 @@ def _flush_decisions(
     """Write every decision in `decisions` (docs/adr/0011: everything
     recorded since the last flush) plus the `designs.status` transition,
     all on ONE connection/transaction -- commits once, or none of it
-    lands. Raises `DesignLoopPersistenceError` (never returns a
-    partial-success indication) on any failure, wrapping whichever
-    designs.db exception surfaced.
+    lands. Raises `DesignLoopPersistenceError` for a REFUSED write (a
+    designs.db call rejecting the write outright -- a record_key
+    collision, an unknown requirement_id, ...); any other failure (a real
+    database error) is rolled back and re-raised with its own original
+    type, matching designs/service.py's own convention ("a write that
+    fails for any other reason still raises") rather than relabeling it.
+    Both cases share one property: `advance_design_loop_step` never
+    returns a state that claims the transition succeeded.
     """
     targets = [
         target
@@ -230,14 +268,9 @@ def _flush_decisions(
                 f"iteration={iteration} refused: {exc}"
             ) from exc
         conn.commit()
-    except DesignLoopPersistenceError:
-        raise
-    except Exception as exc:
+    except Exception:
         conn.rollback()
-        raise DesignLoopPersistenceError(
-            f"design-loop flush for design_id={design_id}, loop_id={loop_id!r}, "
-            f"iteration={iteration} failed: {exc}"
-        ) from exc
+        raise
     finally:
         conn.close()
 

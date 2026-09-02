@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import numpy as np
@@ -1239,7 +1240,7 @@ def verify_requirement(
     )
 
 
-assert_all_tools_categorized([tool.name for tool in mcp._tool_manager.list_tools()])
+assert_all_tools_categorized([tool.name for tool in asyncio.run(mcp.list_tools())])
 
 
 if __name__ == "__main__":
