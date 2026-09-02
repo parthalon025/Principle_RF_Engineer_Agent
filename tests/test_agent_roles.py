@@ -57,9 +57,10 @@ def test_principal_role_has_broad_access():
     assert "extract_components" in names
     assert "analyze_touchstone_file" in names
     # principal is the coordinating role and is deliberately unscoped: the
-    # 11 calculation/knowledge tools plus 5 consult_<role>_role delegation
-    # tools (issue #35), one per non-principal specialist.
-    assert len(names) == 16
+    # 11 pre-#36 calculation/knowledge tools, the 35 Phase 1-2 tools added
+    # by issue #36, plus 5 consult_<role>_role delegation tools (issue #35),
+    # one per non-principal specialist.
+    assert len(names) == 51
 
 
 def test_principal_module_alias_matches_registry():
@@ -112,6 +113,98 @@ def test_verification_role_gets_knowledge_auditing_tools():
     assert "calculate_wavelength" not in names
     # authoring belongs to systems, not verification
     assert "ingest_document" not in names
+
+
+# ---------------------------------------------------------------------------
+# Issue #36: Phase 1-2 calculation/Touchstone tools' role scoping.
+#
+# These tests check role-tool-list coverage only, per the ticket's own
+# testing decision -- the underlying tool wiring (each new tool calls
+# through to its rf_tools function correctly) is exercised in
+# test_mcp_server.py, and the tools' own math is covered by
+# test_calculations.py/test_touchstone.py.
+# ---------------------------------------------------------------------------
+
+
+def test_systems_role_gets_link_budget_and_ip3_and_unit_converters():
+    names = _tool_names(ROLES["systems"])
+    assert "calculate_free_space_path_loss" in names
+    assert "calculate_link_budget_margin" in names
+    assert "calculate_cascade_output_ip3" in names
+    assert "convert_db_to_linear" in names
+    assert "convert_linear_to_db" in names
+    # network-parameter conversions and stability/matching are microwave's job
+    assert "convert_s_to_z" not in names
+    assert "calculate_rollett_k_factor" not in names
+    # antenna synthesis is the antenna role's job
+    assert "calculate_aperture_gain" not in names
+
+
+def test_microwave_role_gets_conversions_stability_and_matching():
+    names = _tool_names(ROLES["microwave"])
+    for tool_name in (
+        "convert_s_to_z",
+        "convert_z_to_s",
+        "convert_s_to_y",
+        "convert_y_to_s",
+        "convert_s_to_abcd",
+        "convert_abcd_to_s",
+    ):
+        assert tool_name in names, f"missing {tool_name!r} from microwave role"
+    assert "calculate_rollett_k_factor" in names
+    assert "calculate_stability_verdict" in names
+    assert "calculate_output_stability_circle" in names
+    assert "calculate_input_stability_circle" in names
+    assert "calculate_stability_delta" in names
+    assert "calculate_quarter_wave_transformer_impedance" in names
+    assert "calculate_l_network_match" in names
+    # shared with systems: linearity budgeting is both chain- and
+    # component-level, same overlap already established for noise figure
+    assert "calculate_cascade_output_ip3" in names
+    # link budget and antenna synthesis are not microwave's job
+    assert "calculate_link_budget_margin" not in names
+    assert "calculate_aperture_gain" not in names
+
+
+def test_antenna_role_gets_antenna_synthesis_tools():
+    names = _tool_names(ROLES["antenna"])
+    for tool_name in (
+        "calculate_patch_effective_permittivity",
+        "calculate_patch_length_extension",
+        "calculate_patch_resonant_frequency",
+        "calculate_fractional_bandwidth_from_q",
+        "calculate_quality_factor_from_fractional_bandwidth",
+        "calculate_curvature_length_correction_factor",
+        "calculate_curvature_shifted_resonant_frequency",
+        "calculate_maxwell_garnett_effective_permeability",
+        "calculate_aperture_gain",
+    ):
+        assert tool_name in names, f"missing {tool_name!r} from antenna role"
+    # S/Z/Y/ABCD conversions and stability/matching are microwave's job
+    assert "convert_s_to_z" not in names
+    assert "calculate_rollett_k_factor" not in names
+    # link budget is systems' job
+    assert "calculate_link_budget_margin" not in names
+
+
+def test_test_role_gets_new_touchstone_tools():
+    names = _tool_names(ROLES["test"])
+    assert "interpolate_touchstone_file" in names
+    assert "deembed_touchstone_file" in names
+    assert "cascade_touchstone_files" in names
+    assert "compare_touchstone_files" in names
+    # antenna synthesis and link budget are not test's job
+    assert "calculate_aperture_gain" not in names
+    assert "calculate_link_budget_margin" not in names
+
+
+def test_verification_role_gets_no_new_calculation_tools():
+    names = _tool_names(ROLES["verification"])
+    # verification audits documented claims, it does not run RF arithmetic --
+    # none of the issue #36 tools belong here either.
+    assert "convert_db_to_linear" not in names
+    assert "calculate_aperture_gain" not in names
+    assert "interpolate_touchstone_file" not in names
 
 
 def test_search_knowledge_is_shared_by_every_role():
