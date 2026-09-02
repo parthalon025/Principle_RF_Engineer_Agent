@@ -119,8 +119,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
-    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
+    # 1 more (run_palace_simulation) added by #61.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -141,6 +142,11 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_run_palace_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_palace_simulation" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
@@ -777,3 +783,70 @@ def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert Path(result["touchstone_file"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# Palace simulation (issue #61)
+#
+# The real palace binary is not installed in this environment, so this
+# exercises the MCP wrapper's call-through to simulation.palace via a fake
+# "palace" script pointed to by PALACE_BIN -- same not-verified-against-a-
+# real-binary caveat as tests/test_palace.py. The fake script writes a
+# synthetic port-floquet-S.csv (RFC4180-quoted, per simulation/palace.py's
+# module docstring honest caveat) into the config's declared Output
+# directory, matching how a real Palace run would.
+# ---------------------------------------------------------------------------
+
+_FAKE_PALACE_CSV_HEADER = ["f (GHz)", "|S[P1(0,0)TE][1]| (dB)", "arg(S[P1(0,0)TE][1]) (deg.)"]
+_FAKE_PALACE_CSV_ROW = ["10.000000e+00", "-6.0206", "0.0"]
+
+
+def _write_fake_palace(tmp_path: Path) -> Path:
+    import csv
+    import io
+    import stat
+    import sys
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_FAKE_PALACE_CSV_HEADER)
+    writer.writerow(_FAKE_PALACE_CSV_ROW)
+    csv_text = buf.getvalue()
+
+    script = tmp_path / "fake_palace.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        f'CSV = """{csv_text}"""\n'
+        "config_path = Path(sys.argv[2])\n"
+        "config = json.loads(config_path.read_text())\n"
+        'output_dir = Path(config["Problem"]["Output"])\n'
+        "output_dir.mkdir(parents=True, exist_ok=True)\n"
+        '(output_dir / "port-floquet-S.csv").write_text(CSV)\n'
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_palace_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_palace(tmp_path)
+    monkeypatch.setenv("PALACE_BIN", str(script))
+
+    geometry = {
+        "unit_cell": {"lx_m": 0.04, "ly_m": 0.01, "lz_m": 0.08},
+        "materials": [
+            {"p1_m": [0.01, 0.0, 0.0375], "p2_m": [0.03, 0.01, 0.0425], "epsilon_r": 7.0}
+        ],
+        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    }
+    result = server.run_palace_simulation(geometry, frequency_hz=10e9, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "Palace"
+    assert result["status"] == "COMPLETED"
+    assert result["s_parameters"]["computed"] is True
+    assert result["s_parameters"]["frequency_hz"] == pytest.approx([10e9])
+    assert "S11" in result["s_parameters"]["specular"]

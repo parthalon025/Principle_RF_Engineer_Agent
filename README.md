@@ -56,6 +56,9 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- Palace (github.com/awslabs/palace) -- full-wave FEM with native Floquet/periodic-port
+  boundaries, for periodic metamaterial unit cells; manual source/binary install, no
+  pyproject extra
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -99,6 +102,7 @@ Notable components:
 - openEMS: GPLv3
 - NEC2++: GPL
 - Qucs-S: GPL-2.0
+- Palace: Apache-2.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license
