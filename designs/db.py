@@ -382,6 +382,57 @@ class UnknownVerificationItemError(Exception):
         )
 
 
+class UnknownDesignError(Exception):
+    """Raised by `update_design_status` when no `designs` row exists for
+    `design_id` -- mirrors `UnknownVerificationItemError`'s "no row
+    matched is unambiguous" reasoning (the `designs` primary key means at
+    most one row could ever match). Nothing is written."""
+
+    def __init__(self, design_id: int):
+        self.design_id = design_id
+        super().__init__(f"no designs row for design_id={design_id}")
+
+
+def update_design_status(
+    conn: psycopg.Connection,
+    design_id: int,
+    status: str,
+) -> dict[str, Any]:
+    """Set `designs.status` (docs/adr/0011 -- the design loop's first real
+    caller of a status transition; docs/adr/0007 fixed the nine legal
+    values but deferred building any transition logic between them).
+
+    `status` must be one of `DesignStatus`'s values -- checked before the
+    database is touched, same discipline as `verify_requirement`'s own
+    `status` check. An unknown `design_id` raises `UnknownDesignError`
+    rather than silently affecting zero rows. `updated_at` is bumped to
+    `now()` in the same statement -- this is the only function that
+    changes `designs.status` after creation, so there is no separate
+    "touch updated_at" call to keep in sync with it.
+    """
+    if status not in {member.value for member in DesignStatus}:
+        raise ValueError(
+            f"status must be one of {sorted(m.value for m in DesignStatus)}, got {status!r}"
+        )
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            UPDATE designs
+            SET status = %s, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (status, design_id),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        raise UnknownDesignError(design_id)
+
+    return row
+
+
 def verify_requirement(
     conn: psycopg.Connection,
     design_id: int,
@@ -457,6 +508,7 @@ def record_engineering_result(
     tool_name: str,
     value: Any,
     tool_version: str | None = None,
+    provenance: str | None = None,
 ) -> dict[str, Any]:
     """Insert one `engineering_results` row for a calculation/Touchstone/
     simulation tool run against `design_id` (ticket #19; CONTEXT.md:
@@ -465,9 +517,17 @@ def record_engineering_result(
     `result_type` and `name` are both the tool's own name (`tool_name`) --
     this ticket's wrappers have no separate human-supplied label to give
     `name`, so it mirrors `result_type` rather than inventing one.
-    `provenance` is never caller-supplied: it's looked up from `tool_name`
-    via `designs.provenance.provenance_for_tool`, which raises `ValueError`
-    for a tool with no mapping. `confidence` is always `NULL` -- deterministic
+    `provenance` is looked up from `tool_name` via
+    `designs.provenance.provenance_for_tool` (which raises `ValueError` for
+    a tool with no mapping) UNLESS the caller passes `provenance` explicitly
+    -- an escape hatch added by docs/adr/0011 for trusted internal callers
+    that have already computed the correct provenance themselves from a
+    real function's own return value (`orchestration/tooling.py`'s
+    design-loop persistence is the one caller that uses it: the loop's own
+    step handlers, not this module's tool-name table, are the source of
+    truth for a design-loop decision's provenance). Every existing caller
+    -- the ~65 agent/MCP tool wrappers -- never passes it, so their
+    behavior is unchanged. `confidence` is always `NULL` -- deterministic
     calculations don't carry a confidence signal (CONTEXT.md). `value` is
     stored as-is via `Json`, so it accepts either a bare JSON scalar (a
     `calculate_vswr`-style tool returning a plain float) or a JSON object
@@ -477,6 +537,7 @@ def record_engineering_result(
     Same transaction-boundary contract as `create_design`: takes an
     already-open connection and never commits it itself.
     """
+    resolved_provenance = provenance if provenance is not None else provenance_for_tool(tool_name)
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
@@ -491,7 +552,7 @@ def record_engineering_result(
                 tool_name,
                 tool_name,
                 Json(value),
-                provenance_for_tool(tool_name),
+                resolved_provenance,
                 tool_name,
                 tool_version,
             ),

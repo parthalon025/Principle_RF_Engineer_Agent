@@ -38,6 +38,7 @@ from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from orchestration.policy import assert_all_tools_categorized
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
@@ -1317,21 +1318,42 @@ def optimize_patch_length_for_target_frequency(
 # surface. There is no code path from this loop to a manufacturing-release
 # action -- see tests/test_design_loop.py's
 # test_no_manufacturing_release_step_exists and its sibling tests.
+#
+# start_design_loop now creates a real `designs` row backing the loop
+# (docs/adr/0011), and advance_design_loop_step's REDESIGN_DECISION
+# transition flushes that iteration's decisions to the database -- see
+# orchestration/tooling.py's module docstring for the persistence design,
+# including the DesignLoopPersistenceError a failed flush raises.
 # ---------------------------------------------------------------------------
 
 
 @function_tool(strict_mode=False)  # `requirements` is a free-form dict --
 # same rationale as run_nec2_simulation's geometry parameter above.
-def start_design_loop(requirements: dict) -> dict:
-    """Start a new controlled design-iteration loop from a customer
-    requirement (frequency band, gain/VSWR/bandwidth target, form factor,
-    host-surface curvature, platform -- CONTEXT.md's "Customer
-    requirement"). Returns the new loop's state, positioned at the
-    ARCHITECTURE step -- hold onto this dict and pass it back into
-    advance_design_loop_step for every subsequent call; it is the whole
-    loop's session token (this project has no long-running server process,
-    so state is not persisted server-side)."""
-    return _start_new_design_loop(requirements)
+def start_design_loop(design_key: str, name: str, revision: str, requirements: dict) -> dict:
+    """Start a new controlled design-iteration loop, backed by a real
+    `designs` row created in `DRAFT` status (docs/adr/0011).
+
+    `design_key`, `name`, and `revision` are exactly `designs.service.
+    create_design`'s own fields for that row. `requirements` must be in
+    that same function's shape -- a dict keyed by `requirement_id`, each
+    value a dict carrying a non-empty string `requirement` field (e.g.
+    `{"gain_req": {"requirement": "Gain >= 5 dBi over 2.4-2.5 GHz"}}`) --
+    NOT the older free-form "customer requirement" shape (frequency band,
+    gain/VSWR/bandwidth target, form factor, host-surface curvature,
+    platform -- CONTEXT.md's "Customer requirement"); those descriptive
+    details can still be carried as extra keys on each requirement, or as
+    prose inside its `requirement` text, since only the `requirement`
+    field itself is checked. A rejected `requirements` shape raises
+    DesignLoopPersistenceError naming the problem, and no loop is started.
+
+    Returns the new loop's state, positioned at the ARCHITECTURE step and
+    additionally carrying `design_id` -- hold onto this dict and pass it
+    back into advance_design_loop_step for every subsequent call; it is
+    the whole loop's session token (this project has no long-running
+    server process, so the state dict itself is still not persisted
+    server-side -- only the loop's history, once flushed at an iteration
+    boundary, is)."""
+    return _start_new_design_loop(design_key, name, revision, requirements)
 
 
 @function_tool(strict_mode=False)  # `state`/`step_input`/`approval` are
@@ -1357,7 +1379,14 @@ def advance_design_loop_step(state: dict, step_input: dict, approval: dict | Non
     does not advance; there is no way to skip a gated step from this tool.
     Check the returned state's "pending_approval" key (also available from
     inspect_design_loop_state) to see, at any point, whether the loop is
-    currently blocked on an approval and which step it's blocked at."""
+    currently blocked on an approval and which step it's blocked at.
+
+    A REDESIGN_DECISION transition additionally flushes that iteration's
+    decisions to the database and advances the backing design's status
+    (docs/adr/0011). If that flush fails, this raises
+    DesignLoopPersistenceError instead of returning: the `state` the
+    caller already holds remains the only valid state, exactly as if the
+    step had never advanced."""
     return _advance_design_loop_step(state, step_input, approval=approval)
 
 
@@ -1369,7 +1398,7 @@ def inspect_design_loop_state(state: dict) -> dict:
     every decision recorded so far with its own provenance, and whether an
     approval is currently pending (and for which step). Safe to call at any
     point mid-loop, not just at completion; does not mutate or advance the
-    loop."""
+    loop, and does not touch the database."""
     return _inspect_design_loop_state(state)
 
 
@@ -1545,6 +1574,8 @@ _ALL_TOOLS = [
     advance_design_loop_step,
     inspect_design_loop_state,
 ]
+
+assert_all_tools_categorized([tool.name for tool in _ALL_TOOLS])
 
 
 @dataclass(frozen=True)

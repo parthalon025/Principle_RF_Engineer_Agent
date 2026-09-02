@@ -186,6 +186,7 @@ def record_engineering_result(
     tool_name: str,
     value: Any,
     tool_version: str | None = None,
+    provenance: str | None = None,
 ) -> dict[str, Any]:
     """Record one `engineering_results` row for a calculation/Touchstone/
     simulation tool's own run against `design_id` (ticket #19). Owns the
@@ -193,10 +194,11 @@ def record_engineering_result(
     `calculate_*`/`analyze_touchstone_file` tool wrapper in `agent/main.py`/
     `mcp_server/server.py` can call this directly instead of managing a
     connection itself. See `designs.db.record_engineering_result` for the
-    full write-path contract (`provenance` looked up from `tool_name`,
-    `confidence` always `NULL`). Returns just the new row's id -- wrappers
-    merge `{"engineering_result_id": ...}` into their own `recorded_as`
-    field, they don't need the rest of the row back.
+    full write-path contract (`provenance` looked up from `tool_name` unless
+    passed explicitly -- docs/adr/0011 -- `confidence` always `NULL`).
+    Returns just the new row's id -- wrappers merge
+    `{"engineering_result_id": ...}` into their own `recorded_as` field,
+    they don't need the rest of the row back.
     """
     conn = db.get_connection()
     try:
@@ -206,6 +208,7 @@ def record_engineering_result(
             tool_name=tool_name,
             value=value,
             tool_version=tool_version,
+            provenance=provenance,
         )
         conn.commit()
     except Exception:
@@ -215,6 +218,38 @@ def record_engineering_result(
         conn.close()
 
     return {"engineering_result_id": row["id"]}
+
+
+def update_design_status(design_id: int, status: str) -> dict[str, Any]:
+    """Set a design's `status` (docs/adr/0011). See `designs.db.update_design_status`
+    for the full write-path contract (`status` value check, `updated_at`
+    bump). An unknown `design_id` or invalid `status` returns a structured
+    `status`-tagged result instead of raising, matching every other
+    function in this module; a write that fails for any other reason
+    still raises.
+    """
+    conn = db.get_connection()
+    try:
+        try:
+            row = db.update_design_status(conn, design_id=design_id, status=status)
+        except ValueError as exc:
+            conn.rollback()
+            return {"status": "invalid_status", "message": str(exc)}
+        except db.UnknownDesignError as exc:
+            conn.rollback()
+            return {"status": "not_found", "design_id": exc.design_id}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "status": "updated",
+        "design_id": row["id"],
+        "design_status": row["status"],
+    }
 
 
 def verify_requirement(
