@@ -19,6 +19,27 @@ dependencies = [
   "docling>=2.124.0",
 ]
 
+[project.optional-dependencies]
+# HFSS simulation (issue #40) is confined to a controlled, licensed
+# workstation -- see simulation/hfss.py. pyaedt is a large Ansys-adjacent
+# package that most installs (including CI) will never touch, so it is an
+# explicit optional extra, not a hard dependency: install with
+# `uv sync --extra hfss` or `pip install '.[hfss]'` on that workstation.
+hfss = [
+  "pyaedt",
+]
+# SCPI/VISA instrument adapters (issue #43) -- see measurement/vna.py.
+# pyvisa requires a real VISA backend (NI-VISA, Keysight IO Libraries, or
+# the pure-Python pyvisa-py) and, for anything beyond *IDN? against a
+# simulated resource, real lab hardware, neither of which CI or most
+# installs have -- so it is an explicit optional extra, not a hard
+# dependency: install with `uv sync --extra measurement` or
+# `pip install '.[measurement]'` on a workstation with real instrument
+# access.
+measurement = [
+  "pyvisa",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.3",
@@ -30,7 +51,7 @@ dev = [
 package = true
 
 [tool.setuptools.packages.find]
-include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "designs"]
+include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "optimization", "measurement", "orchestration", "designs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

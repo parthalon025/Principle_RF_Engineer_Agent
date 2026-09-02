@@ -1,6 +1,7 @@
 from knowledge.models import SourceType
 from knowledge.provenance import (
     INFERRED,
+    INTERNAL_HISTORY,
     LITERATURE_SUPPORTED,
     MANUFACTURER_SPECIFIED,
     UNKNOWN,
@@ -25,6 +26,19 @@ def test_manufacturer_tier_outranks_literature_tier():
     # Lower authority_rank sorts first / wins (ADR-0002).
     assert default_authority_rank(SourceType.DATASHEET) < default_authority_rank(
         SourceType.STANDARD
+    )
+
+
+def test_design_record_is_internal_history():
+    # Ticket #37: CONTEXT.md's "internal engineering history" evidence tier.
+    assert provenance_tier_for(SourceType.DESIGN_RECORD) == INTERNAL_HISTORY
+
+
+def test_literature_tier_outranks_internal_history_tier():
+    # Evidence hierarchy (CONTEXT.md): authoritative reference > internal
+    # engineering history. Lower authority_rank sorts first / wins.
+    assert default_authority_rank(SourceType.STANDARD) < default_authority_rank(
+        SourceType.DESIGN_RECORD
     )
 
 

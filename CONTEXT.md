@@ -73,9 +73,9 @@ for history.
   engineering history > general web material > LLM inference. Higher wins
   when evidence conflicts.
 - **Source type**: the classification of an ingested knowledge document —
-  `datasheet`, `application_note`, `standard`, `textbook`, or `paper`.
-  Fixed at ingest time; determines the document's default provenance and
-  authority rank.
+  `datasheet`, `application_note`, `standard`, `textbook`, `paper`, or
+  `design_record`. Fixed at ingest time; determines the document's default
+  provenance and authority rank.
 - **Authority rank**: a per-document integer position in the evidence
   hierarchy, defaulted from source type (datasheet/application_note sit at
   the manufacturer-spec tier; standard/textbook/paper sit at the
@@ -95,6 +95,55 @@ for history.
   `filter`, `mixer`, `attenuator`, `coupler_splitter`,
   `circulator_isolator`, `switch`, `antenna`, `connector_cable`, or
   `passive_component`.
+- **Adaptive EM skin**: the umbrella technology category this repo's
+  target designs belong to — a layered, flexible electromagnetic surface
+  (metamaterial elements plus an antenna layer and spacer) that mounts on
+  a curved or flat host surface to transmit, absorb, reflect, or steer RF
+  energy. Not a specific product; a category.
+  _Avoid_: EM skin (ambiguous without "adaptive"), smart skin.
+- **Conformal antenna**: an antenna designed to mount on and follow a
+  curved or non-planar host surface without its resonant frequency,
+  gain, or match degrading relative to a flat reference design.
+  _Avoid_: Flexible antenna — describes the substrate, not the
+  mounting requirement; a flexible antenna mounted flat isn't
+  exercising the conformal property.
+- **Metamaterial unit cell**: the repeating element (e.g. an elongated,
+  passive-magnetic-property element with tailored geometry) whose
+  geometry — not material composition — produces an antenna's effective
+  permittivity/permeability. The base building block a metamaterial
+  antenna design starts from.
+  _Avoid_: Meta-atom — an optics-context term, not this project's.
+- **Customer requirement**: a stated design target for one antenna/EM-skin
+  design — frequency band, gain or VSWR/bandwidth target, form factor,
+  host-surface curvature, and platform — that anchors a request for
+  design guidance. Distinct from a Component's specification, which
+  describes an existing manufactured part rather than a target for a new
+  one.
+- **Design guidance**: the agent's output for a customer requirement — a
+  parameter recommendation (e.g. unit-cell spacing, layer stack, expected
+  gain) with rationale tracing back to CALCULATED results and/or
+  LITERATURE-SUPPORTED sources. Not a fabrication-ready CAD file or mesh;
+  a human still builds the prototype from it.
+- **Design/decision record**: an internally-authored write-up of what was
+  decided for a prior design, why, and what alternatives were considered —
+  ingested as an ordinary `documents` row (`source_type = design_record`,
+  CONTEXT.md: Source type) through the same `ingest_document` pipeline as
+  any other document, and retrieved via `search_design_records`, a
+  `search_knowledge` wrapper scoped to that source type — so a design can be
+  checked against precedent before it's proposed. Sits at the "internal
+  engineering history" evidence tier (see Evidence hierarchy above): below
+  authoritative reference, since it is the team's own experience rather than
+  a published authority.
+  _Avoid_: conflating with the `decision_records` table (`db/schema.sql`) —
+  that table tracks one specific design's own approval-gated decisions
+  (`design_id`, `approval_status`) as the design is being made; a
+  design/decision record is a separate, searchable knowledge-base document
+  about a *past* design, consulted for precedent, not an approval workflow.
+- **Test iteration**: evaluating a physical prototype's measured data (a
+  Touchstone file from bench/range testing) against the customer
+  requirement it was built to meet, and recommending specific design
+  revisions. Distinct from simulation — the input is real measured
+  hardware data, not a simulated result.
 - **Design**: a `designs` row — a named, revisioned unit of engineering work
   (`design_key`, `name`, `revision`, `status`) that `requirements`,
   `architecture`, engineering results, decisions, and verification all hang

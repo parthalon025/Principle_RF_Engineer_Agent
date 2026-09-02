@@ -1,0 +1,68 @@
+Source URL: https://www.sbir.gov/awards/145942
+Fetched via: direct HTTP fetch of the SBIR.gov award page (real content, not summarized)
+
+Award
+Portfolio Data
+Back to Award Search
+Low-profile VHF-UHF antennas using anisotropic/inhomogeneous MetaFerrites
+Awardee
+MetaMaterials.LLC
+P. O. Box 66362
+Austin, TX, 78766-6362
+USA
+Award Year:
+2014
+UEI:
+N/A
+HUBZone Owned:
+No
+Woman Owned:
+No
+Socially and Economically Disadvantaged:
+No
+Congressional District:
+N/A
+Tagged as:
+SBIR
+Phase I
+Awarding Agency
+DOW
+Branch: ARMY
+Total Award Amount:
+$99,994
+Contract Number:
+W911QX-14-C-0058
+Agency Tracking Number:
+A141-018-0451
+Solicitation Topic Code:
+A14-018
+Solicitation Number:
+2014.1
+Abstract
+This research is aimed at using MetaFerrite composites to design low profile, octave bandwidth with gain greater than 0 dBi VHF-UHF antennas for Army platforms where size and weight are critically important. The goals of this proposal are to design such an antenna 200-500 MHz band. In 2013, MetaMaterials Inc. researchers demonstrated that their proprietary anisotropic MetaFerrites could be used to demonstrate a light weight, linearly polarized antenna that had a 2 sq. ft. aperture, and a 1.5 depth with gain greater than 0 dBi over an octave. In Phase I of this program, MetaMaterials Inc. will use its improved anisotropic and inhomogeneous MetaFerrites to design an even thinner antenna with without decreasing gain or bandwidth. The effort in the Phase I Option will be focused on demonstrating the realizability and practicality of the MetaFerrites used in the design of the optimum antenna.
+Award Schedule
+2014
+Solicitation Year
+2014
+Award Year
+June 11, 2014
+Award Start Date
+December 11, 2014
+Award End Date
+Principal Investigator
+Name:
+Rodger  Walser
+Phone:
+(512) 680-9487
+Email:
+walser@metamaterials.com
+Business Contact
+Name:
+Alaka  Valanju
+Phone:
+(512) 294-0033
+Email:
+valanju@metamaterials.com
+Research Institution
+Name:
+Stub

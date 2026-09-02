@@ -219,11 +219,22 @@ def _document_scope_clause(document_id: int | None) -> tuple[str, Any]:
     return "d.status = %s", DocumentStatus.ACTIVE.value
 
 
+def _source_type_clause(source_types: list[str] | None) -> tuple[str | None, list[str] | None]:
+    """The optional `documents.source_type` filter shared by `search_lexical`
+    and `search_semantic` (ticket #37): `source_types` given -> only chunks
+    of documents whose source_type is in that list; None (default) -> no
+    filter, every source type is eligible, matching pre-#37 behavior."""
+    if source_types is None:
+        return None, None
+    return "d.source_type = ANY(%s)", list(source_types)
+
+
 def search_lexical(
     conn: psycopg.Connection,
     query_text: str,
     *,
     document_id: int | None = None,
+    source_types: list[str] | None = None,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """Full-text search `document_chunks.content` against `query_text`
@@ -233,19 +244,27 @@ def search_lexical(
     `document_id` is None (default): only chunks of `ACTIVE` documents are
     searched. `document_id` given: only that document's chunks are searched,
     regardless of its status -- pinning a specific document/revision id can
-    retrieve a SUPERSEDED one (ADR-0002). Results are ordered by `ts_rank`
-    descending; `search_knowledge` (knowledge/search.py) is responsible for
-    the final authority-rank-first ordering across match types.
+    retrieve a SUPERSEDED one (ADR-0002). `source_types` (ticket #37), given,
+    additionally restricts results to documents of those source types (e.g.
+    `["design_record"]` for `search_design_records`) -- None searches every
+    source type, same as before this filter existed. Results are ordered by
+    `ts_rank` descending; `search_knowledge` (knowledge/search.py) is
+    responsible for the final authority-rank-first ordering across match
+    types.
     """
     scope_clause, scope_param = _document_scope_clause(document_id)
     where = ["to_tsvector('english', dc.content) @@ plainto_tsquery('english', %s)", scope_clause]
     where_params: list[Any] = [query_text, scope_param]
+    source_type_clause, source_type_param = _source_type_clause(source_types)
+    if source_type_clause is not None:
+        where.append(source_type_clause)
+        where_params.append(source_type_param)
 
     query = f"""
         SELECT
             dc.id AS chunk_id, dc.document_id, dc.chunk_index, dc.content,
             dc.page_number, dc.section,
-            d.title AS document_title, d.authority_rank, d.status,
+            d.title AS document_title, d.source_type, d.authority_rank, d.status,
             ts_rank(to_tsvector('english', dc.content), plainto_tsquery('english', %s)) AS score
         FROM document_chunks dc
         JOIN documents d ON d.id = dc.document_id
@@ -267,6 +286,7 @@ def search_semantic(
     query_embedding: list[float],
     *,
     document_id: int | None = None,
+    source_types: list[str] | None = None,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """Nearest-neighbor search of `column` ("embedding" or "embedding_local")
@@ -278,7 +298,8 @@ def search_semantic(
 
     Only chunks where `column IS NOT NULL` are eligible -- a chunk embedded
     via the other backend, or not yet indexed at all, is silently absent
-    rather than an error. `document_id` behaves as in `search_lexical`.
+    rather than an error. `document_id` and `source_types` (ticket #37)
+    behave as in `search_lexical`.
     """
     if column not in _EMBEDDING_COLUMNS:
         raise ValueError(f"Not an embedding column: {column!r}")
@@ -286,6 +307,10 @@ def search_semantic(
     scope_clause, scope_param = _document_scope_clause(document_id)
     where = [f"dc.{column} IS NOT NULL", scope_clause]
     where_params: list[Any] = [scope_param]
+    source_type_clause, source_type_param = _source_type_clause(source_types)
+    if source_type_clause is not None:
+        where.append(source_type_clause)
+        where_params.append(source_type_param)
 
     register_vector(conn)
     query = sql.SQL(
@@ -293,7 +318,7 @@ def search_semantic(
         SELECT
             dc.id AS chunk_id, dc.document_id, dc.chunk_index, dc.content,
             dc.page_number, dc.section,
-            d.title AS document_title, d.authority_rank, d.status,
+            d.title AS document_title, d.source_type, d.authority_rank, d.status,
             1 - (dc.{col} <=> %s::vector) AS score
         FROM document_chunks dc
         JOIN documents d ON d.id = dc.document_id

@@ -13,7 +13,7 @@ from knowledge.db import (
     write_chunk_embeddings,
 )
 from knowledge.models import ChunkDraft, Classification, DocumentDraft, SourceType
-from knowledge.search import search_knowledge
+from knowledge.search import search_design_records, search_knowledge
 
 load_dotenv()
 
@@ -389,3 +389,115 @@ def test_search_knowledge_registered_as_mcp_tool():
 
     tools = asyncio.run(mcp_module.mcp.list_tools())
     assert "search_knowledge" in {t.name for t in tools}
+
+
+# ---------------------------------------------------------------------------
+# Issue #37: search_design_records (design/decision-record retrieval).
+#
+# search_design_records is a thin wrapper around search_knowledge, pinned to
+# source_type="design_record" -- these tests confirm the filter actually
+# excludes other source types, not the underlying ranking/match-type
+# behavior already covered above for search_knowledge itself.
+# ---------------------------------------------------------------------------
+
+
+def test_search_design_records_returns_design_record_and_excludes_reference_doc(
+    cleanup_documents,
+):
+    """Seed one design_record document and one plain datasheet with
+    overlapping keywords -- search_design_records must return only the
+    design record, even though both would match a plain search_knowledge
+    lexical query."""
+    design_doc = _seed_committed_doc(
+        checksum="d1" * 32,
+        contents=[
+            "Patch antenna design decision: patch selected over dipole for "
+            "conformal mounting; dipole rejected for bend sensitivity."
+        ],
+        source_type=SourceType.DESIGN_RECORD,
+    )
+    cleanup_documents.append(design_doc["id"])
+    reference_doc = _seed_committed_doc(
+        checksum="d2" * 32,
+        contents=[
+            "Patch antenna datasheet: dipole comparison chart and gain "
+            "specifications for the reference part."
+        ],
+        source_type=SourceType.DATASHEET,
+    )
+    cleanup_documents.append(reference_doc["id"])
+
+    results = search_design_records(
+        "patch antenna dipole",
+        embed_local=_Spy(raises=Exception()),
+        embed_external=_Spy(raises=Exception()),
+    )
+
+    doc_ids = {r["document_id"] for r in results}
+    assert design_doc["id"] in doc_ids
+    assert reference_doc["id"] not in doc_ids
+
+    # Also confirm the plain search_knowledge query (no source_types filter)
+    # would have matched both -- proving the exclusion above is the filter
+    # doing its job, not just the two documents failing to overlap.
+    unfiltered = search_knowledge(
+        "patch antenna dipole",
+        embed_local=_Spy(raises=Exception()),
+        embed_external=_Spy(raises=Exception()),
+    )
+    unfiltered_doc_ids = {r["document_id"] for r in unfiltered}
+    assert design_doc["id"] in unfiltered_doc_ids
+    assert reference_doc["id"] in unfiltered_doc_ids
+
+
+def test_search_design_records_returns_empty_when_no_design_record_matches(
+    cleanup_documents,
+):
+    reference_doc = _seed_committed_doc(
+        checksum="d3" * 32,
+        contents=["Klystron amplifier chain design notes and gain figures."],
+        source_type=SourceType.DATASHEET,
+    )
+    cleanup_documents.append(reference_doc["id"])
+
+    results = search_design_records(
+        "klystron amplifier chain",
+        embed_local=_Spy(raises=Exception()),
+        embed_external=_Spy(raises=Exception()),
+    )
+
+    assert results == []
+
+
+def test_search_design_records_excludes_superseded_by_default(cleanup_documents):
+    design_doc = _seed_committed_doc(
+        checksum="d4" * 32,
+        contents=["Decision: circulator isolation target set to 20 dB minimum."],
+        source_type=SourceType.DESIGN_RECORD,
+        status="SUPERSEDED",
+    )
+    cleanup_documents.append(design_doc["id"])
+
+    results = search_design_records(
+        "circulator isolation target",
+        embed_local=_Spy(raises=Exception()),
+        embed_external=_Spy(raises=Exception()),
+    )
+
+    assert results == []
+
+
+def test_search_design_records_registered_as_agent_tool():
+    import agent.main as agent_main
+
+    tool_names = {tool.name for tool in agent_main.principal.tools}
+    assert "search_design_records" in tool_names
+
+
+def test_search_design_records_registered_as_mcp_tool():
+    import asyncio
+
+    import mcp_server.server as mcp_module
+
+    tools = asyncio.run(mcp_module.mcp.list_tools())
+    assert "search_design_records" in {t.name for t in tools}
