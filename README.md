@@ -56,6 +56,11 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- MEEP (FDTD, driven as a Python library -- `import meep`; a second, independent
+  full-wave solver for cross-checking a design decision against openEMS instead of
+  resting on one solver alone. No PyPI wheel: install via conda-forge
+  (`conda create -n mp -c conda-forge pymeep`); no native Windows support (WSL
+  required on Windows). See `simulation/meep.py`.)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments

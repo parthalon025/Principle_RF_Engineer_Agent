@@ -101,6 +101,7 @@ from rf_tools.touchstone import (
     interpolate_touchstone,
 )
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
+from simulation.meep import run_meep_simulation as _run_meep_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 
@@ -812,6 +813,40 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# geometry's shape (optional materials/conductors lists, a single port dict) does
+# not fit the SDK's strict-schema requirement.
+def run_meep_simulation(
+    geometry: dict,
+    characteristic_length_m: float = 1e-3,
+    nfreq: int = 1,
+) -> dict:
+    """Simulate a structure with MEEP (FDTD, driven as a Python library, not a
+    subprocess binary) as a SECOND, INDEPENDENT full-wave EM solver you can cross-
+    check a design decision against instead of resting on run_openems_simulation's
+    output alone -- e.g. run the same geometry through both and compare |S11|. Takes
+    box/cylinder dielectric materials and PEC conductors in meters (see
+    simulation.meep.run_meep_simulation for the full geometry shape), a single port
+    modeled as a Gaussian-pulse source plus a reflection-flux monitor (MEEP has no
+    lumped-RLC-port concept the way openEMS/HFSS do -- see simulation/meep.py's PORT
+    MODEL caveat), and returns "SIMULATED" provenance. IMPORTANT SCOPE LIMITS: only
+    POWER REFLECTANCE and its magnitude |S11| are computed (via MEEP's own documented
+    flux-subtraction technique) -- NO complex phase, NO S21/multi-port, NO Touchstone
+    export, and NO far-field/gain (see simulation/meep.py's module docstring SCOPE
+    section) -- so only |S11| magnitude, not phase, can be cross-checked against
+    run_openems_simulation's complex S11. `characteristic_length_m` is MEEP's own
+    dimensionless-unit lengthscale "a" (default 1mm, reasonable for patch-antenna-
+    scale geometry); geometry/units translation verified against MEEP's own primary
+    documentation (see simulation/meep.py's module docstring for the citation) but
+    NOT against a real MEEP install -- MEEP has no PyPI wheel and no native Windows
+    support (conda-forge only, WSL required on Windows; see README.md's Optional
+    tools list); treat any result as unverified end-to-end until it has been run
+    against the real library at least once."""
+    return _run_meep_simulation(
+        geometry=geometry, characteristic_length_m=characteristic_length_m, nfreq=nfreq
     )
 
 
@@ -1629,6 +1664,7 @@ _ALL_TOOLS = [
     run_nec2_simulation,
     run_openems_simulation,
     run_hfss_simulation,
+    run_meep_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -1781,7 +1817,13 @@ ROLE_SPECS: list[RoleSpec] = [
             "PyAEDT (run_hfss_simulation) for real S-parameter/report "
             "extraction, confined to a controlled licensed workstation "
             "(it refuses to run anywhere else, including this one). Also "
-            "gets optimize_patch_length_for_target_frequency (issue #41) "
+            "gets MEEP FDTD simulation (run_meep_simulation, issue #60) as "
+            "a SECOND, INDEPENDENT full-wave solver to cross-check a "
+            "design decision against run_openems_simulation's output "
+            "instead of resting on one solver alone -- power-reflectance/"
+            "|S11| magnitude only, no phase or S21 (see simulation/"
+            "meep.py). Also gets "
+            "optimize_patch_length_for_target_frequency (issue #41) "
             "to search patch length against a target resonant frequency "
             "via parameter sweep, grid search, or Bayesian optimization "
             "(all built on the generic optimization/ package). Defer "
@@ -1808,6 +1850,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_meep_simulation,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],
@@ -1822,9 +1865,12 @@ ROLE_SPECS: list[RoleSpec] = [
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
             "values, including SIMULATED-provenance NEC2++ "
-            "(run_nec2_simulation), openEMS (run_openems_simulation), and "
+            "(run_nec2_simulation), openEMS (run_openems_simulation), "
             "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. Use "
+            "only), and MEEP (run_meep_simulation, issue #60 -- a second, "
+            "independent full-wave solver for cross-checking a design "
+            "decision instead of resting on one solver's output alone) "
+            "reference results to validate hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -1873,6 +1919,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_meep_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

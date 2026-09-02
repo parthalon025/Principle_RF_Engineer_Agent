@@ -63,7 +63,8 @@ def test_principal_role_has_broad_access():
     # by issue #36, the search_design_records tool added by issue #37, the
     # run_nec2_simulation tool added by issue #38, the run_openems_simulation
     # tool added by issue #39, the run_hfss_simulation tool added by issue
-    # #40, the optimize_patch_length_for_target_frequency tool added by
+    # #40, the run_meep_simulation tool added by issue #60, the
+    # optimize_patch_length_for_target_frequency tool added by
     # issue #41, the request_vna_measurement_approval and
     # measure_vna_s_parameters tools added by issue #43, the 6 spectrum
     # analyzer/signal generator/power meter approval+measure/actuate tools
@@ -75,7 +76,7 @@ def test_principal_role_has_broad_access():
     # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
     # tool set, plus 5 consult_<role>_role delegation tools (issue #35), one
     # per non-principal specialist.
-    assert len(names) == 72
+    assert len(names) == 73
 
 
 def test_principal_module_alias_matches_registry():
@@ -258,6 +259,20 @@ def test_antenna_and_test_roles_get_hfss_simulation():
     assert "run_hfss_simulation" not in _tool_names(ROLES["systems"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_meep_simulation():
+    # issue #60: MEEP FDTD simulation is a second, independent full-wave
+    # solver for cross-checking a design decision against
+    # run_openems_simulation's own output -- same antenna-element/test-
+    # reference-result family as run_nec2_simulation/run_openems_simulation/
+    # run_hfss_simulation.
+    assert "run_meep_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_meep_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_meep_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_meep_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_meep_simulation" not in _tool_names(ROLES["verification"])
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

@@ -86,9 +86,13 @@ simulation_auto:
   # Non-destructive, sandboxed simulator runs -- safe to run without
   # approval. run_hfss_simulation is deliberately NOT here: it enforces
   # its own licensed-workstation confinement check (simulation/hfss.py)
-  # and is listed under approval_self_gated below instead.
+  # and is listed under approval_self_gated below instead. run_meep_simulation
+  # (issue #60) is free/open-source FDTD driven as a Python library (no
+  # licensing gate needed, unlike HFSS) -- same category as run_nec2_simulation/
+  # run_openems_simulation.
   - run_nec2_simulation
   - run_openems_simulation
+  - run_meep_simulation
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

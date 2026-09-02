@@ -10,6 +10,7 @@ Planning reference; not legal advice.
 | scikit-rf | BSD-3-Clause | Free |
 | NEC2++ | GPL | Free; review obligations if redistributed |
 | openEMS | GPLv3 | Free; review obligations if redistributed |
+| MEEP | GPLv2 | Free; review obligations if redistributed; Python library (conda-forge), no PyPI wheel |
 | Qucs-S | GPL-2.0 | Free; review obligations if redistributed |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |
