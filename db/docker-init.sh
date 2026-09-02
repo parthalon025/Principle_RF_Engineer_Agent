@@ -10,8 +10,15 @@ set -e
 EMBEDDING_DIM_EXTERNAL="${EMBEDDING_DIM_EXTERNAL:-1536}"
 EMBEDDING_DIM_LOCAL="${EMBEDDING_DIM_LOCAL:-1536}"
 
+# db/apply_schema.py renders schema.sql through Python's string.Template,
+# which (as a side effect of substituting ${EMBEDDING_DIM_*}) also collapses
+# any literal "$$" escape sequence to a single "$" -- schema.sql's DO block
+# is written with quadrupled dollar quoting ($$$$) so that pass leaves it as
+# valid Postgres dollar quoting ($$). Mirror that collapse here, or the DO
+# block reaches psql as literal "$$$$", which is a syntax error.
 sed \
   -e "s/\${EMBEDDING_DIM_EXTERNAL}/${EMBEDDING_DIM_EXTERNAL}/g" \
   -e "s/\${EMBEDDING_DIM_LOCAL}/${EMBEDDING_DIM_LOCAL}/g" \
+  -e 's/\$\$\$\$/$$/g' \
   /docker-entrypoint-initdb.d/schema.sql.template \
   | psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"
