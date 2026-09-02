@@ -59,6 +59,9 @@ Optional:
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
+- KiCad (application + `kicad-cli`) -- for PCB geometry export via kicad-python's IPC API (issue #65)
+- gerbv -- Gerber rasterizer gerber2ems shells out to internally
+- gerber2ems -- PCB trace signal-integrity simulation front end for openEMS; not on PyPI, install from github.com/antmicro/gerber2ems
 
 ## Quick start
 
@@ -100,6 +103,10 @@ Notable components:
 - NEC2++: GPL
 - Qucs-S: GPL-2.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
+- KiCad (application/kicad-cli): GPL-3.0-or-later
+- kicad-python: MIT
+- gerber2ems: Apache-2.0
+- gerbv: GPL-2.0
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license
 

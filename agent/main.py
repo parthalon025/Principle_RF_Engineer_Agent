@@ -101,6 +101,9 @@ from rf_tools.touchstone import (
     interpolate_touchstone,
 )
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
+from simulation.kicad_gerber2ems import (
+    run_kicad_gerber2ems_simulation as _run_kicad_gerber2ems_simulation,
+)
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 
@@ -812,6 +815,43 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@function_tool(strict_mode=False)  # `config`'s shape (gerber2ems's own optional
+# ports/traces/differential_pairs/grid/via keys) doesn't fit the SDK's strict-schema
+# requirement -- same rationale as run_nec2_simulation's geometry parameter above.
+def run_kicad_gerber2ems_simulation(board_file: str, config: dict, timeout_s: int = 3600) -> dict:
+    """Derive PCB signal-integrity simulation geometry from a REAL, as-laid-out KiCad
+    PCB design (a .kicad_pcb file) -- NOT a hand-modeled geometry dict -- and simulate
+    it with gerber2ems (which drives openEMS internally through its own Python
+    interface, with its own config schema; this is a separate pipeline from
+    run_openems_simulation, not built on top of it). Connects to a headless KiCad
+    instance via kicad-python's IPC API, exports the board's Gerber/drill/position
+    fileset plus a translated stackup.json, writes gerber2ems's own simulation.json
+    from `config` (REQUIRED: `{"frequency": {"start": hz, "stop": hz}}`; optional
+    "ports"/"traces"/"differential_pairs"/"grid"/"max_steps"/"pixel_size"/"via" in
+    gerber2ems's own schema -- see simulation.kicad_gerber2ems.generate_gerber2ems_
+    config for the full shape), runs `gerber2ems -a`, and parses its per-port results.
+
+    SCOPED EXPLICITLY TO PCB SIGNAL-INTEGRITY RESULTS -- trace impedance and
+    via/stackup S-parameters, per gerber2ems's own actual scope -- NOT antenna
+    far-field/gain patterns; gerber2ems has no far-field capability at all, so
+    (unlike run_openems_simulation) this tool's result carries no far-field key to
+    even stub. Returns "SIMULATED" provenance. REQUIRES the PCB design to already
+    place "Simulation_Port"-valued footprints (reference designators SP1, SP2, ...)
+    at the trace endpoints of interest -- this is gerber2ems's own PCB-design-time
+    port-discovery convention, not something this tool can synthesize. Format/API
+    verified against gerber2ems's and kicad-python's own primary sources (see
+    simulation/kicad_gerber2ems.py's module docstring for the full citation list)
+    but NOT against a real KiCad/kicad-cli/gerbv/gerber2ems/openEMS installation --
+    none is installed in this environment; treat any result as unverified end-to-end
+    until it has been run against the real tools at least once. One honestly-flagged
+    gap beyond that: kicad-python's drill export does not yet expose a plated/
+    non-plated-hole split, so a board with unplated holes may get a mis-labeled drill
+    file (see that module's own docstring and each result's own `warnings`)."""
+    return _run_kicad_gerber2ems_simulation(
+        board_file=board_file, config=config, timeout_s=timeout_s
     )
 
 
@@ -1629,6 +1669,7 @@ _ALL_TOOLS = [
     run_nec2_simulation,
     run_openems_simulation,
     run_hfss_simulation,
+    run_kicad_gerber2ems_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -1780,8 +1821,16 @@ ROLE_SPECS: list[RoleSpec] = [
             "simulation/openems.py) -- and full-wave HFSS simulation via "
             "PyAEDT (run_hfss_simulation) for real S-parameter/report "
             "extraction, confined to a controlled licensed workstation "
-            "(it refuses to run anywhere else, including this one). Also "
-            "gets optimize_patch_length_for_target_frequency (issue #41) "
+            "(it refuses to run anywhere else, including this one), and "
+            "(issue #65) run_kicad_gerber2ems_simulation for a REAL, "
+            "as-laid-out KiCad PCB design (not a hand-modeled geometry "
+            "dict) -- gerber2ems drives openEMS internally via its own "
+            "Python interface and is scoped explicitly to PCB "
+            "signal-integrity results (trace impedance, via/stackup "
+            "S-parameters), NOT far-field/gain, so use it for a "
+            "PCB-etched antenna feed network's real copper geometry, not "
+            "the radiating element's own pattern/gain. Also gets "
+            "optimize_patch_length_for_target_frequency (issue #41) "
             "to search patch length against a target resonant frequency "
             "via parameter sweep, grid search, or Bayesian optimization "
             "(all built on the generic optimization/ package). Defer "
@@ -1808,6 +1857,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_kicad_gerber2ems_simulation,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],
@@ -1824,7 +1874,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "values, including SIMULATED-provenance NEC2++ "
             "(run_nec2_simulation), openEMS (run_openems_simulation), and "
             "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. Use "
+            "only), and (issue #65) gerber2ems PCB signal-integrity "
+            "(run_kicad_gerber2ems_simulation, trace impedance and "
+            "via/stackup S-parameters from a real KiCad PCB design) "
+            "reference results to validate hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -1873,6 +1926,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_kicad_gerber2ems_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

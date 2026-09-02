@@ -45,6 +45,19 @@ hfss = [
 measurement = [
   "pyvisa",
 ]
+# KiCad IPC-API PCB geometry export (issue #65) -- see
+# simulation/kicad_gerber2ems.py. kicad-python (imported as `kipy`) is a
+# thin client that connects to a running/headless KiCad instance; it is
+# useless without a real KiCad + kicad-cli install (a manual/system
+# dependency, see README.md's Optional-tools list) and without the
+# separate gerber2ems/gerbv/openEMS tools that same module's pipeline
+# shells out to -- none of which most installs (including CI) will ever
+# touch, so it is an explicit optional extra, not a hard dependency:
+# install with `uv sync --extra kicad` or `pip install '.[kicad]'` on a
+# workstation with KiCad installed.
+kicad = [
+  "kicad-python",
+]
 
 [dependency-groups]
 dev = [
