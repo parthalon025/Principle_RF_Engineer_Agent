@@ -100,6 +100,7 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.gprmax import run_gprmax_simulation as _run_gprmax_simulation
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
@@ -731,6 +732,36 @@ def correlate_simulated_and_measured(
     )
     result["comparison"] = _jsonify_comparison(result["comparison"])
     return result
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation below --
+# geometry's shape (optional half_space/materials/conductors/receivers lists, a
+# single port dict) does not fit the SDK's strict-schema requirement.
+def run_gprmax_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: int = 3600) -> dict:
+    """Simulate a ground-coupled or lossy-half-space antenna structure with gprMax (FDTD):
+    generate a .in file from structured geometry (an optional lossy dielectric ground
+    half-space, box/cylinder/edge/plate material and PEC conductor primitives in metres,
+    and a single #transmission_line excitation port -- see
+    simulation.gprmax.generate_gprmax_input for the full shape), run it via
+    "python -m gprMax" (gprMax has no standalone binary), and return S-parameters/input
+    impedance FFT-computed from the port's own incident/total voltage-current dumps, plus
+    any declared receivers' raw field data. Use this over run_nec2_simulation/
+    run_openems_simulation when the antenna's host surface is a real lossy dielectric half-
+    space (soil, concrete, a vehicle hull) rather than free space or an idealized ground
+    plane -- NEC2++'s ground models can't represent that, and openEMS's adapter has no
+    explicit ground-half-space workflow either. Returns "SIMULATED" provenance.
+    IMPORTANT: this adapter deliberately does NOT use gprMax's bundled antenna-model
+    library (GSSI/MALA) -- those are calibrated replicas of specific commercial GPR
+    antenna hardware, not stand-ins for this repo's own antenna designs (see
+    simulation/gprmax.py's module docstring "ADAPTATION WORK"). SCOPE LIMIT: far-field/
+    gain extraction is NOT computed -- gprMax has no near-field-to-far-field tool at all
+    (see simulation/gprmax.py's module docstring). Format verified against primary
+    gprMax documentation (see simulation/gprmax.py's module docstring for citations) but
+    NOT against a real gprMax run -- gprMax is not installed in this environment and
+    (unlike NEC2++/openEMS) cannot be installed via pip at all, only via a conda + C-
+    compiler source build (see that module's "CORRECTION" section); treat any result as
+    unverified end-to-end until it has been run against the real tool at least once."""
+    return _run_gprmax_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
 @function_tool(strict_mode=False)  # geometry's shape (optional keys, variable-length
@@ -1534,6 +1565,11 @@ def inspect_design_loop_state(state: dict) -> dict:
 #                   run_openems_simulation, the FDTD counterpart for
 #                   conformal/curved or metamaterial geometry NEC2++'s wire
 #                   method-of-moments can't adequately model, and (issue
+#                   #63) run_gprmax_simulation, the ground-coupled/lossy-
+#                   half-space FDTD counterpart for when the host surface
+#                   is a real lossy dielectric (soil, concrete, a vehicle
+#                   hull) neither NEC2++'s ground models nor openEMS's
+#                   adapter can represent, and (issue
 #                   #41) optimize_patch_length_for_target_frequency --
 #                   searching patch length against a target resonant
 #                   frequency via the generic optimization/ package's
@@ -1551,8 +1587,9 @@ def inspect_design_loop_state(state: dict) -> dict:
 #                   de-embedding, network cascading, and quantified
 #                   measured-vs-predicted comparison -- plus VSWR, return
 #                   loss, and cascade gain for comparing a measured chain
-#                   against its predicted/spec values, plus (issue #38, #39)
-#                   run_nec2_simulation and run_openems_simulation --
+#                   against its predicted/spec values, plus (issue #38, #39,
+#                   #63) run_nec2_simulation, run_openems_simulation, and
+#                   run_gprmax_simulation --
 #                   generating a SIMULATED-provenance reference result is
 #                   itself something a measured result gets validated
 #                   against. Does NOT get any knowledge-
@@ -1628,6 +1665,7 @@ _ALL_TOOLS = [
     correlate_simulated_and_measured,
     run_nec2_simulation,
     run_openems_simulation,
+    run_gprmax_simulation,
     run_hfss_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
@@ -1777,7 +1815,15 @@ ROLE_SPECS: list[RoleSpec] = [
             "geometry NEC2++'s wire method-of-moments can't adequately "
             "model -- its convergence metadata is real, but S-parameter/"
             "far-field extraction is not computed in this pass (see "
-            "simulation/openems.py) -- and full-wave HFSS simulation via "
+            "simulation/openems.py) -- gprMax FDTD simulation "
+            "(run_gprmax_simulation, issue #63) for a ground-coupled or "
+            "lossy-half-space host surface (soil, concrete, a vehicle "
+            "hull) that NEC2++'s ground models and openEMS's adapter can't "
+            "represent -- its S-parameters/input impedance are real, "
+            "FFT-computed from the excited port's own voltage/current "
+            "dumps, but it deliberately does not use gprMax's bundled "
+            "commercial-GPR-antenna model library (see simulation/"
+            "gprmax.py) -- and full-wave HFSS simulation via "
             "PyAEDT (run_hfss_simulation) for real S-parameter/report "
             "extraction, confined to a controlled licensed workstation "
             "(it refuses to run anywhere else, including this one). Also "
@@ -1807,6 +1853,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_aperture_gain,
             run_nec2_simulation,
             run_openems_simulation,
+            run_gprmax_simulation,
             run_hfss_simulation,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
@@ -1822,9 +1869,11 @@ ROLE_SPECS: list[RoleSpec] = [
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
             "values, including SIMULATED-provenance NEC2++ "
-            "(run_nec2_simulation), openEMS (run_openems_simulation), and "
-            "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. Use "
+            "(run_nec2_simulation), openEMS (run_openems_simulation), "
+            "gprMax (run_gprmax_simulation, issue #63, ground-coupled/"
+            "lossy-half-space), and HFSS (run_hfss_simulation, controlled-"
+            "licensed-workstation-only) reference results to validate "
+            "hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -1872,6 +1921,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_cascade_gain,
             run_nec2_simulation,
             run_openems_simulation,
+            run_gprmax_simulation,
             run_hfss_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,

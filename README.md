@@ -56,6 +56,9 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- gprMax (ground-coupled/lossy-half-space FDTD -- conda + a C compiler with
+  OpenMP, then `python setup.py build && python setup.py install`; not
+  pip-installable, see `simulation/gprmax.py`'s module docstring)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -98,6 +101,7 @@ Notable components:
 - scikit-rf: BSD-3-Clause
 - openEMS: GPLv3
 - NEC2++: GPL
+- gprMax: GPLv3-or-later
 - Qucs-S: GPL-2.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - PostgreSQL: PostgreSQL License

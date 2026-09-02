@@ -73,9 +73,10 @@ def test_principal_role_has_broad_access():
     # #46, the 4 design-lifecycle tools (create_design, read_design,
     # record_decision, verify_requirement) from a separately-merged PR
     # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
-    # tool set, plus 5 consult_<role>_role delegation tools (issue #35), one
-    # per non-principal specialist.
-    assert len(names) == 72
+    # tool set, the run_gprmax_simulation tool added by issue #63, plus 5
+    # consult_<role>_role delegation tools (issue #35), one per
+    # non-principal specialist.
+    assert len(names) == 73
 
 
 def test_principal_module_alias_matches_registry():
@@ -258,6 +259,21 @@ def test_antenna_and_test_roles_get_hfss_simulation():
     assert "run_hfss_simulation" not in _tool_names(ROLES["systems"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_gprmax_simulation():
+    # issue #63: gprMax FDTD simulation is the ground-coupled/lossy-half-
+    # space counterpart to NEC2++/openEMS, for a host surface (soil,
+    # concrete, a vehicle hull) neither of those can represent, and (like
+    # run_nec2_simulation/run_openems_simulation) its SIMULATED-provenance
+    # result is something a measured result gets validated against in test
+    # engineering.
+    assert "run_gprmax_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_gprmax_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["verification"])
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

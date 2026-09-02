@@ -72,11 +72,15 @@ carries a top-level `"touchstone_file"` (mirroring `simulation.hfss.
 run_hfss_simulation`'s own `"computed": True` shape) and is accepted via
 that path, not the generic `"s_parameters"` dict shape (which stays a
 self-describing `{"computed", "values", ...}` structure, not the bare
-`{"S11": [...], ...}` shape this function's generic path expects). This
+`{"S11": [...], ...}` shape this function's generic path expects).
+`simulation.gprmax.run_gprmax_simulation` (issue #63) follows the exact
+same `"computed"`/top-level-`"touchstone_file"` convention as openEMS's
+S-parameter output (both single-port, FFT-computed from a port's own
+time-domain dumps) and is accepted/rejected via the same two paths. This
 function works today against any source that already carries real swept
 S-parameter data -- a raw Touchstone file/`skrf.Network`, a computed
-NEC2++/openEMS/HFSS export, or a future simulator export in this generic
-shape.
+NEC2++/openEMS/gprMax/HFSS export, or a future simulator export in this
+generic shape.
 """
 
 import tempfile

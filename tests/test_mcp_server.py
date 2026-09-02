@@ -119,8 +119,10 @@ def test_registered_tool_count_matches_old_plus_new():
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
-    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
+    # 1 more (run_gprmax_simulation) added by #63.
+    expected = 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1
+    assert len(registered_names) == expected
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -141,6 +143,11 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_run_gprmax_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_gprmax_simulation" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
@@ -662,6 +669,99 @@ def test_run_openems_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["simulator"] == "openEMS"
     assert result["convergence"]["terminated_reason"] == "end_criteria"
     assert result["s_parameters"]["computed"] is False
+    assert result["far_field"]["computed"] is False
+
+
+# ---------------------------------------------------------------------------
+# gprMax simulation (issue #63)
+#
+# gprMax genuinely cannot be installed in this environment at all (no pip
+# package exists -- see simulation/gprmax.py's module docstring
+# "CORRECTION" section), so this exercises the MCP wrapper's call-through
+# to simulation.gprmax via a fake "python -m gprMax" script (pointed to by
+# GPRMAX_PYTHON) that writes a synthetic .out HDF5 file next to the input
+# file it's given, matching gprMax's own documented output-file naming and
+# /tls/tlN/ structure (see simulation/gprmax.py's module docstring
+# citation) -- kept self-contained in this file rather than importing
+# tests/test_gprmax.py's own fake-data helpers, same "not re-imported here
+# to keep this file self-contained" discipline as this file's HFSS section
+# below (which does the same for tests/test_hfss.py's FakeHfss).
+# ---------------------------------------------------------------------------
+
+
+def _write_fake_gprmax_python(tmp_path: Path, vinc, vtotal, itotal, dt: float) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_gprmax_python.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "import h5py\n"
+        f"VINC = {list(float(v) for v in vinc)!r}\n"
+        f"VTOTAL = {list(float(v) for v in vtotal)!r}\n"
+        f"ITOTAL = {list(float(v) for v in itotal)!r}\n"
+        f"DT = {float(dt)!r}\n"
+        "args = sys.argv[1:]\n"
+        "assert args[:2] == ['-m', 'gprMax'], args\n"
+        "input_file = Path(args[2])\n"
+        "out_path = Path(str(input_file) + '.out')\n"
+        "with h5py.File(out_path, 'w') as f:\n"
+        "    f.attrs['dt'] = DT\n"
+        "    f.attrs['Iterations'] = len(VINC)\n"
+        "    tl = f.create_group('tls/tl1')\n"
+        "    tl.create_dataset('Vinc', data=VINC)\n"
+        "    tl.create_dataset('Vtotal', data=VTOTAL)\n"
+        "    tl.create_dataset('Itotal', data=ITOTAL)\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_gprmax_simulation_calls_through(tmp_path: Path, monkeypatch):
+    # A short Gaussian pulse for Vinc, with Vtotal = (1+GAMMA)*Vinc pointwise
+    # in time -- so Vref=Vtotal-Vinc=GAMMA*Vinc and S11(f)=GAMMA at every
+    # frequency, a closed-form known answer (see tests/test_gprmax.py for
+    # the fuller version of this same construction).
+    n = 256
+    dt = 2e-11
+    t = np.arange(n) * dt
+    vinc = np.exp(-(((t - 2.5e-9) / 5e-10) ** 2))
+    gamma = -0.3
+    vtotal = (1 + gamma) * vinc
+    itotal = vtotal / 50.0
+
+    script = _write_fake_gprmax_python(tmp_path, vinc, vtotal, itotal, dt)
+    monkeypatch.setenv("GPRMAX_PYTHON", str(script))
+
+    geometry = {
+        "domain_m": [0.1, 0.1, 0.1],
+        "resolution_m": 0.002,
+        "half_space": {"z_m": 0.04, "epsilon_r": 6.0, "conductivity_s_m": 0.01},
+        "conductors": [
+            {"shape": "box", "p1_m": [0.03, 0.03, 0.04], "p2_m": [0.07, 0.07, 0.04]}
+        ],
+        "port": {
+            "polarization": "z",
+            "position_m": [0.05, 0.05, 0.04],
+            "resistance_ohms": 50.0,
+            "center_frequency_hz": 1.0e9,
+        },
+    }
+    result = server.run_gprmax_simulation(
+        geometry, fdtd={"time_window_s": 6e-8}, timeout_s=10
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "gprMax"
+    assert result["s_parameters"]["computed"] is True
+    s11_values = result["s_parameters"]["values"]["S11"]
+    assert s11_values, "expected at least one in-band S11 frequency point"
+    for re, im in s11_values:
+        assert re == pytest.approx(gamma, abs=1e-6)
+        assert im == pytest.approx(0.0, abs=1e-6)
     assert result["far_field"]["computed"] is False
 
 
