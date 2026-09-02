@@ -65,9 +65,10 @@ def test_principal_role_has_broad_access():
     # issue #41, the request_vna_measurement_approval and
     # measure_vna_s_parameters tools added by issue #43, the 6 spectrum
     # analyzer/signal generator/power meter approval+measure/actuate tools
-    # added by issue #44, plus 5 consult_<role>_role delegation tools
+    # added by issue #44, the correlate_simulated_and_measured tool added
+    # by issue #45, plus 5 consult_<role>_role delegation tools
     # (issue #35), one per non-principal specialist.
-    assert len(names) == 64
+    assert len(names) == 65
 
 
 def test_principal_module_alias_matches_registry():
@@ -107,6 +108,8 @@ def test_test_role_gets_verification_and_measurement_tools():
     names = _tool_names(ROLES["test"])
     assert "analyze_touchstone_file" in names
     assert "calculate_cascade_gain" in names
+    # issue #45: quantifying simulated-vs-measured trust is test-engineering work
+    assert "correlate_simulated_and_measured" in names
     # test role validates hardware, it doesn't author the knowledge base
     assert "ingest_document" not in names
     assert "extract_components" not in names
@@ -118,6 +121,7 @@ def test_verification_role_gets_knowledge_auditing_tools():
     assert "extract_components" in names
     # verification audits documented claims, it does not run RF arithmetic
     assert "calculate_wavelength" not in names
+    assert "correlate_simulated_and_measured" not in names
     # authoring belongs to systems, not verification
     assert "ingest_document" not in names
 

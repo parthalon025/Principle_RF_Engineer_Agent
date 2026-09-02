@@ -71,6 +71,9 @@ from rf_tools.calculations import (
     y_to_s,
     z_to_s,
 )
+from rf_tools.correlation import (
+    correlate_simulation_measurement as _correlate_simulation_measurement,
+)
 from rf_tools.touchstone import (
     analyze_touchstone,
     cascade_touchstone,
@@ -513,12 +516,11 @@ def cascade_touchstone_files(paths: list[str]) -> dict:
     return result
 
 
-@function_tool
-def compare_touchstone_files(path_a: str, path_b: str) -> dict:
-    """Quantify how two Touchstone networks differ, per S-parameter (max/RMS magnitude
-    difference and per-point complex difference across their common frequency grid). Both
-    networks must have the same port count and an overlapping frequency range."""
-    result = compare_touchstone(path_a, path_b)
+def _jsonify_comparison(result: dict) -> dict:
+    """Convert a compare_touchstone-shaped dict's complex numpy arrays into
+    JSON-safe values -- shared by compare_touchstone_files and
+    correlate_simulated_and_measured below, both of which embed this exact
+    per-S-parameter shape."""
     jsonified: dict = {}
     for key, value in result.items():
         if isinstance(value, dict) and "diff" in value:
@@ -531,8 +533,59 @@ def compare_touchstone_files(path_a: str, path_b: str) -> dict:
             }
         else:
             jsonified[key] = value
+    return jsonified
+
+
+@function_tool
+def compare_touchstone_files(path_a: str, path_b: str) -> dict:
+    """Quantify how two Touchstone networks differ, per S-parameter (max/RMS magnitude
+    difference and per-point complex difference across their common frequency grid). Both
+    networks must have the same port count and an overlapping frequency range."""
+    jsonified = _jsonify_comparison(compare_touchstone(path_a, path_b))
     jsonified["provenance"] = "CALCULATED"
     return jsonified
+
+
+@function_tool(strict_mode=False)  # `simulated`/`measured`'s shape (free-form
+# dicts from whatever simulator/instrument-adapter output the caller has --
+# an skrf.Network can't itself cross this JSON boundary) doesn't fit the
+# SDK's strict-schema requirement -- same rationale as run_nec2_simulation's
+# geometry parameter above.
+def correlate_simulated_and_measured(
+    simulated: dict,
+    measured: dict,
+    fixture_path: str | None = None,
+    output_fixture_path: str | None = None,
+    temperature_tolerance_c: float = 5.0,
+) -> dict:
+    """Correlate a SIMULATED result against a MEASURED result so you can
+    judge how much to trust a given simulation for future design decisions
+    on similar geometries: normalizes the two onto a common frequency grid
+    and reference impedance (reusing compare_touchstone/interpolate_
+    touchstone), de-embeds fixture effects when fixture_path is given
+    (reusing deembed_touchstone -- SKIPPED, and said so in the result, when
+    omitted), and returns a quantified per-S-parameter comparison, not a
+    bare pass/fail. `simulated`/`measured` each accept a dict shaped like
+    measure_vna_s_parameters' output (frequency_hz/s_parameters/z0), or one
+    carrying a "touchstone_file" path -- see rf_tools/correlation.py's
+    module docstring for exactly which of run_nec2_simulation's/
+    run_openems_simulation's current outputs this can and cannot use yet
+    (NEC2++'s single-frequency impedance and openEMS's stubbed S-parameters
+    are both honestly rejected, not fabricated from). Temperature
+    normalization is a documented no-op unless both inputs happen to carry
+    a "temperature_c" field, since no current simulator/instrument adapter
+    populates one -- see the returned temperature_note. Returns
+    "CALCULATED" provenance for the correlation result itself, alongside
+    the input results' own SIMULATED/MEASURED provenance tags."""
+    result = _correlate_simulation_measurement(
+        simulated=simulated,
+        measured=measured,
+        fixture_path=fixture_path,
+        output_fixture_path=output_fixture_path,
+        temperature_tolerance_c=temperature_tolerance_c,
+    )
+    result["comparison"] = _jsonify_comparison(result["comparison"])
+    return result
 
 
 @function_tool(strict_mode=False)  # geometry's shape (optional keys, variable-length
@@ -1208,6 +1261,7 @@ _ALL_TOOLS = [
     deembed_touchstone_file,
     cascade_touchstone_files,
     compare_touchstone_files,
+    correlate_simulated_and_measured,
     run_nec2_simulation,
     run_openems_simulation,
     run_hfss_simulation,
@@ -1386,7 +1440,14 @@ ROLE_SPECS: list[RoleSpec] = [
             "values, including SIMULATED-provenance NEC2++ "
             "(run_nec2_simulation), openEMS (run_openems_simulation), and "
             "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. You also "
+            "only) reference results to validate hardware against. Use "
+            "correlate_simulated_and_measured (issue #45) to quantify how "
+            "well a simulated result matches a measured one -- common "
+            "frequency grid/reference impedance normalization, optional "
+            "fixture de-embedding (calibration-plane normalization), and a "
+            "per-S-parameter error metric across frequency, not a bare "
+            "pass/fail -- so you can judge how much to trust a given "
+            "simulation for similar future designs. You also "
             "get the real physical-instrument measurement tools for the "
             "full standard test-bench set (issue #43's VNA adapter plus "
             "issue #44's spectrum analyzer, signal generator, and power "
@@ -1421,6 +1482,7 @@ ROLE_SPECS: list[RoleSpec] = [
             deembed_touchstone_file,
             cascade_touchstone_files,
             compare_touchstone_files,
+            correlate_simulated_and_measured,
             calculate_vswr,
             calculate_return_loss,
             calculate_cascade_gain,

@@ -114,8 +114,14 @@ def test_registered_tool_count_matches_old_plus_new():
     # measure_spectrum_analyzer_trace,
     # request_signal_generator_output_approval, set_signal_generator_output,
     # request_power_meter_measurement_approval, measure_power_meter_reading)
-    # added by #44.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6
+    # added by #44, plus 1 more (correlate_simulated_and_measured) added by
+    # #45.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1
+
+
+def test_correlate_simulated_and_measured_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "correlate_simulated_and_measured" in registered_names
 
 
 def test_run_nec2_simulation_is_registered():
