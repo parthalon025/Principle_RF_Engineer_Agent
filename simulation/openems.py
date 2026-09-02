@@ -130,6 +130,19 @@ class OpenemsSimulator(Simulator):
 #     rdmontoya.wordpress.com/2020/06/17/ (decimal-locale fixups applied to
 #     "P1/P2 coordinates (X, Y, Z)" and "Excitation Delay/Frequency"
 #     attributes in real generated openEMS XML files).
+#   - <Polygon Elevation="..." NormDir="..." QtyVertices="N"> primitive
+#     geometry (issue #55) -- an "Elevation" plain attribute (position along
+#     the out-of-plane axis) and an integer "NormDir" plain attribute (0/1/2
+#     for the X/Y/Z axis the polygon's plane is perpendicular to), then one
+#     child <Vertex X1="..." X2="..."/> element per in-plane vertex (X1/X2
+#     being the two in-plane coordinates, not X/Y/Z -- CSXCAD picks which
+#     physical axes those map to via NormDir): CSPrimPolygon::Write2XML in
+#     github.com/thliebig/CSXCAD/blob/master/src/CSPrimPolygon.cpp, fetched
+#     directly from that file during this pass (element tag name "Polygon"
+#     confirmed via that same file's own PrimTypeName="Polygon" constructor
+#     assignments, and via CSProperties::Write2XML's primitive-serialization
+#     loop in CSProperties.cpp, which builds each primitive's XML tag from
+#     its own GetTypeName()).
 #   - <Material> Epsilon/Mue/Kappa/Sigma vector terms and <Excitation>
 #     Type/Excite/Frequency/Delay terms: CSPropMaterial.cpp and
 #     CSPropExcitation.cpp Write2XML, same CSXCAD repo -- WriteTerm(...)
@@ -216,8 +229,15 @@ class OpenemsSimulator(Simulator):
 # far-field results are exported in the same structured, provenance-tagged
 # form as other simulation results"; an earlier version of this comment
 # incorrectly implied that text came from the ticket body):
-#   - Geometry primitives: axis-aligned Box and Cylinder only (no Sphere/
-#     Polygon/Polyhedron/etc, though CSXCAD supports more).
+#   - Geometry primitives: axis-aligned Box, Cylinder, and (added issue #55)
+#     planar Polygon (no Sphere/Polyhedron/etc, though CSXCAD supports
+#     more). Polygon covers arbitrary metamaterial/frequency-selective-
+#     surface unit-cell outlines (split-ring resonators, Jerusalem crosses,
+#     non-rectilinear elements) that Box/Cylinder alone can't express --
+#     see geometry/unit_cell.py for a gdstk-based generator that builds
+#     such outlines (via boolean composition of simpler box/polygon shapes)
+#     and tiles them into a periodic planar array's worth of these Polygon
+#     primitives, independent of this module.
 #   - Materials: isotropic only (a single epsilon_r/mue_r/kappa applied
 #     identically to X/Y/Z) -- CSXCAD's real per-axis anisotropic tensors
 #     are not exposed here.
@@ -295,6 +315,12 @@ class OpenemsSimulator(Simulator):
 # ---------------------------------------------------------------------------
 
 
+# x/y/z -> CSXCAD's own integer axis-index convention (0/1/2), shared by the
+# port "direction" field (below, unchanged from before issue #55) and the
+# new polygon primitive's "normal_axis" field (see _polygon_primitive_xml).
+_AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
 def _fmt(value: float) -> str:
     return f"{float(value):.6g}"
 
@@ -304,10 +330,41 @@ def _p_element(tag: str, xyz: tuple[float, float, float]) -> str:
     return f'<{tag} X="{_fmt(x)}" Y="{_fmt(y)}" Z="{_fmt(z)}"/>'
 
 
+def _polygon_primitive_xml(prim: dict[str, Any]) -> str:
+    """Render one Polygon primitive -- <Polygon Elevation="..." NormDir="..."
+    QtyVertices="N"><Vertex X1="..." X2="..."/>...</Polygon> -- see module
+    docstring citation for the CSPrimPolygon.cpp Write2XML source this was
+    verified against (issue #55)."""
+    if "points_m" not in prim:
+        raise ValueError("polygon primitive requires 'points_m'")
+    points = prim["points_m"]
+    if len(points) < 3:
+        raise ValueError(
+            f"polygon primitive requires at least 3 points_m, got {len(points)}"
+        )
+    normal_axis = prim.get("normal_axis", "z")
+    if normal_axis not in _AXIS_INDEX:
+        raise ValueError(
+            "polygon primitive 'normal_axis' must be 'x', 'y', or 'z', got "
+            f"{normal_axis!r}"
+        )
+    elevation = prim.get("elevation_m", 0.0)
+    vertices = "".join(
+        f'<Vertex X1="{_fmt(x)}" X2="{_fmt(y)}"/>' for x, y in points
+    )
+    return (
+        f'<Polygon Elevation="{_fmt(elevation)}" NormDir="{_AXIS_INDEX[normal_axis]}" '
+        f'QtyVertices="{len(points)}">' + vertices + "</Polygon>"
+    )
+
+
 def _primitive_xml(prim: dict[str, Any]) -> str:
-    """Render one Box or Cylinder primitive (see module docstring citation
-    for the P1/P2 child-element and Cylinder "Radius" attribute forms)."""
+    """Render one Box, Cylinder, or Polygon primitive (see module docstring
+    citation for the P1/P2 child-element, Cylinder "Radius" attribute, and
+    Polygon Vertex/NormDir/Elevation forms)."""
     shape = prim.get("shape", "box")
+    if shape == "polygon":
+        return _polygon_primitive_xml(prim)
     p1 = (prim["p1_m"][0], prim["p1_m"][1], prim["p1_m"][2])
     p2 = (prim["p2_m"][0], prim["p2_m"][1], prim["p2_m"][2])
     if shape == "box":
@@ -321,7 +378,17 @@ def _primitive_xml(prim: dict[str, Any]) -> str:
             + _p_element("P2", p2)
             + "</Cylinder>"
         )
-    raise ValueError(f"shape must be 'box' or 'cylinder', got {shape!r}")
+    raise ValueError(f"shape must be 'box', 'cylinder', or 'polygon', got {shape!r}")
+
+
+def _required_primitive_fields(prim: dict[str, Any]) -> tuple[str, ...]:
+    """Which top-level fields a materials/conductors primitive dict must
+    carry, before _primitive_xml is asked to render it -- shape-dependent
+    since polygon's 'points_m' replaces box/cylinder's 'p1_m'/'p2_m'
+    (issue #55)."""
+    if prim.get("shape", "box") == "polygon":
+        return ("points_m",)
+    return ("p1_m", "p2_m")
 
 
 def generate_openems_xml(
@@ -337,17 +404,27 @@ def generate_openems_xml(
           "materials": [                 # dielectric/lossy layers, optional
               {
                 "name": str,
-                "shape": "box" (default) | "cylinder",
+                "shape": "box" (default) | "cylinder" | "polygon",
                 "p1_m", "p2_m": [x, y, z],   # corner/axis-endpoint points
+                    # (box/cylinder only)
                 "radius_m": float,           # cylinder only
+                "points_m": [[x, y], ...],   # polygon only -- >=3 in-plane
+                    # vertex coordinates, local to "normal_axis"'s plane
+                "normal_axis": "x"|"y"|"z" (default "z"),   # polygon only --
+                    # the axis the polygon's plane is perpendicular to
+                "elevation_m": float (default 0.0),   # polygon only --
+                    # position along normal_axis
                 "epsilon_r": float (default 1.0),
                 "mue_r": float (default 1.0),
                 "kappa_s_m": float (default 0.0),   # electric conductivity
               }, ...
           ],
           "conductors": [                # PEC layers (patch, ground, etc.)
-              {"name": str, "shape": "box"|"cylinder", "p1_m", "p2_m",
-               "radius_m" (cylinder only)}, ...
+              {"name": str, "shape": "box"|"cylinder"|"polygon", "p1_m",
+               "p2_m", "radius_m" (cylinder only), "points_m",
+               "normal_axis", "elevation_m" (polygon only, see "materials"
+               above -- e.g. a split-ring resonator or Jerusalem-cross
+               frequency-selective-surface element, issue #55)}, ...
           ],
           "ports": [                     # at least one required
               {
@@ -417,8 +494,7 @@ def generate_openems_xml(
     parts.append("<Properties>")
 
     for idx, mat in enumerate(materials):
-        required = ("p1_m", "p2_m")
-        missing = [f for f in required if f not in mat]
+        missing = [f for f in _required_primitive_fields(mat) if f not in mat]
         if missing:
             raise ValueError(f"material {idx} missing required field(s): {missing}")
         name = mat.get("name", f"material_{idx + 1}")
@@ -438,8 +514,7 @@ def generate_openems_xml(
         )
 
     for idx, cond in enumerate(conductors):
-        required = ("p1_m", "p2_m")
-        missing = [f for f in required if f not in cond]
+        missing = [f for f in _required_primitive_fields(cond) if f not in cond]
         if missing:
             raise ValueError(f"conductor {idx} missing required field(s): {missing}")
         name = cond.get("name", f"conductor_{idx + 1}")
@@ -450,16 +525,15 @@ def generate_openems_xml(
         )
 
     default_frequency_hz = geometry.get("frequency_hz")
-    direction_axis = {"x": 0, "y": 1, "z": 2}
     for idx, port in enumerate(ports):
         required = ("p1_m", "p2_m", "direction")
         missing = [f for f in required if f not in port]
         if missing:
             raise ValueError(f"port {idx} missing required field(s): {missing}")
         direction = port["direction"]
-        if direction not in direction_axis:
+        if direction not in _AXIS_INDEX:
             raise ValueError(f"port {idx} direction must be 'x', 'y', or 'z', got {direction!r}")
-        ny = direction_axis[direction]
+        ny = _AXIS_INDEX[direction]
         name = port.get("name", f"port_{idx + 1}")
         resistance = port.get("resistance_ohms", 50.0)
         excite = port.get("excite", idx == 0)

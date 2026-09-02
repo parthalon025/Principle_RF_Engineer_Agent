@@ -275,6 +275,135 @@ def test_generate_openems_xml_cylinder_primitive():
     assert '<Cylinder Radius="0.001">' in xml_text
 
 
+def test_generate_openems_xml_polygon_primitive():
+    """Issue #55: a Polygon conductor primitive -- e.g. a metamaterial
+    unit-cell element -- matching CSXCAD's own <Polygon Elevation="..."
+    NormDir="..." QtyVertices="N"><Vertex X1="..." X2="..."/>...</Polygon>
+    shape (see module docstring citation)."""
+    geometry = {
+        **PATCH_GEOMETRY,
+        "conductors": [
+            {
+                "name": "srr_element",
+                "shape": "polygon",
+                "points_m": [[0.0, 0.0], [0.002, 0.0], [0.002, 0.002], [0.0, 0.002]],
+                "normal_axis": "z",
+                "elevation_m": 0.0016,
+            }
+        ],
+    }
+    xml_text = generate_openems_xml(geometry)
+    assert '<Metal Name="srr_element">' in xml_text
+    assert '<Polygon Elevation="0.0016" NormDir="2" QtyVertices="4">' in xml_text
+    assert '<Vertex X1="0" X2="0"/>' in xml_text
+    assert '<Vertex X1="0.002" X2="0.002"/>' in xml_text
+
+
+def test_generate_openems_xml_polygon_primitive_is_well_formed():
+    import xml.etree.ElementTree as ET
+
+    geometry = {
+        **PATCH_GEOMETRY,
+        "conductors": [
+            {
+                "name": "jerusalem_cross",
+                "shape": "polygon",
+                "points_m": [[0.0, 0.0], [0.001, 0.0], [0.001, 0.001], [0.0, 0.001]],
+            }
+        ],
+    }
+    xml_text = generate_openems_xml(geometry)
+    root = ET.fromstring(xml_text)
+    polygons = root.findall(".//Polygon")
+    assert len(polygons) == 1
+    assert polygons[0].get("NormDir") == "2"  # default normal_axis="z"
+    vertices = polygons[0].findall("Vertex")
+    assert len(vertices) == 4
+
+
+def test_generate_openems_xml_polygon_missing_points_raises():
+    geometry = {
+        **PATCH_GEOMETRY,
+        "conductors": [{"name": "bad", "shape": "polygon"}],
+    }
+    with pytest.raises(ValueError, match="points_m"):
+        generate_openems_xml(geometry)
+
+
+def test_generate_openems_xml_polygon_too_few_points_raises():
+    geometry = {
+        **PATCH_GEOMETRY,
+        "conductors": [
+            {"name": "bad", "shape": "polygon", "points_m": [[0.0, 0.0], [1.0, 1.0]]}
+        ],
+    }
+    with pytest.raises(ValueError, match="at least 3"):
+        generate_openems_xml(geometry)
+
+
+def test_generate_openems_xml_polygon_invalid_normal_axis_raises():
+    geometry = {
+        **PATCH_GEOMETRY,
+        "conductors": [
+            {
+                "name": "bad",
+                "shape": "polygon",
+                "points_m": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+                "normal_axis": "w",
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="normal_axis"):
+        generate_openems_xml(geometry)
+
+
+def test_generate_openems_xml_polygon_material_uses_points_m_not_p1_p2():
+    """A polygon material primitive must not be rejected for lacking the
+    box/cylinder-only p1_m/p2_m fields (issue #55 shape-aware validation)."""
+    geometry = {
+        **PATCH_GEOMETRY,
+        "materials": [
+            {
+                "name": "polygon_dielectric",
+                "shape": "polygon",
+                "points_m": [[0.0, 0.0], [0.01, 0.0], [0.01, 0.01], [0.0, 0.01]],
+                "epsilon_r": 2.2,
+            }
+        ],
+    }
+    xml_text = generate_openems_xml(geometry)
+    assert '<Material Name="polygon_dielectric">' in xml_text
+    assert "<Polygon " in xml_text
+
+
+def test_generate_openems_xml_existing_box_cylinder_unaffected_by_polygon_support():
+    """Additive-not-breaking check (issue #55 acceptance criterion): the
+    pre-existing box/cylinder path still works unchanged alongside the new
+    polygon path."""
+    geometry = {
+        **PATCH_GEOMETRY,
+        "conductors": [
+            *PATCH_GEOMETRY["conductors"],
+            {
+                "name": "post",
+                "shape": "cylinder",
+                "p1_m": [0.015, 0.01, 0.0],
+                "p2_m": [0.015, 0.01, 0.0016],
+                "radius_m": 0.001,
+            },
+            {
+                "name": "srr",
+                "shape": "polygon",
+                "points_m": [[0.0, 0.0], [0.001, 0.0], [0.001, 0.001]],
+            },
+        ],
+    }
+    xml_text = generate_openems_xml(geometry)
+    assert '<Metal Name="patch">' in xml_text
+    assert '<Cylinder Radius="0.001">' in xml_text
+    assert "<Polygon " in xml_text
+
+
 def test_generate_openems_xml_second_port_not_excited_by_default():
     geometry = {
         **PATCH_GEOMETRY,
