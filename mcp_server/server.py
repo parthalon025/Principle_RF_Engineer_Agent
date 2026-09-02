@@ -7,6 +7,9 @@ from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from optimization.rf_objectives import (
+    optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
+)
 from rf_tools.calculations import (
     abcd_to_s,
     aperture_gain,
@@ -571,6 +574,42 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@mcp.tool()
+def optimize_patch_length_for_target_frequency(
+    eps_r: float,
+    w_m: float,
+    h_m: float,
+    target_frequency_hz: float,
+    length_lower_m: float,
+    length_upper_m: float,
+    method: str = "bayesian",
+    n_evaluations: int = 20,
+) -> dict:
+    """Search microstrip patch length (substrate eps_r/h_m and patch width w_m held
+    fixed) in [length_lower_m, length_upper_m] for the value whose TM010 resonant
+    frequency (patch_resonant_frequency_hz) is closest to target_frequency_hz. method
+    selects the search: "sweep" (evenly-spaced points), "grid" (equivalent to sweep in
+    this single-parameter case), or "bayesian" (from-scratch Gaussian-process
+    optimization -- see optimization/bayesian.py), each using n_evaluations calls to the
+    underlying calculation. This is the one concrete case (issue #41) wiring this
+    project's optimization/ package across the MCP JSON boundary: the objective itself
+    -- patch_resonant_frequency_hz -- is fixed/named, not an arbitrary callable, since
+    only JSON-serializable arguments can cross this boundary (see
+    optimization/rf_objectives.py's module docstring for the full rationale). Returns
+    "CALCULATED" provenance, tagged with the method, objective description, and the
+    fixed eps_r/w_m/h_m constraints that produced it."""
+    return _optimize_patch_length_for_target_frequency(
+        eps_r=eps_r,
+        w_m=w_m,
+        h_m=h_m,
+        target_frequency_hz=target_frequency_hz,
+        length_lower_m=length_lower_m,
+        length_upper_m=length_upper_m,
+        method=method,
+        n_evaluations=n_evaluations,
     )
 
 

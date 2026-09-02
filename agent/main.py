@@ -13,6 +13,9 @@ from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from optimization.rf_objectives import (
+    optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
+)
 from rf_tools.calculations import (
     abcd_to_s,
     aperture_gain,
@@ -671,6 +674,39 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
+@function_tool
+def optimize_patch_length_for_target_frequency(
+    eps_r: float,
+    w_m: float,
+    h_m: float,
+    target_frequency_hz: float,
+    length_lower_m: float,
+    length_upper_m: float,
+    method: str = "bayesian",
+    n_evaluations: int = 20,
+) -> dict:
+    """Search microstrip patch length (substrate eps_r/h_m and patch width w_m held
+    fixed) in [length_lower_m, length_upper_m] for the value whose TM010 resonant
+    frequency (patch_resonant_frequency_hz) is closest to target_frequency_hz. method
+    selects the search: "sweep" (evenly-spaced points), "grid" (equivalent to sweep in
+    this single-parameter case), or "bayesian" (from-scratch Gaussian-process
+    optimization), each using n_evaluations calls to the underlying calculation. Returns
+    "CALCULATED" provenance, tagged with the method, objective description, and the
+    fixed eps_r/w_m/h_m constraints that produced it -- see
+    optimization/rf_objectives.py for why this wires ONE named objective, not an
+    arbitrary optimization callable, across the tool boundary."""
+    return _optimize_patch_length_for_target_frequency(
+        eps_r=eps_r,
+        w_m=w_m,
+        h_m=h_m,
+        target_frequency_hz=target_frequency_hz,
+        length_lower_m=length_lower_m,
+        length_upper_m=length_upper_m,
+        method=method,
+        n_evaluations=n_evaluations,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Specialist roles (issue #34) + principal delegation/synthesis (issue #35).
 #
@@ -724,8 +760,14 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
 #                   gain is squarely antenna-element work -- and (issue #39)
 #                   run_openems_simulation, the FDTD counterpart for
 #                   conformal/curved or metamaterial geometry NEC2++'s wire
-#                   method-of-moments can't adequately model. Does NOT get
-#                   calculate_noise_figure or calculate_cascade_gain
+#                   method-of-moments can't adequately model, and (issue
+#                   #41) optimize_patch_length_for_target_frequency --
+#                   searching patch length against a target resonant
+#                   frequency via the generic optimization/ package's
+#                   parameter sweep/grid search/Bayesian optimization is
+#                   antenna-synthesis work, the same family as the Phase 1
+#                   patch-resonant-frequency tool it composes with. Does
+#                   NOT get calculate_noise_figure or calculate_cascade_gain
 #                   (receiver-chain concerns, not the antenna element
 #                   itself) or the S/Z/Y/ABCD/stability/matching tools
 #                   (microwave's job).
@@ -819,6 +861,7 @@ _ALL_TOOLS = [
     search_knowledge,
     search_design_records,
     extract_components,
+    optimize_patch_length_for_target_frequency,
 ]
 
 
@@ -935,7 +978,11 @@ ROLE_SPECS: list[RoleSpec] = [
             "simulation/openems.py) -- and full-wave HFSS simulation via "
             "PyAEDT (run_hfss_simulation) for real S-parameter/report "
             "extraction, confined to a controlled licensed workstation "
-            "(it refuses to run anywhere else, including this one). Defer "
+            "(it refuses to run anywhere else, including this one). Also "
+            "gets optimize_patch_length_for_target_frequency (issue #41) "
+            "to search patch length against a target resonant frequency "
+            "via parameter sweep, grid search, or Bayesian optimization "
+            "(all built on the generic optimization/ package). Defer "
             "receiver-chain noise figure and cascaded gain to the systems "
             "role, and S/Z/Y/ABCD/stability/matching tools to the "
             "microwave role."
@@ -959,6 +1006,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],
     ),

@@ -107,8 +107,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # the 35 new ones this ticket adds, plus 1 more (search_design_records)
     # added by issue #37, plus 1 more (run_nec2_simulation) added by #38,
     # plus 1 more (run_openems_simulation) added by #39, plus 1 more
-    # (run_hfss_simulation) added by #40.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1
+    # (run_hfss_simulation) added by #40, plus 1 more
+    # (optimize_patch_length_for_target_frequency) added by #41.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1
 
 
 def test_run_nec2_simulation_is_registered():
@@ -124,6 +125,32 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_optimize_patch_length_for_target_frequency_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "optimize_patch_length_for_target_frequency" in registered_names
+
+
+def test_optimize_patch_length_for_target_frequency_calls_through():
+    result = server.optimize_patch_length_for_target_frequency(
+        eps_r=4.4,
+        w_m=0.038,
+        h_m=0.0016,
+        target_frequency_hz=2.4e9,
+        length_lower_m=0.02,
+        length_upper_m=0.04,
+        method="grid",
+        n_evaluations=10,
+    )
+    assert result["method"] == "grid_search"
+    assert result["provenance"] == "CALCULATED"
+    assert 0.02 <= result["best_length_m"] <= 0.04
+    assert result["achieved_frequency_hz"] == pytest.approx(
+        patch_resonant_frequency_hz(4.4, 0.038, 0.0016, result["best_length_m"])
+    )
+    assert result["n_evaluations"] == 10
+    assert result["constraints"] == {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016}
 
 
 # ---------------------------------------------------------------------------

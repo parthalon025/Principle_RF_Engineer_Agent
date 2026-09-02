@@ -61,9 +61,10 @@ def test_principal_role_has_broad_access():
     # by issue #36, the search_design_records tool added by issue #37, the
     # run_nec2_simulation tool added by issue #38, the run_openems_simulation
     # tool added by issue #39, the run_hfss_simulation tool added by issue
-    # #40, plus 5 consult_<role>_role delegation tools (issue #35), one per
-    # non-principal specialist.
-    assert len(names) == 55
+    # #40, the optimize_patch_length_for_target_frequency tool added by
+    # issue #41, plus 5 consult_<role>_role delegation tools (issue #35),
+    # one per non-principal specialist.
+    assert len(names) == 56
 
 
 def test_principal_module_alias_matches_registry():
@@ -236,6 +237,19 @@ def test_antenna_and_test_roles_get_hfss_simulation():
     assert "run_hfss_simulation" not in _tool_names(ROLES["systems"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_role_gets_patch_length_optimization_tool():
+    # issue #41: searching patch length against a target resonant frequency
+    # via the generic optimization/ package composes with the Phase 1
+    # antenna-synthesis tool this role already owns.
+    assert "optimize_patch_length_for_target_frequency" in _tool_names(ROLES["antenna"])
+    assert "optimize_patch_length_for_target_frequency" in _tool_names(ROLES["principal"])
+    # not systems/microwave/test/verification's job
+    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["systems"])
+    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["microwave"])
+    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["test"])
+    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["verification"])
 
 
 def test_test_role_gets_new_touchstone_tools():
