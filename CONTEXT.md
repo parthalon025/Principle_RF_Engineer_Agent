@@ -95,6 +95,40 @@ for history.
   `filter`, `mixer`, `attenuator`, `coupler_splitter`,
   `circulator_isolator`, `switch`, `antenna`, `connector_cable`, or
   `passive_component`.
+- **Adaptive EM skin**: the umbrella technology category this repo's
+  target designs belong to — a layered, flexible electromagnetic surface
+  (metamaterial elements plus an antenna layer and spacer) that mounts on
+  a curved or flat host surface to transmit, absorb, reflect, or steer RF
+  energy. Not a specific product; a category.
+  _Avoid_: EM skin (ambiguous without "adaptive"), smart skin.
+- **Conformal antenna**: an antenna designed to mount on and follow a
+  curved or non-planar host surface without its resonant frequency,
+  gain, or match degrading relative to a flat reference design.
+  _Avoid_: Flexible antenna — describes the substrate, not the
+  mounting requirement; a flexible antenna mounted flat isn't
+  exercising the conformal property.
+- **Metamaterial unit cell**: the repeating element (e.g. an elongated,
+  passive-magnetic-property element with tailored geometry) whose
+  geometry — not material composition — produces an antenna's effective
+  permittivity/permeability. The base building block a metamaterial
+  antenna design starts from.
+  _Avoid_: Meta-atom — an optics-context term, not this project's.
+- **Customer requirement**: a stated design target for one antenna/EM-skin
+  design — frequency band, gain or VSWR/bandwidth target, form factor,
+  host-surface curvature, and platform — that anchors a request for
+  design guidance. Distinct from a Component's specification, which
+  describes an existing manufactured part rather than a target for a new
+  one.
+- **Design guidance**: the agent's output for a customer requirement — a
+  parameter recommendation (e.g. unit-cell spacing, layer stack, expected
+  gain) with rationale tracing back to CALCULATED results and/or
+  LITERATURE-SUPPORTED sources. Not a fabrication-ready CAD file or mesh;
+  a human still builds the prototype from it.
+- **Test iteration**: evaluating a physical prototype's measured data (a
+  Touchstone file from bench/range testing) against the customer
+  requirement it was built to meet, and recommending specific design
+  revisions. Distinct from simulation — the input is real measured
+  hardware data, not a simulated result.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).
