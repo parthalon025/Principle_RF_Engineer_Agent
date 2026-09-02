@@ -105,13 +105,19 @@ def test_registered_tool_count_matches_old_plus_new():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     # 11 tools wired before issue #36 (6 calc/touchstone + 5 knowledge) plus
     # the 35 new ones this ticket adds, plus 1 more (search_design_records)
-    # added by issue #37, plus 1 more (run_nec2_simulation) added by #38.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1
+    # added by issue #37, plus 1 more (run_nec2_simulation) added by #38,
+    # plus 1 more (run_openems_simulation) added by #39.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1
 
 
 def test_run_nec2_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_nec2_simulation" in registered_names
+
+
+def test_run_openems_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_openems_simulation" in registered_names
 
 
 # ---------------------------------------------------------------------------
@@ -509,3 +515,87 @@ def test_run_nec2_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["simulator"] == "NEC2++"
     assert result["impedance"]["resistance_ohms"] == pytest.approx(83.0)
     assert result["gain_dbi"] == pytest.approx(8.52)
+
+
+# ---------------------------------------------------------------------------
+# openEMS simulation (issue #39)
+#
+# The real openEMS binary is not installed in this environment, so this
+# exercises the MCP wrapper's call-through to simulation.openems via a fake
+# "openEMS" script pointed to by OPENEMS_BIN -- same not-verified-against-a-
+# real-binary caveat as tests/test_openems.py. See that file's module
+# docstring for the source citations behind this transcribed log text
+# (re-wrapped here, whitespace-compacted, to fit this file's line length).
+# ---------------------------------------------------------------------------
+
+_FAKE_OPENEMS_OUTPUT = """
+[@ 4s] Timestep: 500 || Speed: 88.8 MC/s (3.040e-03 s/TS) || Energy: ~7.06e-03 (- 5.00dB)
+[@ 8s] Timestep: 1326 || Speed: 88.8 MC/s (3.040e-03 s/TS) || Energy: ~7.06e-17 (- 50.00dB)
+Time for 1326 iterations with 269780.00 cells : 32.41 sec
+Speed: 118.02 MCells/s
+"""
+
+
+def _write_fake_openems(tmp_path: Path) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_openems.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f'OUTPUT = """{_FAKE_OPENEMS_OUTPUT}"""\n'
+        "sys.stdout.write(OUTPUT)\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_openems_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_openems(tmp_path)
+    monkeypatch.setenv("OPENEMS_BIN", str(script))
+
+    geometry = {
+        "materials": [
+            {
+                "name": "substrate",
+                "shape": "box",
+                "p1_m": [0.0, 0.0, 0.0],
+                "p2_m": [0.03, 0.02, 0.0016],
+                "epsilon_r": 3.5,
+            }
+        ],
+        "conductors": [
+            {
+                "name": "patch",
+                "shape": "box",
+                "p1_m": [0.005, 0.005, 0.0016],
+                "p2_m": [0.025, 0.015, 0.0016],
+            }
+        ],
+        "ports": [
+            {
+                "name": "feed",
+                "p1_m": [0.015, 0.005, 0.0],
+                "p2_m": [0.015, 0.005, 0.0016],
+                "direction": "z",
+                "resistance_ohms": 50.0,
+            }
+        ],
+        "mesh": {
+            "x_lines_m": [0.0, 0.01, 0.02, 0.03],
+            "y_lines_m": [0.0, 0.01, 0.02],
+            "z_lines_m": [0.0, 0.0016],
+        },
+        "frequency_hz": 2.45e9,
+    }
+    result = server.run_openems_simulation(
+        geometry, fdtd={"max_timesteps": 30000, "end_criteria": 1e-5}, timeout_s=10
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "openEMS"
+    assert result["convergence"]["terminated_reason"] == "end_criteria"
+    assert result["s_parameters"]["computed"] is False
+    assert result["far_field"]["computed"] is False

@@ -60,6 +60,7 @@ from rf_tools.touchstone import (
     interpolate_touchstone,
 )
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
+from simulation.openems import run_openems_simulation as _run_openems_simulation
 
 load_dotenv()
 
@@ -534,6 +535,31 @@ def run_nec2_simulation(geometry: dict, frequency_hz: float, timeout_s: int = 60
     )
 
 
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# geometry's shape (optional materials/conductors lists, variable-length ports) does
+# not fit the SDK's strict-schema requirement.
+def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: int = 3600) -> dict:
+    """Simulate a conformal/metamaterial antenna structure with openEMS (FDTD):
+    generate an FDTD-XML file from structured geometry (box/cylinder material and
+    conductor primitives in meters, one or more lumped ports with direction/
+    resistance_ohms/frequency_hz, and explicit rectilinear mesh lines -- see
+    simulation.openems.generate_openems_xml for the full shape), run it via openEMS,
+    and return convergence metadata (did the run converge on the energy end-criteria
+    or hit max timesteps -- the latter signals the mesh/excitation may need revision)
+    plus S-parameter/far-field result keys. Use this over run_nec2_simulation for
+    conformal/curved or metamaterial geometry that NEC2++'s wire method-of-moments
+    can't adequately model. Returns "SIMULATED" provenance. IMPORTANT SCOPE LIMIT:
+    S-parameter and far-field extraction are NOT computed in this implementation --
+    they require FFT post-processing of port time-domain data and openEMS's separate
+    nf2ff tool, both out of scope for this pass (see simulation/openems.py's module
+    docstring); only convergence metadata is real. Format verified against primary
+    openEMS/CSXCAD documentation (see simulation/openems.py's module docstring for
+    citations) but NOT against a real openEMS binary -- none is installed in this
+    environment; treat any result as unverified end-to-end until it has been run
+    against the real tool at least once."""
+    return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
+
+
 @function_tool
 def ingest_document(
     file_path: str,
@@ -656,9 +682,12 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
 #                   bandwidth<->Q, curvature-shifted resonant frequency,
 #                   Maxwell-Garnett metamaterial permeability, aperture
 #                   gain), the dB<->linear unit converters aperture gain
-#                   composes with, and (issue #38) run_nec2_simulation --
+#                   composes with, (issue #38) run_nec2_simulation --
 #                   simulating a wire-antenna structure's impedance/pattern/
-#                   gain is squarely antenna-element work. Does NOT get
+#                   gain is squarely antenna-element work -- and (issue #39)
+#                   run_openems_simulation, the FDTD counterpart for
+#                   conformal/curved or metamaterial geometry NEC2++'s wire
+#                   method-of-moments can't adequately model. Does NOT get
 #                   calculate_noise_figure or calculate_cascade_gain
 #                   (receiver-chain concerns, not the antenna element
 #                   itself) or the S/Z/Y/ABCD/stability/matching tools
@@ -670,10 +699,11 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
 #                   de-embedding, network cascading, and quantified
 #                   measured-vs-predicted comparison -- plus VSWR, return
 #                   loss, and cascade gain for comparing a measured chain
-#                   against its predicted/spec values, plus (issue #38)
-#                   run_nec2_simulation -- generating a SIMULATED-provenance
-#                   reference result is itself something a measured result
-#                   gets validated against. Does NOT get any knowledge-
+#                   against its predicted/spec values, plus (issue #38, #39)
+#                   run_nec2_simulation and run_openems_simulation --
+#                   generating a SIMULATED-provenance reference result is
+#                   itself something a measured result gets validated
+#                   against. Does NOT get any knowledge-
 #                   authoring or knowledge-auditing tool -- test validates
 #                   hardware against a spec, it doesn't ingest or extract
 #                   documents.
@@ -744,6 +774,7 @@ _ALL_TOOLS = [
     cascade_touchstone_files,
     compare_touchstone_files,
     run_nec2_simulation,
+    run_openems_simulation,
     ingest_document,
     index_document,
     read_document,
@@ -856,11 +887,16 @@ ROLE_SPECS: list[RoleSpec] = [
             "synthesis (patch effective permittivity/length extension/"
             "resonant frequency, fractional-bandwidth<->Q, curvature-shifted "
             "resonant frequency, Maxwell-Garnett metamaterial permeability, "
-            "aperture gain), and NEC2++ wire-antenna simulation "
+            "aperture gain), NEC2++ wire-antenna simulation "
             "(run_nec2_simulation) for SIMULATED-provenance impedance/"
-            "pattern/gain. Defer receiver-chain noise figure and cascaded "
-            "gain to the systems role, and S/Z/Y/ABCD/stability/matching "
-            "tools to the microwave role."
+            "pattern/gain, and openEMS FDTD simulation "
+            "(run_openems_simulation) for conformal/curved or metamaterial "
+            "geometry NEC2++'s wire method-of-moments can't adequately "
+            "model -- its convergence metadata is real, but S-parameter/"
+            "far-field extraction is not computed in this pass (see "
+            "simulation/openems.py). Defer receiver-chain noise figure and "
+            "cascaded gain to the systems role, and S/Z/Y/ABCD/stability/"
+            "matching tools to the microwave role."
         ),
         tools=[
             calculate_wavelength,
@@ -879,6 +915,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_maxwell_garnett_effective_permeability,
             calculate_aperture_gain,
             run_nec2_simulation,
+            run_openems_simulation,
             search_knowledge,
         ],
     ),
@@ -891,10 +928,11 @@ ROLE_SPECS: list[RoleSpec] = [
             "fixture de-embedding, network cascading, and quantified "
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
-            "values, including a SIMULATED-provenance NEC2++ reference "
-            "result (run_nec2_simulation) to validate hardware against. "
-            "You do not ingest or extract documents -- that is the "
-            "systems/verification roles' job."
+            "values, including SIMULATED-provenance NEC2++ "
+            "(run_nec2_simulation) and openEMS (run_openems_simulation) "
+            "reference results to validate hardware against. You do not "
+            "ingest or extract documents -- that is the systems/"
+            "verification roles' job."
         ),
         tools=[
             analyze_touchstone_file,
@@ -906,6 +944,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_return_loss,
             calculate_cascade_gain,
             run_nec2_simulation,
+            run_openems_simulation,
             search_knowledge,
         ],
     ),

@@ -54,6 +54,7 @@ from rf_tools.touchstone import (
     interpolate_touchstone,
 )
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
+from simulation.openems import run_openems_simulation as _run_openems_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -520,6 +521,26 @@ def run_nec2_simulation(geometry: dict, frequency_hz: float, timeout_s: int = 60
     return _run_nec2_simulation(
         geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s
     )
+
+
+@mcp.tool()
+def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: int = 3600) -> dict:
+    """Simulate a conformal/metamaterial antenna structure with openEMS (FDTD):
+    generate an FDTD-XML file from structured geometry (box/cylinder material and
+    conductor primitives in meters, one or more lumped ports with direction/
+    resistance_ohms/frequency_hz, and explicit rectilinear mesh lines -- see
+    simulation.openems.generate_openems_xml for the full shape), run it via openEMS,
+    and return convergence metadata (energy end-criteria vs. max-timesteps exit) plus
+    S-parameter/far-field result keys. Use this over run_nec2_simulation for
+    conformal/curved or metamaterial geometry NEC2++'s wire method-of-moments can't
+    adequately model. Returns "SIMULATED" provenance. SCOPE LIMIT: S-parameter and
+    far-field extraction are NOT computed in this implementation -- they require FFT
+    post-processing of port time-domain data and openEMS's separate nf2ff tool, both
+    out of scope for this pass (see simulation/openems.py's module docstring); only
+    convergence metadata is real. Format verified against primary openEMS/CSXCAD
+    documentation (see simulation/openems.py's module docstring for citations) but
+    NOT against a real openEMS binary -- none is installed in this environment."""
+    return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
 @mcp.tool()
