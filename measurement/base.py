@@ -82,9 +82,9 @@ performs the measurement. Concretely:
          see measurement/vna.py).
        - The instrument-control library (pyvisa for the VNA adapter) being
          genuinely importable on this host -- the caller performs this
-         *guarded* import itself (see measurement/vna.py's
-         `_real_pyvisa_importable`) and passes the boolean result in, so
-         this module never imports pyvisa itself.
+         *guarded* import itself (see `_real_pyvisa_importable` below,
+         shared by every adapter) and passes the boolean result in, so
+         this function itself never imports pyvisa.
      ALL of the above, plus a valid approval receipt, are required before
      `check_physical_actuation_gate` returns without raising. Missing
      checks are all named in one `InstrumentError`, same as
@@ -98,6 +98,7 @@ see tests/test_vna.py for the real, unmockable proof.
 
 import hashlib
 import hmac
+import importlib
 import json
 import os
 import secrets
@@ -395,3 +396,53 @@ def check_physical_actuation_gate(
             "SCPI/VISA traffic reaches the instrument. Missing/failed "
             "checks:\n" + "\n".join(f"  - {m}" for m in missing)
         )
+
+
+# ---------------------------------------------------------------------------
+# Shared pyvisa-import helpers.
+#
+# Every instrument adapter (measurement/vna.py, measurement/
+# spectrum_analyzer.py, measurement/signal_generator.py, measurement/
+# power_meter.py) needs the exact same two pieces of pyvisa-import plumbing:
+# a *guarded* "is pyvisa importable" check to feed check_physical_actuation_
+# gate's `library_importable` input above (this module never imports pyvisa
+# itself -- see the module docstring's point 4), and a guarded real import
+# of pyvisa for use only after that gate has already passed. Originally each
+# adapter module defined its own byte-for-byte-identical copy of both
+# functions; they live here instead, once, since they are adapter-agnostic
+# and every adapter needs the identical behavior.
+# ---------------------------------------------------------------------------
+
+
+def _real_pyvisa_importable() -> tuple[bool, str]:
+    """Actually attempt `import pyvisa`. Returns (importable, detail)
+    rather than raising, so check_physical_actuation_gate can report it
+    alongside every other missing signal in one message. Shared by every
+    instrument adapter (measurement/vna.py, measurement/
+    spectrum_analyzer.py, measurement/signal_generator.py, measurement/
+    power_meter.py)."""
+    try:
+        importlib.import_module("pyvisa")
+    except ImportError as exc:
+        return False, str(exc)
+    return True, ""
+
+
+def _import_pyvisa_module() -> Any:
+    """Guarded import of pyvisa itself -- deferred to inside this function
+    (rather than a top-of-module `import`) precisely because pyvisa
+    genuinely will not be installed in most environments. Only ever reached
+    from an adapter's `_real_transport_factory`, itself only reached after
+    check_physical_actuation_gate has already passed. Shared by every
+    instrument adapter (measurement/vna.py, measurement/
+    spectrum_analyzer.py, measurement/signal_generator.py, measurement/
+    power_meter.py)."""
+    try:
+        import pyvisa
+    except ImportError as exc:
+        raise InstrumentError(
+            "pyvisa is not installed. Install the optional 'measurement' "
+            "dependency group, e.g. `uv sync --extra measurement` or "
+            "`pip install '.[measurement]'`."
+        ) from exc
+    return pyvisa

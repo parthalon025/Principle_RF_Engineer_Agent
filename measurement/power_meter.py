@@ -70,7 +70,6 @@ this has actually been run against real power-meter hardware at least
 once.
 """
 
-import importlib
 import os
 import time
 from collections.abc import Callable
@@ -80,6 +79,8 @@ from .base import (
     Instrument,
     InstrumentError,
     InstrumentResult,
+    _import_pyvisa_module,
+    _real_pyvisa_importable,
     check_physical_actuation_gate,
 )
 
@@ -115,35 +116,6 @@ def _power_meter_fingerprint_fields(
     SAME dict from the SAME inputs, mirroring measurement/vna.py's
     _vna_fingerprint_fields."""
     return {"resource": resource, "frequency_hz": frequency_hz}
-
-
-def _real_pyvisa_importable() -> tuple[bool, str]:
-    """Actually attempt `import pyvisa`. Returns (importable, detail)
-    rather than raising, so check_physical_actuation_gate can report it
-    alongside every other missing signal in one message -- same pattern as
-    measurement/vna.py's _real_pyvisa_importable."""
-    try:
-        importlib.import_module("pyvisa")
-    except ImportError as exc:
-        return False, str(exc)
-    return True, ""
-
-
-def _import_pyvisa_module() -> Any:
-    """Guarded import of pyvisa itself -- deferred to inside this function
-    precisely because pyvisa genuinely will not be installed in most
-    environments, including this one (see module docstring). Only ever
-    reached from PowerMeterAdapter._real_transport_factory, itself only
-    reached after check_physical_actuation_gate has already passed."""
-    try:
-        import pyvisa
-    except ImportError as exc:
-        raise InstrumentError(
-            "pyvisa is not installed. Install the optional 'measurement' "
-            "dependency group, e.g. `uv sync --extra measurement` or "
-            "`pip install '.[measurement]'`."
-        ) from exc
-    return pyvisa
 
 
 def _parse_power_reading(raw: str) -> float:
