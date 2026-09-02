@@ -73,9 +73,10 @@ def test_principal_role_has_broad_access():
     # #46, the 4 design-lifecycle tools (create_design, read_design,
     # record_decision, verify_requirement) from a separately-merged PR
     # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
-    # tool set, plus 5 consult_<role>_role delegation tools (issue #35), one
-    # per non-principal specialist.
-    assert len(names) == 72
+    # tool set, the run_elmer_simulation tool added by issue #64, plus 5
+    # consult_<role>_role delegation tools (issue #35), one per non-principal
+    # specialist.
+    assert len(names) == 73
 
 
 def test_principal_module_alias_matches_registry():
@@ -258,6 +259,21 @@ def test_antenna_and_test_roles_get_hfss_simulation():
     assert "run_hfss_simulation" not in _tool_names(ROLES["systems"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_elmer_simulation():
+    # issue #64: Elmer FEM's VectorHelmholtz module is a general,
+    # multiphysics-ready EM cross-check kept available for a future
+    # coupled-physics need -- same antenna-element/test-reference-result
+    # family as run_nec2_simulation/run_openems_simulation/run_hfss_
+    # simulation, despite having no native S-parameter/far-field/gain
+    # post-processing of its own (see simulation/elmer.py).
+    assert "run_elmer_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_elmer_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_elmer_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_elmer_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_elmer_simulation" not in _tool_names(ROLES["verification"])
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

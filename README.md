@@ -56,6 +56,7 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- Elmer FEM (ElmerSolver, VectorHelmholtz module) + Gmsh + ElmerGrid
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -99,6 +100,8 @@ Notable components:
 - openEMS: GPLv3
 - NEC2++: GPL
 - Qucs-S: GPL-2.0
+- Elmer (ElmerSolver core, incl. VectorHelmholtz): LGPL-2.1; ElmerGUI/ElmerGrid/ElmerParam: GPL-2.0
+- Gmsh: GPL-2.0-or-later
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license

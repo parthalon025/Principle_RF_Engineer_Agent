@@ -87,6 +87,7 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.elmer import run_elmer_simulation as _run_elmer_simulation
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
@@ -701,6 +702,49 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@mcp.tool()
+def run_elmer_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    timeout_s: int = 1800,
+    gmsh_executable: str | None = None,
+    elmergrid_executable: str | None = None,
+    elmersolver_executable: str | None = None,
+) -> dict:
+    """Simulate a structure with Elmer FEM's VectorHelmholtz module (a general,
+    multiphysics-ready EM cross-check for a FUTURE coupled-physics need, e.g. EM/
+    thermal on a mounted "adaptive EM skin" -- NOT a replacement for run_nec2_
+    simulation/run_openems_simulation/run_hfss_simulation on everyday antenna work):
+    generate a Gmsh OpenCASCADE .geo script from structured geometry (a single
+    rectangular domain with isotropic material, plus an optional rectangular
+    excitation sub-region -- see simulation.elmer.generate_gmsh_geo_script for the
+    full shape), mesh it with gmsh, convert the mesh to ElmerSolver's native format
+    with ElmerGrid, generate a matching VectorHelmholtz .sif (see simulation.elmer.
+    generate_elmer_sif), run it with ElmerSolver, and parse whatever raw output is
+    available. Returns "SIMULATED" provenance. CRITICAL SCOPE LIMIT: Elmer's
+    VectorHelmholtz module has NO native antenna-specific port/S-parameter/far-field/
+    gain post-processing (unlike OpenParEM/Palace) -- this tool's excitation
+    (impressed "Body Force"/"Current Density" current source) and boundary conditions
+    (PEC "E Re"/"E Im"=0, or the solver's own generic "Absorbing BC" flag) are
+    hand-assembled, real FEM techniques but NOT a calibrated port; "s_parameters" and
+    "far_field" are therefore ALWAYS returned computed=False with an explanatory note,
+    never fabricated -- see simulation/elmer.py's module docstring "SCOPE AND
+    LIMITATIONS" for the full detail. .geo/.sif/CLI format verified against Gmsh's own
+    official reference manual and ElmerGrid's/ElmerSolver's own primary GitHub source
+    (see simulation/elmer.py's module docstring for the full citation list, each fact
+    graded by confidence) but NOT against real gmsh/ElmerGrid/ElmerSolver binaries --
+    none is installed in this environment; treat any result as unverified end-to-end
+    until it has been run against the real tools at least once."""
+    return _run_elmer_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        timeout_s=timeout_s,
+        gmsh_executable=gmsh_executable,
+        elmergrid_executable=elmergrid_executable,
+        elmersolver_executable=elmersolver_executable,
     )
 
 

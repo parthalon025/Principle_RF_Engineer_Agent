@@ -10,6 +10,7 @@ test_calculations.py and test_touchstone.py.
 """
 
 import asyncio
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -120,7 +121,11 @@ def test_registered_tool_count_matches_old_plus_new():
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
     # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # plus 1 more (run_elmer_simulation) added by #64.
+    assert (
+        len(registered_names)
+        == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1
+    )
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -141,6 +146,11 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_run_elmer_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_elmer_simulation" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
@@ -777,3 +787,83 @@ def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert Path(result["touchstone_file"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# Elmer FEM VectorHelmholtz simulation (issue #64)
+#
+# None of gmsh, ElmerGrid, or ElmerSolver is installed in this environment,
+# so this exercises the MCP wrapper's call-through to simulation.elmer via
+# small fake "gmsh"/"ElmerGrid"/"ElmerSolver" scripts passed through the
+# tool's own gmsh_executable/elmergrid_executable/elmersolver_executable
+# override parameters -- same not-verified-against-real-binaries caveat as
+# tests/test_elmer.py, whose module docstring carries the full citation
+# list for the .geo/.sif/CLI formats these fakes stand in for.
+# ---------------------------------------------------------------------------
+
+_FAKE_GMSH_FOR_MCP_TEST = """
+import sys
+args = sys.argv[1:]
+out = args[args.index("-o") + 1]
+with open(out, "w") as f:
+    f.write("$MeshFormat\\n2.2 0 8\\n$EndMeshFormat\\n")
+sys.exit(0)
+"""
+
+_FAKE_ELMERGRID_FOR_MCP_TEST = """
+import sys, os
+args = sys.argv[1:]
+out_dir = args[args.index("-out") + 1]
+os.makedirs(out_dir, exist_ok=True)
+with open(os.path.join(out_dir, "mesh.header"), "w") as f:
+    f.write("fake mesh header\\n")
+sys.exit(0)
+"""
+
+_FAKE_ELMERSOLVER_FOR_MCP_TEST = """
+import sys
+with open("scalar_values.dat.names", "w") as f:
+    f.write("Variables in columns of matrix:\\n   1: Line Marker\\n   2: res: energy functional\\n")
+with open("scalar_values.dat", "w") as f:
+    f.write("1 4.2\\n")
+sys.stdout.write("*** Elmer Solver: ALL DONE ***\\n")
+sys.exit(0)
+"""
+
+
+def _write_fake_elmer_toolchain(tmp_path: Path):
+    import stat
+
+    scripts = {}
+    for name, body in (
+        ("fake_gmsh.py", _FAKE_GMSH_FOR_MCP_TEST),
+        ("fake_elmergrid.py", _FAKE_ELMERGRID_FOR_MCP_TEST),
+        ("fake_elmersolver.py", _FAKE_ELMERSOLVER_FOR_MCP_TEST),
+    ):
+        script = tmp_path / name
+        script.write_text(f"#!{sys.executable}\n" + body)
+        script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        scripts[name] = script
+    return scripts
+
+
+def test_run_elmer_simulation_calls_through(tmp_path: Path):
+    scripts = _write_fake_elmer_toolchain(tmp_path)
+
+    geometry = {"domain": {"p1_m": [0.0, 0.0, 0.0], "p2_m": [0.1, 0.08, 0.06]}}
+    result = server.run_elmer_simulation(
+        geometry,
+        frequency_hz=2.45e9,
+        timeout_s=10,
+        gmsh_executable=str(scripts["fake_gmsh.py"]),
+        elmergrid_executable=str(scripts["fake_elmergrid.py"]),
+        elmersolver_executable=str(scripts["fake_elmersolver.py"]),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "Elmer/VectorHelmholtz"
+    assert result["status"] == "COMPLETED"
+    assert result["completed_normally"] is True
+    assert result["raw_scalars"]["computed"] is True
+    assert result["s_parameters"]["computed"] is False
+    assert result["far_field"]["computed"] is False
