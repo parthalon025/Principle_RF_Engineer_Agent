@@ -100,6 +100,7 @@ simulation_auto:
   - run_elmer_simulation
   - run_ltspice_simulation
   - run_qucs_simulation
+  - run_kicad_gerber2ems_simulation
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

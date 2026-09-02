@@ -17,6 +17,10 @@ Planning reference; not legal advice.
 | Elmer (ElmerSolver core, incl. VectorHelmholtz module) | LGPL-2.1 | Free; review obligations if redistributed. Verified directly against `license_texts/LGPL-2.1.txt` and `fem/src/modules/VectorHelmholtz.F90`'s own file header at github.com/ElmerCSC/elmerfem -- Elmer's own `ElmerLicensePolicy.md` states the GPL/LGPL version numbers backwards ("GPL v.2.1"/"LGPL v.2.0"); see simulation/elmer.py's module docstring for the full resolution. |
 | ElmerGUI / ElmerGrid / ElmerParam | GPL-2.0 | Free; review obligations if redistributed. ElmerGUI and ElmerGrid confirmed directly (`elmergrid/GPL-2`, `elmergrid/src/fempre.c` header) at github.com/ElmerCSC/elmerfem; ElmerParam was NOT found as a present top-level component in that repo during this verification pass (see simulation/elmer.py's module docstring) -- recorded honestly as unconfirmed-present, not assumed still shipping. |
 | Gmsh | GPL-2.0-or-later | Free; review obligations if redistributed. Verified directly against `LICENSE.txt` at github.com/live-clones/gmsh (mirror of gmsh's canonical gitlab.onelab.info repo); includes an explicit linking exception for Netgen/METIS/OpenCASCADE/ParaView. |
+| KiCad (application/kicad-cli) | GPL-3.0-or-later | Free; review obligations if redistributed. Verified against kicad.org/about/licenses/. |
+| kicad-python (`kipy`) | MIT | Free. Verified against the project's own `pyproject.toml` (`license = "MIT"`), corroborated by PyPI's `license_expression`. |
+| gerber2ems | Apache-2.0 | Free; NOTICE/attribution obligations if redistributed. Verified against the project's own LICENSE file. Not on PyPI -- manual/source install. |
+| gerbv | GPL-2.0 | Free; review obligations if redistributed. Verified against the maintained fork's own README/LICENSE. Manual/system install. |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |
 | PyVISA | MIT | Free; requires a VISA backend (vendor or pyvisa-py) for real hardware |

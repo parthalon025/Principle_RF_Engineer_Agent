@@ -76,12 +76,13 @@ def test_principal_role_has_broad_access():
     # tool set, the run_openparem_simulation tool added by issue #62, the
     # run_elmer_simulation tool added by issue #64, the run_ltspice_
     # simulation tool added by issue #59, the run_qucs_simulation tool added
-    # by issue #58, plus 4 more
+    # by issue #58, the run_kicad_gerber2ems_simulation tool added by issue
+    # #65, plus 4 more
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by ticket
     # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
     # non-principal specialist.
-    assert len(names) == 80
+    assert len(names) == 81
 
 
 def test_principal_module_alias_matches_registry():
