@@ -130,11 +130,12 @@ def test_registered_tool_count_matches_old_plus_new():
     # (run_palace_simulation) added by #61, plus 4 more
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by #67,
-    # plus 1 more (run_gprmax_simulation) added by #63.
+    # plus 1 more (run_gprmax_simulation) added by #63, plus 1 more
+    # (run_meep_simulation) added by #60.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
-        + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1
+        + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1
     )
     assert len(registered_names) == expected
 
@@ -1259,3 +1260,141 @@ def test_run_palace_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["s_parameters"]["computed"] is True
     assert result["s_parameters"]["frequency_hz"] == pytest.approx([10e9])
     assert "S11" in result["s_parameters"]["specular"]
+
+
+# ---------------------------------------------------------------------------
+# MEEP simulation (issue #60)
+#
+# MEEP genuinely is not installed in this environment (see tests/test_meep.py
+# for the direct, unmockable proof). This test exercises only the MCP
+# wrapper's parameter call-through to simulation.meep.run_meep_simulation,
+# by monkeypatching the module-level `_run_meep_simulation` reference
+# server.py calls through so it engages that function's own `meep_module`
+# test-injection seam (documented on MeepSimulator.__init__) against a
+# minimal fake -- same shape as tests/test_meep.py's FakeMeepModule, not
+# re-imported here to keep this file self-contained like its NEC2++/
+# openEMS/HFSS sections above.
+# ---------------------------------------------------------------------------
+
+
+def test_run_meep_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_meep_simulation" in registered_names
+
+
+def test_run_meep_simulation_calls_through(monkeypatch):
+    from simulation.meep import run_meep_simulation as real_run_meep_simulation
+
+    class _FakeFlux:
+        def __init__(self, freqs, values):
+            self.freqs = freqs
+            self.values = values
+
+    class _FakeMedium:
+        def __init__(self, epsilon=1.0, mu=1.0):
+            self.epsilon = epsilon
+            self.mu = mu
+
+    class _FakeSimulation:
+        def __init__(self, module, **kwargs):
+            self._module = module
+
+        def add_flux(self, fcen, df, nfreq, region):
+            return self._module._next_flux()
+
+        def run(self, *step_funcs, **kwargs):
+            pass
+
+        def get_flux_data(self, flux):
+            return {"saved_from": flux}
+
+        def load_minus_flux_data(self, flux, data):
+            pass
+
+        def reset_meep(self):
+            pass
+
+    class _FakeMeepModuleForMcpTest:
+        def __init__(self):
+            freqs = [0.1]
+            self._script = [(freqs, [0.0]), (freqs, [2.0]), (freqs, [-0.5])]
+            self._index = 0
+            self.inf = float("inf")
+            self.metal = _FakeMedium(epsilon=-1e20)
+            for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+                setattr(self, name, name)
+
+        def _next_flux(self):
+            freqs, values = self._script[self._index]
+            self._index += 1
+            return _FakeFlux(freqs, values)
+
+        def Vector3(self, x=0.0, y=0.0, z=0.0):
+            return (x, y, z)
+
+        def Medium(self, epsilon=1.0, mu=1.0, **kwargs):
+            return _FakeMedium(epsilon=epsilon, mu=mu)
+
+        def Block(self, material=None, center=None, size=None, **kwargs):
+            return {"material": material, "center": center, "size": size}
+
+        def Cylinder(self, **kwargs):
+            return kwargs
+
+        def PML(self, thickness, **kwargs):
+            return {"thickness": thickness}
+
+        def GaussianSource(self, frequency, fwidth=0.0, **kwargs):
+            return {"frequency": frequency, "fwidth": fwidth}
+
+        def Source(self, src, component=None, center=None, size=None, **kwargs):
+            return {"src": src, "component": component}
+
+        def FluxRegion(self, center=None, size=None, **kwargs):
+            return {"center": center, "size": size}
+
+        def Simulation(self, **kwargs):
+            return _FakeSimulation(self, **kwargs)
+
+        def get_fluxes(self, flux):
+            return list(flux.values)
+
+        def get_flux_freqs(self, flux):
+            return list(flux.freqs)
+
+        def stop_when_fields_decayed(self, dt, component, pt, decay_by):
+            return None
+
+    def fake_run(geometry, characteristic_length_m=1e-3, nfreq=1):
+        return real_run_meep_simulation(
+            geometry=geometry,
+            characteristic_length_m=characteristic_length_m,
+            nfreq=nfreq,
+            meep_module=_FakeMeepModuleForMcpTest(),
+        )
+
+    monkeypatch.setattr(server, "_run_meep_simulation", fake_run)
+
+    geometry = {
+        "cell_size_m": [30e-3, 20e-3, 10e-3],
+        "pml_thickness_m": 1e-3,
+        "mesh_cell_size_m": 0.5e-3,
+        "conductors": [
+            {"name": "ground", "shape": "box", "p1_m": [0, 0, 0], "p2_m": [30e-3, 20e-3, 0]},
+        ],
+        "port": {
+            "center_m": [-10e-3, 10e-3, 0.8e-3],
+            "size_m": [0, 20e-3, 1.6e-3],
+            "direction": "x",
+            "frequency_hz": 2.45e9,
+        },
+        "reflection_monitor_center_m": [-8e-3, 10e-3, 0.8e-3],
+        "reference_monitor_center_m": [12e-3, 10e-3, 0.8e-3],
+    }
+    result = server.run_meep_simulation(geometry)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "MEEP"
+    assert result["status"] == "COMPLETED"
+    assert result["s_parameters"]["computed"] is True
+    assert result["s_parameters"]["s11_magnitude"] == pytest.approx([0.5])

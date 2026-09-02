@@ -100,6 +100,7 @@ from simulation.kicad_gerber2ems import (
     run_kicad_gerber2ems_simulation as _run_kicad_gerber2ems_simulation,
 )
 from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
+from simulation.meep import run_meep_simulation as _run_meep_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.ngspice import run_ngspice_simulation as _run_ngspice_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
@@ -1001,6 +1002,35 @@ def run_palace_simulation(
         sweep=sweep,
         num_processes=num_processes,
         timeout_s=timeout_s,
+    )
+
+
+@mcp.tool()
+def run_meep_simulation(
+    geometry: dict,
+    characteristic_length_m: float = 1e-3,
+    nfreq: int = 1,
+) -> dict:
+    """Simulate a structure with MEEP (FDTD, driven as a Python library, not a
+    subprocess binary) as a SECOND, INDEPENDENT full-wave EM solver you can cross-
+    check a design decision against instead of resting on run_openems_simulation's
+    output alone -- e.g. run the same geometry through both and compare |S11|. Takes
+    box/cylinder dielectric materials and PEC conductors in meters (see
+    simulation.meep.run_meep_simulation for the full geometry shape), a single port
+    modeled as a Gaussian-pulse source plus a reflection-flux monitor (MEEP has no
+    lumped-RLC-port concept the way openEMS/HFSS do -- see simulation/meep.py's PORT
+    MODEL caveat), and returns "SIMULATED" provenance. IMPORTANT SCOPE LIMITS: only
+    POWER REFLECTANCE and its magnitude |S11| are computed (via MEEP's own documented
+    flux-subtraction technique) -- NO complex phase, NO S21/multi-port, NO Touchstone
+    export, and NO far-field/gain (see simulation/meep.py's module docstring SCOPE
+    section). `characteristic_length_m` is MEEP's own dimensionless-unit lengthscale
+    "a" (default 1mm). Geometry/units translation verified against MEEP's own primary
+    documentation (see simulation/meep.py's module docstring for the citation) but
+    NOT against a real MEEP install -- MEEP has no PyPI wheel and no native Windows
+    support (conda-forge only, WSL required on Windows; see README.md's Optional
+    tools list)."""
+    return _run_meep_simulation(
+        geometry=geometry, characteristic_length_m=characteristic_length_m, nfreq=nfreq
     )
 
 

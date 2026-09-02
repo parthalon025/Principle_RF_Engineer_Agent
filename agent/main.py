@@ -113,6 +113,7 @@ from simulation.kicad_gerber2ems import (
     run_kicad_gerber2ems_simulation as _run_kicad_gerber2ems_simulation,
 )
 from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
+from simulation.meep import run_meep_simulation as _run_meep_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.ngspice import run_ngspice_simulation as _run_ngspice_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
@@ -1144,6 +1145,40 @@ def run_xyce_simulation(job: dict, timeout_s: int = 600) -> dict:
     return _run_xyce_simulation(job=job, timeout_s=timeout_s)
 
 
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# geometry's shape (optional materials/conductors lists, a single port dict) does
+# not fit the SDK's strict-schema requirement.
+def run_meep_simulation(
+    geometry: dict,
+    characteristic_length_m: float = 1e-3,
+    nfreq: int = 1,
+) -> dict:
+    """Simulate a structure with MEEP (FDTD, driven as a Python library, not a
+    subprocess binary) as a SECOND, INDEPENDENT full-wave EM solver you can cross-
+    check a design decision against instead of resting on run_openems_simulation's
+    output alone -- e.g. run the same geometry through both and compare |S11|. Takes
+    box/cylinder dielectric materials and PEC conductors in meters (see
+    simulation.meep.run_meep_simulation for the full geometry shape), a single port
+    modeled as a Gaussian-pulse source plus a reflection-flux monitor (MEEP has no
+    lumped-RLC-port concept the way openEMS/HFSS do -- see simulation/meep.py's PORT
+    MODEL caveat), and returns "SIMULATED" provenance. IMPORTANT SCOPE LIMITS: only
+    POWER REFLECTANCE and its magnitude |S11| are computed (via MEEP's own documented
+    flux-subtraction technique) -- NO complex phase, NO S21/multi-port, NO Touchstone
+    export, and NO far-field/gain (see simulation/meep.py's module docstring SCOPE
+    section) -- so only |S11| magnitude, not phase, can be cross-checked against
+    run_openems_simulation's complex S11. `characteristic_length_m` is MEEP's own
+    dimensionless-unit lengthscale "a" (default 1mm, reasonable for patch-antenna-
+    scale geometry); geometry/units translation verified against MEEP's own primary
+    documentation (see simulation/meep.py's module docstring for the citation) but
+    NOT against a real MEEP install -- MEEP has no PyPI wheel and no native Windows
+    support (conda-forge only, WSL required on Windows; see README.md's Optional
+    tools list); treat any result as unverified end-to-end until it has been run
+    against the real library at least once."""
+    return _run_meep_simulation(
+        geometry=geometry, characteristic_length_m=characteristic_length_m, nfreq=nfreq
+    )
+
+
 # ---------------------------------------------------------------------------
 # VNA measurement (issue #43, Phase 10 ticket 1 of 2) -- deliberately TWO
 # separate tools, not one tool with an easily-flippable boolean parameter,
@@ -2046,6 +2081,7 @@ _ALL_TOOLS = [
     run_ngspice_simulation,
     run_xyce_simulation,
     run_palace_simulation,
+    run_meep_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -2268,7 +2304,12 @@ ROLE_SPECS: list[RoleSpec] = [
             "element design at all (embedded PEC conductor patches -- a "
             "metallic metasurface pattern, as opposed to an all-dielectric "
             "grating/photonic-crystal cell -- are not supported yet, see "
-            "simulation/palace.py). Also gets "
+            "simulation/palace.py), and MEEP FDTD simulation "
+            "(run_meep_simulation, issue #60) as a SECOND, INDEPENDENT "
+            "full-wave solver to cross-check a design decision against "
+            "run_openems_simulation's output instead of resting on one "
+            "solver alone -- power-reflectance/|S11| magnitude only, no "
+            "phase or S21 (see simulation/meep.py). Also gets "
             "optimize_patch_length_for_target_frequency (issue #41) "
             "to search patch length against a target resonant frequency "
             "via parameter sweep, grid search, or Bayesian optimization "
@@ -2301,6 +2342,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_elmer_simulation,
             run_kicad_gerber2ems_simulation,
             run_palace_simulation,
+            run_meep_simulation,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],
@@ -2328,10 +2370,12 @@ ROLE_SPECS: list[RoleSpec] = [
             "design), (issue #57) ngspice/Xyce (run_ngspice_simulation, "
             "run_xyce_simulation) circuit-level, Palace "
             "(run_palace_simulation, issue #61 -- native Floquet/periodic-"
-            "port full-wave results for a metamaterial unit cell), and "
-            "gprMax (run_gprmax_simulation, issue #63, ground-coupled/"
-            "lossy-half-space) reference results to validate hardware "
-            "against. Use "
+            "port full-wave results for a metamaterial unit cell), gprMax "
+            "(run_gprmax_simulation, issue #63, ground-coupled/lossy-"
+            "half-space), and MEEP (run_meep_simulation, issue #60 -- a "
+            "second, independent full-wave solver for cross-checking a "
+            "design decision instead of resting on one solver's output "
+            "alone) reference results to validate hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -2392,6 +2436,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_ngspice_simulation,
             run_xyce_simulation,
             run_palace_simulation,
+            run_meep_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

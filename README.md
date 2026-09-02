@@ -77,6 +77,11 @@ Optional:
 - gprMax (ground-coupled/lossy-half-space FDTD -- conda + a C compiler with
   OpenMP, then `python setup.py build && python setup.py install`; not
   pip-installable, see `simulation/gprmax.py`'s module docstring)
+- MEEP (FDTD, driven as a Python library -- `import meep`; a second, independent
+  full-wave solver for cross-checking a design decision against openEMS instead of
+  resting on one solver alone. No PyPI wheel: install via conda-forge
+  (`conda create -n mp -c conda-forge pymeep`); no native Windows support (WSL
+  required on Windows). See `simulation/meep.py`.)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
@@ -134,6 +139,7 @@ Notable components:
 - Xyce: GPL-3.0
 - Palace: Apache-2.0
 - gprMax: GPLv3-or-later
+- MEEP: GPLv2
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - KiCad (application/kicad-cli): GPL-3.0-or-later
 - kicad-python: MIT

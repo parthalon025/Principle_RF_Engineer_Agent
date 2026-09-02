@@ -95,7 +95,10 @@ simulation_auto:
   # run_ads under approval_required below), matching run_nec2_simulation/
   # run_openems_simulation exactly. Palace (issue #61) is open-source
   # (Apache-2.0) and has no licensing/workstation gate of its own -- see
-  # simulation/palace.py.
+  # simulation/palace.py. run_meep_simulation (issue #60) is free/open-
+  # source FDTD driven as a Python library (no licensing gate needed,
+  # unlike HFSS) -- same category as run_nec2_simulation/run_openems_
+  # simulation.
   - run_nec2_simulation
   - run_openems_simulation
   - run_openparem_simulation
@@ -107,6 +110,7 @@ simulation_auto:
   - run_xyce_simulation
   - run_palace_simulation
   - run_gprmax_simulation
+  - run_meep_simulation
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without
