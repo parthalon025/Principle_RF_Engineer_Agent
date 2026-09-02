@@ -13,6 +13,8 @@ from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from measurement.vna import request_vna_measurement_approval as _request_vna_measurement_approval
+from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -600,6 +602,115 @@ def run_hfss_simulation(
     )
 
 
+# ---------------------------------------------------------------------------
+# VNA measurement (issue #43, Phase 10 ticket 1 of 2) -- deliberately TWO
+# separate tools, not one tool with an easily-flippable boolean parameter,
+# per this ticket's design guidance and mirroring measurement/base.py's
+# structural approval-gate design: request_vna_measurement_approval() is
+# the ONLY way to obtain an approval receipt, and does nothing dangerous
+# itself; measure_vna_s_parameters() is the only tool that can actually
+# reach the instrument, and it cryptographically verifies (via
+# measurement/base.py's check_physical_actuation_gate) that the `approval`
+# it was given is a genuine, unmodified receipt granted for this EXACT
+# resource/start_hz/stop_hz/points/sparams combination -- a receipt for a
+# different request, a forged token, or a bare string/boolean in place of
+# a real receipt are all rejected, not silently accepted.
+#
+# IMPORTANT: this codebase does not yet wire up any real human-facing
+# approval UI/workflow (see measurement/base.py's module docstring), so
+# request_vna_measurement_approval below ALWAYS raises when actually
+# invoked through this tool surface -- a Python approval_callback cannot
+# cross this JSON tool-call boundary, so there is currently no way for an
+# agent invocation of this tool to produce a granted approval. This is
+# intentional: physical lab instruments are never controlled autonomously
+# in this project (README.md, docs/BUILD_PLAN.md's Phase 10 "Physical
+# control remains approval-required", docs/SECURITY.md). Wiring a real
+# approval_callback (a genuine human-facing confirmation workflow) is a
+# project for later.
+# ---------------------------------------------------------------------------
+
+
+@function_tool
+def request_vna_measurement_approval(
+    resource: str,
+    start_hz: float,
+    stop_hz: float,
+    points: int = 201,
+    sparams: list[str] | None = None,
+    approved_by: str = "",
+) -> dict:
+    """Request the distinct, auditable human-approval step required before
+    ANY VNA S-parameter measurement can physically actuate a real
+    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no
+    instrument I/O of any kind. On success, returns an approval receipt
+    (a plain dict) to pass UNCHANGED as measure_vna_s_parameters'
+    `approval` argument, for THIS EXACT resource/start_hz/stop_hz/points/
+    sparams combination -- a receipt requested for a different combination
+    will be rejected there.
+
+    THIS TOOL CURRENTLY ALWAYS RAISES: no real human-facing approval
+    workflow is wired into this codebase yet (see this module's comment
+    above and measurement/base.py's module docstring). Do not attempt to
+    work around this by fabricating a token yourself -- measure_vna_
+    s_parameters cryptographically verifies the receipt and rejects
+    anything that did not genuinely come from this function having
+    actually granted an approval."""
+    return _request_vna_measurement_approval(
+        resource=resource,
+        start_hz=start_hz,
+        stop_hz=stop_hz,
+        points=points,
+        sparams=sparams,
+        approved_by=approved_by or None,
+    )
+
+
+@function_tool(strict_mode=False)  # `approval`'s shape (an opaque receipt
+# dict passed through unchanged from request_vna_measurement_approval's
+# output) and `calibration` (free-form caller metadata) don't fit the
+# SDK's strict-schema requirement -- same rationale as run_nec2_
+# simulation's geometry parameter above.
+def measure_vna_s_parameters(
+    resource: str,
+    start_hz: float,
+    stop_hz: float,
+    approval: dict,
+    points: int = 201,
+    sparams: list[str] | None = None,
+    z0: float = 50.0,
+    calibration: dict | None = None,
+) -> dict:
+    """Perform a real VNA S-parameter measurement over SCPI/VISA, GIVEN a
+    valid approval receipt already obtained from a separate, prior call to
+    request_vna_measurement_approval for this EXACT resource/start_hz/
+    stop_hz/points/sparams combination. Configures the frequency sweep,
+    triggers a measurement, and reads back S-parameter data, returning a
+    "MEASURED"-provenance result (this project's top evidence tier --
+    README.md's "Design goals") with instrument identity and calibration
+    metadata attached, structured Touchstone-compatibly (an in-memory
+    skrf.Network is built from the parsed data -- see measurement/vna.py,
+    which reuses this project's existing rf_tools/touchstone.py
+    conventions). Refuses to run without ALL of: ALLOW_INSTRUMENT_
+    CONTROL=true, a configured VISA resource, pyvisa installed, AND a
+    cryptographically valid approval receipt for this exact request (see
+    measurement/base.py's check_physical_actuation_gate) -- none of this
+    is optional or bypassable from this tool surface. Exact SCPI command
+    syntax is documented, generic, and explicitly vendor-variable (see
+    measurement/vna.py's module docstring's citations and caveat); it is
+    NOT verified against any real instrument in this environment -- none
+    is installed or available here."""
+    return _run_vna_measurement(
+        resource=resource,
+        start_hz=start_hz,
+        stop_hz=stop_hz,
+        approval=approval,
+        points=points,
+        sparams=sparams,
+        z0=z0,
+        calibration=calibration,
+    )
+
+
 @function_tool
 def ingest_document(
     file_path: str,
@@ -855,6 +966,8 @@ _ALL_TOOLS = [
     run_nec2_simulation,
     run_openems_simulation,
     run_hfss_simulation,
+    request_vna_measurement_approval,
+    measure_vna_s_parameters,
     ingest_document,
     index_document,
     read_document,
@@ -1022,9 +1135,20 @@ ROLE_SPECS: list[RoleSpec] = [
             "values, including SIMULATED-provenance NEC2++ "
             "(run_nec2_simulation), openEMS (run_openems_simulation), and "
             "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. You do "
-            "not ingest or extract documents -- that is the systems/"
-            "verification roles' job."
+            "only) reference results to validate hardware against. You also "
+            "get (issue #43) the real VNA measurement tools -- "
+            "request_vna_measurement_approval and measure_vna_s_parameters "
+            "-- for pulling real MEASURED-provenance S-parameter data off a "
+            "physical instrument via SCPI/VISA. These are deliberately TWO "
+            "separate tools, not one with a boolean flag: physical lab "
+            "instruments are never controlled autonomously in this project "
+            "(README.md, docs/BUILD_PLAN.md's Phase 10, docs/SECURITY.md), "
+            "so a real instrument actuation requires a distinct approval "
+            "receipt from the first tool before the second will run -- and "
+            "in this codebase's current state, the first tool always "
+            "raises, since no human-facing approval workflow is wired up "
+            "yet. You do not ingest or extract documents -- that is the "
+            "systems/verification roles' job."
         ),
         tools=[
             analyze_touchstone_file,
@@ -1038,6 +1162,8 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            request_vna_measurement_approval,
+            measure_vna_s_parameters,
             search_knowledge,
         ],
     ),

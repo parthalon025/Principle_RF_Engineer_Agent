@@ -7,6 +7,8 @@ from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from measurement.vna import request_vna_measurement_approval as _request_vna_measurement_approval
+from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -574,6 +576,84 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+# ---------------------------------------------------------------------------
+# VNA measurement (issue #43, Phase 10 ticket 1 of 2) -- TWO separate
+# tools, not one with a boolean flag, mirroring measurement/base.py's
+# structural approval-gate design and agent/main.py's same split. See
+# measurement/base.py's module docstring for the full approval-gate design.
+#
+# request_vna_measurement_approval below ALWAYS raises when actually
+# invoked through this tool surface: no real human-facing approval
+# UI/workflow is wired into this codebase yet, and a Python
+# approval_callback cannot cross this JSON tool-call boundary. Physical lab
+# instruments are never controlled autonomously in this project (README.md,
+# docs/BUILD_PLAN.md's Phase 10 "Physical control remains
+# approval-required", docs/SECURITY.md).
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def request_vna_measurement_approval(
+    resource: str,
+    start_hz: float,
+    stop_hz: float,
+    points: int = 201,
+    sparams: list[str] | None = None,
+    approved_by: str = "",
+) -> dict:
+    """Request the distinct, auditable human-approval step required before
+    ANY VNA S-parameter measurement can physically actuate a real
+    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no
+    instrument I/O. On success, returns an approval receipt (a plain dict)
+    to pass UNCHANGED as measure_vna_s_parameters' `approval` argument, for
+    THIS EXACT resource/start_hz/stop_hz/points/sparams combination.
+    CURRENTLY ALWAYS RAISES: no real human-facing approval workflow is
+    wired into this codebase yet."""
+    return _request_vna_measurement_approval(
+        resource=resource,
+        start_hz=start_hz,
+        stop_hz=stop_hz,
+        points=points,
+        sparams=sparams,
+        approved_by=approved_by or None,
+    )
+
+
+@mcp.tool()
+def measure_vna_s_parameters(
+    resource: str,
+    start_hz: float,
+    stop_hz: float,
+    approval: dict,
+    points: int = 201,
+    sparams: list[str] | None = None,
+    z0: float = 50.0,
+    calibration: dict | None = None,
+) -> dict:
+    """Perform a real VNA S-parameter measurement over SCPI/VISA, GIVEN a
+    valid approval receipt already obtained from a separate, prior call to
+    request_vna_measurement_approval for this EXACT resource/start_hz/
+    stop_hz/points/sparams combination. Returns a "MEASURED"-provenance
+    result with instrument identity and calibration metadata attached,
+    structured Touchstone-compatibly (an in-memory skrf.Network is built
+    from the parsed data -- see measurement/vna.py). Refuses to run
+    without ALL of: ALLOW_INSTRUMENT_CONTROL=true, a configured VISA
+    resource, pyvisa installed, AND a cryptographically valid approval
+    receipt for this exact request. Exact SCPI command syntax is
+    documented, generic, and vendor-variable (see measurement/vna.py's
+    module docstring); NOT verified against any real instrument here."""
+    return _run_vna_measurement(
+        resource=resource,
+        start_hz=start_hz,
+        stop_hz=stop_hz,
+        approval=approval,
+        points=points,
+        sparams=sparams,
+        z0=z0,
+        calibration=calibration,
     )
 
 

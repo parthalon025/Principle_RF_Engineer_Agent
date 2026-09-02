@@ -108,8 +108,10 @@ def test_registered_tool_count_matches_old_plus_new():
     # added by issue #37, plus 1 more (run_nec2_simulation) added by #38,
     # plus 1 more (run_openems_simulation) added by #39, plus 1 more
     # (run_hfss_simulation) added by #40, plus 1 more
-    # (optimize_patch_length_for_target_frequency) added by #41.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1
+    # (optimize_patch_length_for_target_frequency) added by #41, plus 2 more
+    # (request_vna_measurement_approval, measure_vna_s_parameters) added by
+    # #43.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2
 
 
 def test_run_nec2_simulation_is_registered():

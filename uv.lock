@@ -2149,6 +2149,9 @@ dependencies = [
 hfss = [
     { name = "pyaedt" },
 ]
+measurement = [
+    { name = "pyvisa" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -2170,11 +2173,12 @@ requires-dist = [
     { name = "pyaedt", marker = "extra == 'hfss'" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "pyvisa", marker = "extra == 'measurement'" },
     { name = "rich", specifier = ">=13.9" },
     { name = "scikit-rf", specifier = ">=1.8" },
     { name = "scipy", specifier = ">=1.14" },
 ]
-provides-extras = ["hfss"]
+provides-extras = ["hfss", "measurement"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2634,6 +2638,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/52/a9/0c0db8d37b2b8a645666f7fd8accea4c6224e013c42b1d5c17c93590cd06/python_pptx-1.0.2.tar.gz", hash = "sha256:479a8af0eaf0f0d76b6f00b0887732874ad2e3188230315290cd1f9dd9cc7095", size = 10109297, upload-time = "2024-08-07T17:33:37.772Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/4f/00be2196329ebbff56ce564aa94efb0fbc828d00de250b1980de1a34ab49/python_pptx-1.0.2-py3-none-any.whl", hash = "sha256:160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba", size = 472788, upload-time = "2024-08-07T17:33:28.192Z" },
+]
+
+[[package]]
+name = "pyvisa"
+version = "1.16.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/72/a50adff945e66f2161a44b243970f809de19152a2e7da0473ae8ff96d642/pyvisa-1.16.2.tar.gz", hash = "sha256:75beb93eeafe20a50be5726fa4e3a645948c93d86819f9c1f8c542efa4085a38", size = 238729, upload-time = "2026-02-27T12:14:08.54Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/a9/776da4f397003cca093659524c3526590522f81b642936838428c11274e6/pyvisa-1.16.2-py3-none-any.whl", hash = "sha256:54f034adafd3e8d1858d57cdafec64e920444f4b84b31c9fd17487fbad0a197a", size = 181413, upload-time = "2026-02-27T12:14:07.301Z" },
 ]
 
 [[package]]
