@@ -78,13 +78,13 @@ def test_principal_role_has_broad_access():
     # simulation tool added by issue #59, the run_qucs_simulation tool added
     # by issue #58, the run_kicad_gerber2ems_simulation tool added by issue
     # #65, the run_ngspice_simulation and run_xyce_simulation tools added by
-    # issue #57, the run_palace_simulation tool added by issue #61, plus 4
-    # more
+    # issue #57, the run_palace_simulation tool added by issue #61, the
+    # run_gprmax_simulation tool added by issue #63, plus 4 more
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by ticket
     # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
     # non-principal specialist.
-    assert len(names) == 84
+    assert len(names) == 85
 
 
 def test_principal_module_alias_matches_registry():
@@ -330,6 +330,21 @@ def test_microwave_and_test_roles_get_ngspice_and_xyce_simulation():
         assert tool_name not in _tool_names(ROLES["systems"])
         assert tool_name not in _tool_names(ROLES["antenna"])
         assert tool_name not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_gprmax_simulation():
+    # issue #63: gprMax FDTD simulation is the ground-coupled/lossy-half-
+    # space counterpart to NEC2++/openEMS, for a host surface (soil,
+    # concrete, a vehicle hull) neither of those can represent, and (like
+    # run_nec2_simulation/run_openems_simulation) its SIMULATED-provenance
+    # result is something a measured result gets validated against in test
+    # engineering.
+    assert "run_gprmax_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_gprmax_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["verification"])
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

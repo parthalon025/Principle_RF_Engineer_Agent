@@ -18,6 +18,16 @@ dependencies = [
   "rich>=13.9",
   "docling>=2.124.0",
   "pyyaml>=6.0",
+  # Reads gprMax's own native .out result format (simulation/gprmax.py,
+  # issue #63) -- h5py is free/open-source, needs no special hardware or
+  # license (unlike the hfss/measurement extras below), and this module's
+  # own tests construct synthetic .out files with it to exercise result
+  # parsing without gprMax itself installed -- so, unlike pyaedt/pyvisa,
+  # it is a hard dependency, not an optional extra. (gprMax itself is NOT
+  # pip-installable -- see simulation/gprmax.py's module docstring -- so
+  # it has no extra of its own here; it is documented in README.md's
+  # Optional tools list instead, same as NEC2++/openEMS.)
+  "h5py>=3.11",
   # LLM_PROVIDER=anthropic routing (agent/main.py) via openai-agents' own
   # LiteLLM extension (agents.extensions.models.litellm_model.LitellmModel);
   # free/OSS, no hardware requirement, so a hard dependency like

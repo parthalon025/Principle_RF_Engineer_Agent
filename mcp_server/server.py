@@ -94,6 +94,7 @@ from rf_tools.touchstone import (
     interpolate_touchstone,
 )
 from simulation.elmer import run_elmer_simulation as _run_elmer_simulation
+from simulation.gprmax import run_gprmax_simulation as _run_gprmax_simulation
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.kicad_gerber2ems import (
     run_kicad_gerber2ems_simulation as _run_kicad_gerber2ems_simulation,
@@ -712,6 +713,34 @@ def run_qucs_simulation(circuit: dict, analysis: dict, timeout_s: int = 600) -> 
     named "qucsator_rf", not the bare "qucsator" its upstream project is
     colloquially called -- see that module docstring for why."""
     return _run_qucs_simulation(circuit=circuit, analysis=analysis, timeout_s=timeout_s)
+
+
+@mcp.tool()
+def run_gprmax_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: int = 3600) -> dict:
+    """Simulate a ground-coupled or lossy-half-space antenna structure with gprMax (FDTD):
+    generate a .in file from structured geometry (an optional lossy dielectric ground
+    half-space, box/cylinder/edge/plate material and PEC conductor primitives in metres,
+    and a single #transmission_line excitation port -- see
+    simulation.gprmax.generate_gprmax_input for the full shape), run it via
+    "python -m gprMax" (gprMax has no standalone binary), and return S-parameters/input
+    impedance FFT-computed from the port's own incident/total voltage-current dumps, plus
+    any declared receivers' raw field data. Use this over run_nec2_simulation/
+    run_openems_simulation when the antenna's host surface is a real lossy dielectric half-
+    space (soil, concrete, a vehicle hull) rather than free space or an idealized ground
+    plane -- NEC2++'s ground models can't represent that, and openEMS's adapter has no
+    explicit ground-half-space workflow either. Returns "SIMULATED" provenance.
+    IMPORTANT: this adapter deliberately does NOT use gprMax's bundled antenna-model
+    library (GSSI/MALA) -- those are calibrated replicas of specific commercial GPR
+    antenna hardware, not stand-ins for this repo's own antenna designs (see
+    simulation/gprmax.py's module docstring "ADAPTATION WORK"). SCOPE LIMIT: far-field/
+    gain extraction is NOT computed -- gprMax has no near-field-to-far-field tool at all
+    (see simulation/gprmax.py's module docstring). Format verified against primary
+    gprMax documentation (see simulation/gprmax.py's module docstring for citations) but
+    NOT against a real gprMax run -- gprMax is not installed in this environment and
+    (unlike NEC2++/openEMS) cannot be installed via pip at all, only via a conda + C-
+    compiler source build (see that module's "CORRECTION" section); treat any result as
+    unverified end-to-end until it has been run against the real tool at least once."""
+    return _run_gprmax_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
 @mcp.tool()

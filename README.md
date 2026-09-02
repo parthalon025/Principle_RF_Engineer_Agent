@@ -74,6 +74,9 @@ Optional:
 - Palace (github.com/awslabs/palace) -- full-wave FEM with native Floquet/periodic-port
   boundaries, for periodic metamaterial unit cells; manual source/binary install, no
   pyproject extra
+- gprMax (ground-coupled/lossy-half-space FDTD -- conda + a C compiler with
+  OpenMP, then `python setup.py build && python setup.py install`; not
+  pip-installable, see `simulation/gprmax.py`'s module docstring)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
@@ -130,6 +133,7 @@ Notable components:
 - ngspice: New (3-clause) BSD core, plus per-subtree LGPL/LGPLv2.1/Public-Domain/custom-academic components -- see `docs/LICENSE_MATRIX.md`
 - Xyce: GPL-3.0
 - Palace: Apache-2.0
+- gprMax: GPLv3-or-later
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - KiCad (application/kicad-cli): GPL-3.0-or-later
 - kicad-python: MIT
