@@ -58,6 +58,8 @@ Optional:
 - openEMS
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
+- LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
+  `uv sync --extra ltspice` -- see `simulation/ltspice.py`)
 - VISA/SCPI-capable instruments
 
 ## Quick start

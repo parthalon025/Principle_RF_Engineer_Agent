@@ -101,6 +101,7 @@ from rf_tools.touchstone import (
     interpolate_touchstone,
 )
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
+from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 
@@ -812,6 +813,45 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@function_tool
+def run_ltspice_simulation(
+    netlist: str | None = None,
+    netlist_file: str | None = None,
+    timeout_s: int = 600,
+) -> dict:
+    """Simulate a circuit with LTspice (ADS alternative, part 3 of 3 -- issue
+    #59): run an existing SPICE netlist (either `netlist`, raw netlist text
+    -- e.g. exported from LTspice's own File > Export Netlist -- or
+    `netlist_file`, a path to an existing .net/.cir/.asc file already on
+    disk; exactly one is required) through LTspice's real batch-mode CLI
+    (driven via the spicelib package, not hand-rolled -- see simulation/
+    ltspice.py's module docstring for the primary-source citation), and
+    parse the resulting .raw output into structured trace data (plot type,
+    axis, and every named trace, complex for an AC analysis or real for a
+    transient/DC sweep) via spicelib's own RawRead. Returns "SIMULATED"
+    provenance. LOWEST PRIORITY / LOWEST INVESTMENT of this batch's "ADS
+    alternative" simulators: LTspice is the one non-open-source item here
+    (free-of-charge proprietary Analog Devices freeware, NOT OSI-approved --
+    see docs/LICENSE_MATRIX.md) and is capability-redundant with any
+    ngspice/Xyce/Qucs-S adapter this repo may also have -- its value is
+    vendor device-model-library and engineer familiarity, not new
+    simulation capability. Unlike run_nec2_simulation/run_openems_
+    simulation, this tool does NOT generate a netlist from a structured
+    component-description dict -- a SPICE netlist is already the natural
+    structured/text format for a circuit, so bring your own. spicelib
+    itself is an OPTIONAL install (`pip install '.[ltspice]'` /
+    `uv sync --extra ltspice`) -- this tool raises a clear, actionable
+    SimulatorError (not a bare ImportError) if it isn't installed. Format/
+    invocation verified against spicelib's own primary GitHub source (see
+    simulation/ltspice.py's module docstring for the full citation) but NOT
+    against a real LTspice binary -- none is installed in this environment;
+    treat any result as unverified end-to-end until it has been run against
+    the real tool at least once."""
+    return _run_ltspice_simulation(
+        netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s
     )
 
 
@@ -1629,6 +1669,7 @@ _ALL_TOOLS = [
     run_nec2_simulation,
     run_openems_simulation,
     run_hfss_simulation,
+    run_ltspice_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -1729,8 +1770,14 @@ ROLE_SPECS: list[RoleSpec] = [
             "network data, S/Z/Y/ABCD two-port parameter conversions, "
             "stability (K-factor, Delta, stability circles), impedance-"
             "matching synthesis (quarter-wave transformer, L-network), and "
-            "IP3/IM3 linearity. Defer system-chain-level gain/link budgeting "
-            "to the systems role."
+            "IP3/IM3 linearity. Also gets LTspice circuit simulation "
+            "(run_ltspice_simulation, issue #59) for SPICE-level "
+            "transistor/matching-network circuit validation against a "
+            "vendor device-model library -- the lowest-priority, lowest-"
+            "investment item in this repo's 'ADS alternative' batch (its "
+            "value is vendor-model-library familiarity, not new "
+            "capability). Defer system-chain-level gain/link budgeting to "
+            "the systems role."
         ),
         tools=[
             calculate_vswr,
@@ -1757,6 +1804,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_input_stability_circle,
             calculate_quarter_wave_transformer_impedance,
             calculate_l_network_match,
+            run_ltspice_simulation,
             search_knowledge,
         ],
     ),
@@ -1822,9 +1870,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
             "values, including SIMULATED-provenance NEC2++ "
-            "(run_nec2_simulation), openEMS (run_openems_simulation), and "
+            "(run_nec2_simulation), openEMS (run_openems_simulation), "
             "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. Use "
+            "only), and LTspice (run_ltspice_simulation, issue #59) "
+            "reference results to validate hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -1873,6 +1922,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_ltspice_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

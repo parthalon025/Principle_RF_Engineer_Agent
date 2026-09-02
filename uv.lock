@@ -516,6 +516,15 @@ wheels = [
 ]
 
 [[package]]
+name = "clipin"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/f2/a1ce66cb03c85c56814b188e4bde5feb2b76edb35ffce17cf99307d72c6c/clipin-1.0.0.tar.gz", hash = "sha256:f8204cfeb58db86d58e19787b68a4fa1363d9bc1b0d30725408199673850e4f9", size = 23726, upload-time = "2026-01-05T19:18:32.111Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7a/58/8451ebd54d311aa74975d8a5ff9dd973c03175022cda49281e00f704850f/clipin-1.0.0-py3-none-any.whl", hash = "sha256:a2e70bd146cca9fed6aca0dae865d83a9bc275c8c72fe727c665953a8b54fbc7", size = 25637, upload-time = "2026-01-05T19:18:30.981Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2555,6 +2564,9 @@ dependencies = [
 hfss = [
     { name = "pyaedt" },
 ]
+ltspice = [
+    { name = "spicelib" },
+]
 measurement = [
     { name = "pyvisa" },
 ]
@@ -2585,8 +2597,9 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9" },
     { name = "scikit-rf", specifier = ">=1.8" },
     { name = "scipy", specifier = ">=1.14" },
+    { name = "spicelib", marker = "extra == 'ltspice'" },
 ]
-provides-extras = ["hfss", "measurement"]
+provides-extras = ["hfss", "measurement", "ltspice"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3767,6 +3780,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/69/99/a6ca3beb3ccacb41fb3321d8a60e5566f9e6467601ef8eba6a17e1b89778/soupsieve-2.9.2.tar.gz", hash = "sha256:4a55d8cf158a9c2e587fa4922f1bbb91d68ac829e2d6f25403a85747c71daf74", size = 122445, upload-time = "2026-08-07T00:57:24.801Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/dc/ad025c1ee131eba60c69f4dd5779b18fcf1e6b21a343e2162a84d5d133c7/soupsieve-2.9.2-py3-none-any.whl", hash = "sha256:8089a26fd974ca7a1f30276d3d8492ab266ab15af581642dfe8aa162e0c1c823", size = 37370, upload-time = "2026-08-07T00:57:23.524Z" },
+]
+
+[[package]]
+name = "spicelib"
+version = "1.6.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "clipin" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "psutil" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/07/27/e6d597f2e03ec8e20636986dffb072fe3501215fbcb61907c8f1010e10ec/spicelib-1.6.3.tar.gz", hash = "sha256:ca2ee6e9ab40479c724bf493372881958ca89a6100a9c0b07b9d96eb4d1e86f2", size = 232541, upload-time = "2026-07-21T21:08:32.248Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/e1/98ec4646512d8aa015f9cc041a6f56a9ea62b163956c8c7814c2b6206db6/spicelib-1.6.3-py3-none-any.whl", hash = "sha256:d069c93d41f4938661bf78a3d953456d580e7a8836c6fb4d41bea93df36fd06e", size = 263511, upload-time = "2026-07-21T21:08:30.733Z" },
 ]
 
 [[package]]

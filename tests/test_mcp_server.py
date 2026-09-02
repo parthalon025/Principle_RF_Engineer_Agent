@@ -119,8 +119,10 @@ def test_registered_tool_count_matches_old_plus_new():
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
-    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
+    # 1 more (run_ltspice_simulation) added by #59.
+    old_plus_new = 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1
+    assert len(registered_names) == old_plus_new
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -141,6 +143,11 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_run_ltspice_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_ltspice_simulation" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():

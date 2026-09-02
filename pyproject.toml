@@ -45,6 +45,17 @@ hfss = [
 measurement = [
   "pyvisa",
 ]
+# LTspice circuit simulation (issue #59) -- see simulation/ltspice.py. spicelib
+# drives LTspice's own documented batch/command-line switches and parses its
+# .raw output; LTspice itself is free-of-charge proprietary freeware (Analog
+# Devices SLA, see docs/LICENSE_MATRIX.md) that most installs (including CI,
+# where no LTspice binary exists) will never touch, so -- like hfss/
+# measurement above -- this is an explicit optional extra, not a hard
+# dependency: install with `uv sync --extra ltspice` or
+# `pip install '.[ltspice]'` on a workstation with LTspice installed.
+ltspice = [
+  "spicelib",
+]
 
 [dependency-groups]
 dev = [
