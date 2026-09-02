@@ -115,8 +115,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # request_signal_generator_output_approval, set_signal_generator_output,
     # request_power_meter_measurement_approval, measure_power_meter_reading)
     # added by #44, plus 1 more (correlate_simulated_and_measured) added by
-    # #45.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1
+    # #45, plus 3 more (start_design_loop, advance_design_loop_step,
+    # inspect_design_loop_state) added by #46.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -142,6 +143,13 @@ def test_run_hfss_simulation_is_registered():
 def test_optimize_patch_length_for_target_frequency_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "optimize_patch_length_for_target_frequency" in registered_names
+
+
+def test_design_loop_tools_are_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "start_design_loop" in registered_names
+    assert "advance_design_loop_step" in registered_names
+    assert "inspect_design_loop_state" in registered_names
 
 
 def test_optimize_patch_length_for_target_frequency_calls_through():

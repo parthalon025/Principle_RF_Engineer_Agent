@@ -66,9 +66,11 @@ def test_principal_role_has_broad_access():
     # measure_vna_s_parameters tools added by issue #43, the 6 spectrum
     # analyzer/signal generator/power meter approval+measure/actuate tools
     # added by issue #44, the correlate_simulated_and_measured tool added
-    # by issue #45, plus 5 consult_<role>_role delegation tools
-    # (issue #35), one per non-principal specialist.
-    assert len(names) == 65
+    # by issue #45, the 3 design-iteration-loop tools (start_design_loop,
+    # advance_design_loop_step, inspect_design_loop_state) added by issue
+    # #46, plus 5 consult_<role>_role delegation tools (issue #35), one per
+    # non-principal specialist.
+    assert len(names) == 68
 
 
 def test_principal_module_alias_matches_registry():

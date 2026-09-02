@@ -32,6 +32,9 @@ from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
+from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
+from orchestration.tooling import start_new_design_loop as _start_new_design_loop
 from rf_tools.calculations import (
     abcd_to_s,
     aperture_gain,
@@ -1117,6 +1120,85 @@ def optimize_patch_length_for_target_frequency(
 
 
 # ---------------------------------------------------------------------------
+# Controlled autonomous design-iteration loop (issue #46, Phase 12 -- the
+# final ticket of the 23-ticket build-out). Three focused tools, per this
+# ticket's own scope guidance -- start a loop, advance it one step, inspect
+# its state -- added to the "principal" role only (this is a cross-cutting
+# orchestration concern spanning every specialist's domain, not any one
+# specialist's own scope). See orchestration/design_loop.py and
+# orchestration/tooling.py for the state machine and approval-gate design.
+#
+# advance_design_loop_step's `approval` is REQUIRED whenever the loop's
+# current step is ARCHITECTURE, MEASUREMENT, or REDESIGN_DECISION (every
+# step that isn't a pure Phase 1 calculation or Phase 6-8 simulation run --
+# orchestration/design_loop.py's GATED_STEPS) -- a receipt from a prior,
+# separate call to orchestration.approval.request_loop_step_approval() for
+# THIS EXACT loop/iteration/step/step_input combination. That function is
+# deliberately NOT wired up as a fourth tool here (see
+# orchestration/tooling.py's module docstring): it always raises without a
+# real human-facing approval_callback, which no agent/MCP tool boundary in
+# this project can supply, exactly as measurement/base.py's own instrument-
+# actuation approval gate (issue #43) always raises through this tool
+# surface. There is no code path from this loop to a manufacturing-release
+# action -- see tests/test_design_loop.py's
+# test_no_manufacturing_release_step_exists and its sibling tests.
+# ---------------------------------------------------------------------------
+
+
+@function_tool(strict_mode=False)  # `requirements` is a free-form dict --
+# same rationale as run_nec2_simulation's geometry parameter above.
+def start_design_loop(requirements: dict) -> dict:
+    """Start a new controlled design-iteration loop from a customer
+    requirement (frequency band, gain/VSWR/bandwidth target, form factor,
+    host-surface curvature, platform -- CONTEXT.md's "Customer
+    requirement"). Returns the new loop's state, positioned at the
+    ARCHITECTURE step -- hold onto this dict and pass it back into
+    advance_design_loop_step for every subsequent call; it is the whole
+    loop's session token (this project has no long-running server process,
+    so state is not persisted server-side)."""
+    return _start_new_design_loop(requirements)
+
+
+@function_tool(strict_mode=False)  # `state`/`step_input`/`approval` are
+# free-form dicts whose shape depends on which of the loop's nine steps is
+# current -- same rationale as run_nec2_simulation's geometry parameter
+# above.
+def advance_design_loop_step(state: dict, step_input: dict, approval: dict | None = None) -> dict:
+    """Advance a design-iteration loop from its current step to the next
+    one: requirements -> architecture -> analysis -> simulation ->
+    optimization -> verification -> measurement -> correlation -> redesign
+    (docs/BUILD_PLAN.md's Phase 12). `state` is a prior call's returned
+    loop state. `step_input` is step-specific -- see
+    orchestration/design_loop.py's per-step handlers for exactly what each
+    current_step expects (e.g. ARCHITECTURE wants "decision"/"rationale";
+    ANALYSIS wants the patch_resonant_frequency_hz inputs eps_r/w_m/h_m/
+    l_m; SIMULATION wants the same geometry/frequency_hz run_nec2_
+    simulation itself takes).
+
+    `approval` is REQUIRED whenever the loop is currently at ARCHITECTURE,
+    MEASUREMENT, or REDESIGN_DECISION -- every step that is not a pure
+    calculation or simulation run. Without a valid one (bound to this exact
+    loop/iteration/step/step_input combination), this raises and the loop
+    does not advance; there is no way to skip a gated step from this tool.
+    Check the returned state's "pending_approval" key (also available from
+    inspect_design_loop_state) to see, at any point, whether the loop is
+    currently blocked on an approval and which step it's blocked at."""
+    return _advance_design_loop_step(state, step_input, approval=approval)
+
+
+@function_tool(strict_mode=False)  # `state` is a free-form dict (the loop's
+# own session-token shape) -- same rationale as run_nec2_simulation's
+# geometry parameter above.
+def inspect_design_loop_state(state: dict) -> dict:
+    """Return a design-iteration loop's current state -- current step,
+    every decision recorded so far with its own provenance, and whether an
+    approval is currently pending (and for which step). Safe to call at any
+    point mid-loop, not just at completion; does not mutate or advance the
+    loop."""
+    return _inspect_design_loop_state(state)
+
+
+# ---------------------------------------------------------------------------
 # Specialist roles (issue #34) + principal delegation/synthesis (issue #35).
 #
 # The single generalist agent is split into six named roles, each scoped to a
@@ -1280,6 +1362,9 @@ _ALL_TOOLS = [
     search_design_records,
     extract_components,
     optimize_patch_length_for_target_frequency,
+    start_design_loop,
+    advance_design_loop_step,
+    inspect_design_loop_state,
 ]
 
 
@@ -1301,7 +1386,18 @@ ROLE_SPECS: list[RoleSpec] = [
         domain_note=(
             "You are the coordinating principal-level reviewer, with access to "
             "every tool below. Bring in a specialist's perspective (systems, "
-            "microwave, antenna, test, verification) as the problem requires."
+            "microwave, antenna, test, verification) as the problem requires. "
+            "You alone also hold the controlled design-iteration loop tools "
+            "(start_design_loop/advance_design_loop_step/"
+            "inspect_design_loop_state, issue #46) -- walking a design through "
+            "requirements/architecture/analysis/simulation/optimization/"
+            "verification/measurement/correlation/redesign is a cross-cutting "
+            "orchestration concern spanning every specialist's domain, not any "
+            "one specialist's own scope. Advancing past an architecture "
+            "decision, physical measurement, or a redesign/iteration decision "
+            "always requires a distinct human-approval receipt first -- this "
+            "loop never reaches, and has no path to, an autonomous "
+            "manufacturing-release action."
         ),
         tools=list(_ALL_TOOLS),
     ),

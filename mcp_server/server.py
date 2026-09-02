@@ -26,6 +26,9 @@ from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
+from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
+from orchestration.tooling import start_new_design_loop as _start_new_design_loop
 from rf_tools.calculations import (
     abcd_to_s,
     aperture_gain,
@@ -945,6 +948,57 @@ def optimize_patch_length_for_target_frequency(
         method=method,
         n_evaluations=n_evaluations,
     )
+
+
+# ---------------------------------------------------------------------------
+# Controlled autonomous design-iteration loop (issue #46, Phase 12 -- the
+# final ticket of the 23-ticket build-out). Three focused tools mirroring
+# agent/main.py's principal-role wiring -- see orchestration/design_loop.py
+# and orchestration/tooling.py for the state machine and approval-gate
+# design. advance_design_loop_step's `approval` is required whenever the
+# loop's current step is ARCHITECTURE, MEASUREMENT, or REDESIGN_DECISION;
+# there is no tool here (or anywhere in this project) that can produce a
+# granted loop-step approval, and no code path from this loop to a
+# manufacturing-release action.
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def start_design_loop(requirements: dict) -> dict:
+    """Start a new controlled design-iteration loop from a customer
+    requirement (frequency band, gain/VSWR/bandwidth target, form factor,
+    host-surface curvature, platform). Returns the new loop's state,
+    positioned at the ARCHITECTURE step -- hold onto this dict and pass it
+    back into advance_design_loop_step for every subsequent call; it is the
+    whole loop's session token (this project has no long-running server
+    process, so state is not persisted server-side)."""
+    return _start_new_design_loop(requirements)
+
+
+@mcp.tool()
+def advance_design_loop_step(state: dict, step_input: dict, approval: dict | None = None) -> dict:
+    """Advance a design-iteration loop from its current step to the next
+    one: requirements -> architecture -> analysis -> simulation ->
+    optimization -> verification -> measurement -> correlation -> redesign.
+    `state` is a prior call's returned loop state; `step_input` is step-
+    specific (see orchestration/design_loop.py's per-step handlers).
+    `approval` is REQUIRED whenever the loop is currently at ARCHITECTURE,
+    MEASUREMENT, or REDESIGN_DECISION -- every step that is not a pure
+    calculation or simulation run -- and must be bound to this exact loop/
+    iteration/step/step_input combination or this raises and the loop does
+    not advance. Check the returned state's "pending_approval" key to see,
+    at any point, whether the loop is blocked on an approval."""
+    return _advance_design_loop_step(state, step_input, approval=approval)
+
+
+@mcp.tool()
+def inspect_design_loop_state(state: dict) -> dict:
+    """Return a design-iteration loop's current state -- current step,
+    every decision recorded so far with its own provenance, and whether an
+    approval is currently pending (and for which step). Safe to call at any
+    point mid-loop, not just at completion; does not mutate or advance the
+    loop."""
+    return _inspect_design_loop_state(state)
 
 
 @mcp.tool()
