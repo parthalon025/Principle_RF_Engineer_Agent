@@ -11,6 +11,7 @@ Planning reference; not legal advice.
 | NEC2++ | GPL | Free; review obligations if redistributed |
 | openEMS | GPLv3 | Free; review obligations if redistributed |
 | Qucs-S | GPL-2.0 | Free; review obligations if redistributed |
+| Palace | Apache-2.0 | Free; the only permissively-licensed, non-copyleft full-wave solver in this repo -- verified from github.com/awslabs/palace/blob/main/LICENSE |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |
 | PostgreSQL | PostgreSQL License | Free |

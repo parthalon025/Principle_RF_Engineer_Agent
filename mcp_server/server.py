@@ -90,6 +90,7 @@ from rf_tools.touchstone import (
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
+from simulation.palace import run_palace_simulation as _run_palace_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -701,6 +702,43 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@mcp.tool()
+def run_palace_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    sweep: dict | None = None,
+    num_processes: int = 1,
+    timeout_s: int = 3600,
+) -> dict:
+    """Simulate a periodic metamaterial unit cell with Palace, a full-wave finite-element
+    solver with NATIVE Floquet/periodic-boundary ports -- the only simulator in this
+    repo that can characterize a repeating-element design's actual electromagnetic
+    behavior (neither run_nec2_simulation's method-of-moments nor run_openems_
+    simulation's FDTD adapter expose periodic boundaries). Generates a structured
+    hexahedral mesh (MFEM .mesh format) and a Palace JSON config for a rectangular unit
+    cell -- periodic in x/y, a Floquet port on each of its two z-normal faces, zero or
+    more embedded axis-aligned dielectric material boxes -- from structured geometry
+    (unit_cell lx_m/ly_m/lz_m, optional materials list, optional floquet wave-vector/
+    polarization/max_order overrides -- see simulation.palace.generate_palace_mesh and
+    generate_palace_config for the full shape), runs it via the real `palace` binary,
+    and parses port-floquet-S.csv into structured per-diffraction-order S-parameter
+    data (plus a "specular" S11/S21-style convenience view for the fundamental order).
+    Returns "SIMULATED" provenance. Embedded PEC conductor patches (a metallic
+    metasurface, as opposed to an all-dielectric grating/photonic-crystal unit cell)
+    are NOT supported in this pass -- see simulation/palace.py's module docstring.
+    Config/mesh format verified against Palace's own primary documentation and MFEM's
+    own mesh-format documentation (see simulation/palace.py's module docstring for the
+    full citation list) but NOT against a real palace binary -- none is installed in
+    this environment."""
+    return _run_palace_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        sweep=sweep,
+        num_processes=num_processes,
+        timeout_s=timeout_s,
     )
 
 
