@@ -90,6 +90,7 @@ from rf_tools.touchstone import (
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
+from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -672,6 +673,30 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     citations) but NOT against a real openEMS binary -- none is installed in this
     environment."""
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
+
+
+@mcp.tool()
+def run_qucs_simulation(circuit: dict, analysis: dict, timeout_s: int = 600) -> dict:
+    """Simulate a lumped-element/transmission-line circuit (a matching network,
+    filter, or feed network -- schematic-level circuit simulation, the free/GPL
+    alternative to Keysight ADS this repo has no adapter for) with Qucs-S's
+    qucsator_rf engine: generate a netlist from structured circuit input (ports
+    with node/impedance, plus R/L/C/TLIN components with node connections -- see
+    simulation.qucs.generate_qucs_netlist for the full shape), run it via
+    qucsator_rf, and parse the FULL native N-port S-parameter matrix out of the
+    result in one run (unlike run_openems_simulation, which only yields the
+    excited port's own column per run). Returns "SIMULATED" provenance, plus a
+    "touchstone_file" (any port count) when the ports are contiguously numbered
+    1..N, ready for correlate_simulated_and_measured/compare_touchstone_files.
+    `analysis` sets the frequency sweep: {"sweep_type": "lin"|"log" (default
+    "lin"), "start_hz", "stop_hz" (both required), "points" (default 201)}.
+    Netlist/dataset format verified against qucsator_rf's own primary source
+    (see simulation/qucs.py's module docstring for the full citation list) but
+    NOT against a real qucsator_rf binary -- none is installed in this
+    environment. IMPORTANT: the real executable this adapter shells out to is
+    named "qucsator_rf", not the bare "qucsator" its upstream project is
+    colloquially called -- see that module docstring for why."""
+    return _run_qucs_simulation(circuit=circuit, analysis=analysis, timeout_s=timeout_s)
 
 
 @mcp.tool()

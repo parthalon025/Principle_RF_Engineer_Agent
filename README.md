@@ -56,6 +56,10 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- Qucs-S / qucsator_rf (manual build from source -- see
+  github.com/ra3xdh/qucsator_rf; the CLI binary this repo's
+  `simulation/qucs.py` shells out to is named `qucsator_rf`, not the bare
+  `qucsator` its upstream project is colloquially called)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -98,7 +102,7 @@ Notable components:
 - scikit-rf: BSD-3-Clause
 - openEMS: GPLv3
 - NEC2++: GPL
-- Qucs-S: GPL-2.0
+- Qucs-S / qucsator_rf: GPL-2.0-or-later (see docs/LICENSE_MATRIX.md for the primary-source verification)
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license
