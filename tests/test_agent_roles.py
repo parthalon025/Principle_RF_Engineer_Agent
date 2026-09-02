@@ -78,12 +78,13 @@ def test_principal_role_has_broad_access():
     # simulation tool added by issue #59, the run_qucs_simulation tool added
     # by issue #58, the run_kicad_gerber2ems_simulation tool added by issue
     # #65, the run_ngspice_simulation and run_xyce_simulation tools added by
-    # issue #57, plus 4 more
+    # issue #57, the run_palace_simulation tool added by issue #61, plus 4
+    # more
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by ticket
     # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
     # non-principal specialist.
-    assert len(names) == 83
+    assert len(names) == 84
 
 
 def test_principal_module_alias_matches_registry():

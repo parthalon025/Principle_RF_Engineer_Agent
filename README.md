@@ -71,6 +71,9 @@ Optional:
   `qucsator` its upstream project is colloquially called)
 - ngspice
 - Xyce
+- Palace (github.com/awslabs/palace) -- full-wave FEM with native Floquet/periodic-port
+  boundaries, for periodic metamaterial unit cells; manual source/binary install, no
+  pyproject extra
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
@@ -126,6 +129,7 @@ Notable components:
 - Gmsh: GPL-2.0-or-later
 - ngspice: New (3-clause) BSD core, plus per-subtree LGPL/LGPLv2.1/Public-Domain/custom-academic components -- see `docs/LICENSE_MATRIX.md`
 - Xyce: GPL-3.0
+- Palace: Apache-2.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - KiCad (application/kicad-cli): GPL-3.0-or-later
 - kicad-python: MIT

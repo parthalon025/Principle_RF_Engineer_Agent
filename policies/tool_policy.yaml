@@ -93,7 +93,9 @@ simulation_auto:
   # paid AEDT license. run_qucs_simulation (issue #58, Qucs-S/qucsator_rf)
   # is free/GPL software with no license-confinement concern (unlike
   # run_ads under approval_required below), matching run_nec2_simulation/
-  # run_openems_simulation exactly.
+  # run_openems_simulation exactly. Palace (issue #61) is open-source
+  # (Apache-2.0) and has no licensing/workstation gate of its own -- see
+  # simulation/palace.py.
   - run_nec2_simulation
   - run_openems_simulation
   - run_openparem_simulation
@@ -103,6 +105,7 @@ simulation_auto:
   - run_kicad_gerber2ems_simulation
   - run_ngspice_simulation
   - run_xyce_simulation
+  - run_palace_simulation
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

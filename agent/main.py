@@ -116,6 +116,7 @@ from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.ngspice import run_ngspice_simulation as _run_ngspice_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
+from simulation.palace import run_palace_simulation as _run_palace_simulation
 from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
 from simulation.xyce import run_xyce_simulation as _run_xyce_simulation
 
@@ -898,6 +899,48 @@ def run_openparem_simulation(
         project=project,
         project_name=project_name,
         mpi_processes=mpi_processes,
+        timeout_s=timeout_s,
+    )
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# geometry's shape (optional materials list, mesh/floquet override dicts) does not fit
+# the SDK's strict-schema requirement.
+def run_palace_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    sweep: dict | None = None,
+    num_processes: int = 1,
+    timeout_s: int = 3600,
+) -> dict:
+    """Simulate a periodic metamaterial unit cell with Palace, a full-wave finite-element
+    solver with NATIVE Floquet/periodic-boundary ports -- the only simulator in this
+    repo that can characterize a repeating-element design's actual electromagnetic
+    behavior (neither run_nec2_simulation's method-of-moments nor run_openems_
+    simulation's FDTD adapter expose periodic boundaries). Generates a structured
+    hexahedral mesh (MFEM .mesh format) and a Palace JSON config for a rectangular unit
+    cell -- periodic in x/y, a Floquet port on each of its two z-normal faces, zero or
+    more embedded axis-aligned dielectric material boxes -- from structured geometry
+    (unit_cell lx_m/ly_m/lz_m, optional materials list, optional floquet wave-vector/
+    polarization/max_order overrides -- see simulation.palace.generate_palace_mesh and
+    generate_palace_config for the full shape), runs it via the real `palace` binary,
+    and parses port-floquet-S.csv into structured per-diffraction-order S-parameter
+    data (plus a "specular" S11/S21-style convenience view for the fundamental order).
+    Returns "SIMULATED" provenance. Embedded PEC conductor patches (a metallic
+    metasurface, as opposed to an all-dielectric grating/photonic-crystal unit cell)
+    are NOT supported in this pass -- an explicitly-scoped gap, see simulation/
+    palace.py's module docstring. Config/mesh format verified against Palace's own
+    primary documentation and MFEM's own mesh-format documentation (see simulation/
+    palace.py's module docstring for the full citation list, several facts there
+    graded as reasoned-by-analogy rather than independently confirmed byte-exact) but
+    NOT against a real palace binary -- none is installed in this environment; treat
+    any result as unverified end-to-end until it has been run against the real tool at
+    least once."""
+    return _run_palace_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        sweep=sweep,
+        num_processes=num_processes,
         timeout_s=timeout_s,
     )
 
@@ -1964,6 +2007,7 @@ _ALL_TOOLS = [
     run_kicad_gerber2ems_simulation,
     run_ngspice_simulation,
     run_xyce_simulation,
+    run_palace_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -2162,7 +2206,7 @@ ROLE_SPECS: list[RoleSpec] = [
             "everyday antenna work, since Elmer's VectorHelmholtz module "
             "has no native antenna-specific port/S-parameter/far-field/"
             "gain post-processing (its excitation and boundary conditions "
-            "are hand-assembled, see simulation/elmer.py), and "
+            "are hand-assembled, see simulation/elmer.py), "
             "(issue #65) run_kicad_gerber2ems_simulation for a REAL, "
             "as-laid-out KiCad PCB design (not a hand-modeled geometry "
             "dict) -- gerber2ems drives openEMS internally via its own "
@@ -2170,7 +2214,15 @@ ROLE_SPECS: list[RoleSpec] = [
             "signal-integrity results (trace impedance, via/stackup "
             "S-parameters), NOT far-field/gain, so use it for a "
             "PCB-etched antenna feed network's real copper geometry, not "
-            "the radiating element's own pattern/gain. Also gets "
+            "the radiating element's own pattern/gain, and full-wave "
+            "Palace simulation with NATIVE Floquet/periodic-boundary "
+            "ports (run_palace_simulation, issue #61) for a periodic "
+            "metamaterial unit cell's actual electromagnetic behavior -- "
+            "the only simulator here that can characterize a repeating-"
+            "element design at all (embedded PEC conductor patches -- a "
+            "metallic metasurface pattern, as opposed to an all-dielectric "
+            "grating/photonic-crystal cell -- are not supported yet, see "
+            "simulation/palace.py). Also gets "
             "optimize_patch_length_for_target_frequency (issue #41) "
             "to search patch length against a target resonant frequency "
             "via parameter sweep, grid search, or Bayesian optimization "
@@ -2201,6 +2253,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_openparem_simulation,
             run_elmer_simulation,
             run_kicad_gerber2ems_simulation,
+            run_palace_simulation,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],
@@ -2225,9 +2278,11 @@ ROLE_SPECS: list[RoleSpec] = [
             "(run_qucs_simulation, issue #58), (issue #65) gerber2ems "
             "PCB signal-integrity (run_kicad_gerber2ems_simulation, trace "
             "impedance and via/stackup S-parameters from a real KiCad PCB "
-            "design), and (issue #57) ngspice/Xyce (run_ngspice_simulation, "
-            "run_xyce_simulation) circuit-level reference results to "
-            "validate hardware against. Use "
+            "design), (issue #57) ngspice/Xyce (run_ngspice_simulation, "
+            "run_xyce_simulation) circuit-level, and Palace "
+            "(run_palace_simulation, issue #61 -- native Floquet/periodic-"
+            "port full-wave results for a metamaterial unit cell) "
+            "reference results to validate hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -2286,6 +2341,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_kicad_gerber2ems_simulation,
             run_ngspice_simulation,
             run_xyce_simulation,
+            run_palace_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

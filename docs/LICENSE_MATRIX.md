@@ -23,6 +23,7 @@ Planning reference; not legal advice.
 | gerbv | GPL-2.0 | Free; review obligations if redistributed. Verified against the maintained fork's own README/LICENSE. Manual/system install. |
 | ngspice | New (3-clause) BSD core, plus per-subtree LGPL (numparam, adms), LGPLv2.1 (tclspice), Public Domain (xspice), and a UC Berkeley "Research Software Agreement" (cider -- a custom, BSD-like but non-identical academic-use license, not literally BSD text) | Free; heterogeneous per-file licensing -- verified directly against ngspice's own COPYING file (github.com/ngspice/ngspice/blob/master/COPYING), not assumed to be one blanket license; review obligations if redistributed, especially for the LGPL/LGPLv2.1 subtrees |
 | Xyce | GPL-3.0 | Free; review obligations if redistributed. Verified against Xyce's own COPYING file (github.com/Xyce/Xyce/blob/master/COPYING). Sandia's own binary installers additionally bundle proprietary device models not present in the open-source GitHub source -- irrelevant here since this repo only shells out to a locally-installed binary, never redistributes one |
+| Palace | Apache-2.0 | Free; the only permissively-licensed, non-copyleft full-wave solver in this repo -- verified from github.com/awslabs/palace/blob/main/LICENSE |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |
 | PyVISA | MIT | Free; requires a VISA backend (vendor or pyvisa-py) for real hardware |
