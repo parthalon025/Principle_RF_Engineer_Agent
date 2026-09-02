@@ -100,6 +100,7 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.elmer import run_elmer_simulation as _run_elmer_simulation
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
@@ -857,6 +858,45 @@ def run_openparem_simulation(
         project_name=project_name,
         mpi_processes=mpi_processes,
         timeout_s=timeout_s,
+    )
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# geometry's shape (domain/material/optional excitation) does not fit the SDK's
+# strict-schema requirement.
+def run_elmer_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    timeout_s: int = 1800,
+) -> dict:
+    """Simulate a structure with Elmer FEM's VectorHelmholtz module: a general,
+    multiphysics-ready EM cross-check kept available for a FUTURE coupled-physics
+    need (e.g. EM/thermal analysis on a mounted "adaptive EM skin") -- NOT a
+    replacement for run_nec2_simulation/run_openems_simulation/run_hfss_simulation on
+    everyday antenna work, since Elmer's primary user base is structural/CFD/heat-
+    transfer, not EM. Generates a Gmsh OpenCASCADE .geo script from structured
+    geometry (a single rectangular domain with isotropic material, plus an optional
+    rectangular excitation sub-region -- see simulation.elmer.generate_gmsh_geo_script
+    for the full shape), meshes it with gmsh, converts the mesh to ElmerSolver's
+    native format with ElmerGrid, generates a matching VectorHelmholtz .sif (see
+    simulation.elmer.generate_elmer_sif), runs it with ElmerSolver, and parses
+    whatever raw output is available. Returns "SIMULATED" provenance. CRITICAL SCOPE
+    LIMIT: unlike OpenParEM/Palace, Elmer's VectorHelmholtz module has NO native
+    antenna-specific port/S-parameter/far-field/gain post-processing -- this tool's
+    excitation (an impressed "Body Force"/"Current Density" current source) and
+    boundary conditions (PEC "E Re"/"E Im"=0, or the solver's own generic "Absorbing
+    BC" flag) are hand-assembled, real FEM techniques, not a calibrated port;
+    "s_parameters" and "far_field" in the result are therefore ALWAYS computed=False
+    with an explanatory note, never fabricated -- see simulation/elmer.py's module
+    docstring "SCOPE AND LIMITATIONS" for the full detail. .geo/.sif/CLI format
+    verified against Gmsh's own official reference manual and ElmerGrid's/
+    ElmerSolver's own primary GitHub source (see simulation/elmer.py's module
+    docstring for the full citation list, each fact graded by confidence) but NOT
+    against real gmsh/ElmerGrid/ElmerSolver binaries -- none is installed in this
+    environment; treat any result as unverified end-to-end until it has been run
+    against the real tools at least once."""
+    return _run_elmer_simulation(
+        geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s
     )
 
 
@@ -1675,6 +1715,7 @@ _ALL_TOOLS = [
     run_openems_simulation,
     run_hfss_simulation,
     run_openparem_simulation,
+    run_elmer_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -1826,14 +1867,22 @@ ROLE_SPECS: list[RoleSpec] = [
             "simulation/openems.py) -- and full-wave HFSS simulation via "
             "PyAEDT (run_hfss_simulation) for real S-parameter/report "
             "extraction, confined to a controlled licensed workstation "
-            "(it refuses to run anywhere else, including this one), and "
+            "(it refuses to run anywhere else, including this one), "
             "OpenParEM3D full-wave FEM simulation (run_openparem_"
             "simulation, issue #62) for antenna-specific far-field gain/"
             "directivity/radiation-efficiency computed from the SAME solve "
             "as its S-parameters -- requires an already-meshed Gmsh file "
             "(mesh generation is out of scope, see simulation/openparem.py) "
             "and is young/less battle-tested than the other three "
-            "simulators. Also "
+            "simulators, and Elmer FEM's VectorHelmholtz simulation "
+            "(run_elmer_simulation, issue #64) as a general, multiphysics-"
+            "ready EM cross-check kept available for a future coupled-"
+            "physics need (e.g. EM/thermal on a mounted 'adaptive EM "
+            "skin') -- NOT a substitute for the three tools above on "
+            "everyday antenna work, since Elmer's VectorHelmholtz module "
+            "has no native antenna-specific port/S-parameter/far-field/"
+            "gain post-processing (its excitation and boundary conditions "
+            "are hand-assembled, see simulation/elmer.py). Also "
             "gets optimize_patch_length_for_target_frequency (issue #41) "
             "to search patch length against a target resonant frequency "
             "via parameter sweep, grid search, or Bayesian optimization "
@@ -1862,6 +1911,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_openems_simulation,
             run_hfss_simulation,
             run_openparem_simulation,
+            run_elmer_simulation,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],
@@ -1876,9 +1926,13 @@ ROLE_SPECS: list[RoleSpec] = [
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
             "values, including SIMULATED-provenance NEC2++ "
-            "(run_nec2_simulation), openEMS (run_openems_simulation), and "
+            "(run_nec2_simulation), openEMS (run_openems_simulation), "
             "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
-            "only) reference results to validate hardware against. Use "
+            "only), and Elmer FEM VectorHelmholtz (run_elmer_simulation, "
+            "issue #64 -- a general multiphysics-ready cross-check with no "
+            "native S-parameter/far-field/gain post-processing, see "
+            "simulation/elmer.py) reference results to validate hardware "
+            "against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -1931,6 +1985,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_openems_simulation,
             run_hfss_simulation,
             run_openparem_simulation,
+            run_elmer_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

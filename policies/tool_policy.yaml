@@ -90,6 +90,7 @@ simulation_auto:
   - run_nec2_simulation
   - run_openems_simulation
   - run_openparem_simulation
+  - run_elmer_simulation
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without
