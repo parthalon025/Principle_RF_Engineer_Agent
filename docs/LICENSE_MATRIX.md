@@ -13,6 +13,9 @@ Planning reference; not legal advice.
 | Qucs-S | GPL-2.0 | Free; review obligations if redistributed |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |
+| PyVISA | MIT | Free; requires a VISA backend (vendor or pyvisa-py) for real hardware |
+| PyVISA-py | MIT | Free; pure-Python VISA backend, no vendor install required |
+| PyVISA-sim | MIT | Free; simulated-instrument backend, no hardware or VISA backend required |
 | PostgreSQL | PostgreSQL License | Free |
 | pgvector | Permissive | Free |
 | Manufacturer data | Varies | Internal use subject to source terms |

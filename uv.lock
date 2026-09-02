@@ -2557,6 +2557,8 @@ hfss = [
 ]
 measurement = [
     { name = "pyvisa" },
+    { name = "pyvisa-py" },
+    { name = "pyvisa-sim" },
 ]
 
 [package.dev-dependencies]
@@ -2581,6 +2583,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyvisa", marker = "extra == 'measurement'" },
+    { name = "pyvisa-py", marker = "extra == 'measurement'" },
+    { name = "pyvisa-sim", marker = "extra == 'measurement'" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.9" },
     { name = "scikit-rf", specifier = ">=1.8" },
@@ -3152,6 +3156,34 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/13/72/a50adff945e66f2161a44b243970f809de19152a2e7da0473ae8ff96d642/pyvisa-1.16.2.tar.gz", hash = "sha256:75beb93eeafe20a50be5726fa4e3a645948c93d86819f9c1f8c542efa4085a38", size = 238729, upload-time = "2026-02-27T12:14:08.54Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/a9/776da4f397003cca093659524c3526590522f81b642936838428c11274e6/pyvisa-1.16.2-py3-none-any.whl", hash = "sha256:54f034adafd3e8d1858d57cdafec64e920444f4b84b31c9fd17487fbad0a197a", size = 181413, upload-time = "2026-02-27T12:14:07.301Z" },
+]
+
+[[package]]
+name = "pyvisa-py"
+version = "0.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyvisa" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/55/8d/0f1af2b39feca8868d0692a2c5d0c47f4ad559a051fb678c441fe1e99536/pyvisa_py-0.8.1.tar.gz", hash = "sha256:db53d3219d971d16b8f7c764a93e08475875063635b9ad8ea3c988439833ccdd", size = 102061, upload-time = "2025-09-04T20:48:21.639Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/0b/06ccf917ce30d78d75e452d0afc89236b1d384b776c5c33d75c8cc55fbe7/pyvisa_py-0.8.1-py3-none-any.whl", hash = "sha256:31208a2933c1793b4e829ba5f07d265b83f280668df440ee7ee6ac505dea4ee9", size = 82206, upload-time = "2025-09-04T20:48:20.13Z" },
+]
+
+[[package]]
+name = "pyvisa-sim"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyvisa" },
+    { name = "pyyaml" },
+    { name = "stringparser" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/55/50/151ac5d9e067be9a3af09c2f188eebb7bd6416e32d8351c8f0012548693f/pyvisa_sim-0.7.1.tar.gz", hash = "sha256:11b10658e2152708eeada0c86627d894c4d11484312f02d3cf385196b4bc870f", size = 52679, upload-time = "2025-09-04T20:42:28.686Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/d4/525c79a339b19d4509e78402bad301d77ee6cae0d33dab2668fb1c624ea4/pyvisa_sim-0.7.1-py3-none-any.whl", hash = "sha256:0468326ea76977ba0da4d25c334a8d82ceb22d9b068e2c6894a8075ce7168322", size = 35564, upload-time = "2025-09-04T20:42:27.17Z" },
 ]
 
 [[package]]
@@ -3793,6 +3825,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b5/b4/205b0d5241d934e8add0c38aa924c4f9fb7330834ff11e5444db964ec3f9/starlette-1.6.0.tar.gz", hash = "sha256:d4e3ac5e546444960c710297a3c9fc3f7ebae1b7e963f3d36173b49da535be9b", size = 2716969, upload-time = "2026-08-08T18:27:57.512Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/cb/6a6a47d5b464bd08695d254f3da6e7986cc70c9fa5d778eda57538edfe56/starlette-1.6.0-py3-none-any.whl", hash = "sha256:a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c", size = 75969, upload-time = "2026-08-08T18:27:56.196Z" },
+]
+
+[[package]]
+name = "stringparser"
+version = "0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/c0/57c5e808f68ed9a822d83413a3516f06a7751dc35e7039252e25994bf654/stringparser-0.7.tar.gz", hash = "sha256:bf37aac0166fc8f5705b450cc332f0d323e2d8b8191017bbfebe1f489f18f64d", size = 10211, upload-time = "2023-11-16T00:08:35.958Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/8d/1ce822279ed69e5e5e83826b9f61d37ea146ffaf54b615d34ca363eb0aaa/stringparser-0.7-py3-none-any.whl", hash = "sha256:44678ca6067a5c0cb4c45da38448e1971e2b6fb136b82bfb6a798bdbda7dd71f", size = 7866, upload-time = "2023-11-16T00:08:34.488Z" },
 ]
 
 [[package]]

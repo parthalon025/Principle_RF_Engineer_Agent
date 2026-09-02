@@ -42,8 +42,31 @@ hfss = [
 # dependency: install with `uv sync --extra measurement` or
 # `pip install '.[measurement]'` on a workstation with real instrument
 # access.
+#
+# pyvisa-py (issue #56) is pyvisa's own pure-Python VISA backend (the "py"
+# wrapper -- see pyvisa's highlevel.py get_wrapper_class/_get_default_wrapper),
+# a free alternative to a vendor VISA install (NI-VISA/Keysight IO Libraries)
+# for real serial/USB/TCPIP instrument access -- bundled alongside pyvisa-sim
+# below since both are pure-Python, no-hardware-required, and this ticket's
+# @sim-backed tests exercise the same bare `pyvisa.ResourceManager()` call
+# real hardware access would use.
+#
+# pyvisa-sim (issue #56) is pyvisa's own simulated-instrument backend
+# (selected via the `@sim` resource-manager specification, or the
+# PYVISA_LIBRARY env var -- see pyvisa's highlevel.py: an unspecified
+# ResourceManager() falls back to os.environ["PYVISA_LIBRARY"] verbatim, and
+# `@sim` resolves by pyvisa's own package-naming convention to the installed
+# `pyvisa_sim` package's WRAPPER_CLASS -- both verified directly against
+# pyvisa's GitHub `main` branch, not assumed). It requires no real VISA
+# backend and no physical hardware at all, unlike bare pyvisa above -- so a
+# developer with this extra installed can exercise measurement/vna.py,
+# measurement/spectrum_analyzer.py, measurement/signal_generator.py, and
+# measurement/power_meter.py end-to-end against the repo-specific fixture at
+# tests/fixtures/pyvisa_sim_instruments.yaml (see tests/test_pyvisa_sim.py).
 measurement = [
   "pyvisa",
+  "pyvisa-py",
+  "pyvisa-sim",
 ]
 
 [dependency-groups]
