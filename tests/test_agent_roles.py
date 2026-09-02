@@ -60,9 +60,10 @@ def test_principal_role_has_broad_access():
     # 11 pre-#36 calculation/knowledge tools, the 35 Phase 1-2 tools added
     # by issue #36, the search_design_records tool added by issue #37, the
     # run_nec2_simulation tool added by issue #38, the run_openems_simulation
-    # tool added by issue #39, plus 5 consult_<role>_role delegation tools
-    # (issue #35), one per non-principal specialist.
-    assert len(names) == 54
+    # tool added by issue #39, the run_hfss_simulation tool added by issue
+    # #40, plus 5 consult_<role>_role delegation tools (issue #35), one per
+    # non-principal specialist.
+    assert len(names) == 55
 
 
 def test_principal_module_alias_matches_registry():
@@ -223,6 +224,18 @@ def test_antenna_and_test_roles_get_openems_simulation():
     assert "run_openems_simulation" not in _tool_names(ROLES["systems"])
     assert "run_openems_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_openems_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_hfss_simulation():
+    # issue #40: full-wave HFSS/PyAEDT simulation, confined to a controlled
+    # licensed workstation, is the same antenna-element/test-reference-
+    # result family as run_nec2_simulation/run_openems_simulation.
+    assert "run_hfss_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_hfss_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_hfss_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_hfss_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
 
 
 def test_test_role_gets_new_touchstone_tools():

@@ -59,6 +59,7 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 
@@ -560,6 +561,42 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# geometry's shape (optional materials/conductors lists, one port dict) does not fit
+# the SDK's strict-schema requirement.
+def run_hfss_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    sweep: dict | None = None,
+    project_name: str = "hfss_project",
+    design_name: str = "hfss_design",
+) -> dict:
+    """Simulate a structure with HFSS via PyAEDT: create a project, apply geometry
+    (box material/conductor primitives with materials in meters -- see
+    simulation.hfss._apply_hfss_geometry for the full shape), a lumped port, and a
+    length-based mesh, solve, extract S-parameters, export a Touchstone file, and
+    archive the solved project plus extracted report for later reproducibility.
+    Returns "SIMULATED" provenance. CRITICAL: unlike run_nec2_simulation/
+    run_openems_simulation, HFSS is commercial, licensed software (Ansys HFSS via
+    PyAEDT) that fundamentally cannot run without a paid license -- execution is
+    confined to a configured, explicitly-designated licensed workstation and refuses
+    to run anywhere else (see simulation/hfss.py's check_hfss_workstation_
+    confinement -- it will raise on any host that is not that workstation, including
+    this one). PyAEDT API call shapes are verified against the primary ansys/pyaedt
+    GitHub source (see simulation/hfss.py's module docstring for the full citation
+    list, graded by confidence per fact) but NOT against a real HFSS/AEDT
+    installation -- none is licensed or available in this environment, and none
+    genuinely can be; treat any result as unverified end-to-end until it has
+    actually been run on a real licensed workstation at least once."""
+    return _run_hfss_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        sweep=sweep,
+        project_name=project_name,
+        design_name=design_name,
+    )
+
+
 @function_tool
 def ingest_document(
     file_path: str,
@@ -775,6 +812,7 @@ _ALL_TOOLS = [
     compare_touchstone_files,
     run_nec2_simulation,
     run_openems_simulation,
+    run_hfss_simulation,
     ingest_document,
     index_document,
     read_document,
@@ -889,14 +927,18 @@ ROLE_SPECS: list[RoleSpec] = [
             "resonant frequency, Maxwell-Garnett metamaterial permeability, "
             "aperture gain), NEC2++ wire-antenna simulation "
             "(run_nec2_simulation) for SIMULATED-provenance impedance/"
-            "pattern/gain, and openEMS FDTD simulation "
+            "pattern/gain, openEMS FDTD simulation "
             "(run_openems_simulation) for conformal/curved or metamaterial "
             "geometry NEC2++'s wire method-of-moments can't adequately "
             "model -- its convergence metadata is real, but S-parameter/"
             "far-field extraction is not computed in this pass (see "
-            "simulation/openems.py). Defer receiver-chain noise figure and "
-            "cascaded gain to the systems role, and S/Z/Y/ABCD/stability/"
-            "matching tools to the microwave role."
+            "simulation/openems.py) -- and full-wave HFSS simulation via "
+            "PyAEDT (run_hfss_simulation) for real S-parameter/report "
+            "extraction, confined to a controlled licensed workstation "
+            "(it refuses to run anywhere else, including this one). Defer "
+            "receiver-chain noise figure and cascaded gain to the systems "
+            "role, and S/Z/Y/ABCD/stability/matching tools to the "
+            "microwave role."
         ),
         tools=[
             calculate_wavelength,
@@ -916,6 +958,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_aperture_gain,
             run_nec2_simulation,
             run_openems_simulation,
+            run_hfss_simulation,
             search_knowledge,
         ],
     ),
@@ -929,9 +972,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
             "values, including SIMULATED-provenance NEC2++ "
-            "(run_nec2_simulation) and openEMS (run_openems_simulation) "
-            "reference results to validate hardware against. You do not "
-            "ingest or extract documents -- that is the systems/"
+            "(run_nec2_simulation), openEMS (run_openems_simulation), and "
+            "HFSS (run_hfss_simulation, controlled-licensed-workstation-"
+            "only) reference results to validate hardware against. You do "
+            "not ingest or extract documents -- that is the systems/"
             "verification roles' job."
         ),
         tools=[
@@ -945,6 +989,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_cascade_gain,
             run_nec2_simulation,
             run_openems_simulation,
+            run_hfss_simulation,
             search_knowledge,
         ],
     ),

@@ -53,6 +53,7 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 
@@ -541,6 +542,36 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     documentation (see simulation/openems.py's module docstring for citations) but
     NOT against a real openEMS binary -- none is installed in this environment."""
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
+
+
+@mcp.tool()
+def run_hfss_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    sweep: dict | None = None,
+    project_name: str = "hfss_project",
+    design_name: str = "hfss_design",
+) -> dict:
+    """Simulate a structure with HFSS via PyAEDT: create a project, apply geometry
+    (box material/conductor primitives with materials in meters, a lumped port,
+    length-based mesh -- see simulation.hfss._apply_hfss_geometry for the full
+    shape), solve, extract S-parameters, export a Touchstone file, and archive the
+    solved project plus extracted report. Returns "SIMULATED" provenance. CRITICAL:
+    unlike run_nec2_simulation/run_openems_simulation, HFSS is commercial, licensed
+    software that fundamentally cannot run without a paid license -- execution is
+    confined to a configured, explicitly-designated licensed workstation and
+    refuses to run anywhere else (see simulation/hfss.py's check_hfss_workstation_
+    confinement). PyAEDT API call shapes are verified against the primary
+    ansys/pyaedt GitHub source (see simulation/hfss.py's module docstring for the
+    full citation list) but NOT against a real HFSS/AEDT installation -- none is
+    licensed or available in this environment, and none genuinely can be."""
+    return _run_hfss_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        sweep=sweep,
+        project_name=project_name,
+        design_name=design_name,
+    )
 
 
 @mcp.tool()

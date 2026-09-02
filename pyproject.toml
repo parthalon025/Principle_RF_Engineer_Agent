@@ -19,6 +19,16 @@ dependencies = [
   "docling>=2.124.0",
 ]
 
+[project.optional-dependencies]
+# HFSS simulation (issue #40) is confined to a controlled, licensed
+# workstation -- see simulation/hfss.py. pyaedt is a large Ansys-adjacent
+# package that most installs (including CI) will never touch, so it is an
+# explicit optional extra, not a hard dependency: install with
+# `uv sync --extra hfss` or `pip install '.[hfss]'` on that workstation.
+hfss = [
+  "pyaedt",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.3",

@@ -106,8 +106,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # 11 tools wired before issue #36 (6 calc/touchstone + 5 knowledge) plus
     # the 35 new ones this ticket adds, plus 1 more (search_design_records)
     # added by issue #37, plus 1 more (run_nec2_simulation) added by #38,
-    # plus 1 more (run_openems_simulation) added by #39.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1
+    # plus 1 more (run_openems_simulation) added by #39, plus 1 more
+    # (run_hfss_simulation) added by #40.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1
 
 
 def test_run_nec2_simulation_is_registered():
@@ -118,6 +119,11 @@ def test_run_nec2_simulation_is_registered():
 def test_run_openems_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_openems_simulation" in registered_names
+
+
+def test_run_hfss_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_hfss_simulation" in registered_names
 
 
 # ---------------------------------------------------------------------------
@@ -599,3 +605,117 @@ def test_run_openems_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["convergence"]["terminated_reason"] == "end_criteria"
     assert result["s_parameters"]["computed"] is False
     assert result["far_field"]["computed"] is False
+
+
+# ---------------------------------------------------------------------------
+# HFSS simulation (issue #40)
+#
+# HFSS/PyAEDT genuinely cannot run in this environment even in principle --
+# no license, no AEDT install, and simulation.hfss.check_hfss_workstation_
+# confinement() is designed to reject this sandbox (see tests/test_hfss.py
+# for the direct, unmockable proof of that). This test therefore exercises
+# only the MCP wrapper's parameter call-through to
+# simulation.hfss.run_hfss_simulation, by monkeypatching the module-level
+# `_run_hfss_simulation` reference server.py calls through so it engages
+# that function's own hfss_factory/confinement_check test-injection seams
+# (documented on HfssSimulator.__init__) against a hand-written fake --
+# same fake shape as tests/test_hfss.py's FakeHfss, not re-imported here to
+# keep this file self-contained like its NEC2++/openEMS sections above.
+# ---------------------------------------------------------------------------
+
+
+class _FakeHfssForMcpTest:
+    def __init__(self, project, design, **kwargs):
+        self.project = project
+
+    def assign_material(self, assignment, material):
+        pass
+
+    def lumped_port(self, **kwargs):
+        pass
+
+    def create_setup(self, **kwargs):
+        pass
+
+    def create_linear_count_sweep(self, **kwargs):
+        pass
+
+    def analyze(self, **kwargs):
+        pass
+
+    def export_touchstone(self, **kwargs):
+        from pathlib import Path as _Path
+
+        _Path(kwargs["output_file"]).write_text("! fake touchstone\n")
+        return kwargs["output_file"]
+
+    def save_project(self):
+        from pathlib import Path as _Path
+
+        _Path(self.project).write_text("fake project\n")
+        return True
+
+    def release_desktop(self, **kwargs):
+        return True
+
+    @property
+    def modeler(self):
+        return self
+
+    def create_box(self, origin, sizes, name=None, **kwargs):
+        return name
+
+    @property
+    def mesh(self):
+        return self
+
+    def assign_length_mesh(self, **kwargs):
+        return None
+
+    @property
+    def post(self):
+        return self
+
+    def get_solution_data(self, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            primary_sweep_values=[2.4, 2.45, 2.5],
+            full_matrix_mag_phase=({"S(1,1)": [0.2, 0.02, 0.25]}, {"S(1,1)": [0.0, 0.5, 1.0]}),
+        )
+
+
+def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
+    from simulation.hfss import run_hfss_simulation as real_run_hfss_simulation
+
+    def fake_run(geometry, frequency_hz, sweep=None, project_name="hfss_project",
+                 design_name="hfss_design"):
+        return real_run_hfss_simulation(
+            geometry=geometry,
+            frequency_hz=frequency_hz,
+            sweep=sweep,
+            project_name=project_name,
+            design_name=design_name,
+            archive_dir=str(tmp_path),
+            hfss_factory=lambda **kw: _FakeHfssForMcpTest(**kw),
+            confinement_check=lambda: None,
+        )
+
+    monkeypatch.setattr(server, "_run_hfss_simulation", fake_run)
+
+    geometry = {
+        "conductors": [
+            {"name": "ground", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.03, 0.02, 0.0]},
+        ],
+        "port": {
+            "name": "feed",
+            "sheet": {"p1_m": [0.015, 0.005, 0.0], "p2_m": [0.015, 0.005, 0.0016]},
+        },
+    }
+    result = server.run_hfss_simulation(geometry, frequency_hz=2.45e9)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "HFSS"
+    assert result["status"] == "COMPLETED"
+    assert result["s_parameters"]["computed"] is True
+    assert Path(result["touchstone_file"]).exists()
