@@ -59,6 +59,7 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 
 load_dotenv()
 
@@ -513,6 +514,26 @@ def compare_touchstone_files(path_a: str, path_b: str) -> dict:
     return jsonified
 
 
+@function_tool(strict_mode=False)  # geometry's shape (optional keys, variable-length
+# wires list) doesn't fit the SDK's strict-schema requirement that object
+# parameters have no additionalProperties -- see generate_nec2_deck's
+# docstring in simulation/nec2pp.py for the accepted shape.
+def run_nec2_simulation(geometry: dict, frequency_hz: float, timeout_s: int = 600) -> dict:
+    """Simulate a wire-antenna structure with NEC2++: generate a NEC2 card deck from
+    structured geometry (wires with tag/segments/endpoints/radius in meters, optional
+    ground_condition "free_space"/"perfect"/finite-ground dict, optional excitation and
+    pattern-sweep overrides -- see simulation.nec2pp.generate_nec2_deck for the full
+    shape), run it via nec2++, and parse impedance/radiation-pattern/gain from the
+    output. Returns "SIMULATED" provenance. Deck/output format verified against the
+    primary NEC-2 documentation (see simulation/nec2pp.py's module docstring for the
+    citation) but NOT against a real nec2++ binary -- none is installed in this
+    environment; treat any result as unverified end-to-end until it has been run
+    against the real tool at least once."""
+    return _run_nec2_simulation(
+        geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s
+    )
+
+
 @function_tool
 def ingest_document(
     file_path: str,
@@ -634,11 +655,14 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
 #                   length extension/resonant frequency, fractional-
 #                   bandwidth<->Q, curvature-shifted resonant frequency,
 #                   Maxwell-Garnett metamaterial permeability, aperture
-#                   gain), and the dB<->linear unit converters aperture gain
-#                   composes with. Does NOT get calculate_noise_figure or
-#                   calculate_cascade_gain (receiver-chain concerns, not the
-#                   antenna element itself) or the S/Z/Y/ABCD/stability/
-#                   matching tools (microwave's job).
+#                   gain), the dB<->linear unit converters aperture gain
+#                   composes with, and (issue #38) run_nec2_simulation --
+#                   simulating a wire-antenna structure's impedance/pattern/
+#                   gain is squarely antenna-element work. Does NOT get
+#                   calculate_noise_figure or calculate_cascade_gain
+#                   (receiver-chain concerns, not the antenna element
+#                   itself) or the S/Z/Y/ABCD/stability/matching tools
+#                   (microwave's job).
 #   - test:         verification/measurement-adjacent. Gets Touchstone
 #                   analysis (the measured-network artifact) plus the new
 #                   Touchstone capabilities that are squarely test-engineering
@@ -646,10 +670,13 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
 #                   de-embedding, network cascading, and quantified
 #                   measured-vs-predicted comparison -- plus VSWR, return
 #                   loss, and cascade gain for comparing a measured chain
-#                   against its predicted/spec values. Does NOT get any
-#                   knowledge-authoring or knowledge-auditing tool -- test
-#                   validates hardware against a spec, it doesn't ingest or
-#                   extract documents.
+#                   against its predicted/spec values, plus (issue #38)
+#                   run_nec2_simulation -- generating a SIMULATED-provenance
+#                   reference result is itself something a measured result
+#                   gets validated against. Does NOT get any knowledge-
+#                   authoring or knowledge-auditing tool -- test validates
+#                   hardware against a spec, it doesn't ingest or extract
+#                   documents.
 #   - verification: knowledge/provenance-checking, per the ticket's own
 #                   frame. Gets the knowledge-base *auditing* tools
 #                   (read_document, extract_components) that check what's
@@ -716,6 +743,7 @@ _ALL_TOOLS = [
     deembed_touchstone_file,
     cascade_touchstone_files,
     compare_touchstone_files,
+    run_nec2_simulation,
     ingest_document,
     index_document,
     read_document,
@@ -828,7 +856,9 @@ ROLE_SPECS: list[RoleSpec] = [
             "synthesis (patch effective permittivity/length extension/"
             "resonant frequency, fractional-bandwidth<->Q, curvature-shifted "
             "resonant frequency, Maxwell-Garnett metamaterial permeability, "
-            "aperture gain). Defer receiver-chain noise figure and cascaded "
+            "aperture gain), and NEC2++ wire-antenna simulation "
+            "(run_nec2_simulation) for SIMULATED-provenance impedance/"
+            "pattern/gain. Defer receiver-chain noise figure and cascaded "
             "gain to the systems role, and S/Z/Y/ABCD/stability/matching "
             "tools to the microwave role."
         ),
@@ -848,6 +878,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_curvature_shifted_resonant_frequency,
             calculate_maxwell_garnett_effective_permeability,
             calculate_aperture_gain,
+            run_nec2_simulation,
             search_knowledge,
         ],
     ),
@@ -860,7 +891,9 @@ ROLE_SPECS: list[RoleSpec] = [
             "fixture de-embedding, network cascading, and quantified "
             "measured-vs-predicted comparison) and comparing measured VSWR/"
             "return loss/cascaded gain against predicted or specified "
-            "values. You do not ingest or extract documents -- that is the "
+            "values, including a SIMULATED-provenance NEC2++ reference "
+            "result (run_nec2_simulation) to validate hardware against. "
+            "You do not ingest or extract documents -- that is the "
             "systems/verification roles' job."
         ),
         tools=[
@@ -872,6 +905,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_vswr,
             calculate_return_loss,
             calculate_cascade_gain,
+            run_nec2_simulation,
             search_knowledge,
         ],
     ),

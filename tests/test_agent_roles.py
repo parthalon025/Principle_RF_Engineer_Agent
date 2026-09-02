@@ -58,10 +58,10 @@ def test_principal_role_has_broad_access():
     assert "analyze_touchstone_file" in names
     # principal is the coordinating role and is deliberately unscoped: the
     # 11 pre-#36 calculation/knowledge tools, the 35 Phase 1-2 tools added
-    # by issue #36, the search_design_records tool added by issue #37, plus
-    # 5 consult_<role>_role delegation tools (issue #35), one per
-    # non-principal specialist.
-    assert len(names) == 52
+    # by issue #36, the search_design_records tool added by issue #37, the
+    # run_nec2_simulation tool added by issue #38, plus 5 consult_<role>_role
+    # delegation tools (issue #35), one per non-principal specialist.
+    assert len(names) == 53
 
 
 def test_principal_module_alias_matches_registry():
@@ -196,6 +196,18 @@ def test_antenna_role_gets_antenna_synthesis_tools():
     assert "calculate_rollett_k_factor" not in names
     # link budget is systems' job
     assert "calculate_link_budget_margin" not in names
+
+
+def test_antenna_and_test_roles_get_nec2_simulation():
+    # issue #38: simulating a wire-antenna structure is antenna-element
+    # work, and its SIMULATED-provenance result is something a measured
+    # result gets validated against in test engineering.
+    assert "run_nec2_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_nec2_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_nec2_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_nec2_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_nec2_simulation" not in _tool_names(ROLES["verification"])
 
 
 def test_test_role_gets_new_touchstone_tools():

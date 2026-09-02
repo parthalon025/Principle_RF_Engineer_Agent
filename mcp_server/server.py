@@ -53,6 +53,7 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -502,6 +503,23 @@ def compare_touchstone_files(path_a: str, path_b: str) -> dict:
             jsonified[key] = value
     jsonified["provenance"] = "CALCULATED"
     return jsonified
+
+
+@mcp.tool()
+def run_nec2_simulation(geometry: dict, frequency_hz: float, timeout_s: int = 600) -> dict:
+    """Simulate a wire-antenna structure with NEC2++: generate a NEC2 card deck from
+    structured geometry (wires with tag/segments/endpoints/radius in meters, optional
+    ground_condition "free_space"/"perfect"/finite-ground dict, optional excitation and
+    pattern-sweep overrides -- see simulation.nec2pp.generate_nec2_deck for the full
+    shape), run it via nec2++, and parse impedance/radiation-pattern/gain from the
+    output. Returns "SIMULATED" provenance. Deck/output format verified against the
+    primary NEC-2 documentation (see simulation/nec2pp.py's module docstring for the
+    citation) but NOT against a real nec2++ binary -- none is installed in this
+    environment; treat any result as unverified end-to-end until it has been run
+    against the real tool at least once."""
+    return _run_nec2_simulation(
+        geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s
+    )
 
 
 @mcp.tool()

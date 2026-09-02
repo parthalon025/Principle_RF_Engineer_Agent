@@ -105,8 +105,13 @@ def test_registered_tool_count_matches_old_plus_new():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     # 11 tools wired before issue #36 (6 calc/touchstone + 5 knowledge) plus
     # the 35 new ones this ticket adds, plus 1 more (search_design_records)
-    # added by issue #37.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1
+    # added by issue #37, plus 1 more (run_nec2_simulation) added by #38.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1
+
+
+def test_run_nec2_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_nec2_simulation" in registered_names
 
 
 # ---------------------------------------------------------------------------
@@ -435,3 +440,72 @@ def test_compare_touchstone_files_calls_through(tmp_path: Path):
     assert isinstance(result["s21"]["diff"][0], str)
     complex(result["s21"]["diff"][0])  # round-trips through complex()
     assert result["provenance"] == "CALCULATED"
+
+
+# ---------------------------------------------------------------------------
+# NEC2++ simulation (issue #38)
+#
+# The real nec2++ binary is not installed in this environment, so this
+# exercises the MCP wrapper's call-through to simulation.nec2pp via a fake
+# "nec2++" script pointed to by NEC2PP_BIN -- same not-verified-against-a-
+# real-binary caveat as tests/test_nec2pp.py. The section headings and
+# field order below match the documented NEC2 output format (see
+# tests/test_nec2pp.py for the letter-for-letter guide transcription used
+# to actually validate the parser -- this one is just re-wrapped to fit
+# this file's line length).
+# ---------------------------------------------------------------------------
+
+_FAKE_NEC2PP_OUTPUT = """
+              - - - ANTENNA INPUT PARAMETERS - - -
+  TAG SEG.  VOLTAGE (VOLTS)      CURRENT (AMPS)    IMPEDANCE (OHMS)
+  NO. NO.  REAL       IMAG.     REAL      IMAG.    REAL      IMAG.
+    0   4 1.0E+00 0.0E+00 9.2E-03-5.1E-03 8.3E+01 4.6E+01 9.2E-03-5.1E-03 4.6E-03
+                    - - - RADIATION PATTERNS - - -
+- - ANGLES - -    - POWER GAINS -   - - POLARIZATION - -   - E(THETA) -
+THETA   PHI     VERT.   HOR.  TOTAL   AXIAL   TILT  SENSE   MAGNITUDE
+DEGREES DEGREES   DB     DB    DB    RATIO    DEG.           VOLTS/M
+  90.00    .00   8.52 -999.99  8.52  .00000    .00  LINEAR  1.4E+00  62.47  0.0E-01  .00
+"""
+
+
+def _write_fake_nec2pp(tmp_path: Path) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_nec2pp.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f'OUTPUT = """{_FAKE_NEC2PP_OUTPUT}"""\n'
+        "sys.stdout.write(OUTPUT)\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_nec2_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_nec2pp(tmp_path)
+    monkeypatch.setenv("NEC2PP_BIN", str(script))
+
+    geometry = {
+        "wires": [
+            {
+                "tag": 1,
+                "segments": 7,
+                "x1_m": 0.0,
+                "y1_m": 0.0,
+                "z1_m": -0.25,
+                "x2_m": 0.0,
+                "y2_m": 0.0,
+                "z2_m": 0.25,
+                "radius_m": 0.001,
+            }
+        ]
+    }
+    result = server.run_nec2_simulation(geometry, frequency_hz=300e6, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "NEC2++"
+    assert result["impedance"]["resistance_ohms"] == pytest.approx(83.0)
+    assert result["gain_dbi"] == pytest.approx(8.52)
