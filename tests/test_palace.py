@@ -144,7 +144,10 @@ def test_generate_palace_mesh_embedded_material_gets_its_own_domain_attribute():
 
 
 def test_generate_palace_mesh_no_materials_is_background_only():
-    geometry = {"unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01}, "mesh": {"nx": 1, "ny": 1, "nz": 1}}
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    }
     result = generate_palace_mesh(geometry)
     lines = result["mesh_text"].split("\n")
     start = lines.index("elements") + 2
@@ -236,7 +239,9 @@ def test_generate_palace_config_floquet_wave_vector_oblique_incidence():
             "polarization": "TE",
         },
     }
-    config = generate_palace_config(geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9)
+    config = generate_palace_config(
+        geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
     periodic = config["Boundaries"]["Periodic"]
     assert periodic["FloquetWaveVector"] == pytest.approx([0.0, 104.79, 0.0])
 
@@ -259,7 +264,9 @@ def test_generate_palace_config_floquet_ports_excitation_and_polarization():
 def test_generate_palace_config_invalid_polarization_raises():
     geometry = {**GRATING_GEOMETRY, "floquet": {"polarization": "not_a_real_polarization"}}
     with pytest.raises(ValueError, match="polarization"):
-        generate_palace_config(geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9)
+        generate_palace_config(
+            geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+        )
 
 
 def test_generate_palace_config_driven_sweep_defaults():

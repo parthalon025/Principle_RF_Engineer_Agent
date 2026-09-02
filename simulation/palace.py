@@ -314,14 +314,16 @@ def _feature_lines(lo: float, hi: float, interior: list[float], subdivisions: in
     if subdivisions < 1:
         raise ValueError("mesh subdivisions must be >= 1")
     grid: list[float] = []
-    for a, b in zip(pts[:-1], pts[1:]):
+    for a, b in zip(pts[:-1], pts[1:], strict=False):
         for s in range(subdivisions):
             grid.append(a + (b - a) * s / subdivisions)
     grid.append(pts[-1])
     return grid
 
 
-def _material_attribute(materials: list[dict[str, Any]], centroid: tuple[float, float, float]) -> int:
+def _material_attribute(
+    materials: list[dict[str, Any]], centroid: tuple[float, float, float]
+) -> int:
     """Domain attribute for a mesh element at `centroid`: the first material
     (in input order) whose axis-aligned box contains it, offset by 2 (1 is
     reserved for the background); else 1 (background)."""
@@ -381,9 +383,12 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     ny = int(mesh_cfg.get("ny", 2))
     nz = int(mesh_cfg.get("nz", 2))
 
-    x_grid = _feature_lines(0.0, lx, [c for m in materials for c in (m["p1_m"][0], m["p2_m"][0])], nx)
-    y_grid = _feature_lines(0.0, ly, [c for m in materials for c in (m["p1_m"][1], m["p2_m"][1])], ny)
-    z_grid = _feature_lines(0.0, lz, [c for m in materials for c in (m["p1_m"][2], m["p2_m"][2])], nz)
+    x_feats = [c for m in materials for c in (m["p1_m"][0], m["p2_m"][0])]
+    y_feats = [c for m in materials for c in (m["p1_m"][1], m["p2_m"][1])]
+    z_feats = [c for m in materials for c in (m["p1_m"][2], m["p2_m"][2])]
+    x_grid = _feature_lines(0.0, lx, x_feats, nx)
+    y_grid = _feature_lines(0.0, ly, y_feats, ny)
+    z_grid = _feature_lines(0.0, lz, z_feats, nz)
     nxv, nyv, nzv = len(x_grid), len(y_grid), len(z_grid)
 
     def vidx(i: int, j: int, k: int) -> int:
@@ -410,8 +415,14 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
                 # (4,5,6,7) in the same rotational order, vertex i<->i+4 --
                 # see module docstring citation.
                 v = [
-                    vidx(i, j, k), vidx(i + 1, j, k), vidx(i + 1, j + 1, k), vidx(i, j + 1, k),
-                    vidx(i, j, k + 1), vidx(i + 1, j, k + 1), vidx(i + 1, j + 1, k + 1), vidx(i, j + 1, k + 1),
+                    vidx(i, j, k),
+                    vidx(i + 1, j, k),
+                    vidx(i + 1, j + 1, k),
+                    vidx(i, j + 1, k),
+                    vidx(i, j, k + 1),
+                    vidx(i + 1, j, k + 1),
+                    vidx(i + 1, j + 1, k + 1),
+                    vidx(i, j + 1, k + 1),
                 ]
                 elements.append((attr, v))
 
@@ -423,21 +434,70 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     boundary: list[tuple[int, list[int]]] = []
     for j in range(nyv - 1):
         for k in range(nzv - 1):
-            boundary.append((BOUND_X_MIN, [vidx(0, j, k), vidx(0, j + 1, k), vidx(0, j + 1, k + 1), vidx(0, j, k + 1)]))
-            boundary.append((BOUND_X_MAX, [vidx(nxv - 1, j, k), vidx(nxv - 1, j, k + 1), vidx(nxv - 1, j + 1, k + 1), vidx(nxv - 1, j + 1, k)]))
+            boundary.append(
+                (
+                    BOUND_X_MIN,
+                    [vidx(0, j, k), vidx(0, j + 1, k), vidx(0, j + 1, k + 1), vidx(0, j, k + 1)],
+                )
+            )
+            boundary.append(
+                (
+                    BOUND_X_MAX,
+                    [
+                        vidx(nxv - 1, j, k),
+                        vidx(nxv - 1, j, k + 1),
+                        vidx(nxv - 1, j + 1, k + 1),
+                        vidx(nxv - 1, j + 1, k),
+                    ],
+                )
+            )
     for i in range(nxv - 1):
         for k in range(nzv - 1):
-            boundary.append((BOUND_Y_MIN, [vidx(i, 0, k), vidx(i + 1, 0, k), vidx(i + 1, 0, k + 1), vidx(i, 0, k + 1)]))
-            boundary.append((BOUND_Y_MAX, [vidx(i, nyv - 1, k), vidx(i, nyv - 1, k + 1), vidx(i + 1, nyv - 1, k + 1), vidx(i + 1, nyv - 1, k)]))
+            boundary.append(
+                (
+                    BOUND_Y_MIN,
+                    [vidx(i, 0, k), vidx(i + 1, 0, k), vidx(i + 1, 0, k + 1), vidx(i, 0, k + 1)],
+                )
+            )
+            boundary.append(
+                (
+                    BOUND_Y_MAX,
+                    [
+                        vidx(i, nyv - 1, k),
+                        vidx(i, nyv - 1, k + 1),
+                        vidx(i + 1, nyv - 1, k + 1),
+                        vidx(i + 1, nyv - 1, k),
+                    ],
+                )
+            )
     for i in range(nxv - 1):
         for j in range(nyv - 1):
-            boundary.append((BOUND_Z_MIN, [vidx(i, j, 0), vidx(i + 1, j, 0), vidx(i + 1, j + 1, 0), vidx(i, j + 1, 0)]))
-            boundary.append((BOUND_Z_MAX, [vidx(i, j, nzv - 1), vidx(i, j + 1, nzv - 1), vidx(i + 1, j + 1, nzv - 1), vidx(i + 1, j, nzv - 1)]))
+            boundary.append(
+                (
+                    BOUND_Z_MIN,
+                    [vidx(i, j, 0), vidx(i + 1, j, 0), vidx(i + 1, j + 1, 0), vidx(i, j + 1, 0)],
+                )
+            )
+            boundary.append(
+                (
+                    BOUND_Z_MAX,
+                    [
+                        vidx(i, j, nzv - 1),
+                        vidx(i, j + 1, nzv - 1),
+                        vidx(i + 1, j + 1, nzv - 1),
+                        vidx(i + 1, j, nzv - 1),
+                    ],
+                )
+            )
 
     lines = ["MFEM mesh v1.0", "", "dimension", "3", "", "elements", str(len(elements))]
-    lines += [f"{attr} {_CUBE_GEOM_TYPE} " + " ".join(str(v) for v in verts) for attr, verts in elements]
+    lines += [
+        f"{attr} {_CUBE_GEOM_TYPE} " + " ".join(str(v) for v in verts) for attr, verts in elements
+    ]
     lines += ["", "boundary", str(len(boundary))]
-    lines += [f"{attr} {_SQUARE_GEOM_TYPE} " + " ".join(str(v) for v in verts) for attr, verts in boundary]
+    lines += [
+        f"{attr} {_SQUARE_GEOM_TYPE} " + " ".join(str(v) for v in verts) for attr, verts in boundary
+    ]
     lines += ["", "vertices", str(len(vertices)), "3"]
     lines += [f"{_fmt(x)} {_fmt(y)} {_fmt(z)}" for x, y, z in vertices]
     mesh_text = "\n".join(lines) + "\n"
@@ -500,7 +560,9 @@ def generate_palace_config(
     reference_frequency_hz = floquet.get("reference_frequency_hz", frequency_hz)
     polarization = floquet.get("polarization", "TE")
     if polarization not in _VALID_POLARIZATIONS:
-        raise ValueError(f"floquet polarization must be one of {_VALID_POLARIZATIONS}, got {polarization!r}")
+        raise ValueError(
+            f"floquet polarization must be one of {_VALID_POLARIZATIONS}, got {polarization!r}"
+        )
     max_order = int(floquet.get("max_order", 0))
 
     sweep = sweep or {}
@@ -668,7 +730,9 @@ def parse_palace_output(csv_text: str) -> dict[str, Any]:
             mag_col = meta.get("_magnitude_col")
             phase_col = meta.get("_phase_col")
             mag_db = float(row[mag_col]) if mag_col is not None and mag_col < len(row) else None
-            phase_deg = float(row[phase_col]) if phase_col is not None and phase_col < len(row) else None
+            phase_deg = (
+                float(row[phase_col]) if phase_col is not None and phase_col < len(row) else None
+            )
             modes[label]["magnitude_db"].append(mag_db)
             modes[label]["phase_deg"].append(phase_deg)
             if (
