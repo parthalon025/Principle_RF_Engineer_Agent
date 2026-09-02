@@ -1,12 +1,18 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from agents import Agent, FunctionTool, Runner, function_tool
 from agents.run import RunResult
 from dotenv import load_dotenv
 
+from designs.service import create_design as _create_design
+from designs.service import read_design as _read_design
+from designs.service import record_decision as _record_decision
+from designs.service import record_engineering_result as _record_engineering_result
+from designs.service import verify_requirement as _verify_requirement
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -95,47 +101,102 @@ SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
 
 
 @function_tool
-def calculate_wavelength(frequency_hz: float) -> float:
-    """Calculate free-space wavelength in meters for a given frequency in Hz."""
-    return wavelength(frequency_hz)
+def calculate_wavelength(frequency_hz: float, design_id: int | None = None) -> float | dict:
+    """Calculate free-space wavelength in meters for a given frequency in Hz.
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = wavelength(frequency_hz)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_wavelength", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_vswr(reflection_coefficient_magnitude: float) -> float:
-    """Calculate VSWR from the magnitude of the reflection coefficient (|Gamma|)."""
-    return vswr_from_gamma(reflection_coefficient_magnitude)
+def calculate_vswr(
+    reflection_coefficient_magnitude: float, design_id: int | None = None
+) -> float | dict:
+    """Calculate VSWR from the magnitude of the reflection coefficient (|Gamma|).
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = vswr_from_gamma(reflection_coefficient_magnitude)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_vswr", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_return_loss(reflection_coefficient_magnitude: float) -> float:
-    """Calculate return loss in dB from the magnitude of the reflection coefficient (|Gamma|)."""
-    return return_loss_db(reflection_coefficient_magnitude)
+def calculate_return_loss(
+    reflection_coefficient_magnitude: float, design_id: int | None = None
+) -> float | dict:
+    """Calculate return loss in dB from the magnitude of the reflection coefficient (|Gamma|).
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = return_loss_db(reflection_coefficient_magnitude)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_return_loss", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_cascade_gain(gains_db: list[float]) -> float:
-    """Calculate the total cascaded gain in dB for a chain of stage gains in dB."""
-    return cascade_gain_db(gains_db)
+def calculate_cascade_gain(gains_db: list[float], design_id: int | None = None) -> float | dict:
+    """Calculate the total cascaded gain in dB for a chain of stage gains in dB.
+    Pass design_id to also record this result as an engineering_results row
+    against that design; the return value then gains a recorded_as field
+    naming the new row's id."""
+    result = cascade_gain_db(gains_db)
+    if design_id is None:
+        return result
+    recorded = _record_engineering_result(
+        design_id=design_id, tool_name="calculate_cascade_gain", value=result
+    )
+    return {"value": result, "recorded_as": recorded}
 
 
 @function_tool
-def calculate_noise_figure(noise_factors: list[float], gains_linear: list[float]) -> dict:
+def calculate_noise_figure(
+    noise_factors: list[float], gains_linear: list[float], design_id: int | None = None
+) -> dict:
     """Calculate cascaded noise factor and noise figure (Friis equation) for a chain of
-    stages, given each stage's linear noise factor and linear gain."""
+    stages, given each stage's linear noise factor and linear gain. Pass design_id to
+    also record this result as an engineering_results row against that design; the
+    return value then gains a recorded_as field naming the new row's id."""
     f_total = friis_noise_factor(noise_factors, gains_linear)
-    return {
+    result = {
         "noise_factor": f_total,
         "noise_figure_db": noise_factor_to_db(f_total),
         "provenance": "CALCULATED",
     }
+    if design_id is not None:
+        result["recorded_as"] = _record_engineering_result(
+            design_id=design_id, tool_name="calculate_noise_figure", value=result
+        )
+    return result
 
 
 @function_tool
-def analyze_touchstone_file(path: str) -> dict:
+def analyze_touchstone_file(path: str, design_id: int | None = None) -> dict:
     """Analyze a local Touchstone network file (.sNp) and return port count, frequency
-    range, and S11/S21 extrema."""
+    range, and S11/S21 extrema. Pass design_id to also record this result as an
+    engineering_results row against that design; the return value then gains a
+    recorded_as field naming the new row's id."""
     result = analyze_touchstone(path)
     result["provenance"] = "CALCULATED"
+    if design_id is not None:
+        result["recorded_as"] = _record_engineering_result(
+            design_id=design_id, tool_name="analyze_touchstone_file", value=result
+        )
     return result
 
 
@@ -1089,6 +1150,117 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
+# strict_mode=False: `requirements`/`architecture` are genuinely free-form
+# JSON (arbitrary requirement_id keys; architecture shape isn't fixed by
+# this ticket) -- the SDK's default strict-schema mode rejects an open
+# `dict` parameter outright (`additionalProperties` must be false), which
+# a fixed schema can't express here without inventing structure this
+# ticket doesn't define.
+@function_tool(strict_mode=False)
+def create_design(
+    design_key: str,
+    name: str,
+    revision: str,
+    requirements: dict,
+    architecture: dict,
+) -> dict:
+    """Start a new design: a designs row with design_key, name, revision,
+    requirements, and architecture, starting in DRAFT status. requirements
+    must be a dict keyed by requirement_id, each value carrying a
+    'requirement' text field; one verification_items row is auto-created
+    per key, all starting NOT VERIFIED, so no stated requirement can end up
+    with no verification row. Every component_id referenced anywhere in
+    architecture must already exist in components -- a dangling reference
+    is rejected with a structured error naming the offending block, never
+    silently written."""
+    return _create_design(
+        design_key=design_key,
+        name=name,
+        revision=revision,
+        requirements=requirements,
+        architecture=architecture,
+    )
+
+
+@function_tool
+def read_design(design_id: int) -> dict:
+    """Fetch a stored design's full payload: design_key, name, revision, status,
+    requirements, architecture (every component_id resolved inline to its
+    manufacturer/part_number, not left as a bare id), and all engineering_results,
+    decision_records (with approval_status), and verification_items rows. Returns
+    a not-found result rather than raising if design_id doesn't exist."""
+    return _read_design(design_id)
+
+
+# strict_mode=False: `alternatives`/`evidence` are free-form JSON lists
+# (each entry's shape isn't fixed by this ticket), same reasoning as
+# create_design's requirements/architecture above.
+@function_tool(strict_mode=False)
+def record_decision(
+    design_id: int,
+    record_key: str,
+    decision: str,
+    alternatives: list,
+    rationale: str,
+    evidence: list,
+    approval_required: bool = True,
+) -> dict:
+    """Log a judgment-laden design choice -- a decision between real
+    alternatives, distinct from a mechanical calculation -- with its
+    rationale and evidence. Always an explicit agent judgment call, never
+    triggered automatically by an architecture change. record_key follows
+    '{design_key}-{slug}' and must be globally unique; reusing one is
+    rejected with a structured error pointing at the existing record,
+    never silently overwritten. Every new decision starts
+    approval_status='PENDING' -- this does not yet block anything (no
+    manufacturing_release tool or review UI exists)."""
+    return _record_decision(
+        design_id=design_id,
+        record_key=record_key,
+        decision=decision,
+        alternatives=alternatives,
+        rationale=rationale,
+        evidence=evidence,
+        approval_required=approval_required,
+    )
+
+
+# strict_mode=False: `expected`/`actual` are free-form JSON evidence values
+# (a number, a dict of measured quantities, whatever the verification
+# method produced) -- same open-schema reason as `create_design` above.
+@function_tool(strict_mode=False)
+def verify_requirement(
+    design_id: int,
+    requirement_id: str,
+    method: str,
+    status: str,
+    expected: Any = None,
+    actual: Any = None,
+    evidence_uri: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Explicitly record verification of one requirement on a design:
+    updates its verification_items row (auto-created by create_design) with
+    method, status, expected, actual, evidence_uri, and notes. status must
+    be one of NOT VERIFIED/PASS/FAIL/MARGINAL. Verification is always this
+    explicit call -- never inferred by matching an engineering_results name
+    against a requirement_id, since a wrong automatic guess would produce a
+    silently wrong verification. A requirement_id with no matching row on
+    this design_id is rejected with a structured error rather than
+    creating a stray row. Folding a FAIL into any approval/release gate is
+    out of scope here; this only records the status."""
+    return _verify_requirement(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        method=method,
+        status=status,
+        expected=expected,
+        actual=actual,
+        evidence_uri=evidence_uri,
+        notes=notes,
+    )
+
+
 @function_tool
 def optimize_patch_length_for_target_frequency(
     eps_r: float,
@@ -1364,6 +1536,10 @@ _ALL_TOOLS = [
     search_knowledge,
     search_design_records,
     extract_components,
+    create_design,
+    read_design,
+    record_decision,
+    verify_requirement,
     optimize_patch_length_for_target_frequency,
     start_design_loop,
     advance_design_loop_step,

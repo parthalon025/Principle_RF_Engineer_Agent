@@ -12,13 +12,20 @@ def analyze_touchstone(path: str) -> dict[str, Any]:
         raise FileNotFoundError(path)
 
     network = rf.Network(str(p))
+    # z0 (reference impedance) is complex in general (a lossy line's
+    # characteristic impedance has a reactive part) -- a bare `complex`
+    # isn't JSON-serializable, and this dict is returned as-is to callers
+    # that do serialize it (ticket #19 writes it verbatim as an
+    # `engineering_results.value` JSONB payload), so each entry is stored
+    # as a JSON-safe [real, imag] pair rather than a Python complex.
+    z0 = np.asarray(network.z0)
     result: dict[str, Any] = {
         "file": str(p.resolve()),
         "ports": int(network.nports),
         "frequency_start_hz": float(network.f[0]),
         "frequency_stop_hz": float(network.f[-1]),
         "points": int(len(network.f)),
-        "z0": np.asarray(network.z0).tolist(),
+        "z0": np.stack([z0.real, z0.imag], axis=-1).tolist(),
     }
 
     if network.nports >= 2:

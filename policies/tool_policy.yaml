@@ -5,6 +5,11 @@ read_only:
   - read_touchstone
   - analyze_touchstone
 
+design_tracking:
+  - create_design
+  - record_decision
+  - verify_requirement
+
 calculation:
   - calculate_vswr
   - calculate_return_loss

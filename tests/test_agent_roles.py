@@ -68,9 +68,12 @@ def test_principal_role_has_broad_access():
     # added by issue #44, the correlate_simulated_and_measured tool added
     # by issue #45, the 3 design-iteration-loop tools (start_design_loop,
     # advance_design_loop_step, inspect_design_loop_state) added by issue
-    # #46, plus 5 consult_<role>_role delegation tools (issue #35), one per
-    # non-principal specialist.
-    assert len(names) == 68
+    # #46, the 4 design-lifecycle tools (create_design, read_design,
+    # record_decision, verify_requirement) from a separately-merged PR
+    # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
+    # tool set, plus 5 consult_<role>_role delegation tools (issue #35), one
+    # per non-principal specialist.
+    assert len(names) == 72
 
 
 def test_principal_module_alias_matches_registry():
