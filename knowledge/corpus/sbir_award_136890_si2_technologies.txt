@@ -1,0 +1,67 @@
+Source URL: https://www.sbir.gov/awards/136890
+Fetched via: direct HTTP fetch of the SBIR.gov award page (real content, not summarized)
+
+Award
+Portfolio Data
+Back to Award Search
+Reduced Profile MUOS Metaferrite Antenna for UHF SATCOM (1000-228)
+Awardee
+SI2 TECHNOLOGIES, INC
+267 BOSTON RD
+NORTH BILLERICA, MA, 01862-2310
+USA
+Award Year:
+2012
+UEI:
+YUNJQSCD2Z99
+HUBZone Owned:
+No
+Woman Owned:
+No
+Socially and Economically Disadvantaged:
+No
+Congressional District:
+6
+Tagged as:
+SBIR
+Phase I
+Awarding Agency
+DOW
+Branch: ARMY
+Total Award Amount:
+$99,990
+Contract Number:
+W15P7T-12-C-A324
+Agency Tracking Number:
+A121-045-0275
+Solicitation Topic Code:
+A12-045
+Solicitation Number:
+2012.1
+Abstract
+SI2 Technologies, Inc. (SI2) will leverage our expertise in low profile, conformal metaferrite antenna design to develop an efficient antenna that enables transmit and receive of circularly polarized UHF SATCOM. The conformal antenna will be low profile to enable conformal integration to Army platforms such as helicopters and UAVs. In Phase I, SI2 will concentrate on the design and optimization of a reduced profile UHF cavity and RHCP element. We will validate our design and manufacturing approach through fabricating a prototype and demonstrating its performance via test. In the follow-on Phase II effort, we will team with an industry partner to provide a systems level demonstration.
+Award Schedule
+2012
+Solicitation Year
+2012
+Award Year
+June 29, 2012
+Award Start Date
+Award End Date
+Principal Investigator
+Name:
+Randall  Lapierre
+Phone:
+(978) 495-5300
+Email:
+rlapierre@si2technologies.com
+Business Contact
+Name:
+Noel M Burgoa
+Phone:
+(978) 495-5300
+Email:
+nburgoa@si2technologies.com
+Research Institution
+Name:
+Stub
