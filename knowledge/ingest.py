@@ -37,6 +37,7 @@ def ingest_document(
     license: str,
     classification: str,
     supersedes_document_id: int | None = None,
+    authority_rank_override: int | None = None,
 ) -> dict[str, Any]:
     """Parse, chunk, and store a datasheet/standard/textbook/paper PDF.
 
@@ -44,6 +45,16 @@ def ingest_document(
     requires an explicit classification on every ingested document; no
     default is offered for any of the three). Deterministic end to end --
     docling's parsing is not LLM-based, so this has no backend dependency.
+
+    `authority_rank_override`, if given, replaces the `source_type`-derived
+    default authority rank (`knowledge.provenance.default_authority_rank`)
+    for this one document -- CONTEXT.md documents authority rank as
+    "overridable per document"; this is that mechanism. Ticket #68 is the
+    first caller: `knowledge/sourcing/arxiv.py` passes
+    `knowledge.provenance.arxiv_preprint_authority_rank()` here so an
+    arXiv-sourced `paper` document ranks below a peer-reviewed one, since
+    arXiv preprints are not peer-reviewed. Omit it (the default) and this
+    behaves exactly as before -- every other existing caller is unaffected.
 
     Re-ingesting an identical file (matching checksum) is rejected and
     returns the existing document's id instead of creating a duplicate.
@@ -71,7 +82,11 @@ def ingest_document(
         raise FileNotFoundError(file_path)
 
     checksum = _sha256_of(path)
-    authority_rank = default_authority_rank(source_type_enum)
+    authority_rank = (
+        authority_rank_override
+        if authority_rank_override is not None
+        else default_authority_rank(source_type_enum)
+    )
 
     title = path.stem
     extraction_status = "ok"

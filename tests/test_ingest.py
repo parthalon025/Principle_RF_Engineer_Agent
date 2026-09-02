@@ -243,6 +243,39 @@ def test_ingest_with_invalid_supersession_target_returns_structured_error(
     assert result["supersedes_document_id"] == 999_999
 
 
+def test_authority_rank_override_replaces_source_type_default(tmp_path, cleanup_documents):
+    """Ticket #68: `authority_rank_override` is the mechanism
+    `knowledge/sourcing/arxiv.py` uses to rank an arXiv preprint below the
+    peer-reviewed `paper` default -- exercised directly here against the
+    real DB to confirm the override actually reaches the stored row's
+    `authority_rank`, not just the returned dict."""
+    pdf_path = tmp_path / "overridden_rank.pdf"
+    _write_pdf(pdf_path, ["Rank Override Test", "Some content."])
+
+    result = ingest_document(
+        file_path=str(pdf_path),
+        source_type="paper",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        authority_rank_override=50,
+    )
+    cleanup_documents.append(result["document_id"])
+
+    assert result["authority_rank"] == 50
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT authority_rank FROM documents WHERE id = %s",
+                (result["document_id"],),
+            )
+            (stored_rank,) = cur.fetchone()
+    finally:
+        conn.close()
+    assert stored_rank == 50
+
+
 def test_extraction_failure_still_writes_document_with_zero_chunks(tmp_path, cleanup_documents):
     corrupt_path = tmp_path / "corrupt.pdf"
     corrupt_path.write_bytes(b"%PDF-1.4\nthis is not a valid pdf body\n%%EOF")
