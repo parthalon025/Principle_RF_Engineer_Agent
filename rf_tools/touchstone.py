@@ -130,3 +130,61 @@ def deembed_touchstone(
         dut = dut ** _invert_fixture(output_fixture, output_fixture_path)
 
     return dut
+
+
+def cascade_touchstone(paths: list[str]) -> rf.Network:
+    """Cascade an ordered chain of two-port Touchstone networks.
+
+    Loads each network in `paths` (in order) and cascades them
+    front-to-back with skrf's `**` operator, which multiplies each
+    network's ABCD matrix in turn -- the standard way to predict the
+    end-to-end response of a chain of components or stages (amplifiers,
+    attenuators, lines, connectors, ...) from their individual
+    measured/simulated networks:
+
+        result = networks[0] ** networks[1] ** networks[2] ** ...
+
+    Every network must be a two-port (this repo's whole Touchstone story
+    is two-port so far, matching `analyze_touchstone`'s port-count
+    field) -- a network with a different port count raises `ValueError`
+    naming which entry in `paths` is at fault, rather than letting
+    skrf's own port-count error point at an opaque matrix shape.
+
+    Every network must also share the same reference impedance `z0`.
+    skrf's `**` does not itself guard against cascading networks defined
+    at different `z0` -- doing so without an explicit renormalization
+    step would silently produce a physically wrong result -- so `z0` is
+    compared (within a small floating-point tolerance) against the first
+    network's before cascading, and a mismatch raises `ValueError` naming
+    the offending network.
+    """
+    if not paths:
+        raise ValueError("cascade_touchstone requires at least one network path")
+
+    networks = [_load_network(path) for path in paths]
+
+    for path, network in zip(paths, networks, strict=True):
+        if network.nports != 2:
+            raise ValueError(
+                f"network at {path!r} has {network.nports} ports -- "
+                "cascade_touchstone requires two-port networks"
+            )
+
+    ref_path, ref_network = paths[0], networks[0]
+    ref_z0 = np.asarray(ref_network.z0[0])
+    for path, network in zip(paths[1:], networks[1:], strict=True):
+        z0 = np.asarray(network.z0[0])
+        if not np.allclose(z0, ref_z0, atol=1e-6):
+            raise ValueError(
+                f"network at {path!r} has reference impedance z0="
+                f"{z0.tolist()}, which does not match {ref_path!r}'s z0="
+                f"{ref_z0.tolist()} -- cascading networks defined at "
+                "different reference impedances without an explicit "
+                "renormalization step would produce a physically wrong "
+                "result"
+            )
+
+    result = networks[0]
+    for network in networks[1:]:
+        result = result ** network
+    return result

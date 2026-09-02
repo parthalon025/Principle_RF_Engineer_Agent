@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 import skrf as rf
 
-from rf_tools.touchstone import analyze_touchstone, deembed_touchstone, interpolate_touchstone
+from rf_tools.touchstone import (
+    analyze_touchstone,
+    cascade_touchstone,
+    deembed_touchstone,
+    interpolate_touchstone,
+)
 
 C0 = 299792458.0  # speed of light, m/s
 
@@ -210,3 +215,83 @@ def test_deembed_touchstone_missing_fixture_file(tmp_path: Path):
 
     with pytest.raises(FileNotFoundError):
         deembed_touchstone(str(measured_path), str(tmp_path / "missing.s2p"))
+
+
+def _make_matched_attenuator(freqs_hz: np.ndarray, atten_db: float, z0: float = 50) -> rf.Network:
+    """A synthetic matched attenuator: S11 = S22 = 0, S21 = S12 = 10**(-atten_db/20)."""
+    s = np.zeros((len(freqs_hz), 2, 2), dtype=complex)
+    s21 = 10 ** (-atten_db / 20)
+    s[:, 1, 0] = s21
+    s[:, 0, 1] = s21
+    freq = rf.Frequency.from_f(freqs_hz, unit="hz")
+    return rf.Network(frequency=freq, s=s, z0=z0)
+
+
+def test_cascade_touchstone_two_matched_attenuators(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 5e9, 9)
+    atten_a_db = 3.0
+    atten_b_db = 6.0
+    a = _make_matched_attenuator(freqs_hz, atten_a_db)
+    b = _make_matched_attenuator(freqs_hz, atten_b_db)
+
+    path_a = _write_network(a, tmp_path, "atten_a")
+    path_b = _write_network(b, tmp_path, "atten_b")
+
+    result = cascade_touchstone([str(path_a), str(path_b)])
+
+    assert isinstance(result, rf.Network)
+    expected_s21 = 10 ** (-(atten_a_db + atten_b_db) / 20)
+    np.testing.assert_allclose(np.abs(result.s[:, 1, 0]), expected_s21, atol=1e-9)
+    np.testing.assert_allclose(result.s[:, 0, 0], 0.0, atol=1e-9)
+    np.testing.assert_allclose(result.s[:, 1, 1], 0.0, atol=1e-9)
+
+
+def test_cascade_touchstone_three_or_more_networks(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 5e9, 9)
+    atten_db_values = [2.0, 4.0, 5.0, 1.5]
+    paths = []
+    for i, atten_db in enumerate(atten_db_values):
+        ntwk = _make_matched_attenuator(freqs_hz, atten_db)
+        paths.append(str(_write_network(ntwk, tmp_path, f"atten_{i}")))
+
+    result = cascade_touchstone(paths)
+
+    assert isinstance(result, rf.Network)
+    expected_s21 = 10 ** (-sum(atten_db_values) / 20)
+    np.testing.assert_allclose(np.abs(result.s[:, 1, 0]), expected_s21, atol=1e-9)
+    np.testing.assert_allclose(result.s[:, 0, 0], 0.0, atol=1e-9)
+
+
+def test_cascade_touchstone_mismatched_port_count_raises_value_error(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 3e9, 3)
+    two_port = _make_matched_attenuator(freqs_hz, 3.0)
+    freq = rf.Frequency.from_f(freqs_hz, unit="hz")
+    one_port = rf.Network(frequency=freq, s=np.zeros((3, 1, 1), dtype=complex), z0=50)
+
+    two_port_path = _write_network(two_port, tmp_path, "two_port")
+    one_port_path = tmp_path / "one_port.s1p"
+    one_port.write_touchstone(one_port_path.with_suffix(""))
+
+    with pytest.raises(ValueError, match="ports"):
+        cascade_touchstone([str(two_port_path), str(one_port_path)])
+
+
+def test_cascade_touchstone_mismatched_z0_raises_value_error(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 3e9, 3)
+    a = _make_matched_attenuator(freqs_hz, 3.0, z0=50)
+    b = _make_matched_attenuator(freqs_hz, 6.0, z0=75)
+
+    path_a = _write_network(a, tmp_path, "atten_z0_a")
+    path_b = _write_network(b, tmp_path, "atten_z0_b")
+
+    with pytest.raises(ValueError, match="z0"):
+        cascade_touchstone([str(path_a), str(path_b)])
+
+
+def test_cascade_touchstone_missing_file(tmp_path: Path):
+    freqs_hz = np.linspace(1e9, 3e9, 3)
+    a = _make_matched_attenuator(freqs_hz, 3.0)
+    path_a = _write_network(a, tmp_path, "atten_missing")
+
+    with pytest.raises(FileNotFoundError):
+        cascade_touchstone([str(path_a), str(tmp_path / "missing.s2p")])
