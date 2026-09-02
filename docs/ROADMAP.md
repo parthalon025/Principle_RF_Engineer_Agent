@@ -7,5 +7,6 @@
 0.5: HFSS/PyAEDT, licensed-worker execution, project archival
 0.6: measurement adapters, VNA correlation, SCPI policy engine
 0.7: Monte Carlo/tolerance analysis, design history, failure-case retrieval
+0.8: decision-approval review UI, manufacturing-release gate
 1.0: repeatable design workflows, evaluation benchmark, audited provenance,
      controlled autonomous iteration

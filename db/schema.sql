@@ -120,6 +120,29 @@ ON document_chunks USING hnsw (embedding_local vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS documents_metadata_gin
 ON documents USING gin (metadata);
 
+-- Ticket #17: lets `verify_requirement` (a future ticket) target exactly
+-- one row via (design_id, requirement_id), and makes `create_design`'s
+-- one-verification_items-row-per-requirement-key auto-creation safe to
+-- run idempotently. ALTER TABLE has no `ADD CONSTRAINT IF NOT EXISTS`, so
+-- this file's usual idempotent-ALTER style is approximated with a
+-- DO block that swallows the "already exists" case. The doubled dollar
+-- quoting below is written 4x over rather than 2x: db/apply_schema.py
+-- runs this file through Python's string.Template first, which treats a
+-- 2x run as an escaped single dollar sign, collapsing it -- the 4x run is
+-- what a DO block's dollar quoting needs to survive that substitution pass.
+DO $$$$ BEGIN
+    ALTER TABLE verification_items
+        ADD CONSTRAINT verification_items_design_id_requirement_id_key
+        UNIQUE (design_id, requirement_id);
+EXCEPTION
+    -- A named UNIQUE constraint backs itself with a same-named index, so a
+    -- second run collides on that index (duplicate_table, 42P07) rather
+    -- than on the constraint name itself (duplicate_object, 42710) --
+    -- both are caught so this stays idempotent regardless of which one
+    -- fires.
+    WHEN duplicate_table OR duplicate_object THEN NULL;
+END $$$$;
+
 -- Ticket #10: lexical full-text search over chunk content, alongside the
 -- two semantic (embedding) indexes above. `search_knowledge` queries this
 -- via `plainto_tsquery`/`ts_rank`.
