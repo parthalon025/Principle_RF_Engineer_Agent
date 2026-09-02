@@ -103,6 +103,7 @@ from rf_tools.touchstone import (
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
+from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
 
 load_dotenv()
 
@@ -812,6 +813,50 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# ports'/project's shapes (optional materials/nested path/boundary/mode lists) do not
+# fit the SDK's strict-schema requirement.
+def run_openparem_simulation(
+    mesh_file: str,
+    ports: dict,
+    project: dict | None = None,
+    project_name: str = "openparem_project",
+    mpi_processes: int | None = None,
+    timeout_s: int = 3600,
+) -> dict:
+    """Simulate a structure with OpenParEM3D (full-wave FEM): given an already-meshed
+    Gmsh msh22 `mesh_file` (mesh generation is out of scope -- see simulation/
+    openparem.py's module docstring SCOPE; produce one via FreeCAD+gmsh first) and
+    structured `ports` geometry (Path/Boundary/Port definitions -- see
+    simulation.openparem.generate_openparem_ports_file for the full shape), generate
+    the `.proj` project-control file (frequency plan, mesh/refinement settings,
+    reference impedance, Touchstone format -- see simulation.openparem.
+    generate_openparem_project_config for the full `project` shape) plus the ports
+    file, run OpenParEM3D, and parse S-parameters AND antenna far-field gain/
+    directivity/radiation-efficiency from the SAME FEM solve -- no separate tool or
+    manual post-processing step. Set `project["far_field"] = {"quantity": "G"}` (or
+    "D" for directivity) to request far-field metrics; this only actually computes
+    when `ports["boundaries"]` includes a `type="radiation"` boundary. Returns
+    "SIMULATED" provenance with `s_parameters`/`far_field` each honestly flagged
+    computed=True/False (never fabricated) plus a `touchstone_file` key when a
+    single-port renormalized Touchstone was written. `.proj`/ports-file format and
+    CLI invocation verified against OpenParEM's own primary GitHub source and its
+    official Installation Manual PDF (see simulation/openparem.py's module docstring
+    for the full citation list) but NOT against a real OpenParEM3D binary -- none is
+    installed in this environment; treat any result as unverified end-to-end until it
+    has been run against the real tool at least once. OpenParEM is also considerably
+    younger and less battle-tested than NEC2++/openEMS/HFSS (initial release Sept.
+    2024) -- extra caution warranted."""
+    return _run_openparem_simulation(
+        mesh_file=mesh_file,
+        ports=ports,
+        project=project,
+        project_name=project_name,
+        mpi_processes=mpi_processes,
+        timeout_s=timeout_s,
     )
 
 
@@ -1629,6 +1674,7 @@ _ALL_TOOLS = [
     run_nec2_simulation,
     run_openems_simulation,
     run_hfss_simulation,
+    run_openparem_simulation,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -1780,7 +1826,14 @@ ROLE_SPECS: list[RoleSpec] = [
             "simulation/openems.py) -- and full-wave HFSS simulation via "
             "PyAEDT (run_hfss_simulation) for real S-parameter/report "
             "extraction, confined to a controlled licensed workstation "
-            "(it refuses to run anywhere else, including this one). Also "
+            "(it refuses to run anywhere else, including this one), and "
+            "OpenParEM3D full-wave FEM simulation (run_openparem_"
+            "simulation, issue #62) for antenna-specific far-field gain/"
+            "directivity/radiation-efficiency computed from the SAME solve "
+            "as its S-parameters -- requires an already-meshed Gmsh file "
+            "(mesh generation is out of scope, see simulation/openparem.py) "
+            "and is young/less battle-tested than the other three "
+            "simulators. Also "
             "gets optimize_patch_length_for_target_frequency (issue #41) "
             "to search patch length against a target resonant frequency "
             "via parameter sweep, grid search, or Bayesian optimization "
@@ -1808,6 +1861,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_openparem_simulation,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],
@@ -1831,7 +1885,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "fixture de-embedding (calibration-plane normalization), and a "
             "per-S-parameter error metric across frequency, not a bare "
             "pass/fail -- so you can judge how much to trust a given "
-            "simulation for similar future designs. You also "
+            "simulation for similar future designs, including OpenParEM3D "
+            "(run_openparem_simulation, issue #62) reference results, whose "
+            "S-parameters and far-field gain/directivity/efficiency come "
+            "from the same solve. You also "
             "get the real physical-instrument measurement tools for the "
             "full standard test-bench set (issue #43's VNA adapter plus "
             "issue #44's spectrum analyzer, signal generator, and power "
@@ -1873,6 +1930,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_nec2_simulation,
             run_openems_simulation,
             run_hfss_simulation,
+            run_openparem_simulation,
             request_vna_measurement_approval,
             measure_vna_s_parameters,
             request_spectrum_analyzer_measurement_approval,

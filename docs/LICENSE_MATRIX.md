@@ -12,6 +12,7 @@ Planning reference; not legal advice.
 | openEMS | GPLv3 | Free; review obligations if redistributed |
 | CSXCAD | LGPLv3 | Free; openEMS's own geometry/materials library, verified from thliebig/CSXCAD's own repo -- a separate row/license from openEMS's own GPLv3 (issue #55); no PyPI package, manual source/wheel install (see README.md) |
 | gdstk | Boost Software License 1.0 (BSL-1.0) | Free; permissive, no redistribution review obligation; PyPI-installable (`pyproject.toml`'s `geometry` extra, issue #55) |
+| OpenParEM | GPL-3.0-or-later | Free; review obligations if redistributed. Confirmed from the license header in every OpenParEM3D source file ("either version 3 of the License, or (at your option) any later version") and the repo's own LICENSE file; source/binary install only, not pip-installable -- see simulation/openparem.py |
 | Qucs-S | GPL-2.0 | Free; review obligations if redistributed |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |

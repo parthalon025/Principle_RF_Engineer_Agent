@@ -62,6 +62,8 @@ Optional:
   gdstk, this repo's other geometry-generation dependency, which IS a
   regular PyPI package -- see `geometry/unit_cell.py` and
   `pyproject.toml`'s `geometry` extra)
+- OpenParEM (OpenParEM2D/OpenParEM3D -- source or pre-compiled-binary install only, not
+  pip-installable; see simulation/openparem.py)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -106,6 +108,7 @@ Notable components:
 - CSXCAD: LGPLv3 (separate from openEMS's own GPLv3 -- see docs/LICENSE_MATRIX.md)
 - gdstk: Boost Software License 1.0 (BSL-1.0)
 - NEC2++: GPL
+- OpenParEM: GPL-3.0-or-later
 - Qucs-S: GPL-2.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - PostgreSQL: PostgreSQL License
