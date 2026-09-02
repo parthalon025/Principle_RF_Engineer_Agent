@@ -63,10 +63,11 @@ def test_principal_role_has_broad_access():
     # tool added by issue #39, the run_hfss_simulation tool added by issue
     # #40, the optimize_patch_length_for_target_frequency tool added by
     # issue #41, the request_vna_measurement_approval and
-    # measure_vna_s_parameters tools added by issue #43, plus 5
-    # consult_<role>_role delegation tools (issue #35), one per
-    # non-principal specialist.
-    assert len(names) == 58
+    # measure_vna_s_parameters tools added by issue #43, the 6 spectrum
+    # analyzer/signal generator/power meter approval+measure/actuate tools
+    # added by issue #44, plus 5 consult_<role>_role delegation tools
+    # (issue #35), one per non-principal specialist.
+    assert len(names) == 64
 
 
 def test_principal_module_alias_matches_registry():
