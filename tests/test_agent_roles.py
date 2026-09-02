@@ -73,9 +73,10 @@ def test_principal_role_has_broad_access():
     # #46, the 4 design-lifecycle tools (create_design, read_design,
     # record_decision, verify_requirement) from a separately-merged PR
     # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
-    # tool set, plus 5 consult_<role>_role delegation tools (issue #35), one
-    # per non-principal specialist.
-    assert len(names) == 72
+    # tool set, the run_ngspice_simulation and run_xyce_simulation tools
+    # added by issue #57, plus 5 consult_<role>_role delegation tools
+    # (issue #35), one per non-principal specialist.
+    assert len(names) == 74
 
 
 def test_principal_module_alias_matches_registry():
@@ -258,6 +259,23 @@ def test_antenna_and_test_roles_get_hfss_simulation():
     assert "run_hfss_simulation" not in _tool_names(ROLES["systems"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_microwave_and_test_roles_get_ngspice_and_xyce_simulation():
+    # issue #57: free/open circuit-level SPICE simulation of a matching
+    # network, filter, or amplifier sub-circuit is microwave/network-level
+    # component-analysis work, and (like run_nec2_simulation/
+    # run_openems_simulation/run_hfss_simulation) its SIMULATED-provenance
+    # result is something a measured result gets validated against in test
+    # engineering.
+    for tool_name in ("run_ngspice_simulation", "run_xyce_simulation"):
+        assert tool_name in _tool_names(ROLES["microwave"])
+        assert tool_name in _tool_names(ROLES["test"])
+        assert tool_name in _tool_names(ROLES["principal"])
+        # not systems/antenna/verification's job
+        assert tool_name not in _tool_names(ROLES["systems"])
+        assert tool_name not in _tool_names(ROLES["antenna"])
+        assert tool_name not in _tool_names(ROLES["verification"])
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

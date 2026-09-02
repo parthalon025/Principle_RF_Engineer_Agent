@@ -56,6 +56,8 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- ngspice
+- Xyce
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -99,6 +101,8 @@ Notable components:
 - openEMS: GPLv3
 - NEC2++: GPL
 - Qucs-S: GPL-2.0
+- ngspice: New (3-clause) BSD core, plus per-subtree LGPL/LGPLv2.1/Public-Domain/custom-academic components -- see `docs/LICENSE_MATRIX.md`
+- Xyce: GPL-3.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license
