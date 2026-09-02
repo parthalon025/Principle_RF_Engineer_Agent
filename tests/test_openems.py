@@ -23,6 +23,18 @@ convergence semantics -- it has NOT been produced by, or checked against, a
 real openEMS run, and (per that module's honest caveat) its exact wording
 is not guaranteed byte-for-byte, which is why the parser under test matches
 it with tolerant regexes rather than a fixed string.
+
+S-PARAMETER EXTRACTION TESTS (code-review fix against issue #39's own
+acceptance criterion): the port_probe_* helpers below construct SYNTHETIC
+port voltage/current time-domain data with a closed-form, hand-computable
+answer -- a frequency-independent reflection/transmission coefficient (see
+_matched_pulse_port_signals' docstring) -- rather than anything resembling
+real FDTD physics, and write it in the plain two-column ASCII format
+simulation/openems.py's module docstring cites to openEMS's own ReadUI.m.
+This validates this module's FFT/incident-reflected-wave/S_ij arithmetic
+against a known answer; it is NOT a claim that this synthetic data
+resembles a real openEMS run's port probe output byte-for-byte (see that
+module's honest caveat).
 """
 
 import os
@@ -30,6 +42,7 @@ import stat
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from simulation.base import SimulatorError
@@ -112,6 +125,81 @@ PATCH_GEOMETRY = {
 
 
 # ---------------------------------------------------------------------------
+# Synthetic port ProbeBox time-domain data with a closed-form, hand-
+# computable S-parameter answer, for the S-parameter extraction tests
+# below. See simulation/openems.py's module docstring for the
+# v_inc=(V+Z0*I)/2, v_ref=(V-Z0*I)/2, S_ij=v_ref_i/v_inc_j citation this
+# construction is checked against.
+# ---------------------------------------------------------------------------
+
+_PROBE_Z0 = 50.0
+_PROBE_N = 256
+_PROBE_DT_S = 2e-12
+_PROBE_T0_S = 80e-12
+_PROBE_SIGMA_S = 12e-12
+
+
+def _gaussian_pulse() -> np.ndarray:
+    t = np.arange(_PROBE_N) * _PROBE_DT_S
+    return np.exp(-((t - _PROBE_T0_S) ** 2) / (2 * _PROBE_SIGMA_S**2))
+
+
+def _matched_pulse_port_signals(gamma: float = 0.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Total voltage/current time series for a single port driven by a pure
+    incident Gaussian pulse v_inc(t), reflected with a FREQUENCY-INDEPENDENT
+    real coefficient `gamma`: V(t) = (1+gamma)*v_inc(t), I(t) =
+    (1-gamma)*v_inc(t)/Z0.
+
+    By construction (v_inc=(V+Z0*I)/2, v_ref=(V-Z0*I)/2, see module
+    docstring citation): v_inc(t) recovers the pure pulse and
+    v_ref(t)=gamma*v_inc(t), so S11(f)=v_ref(f)/v_inc(f)=gamma at every
+    frequency -- a hand-computable closed form independent of the FFT
+    itself. gamma=0 (the default) is the matched case, S11 should come back
+    ~0 (a perfectly matched port has no reflection)."""
+    v_inc = _gaussian_pulse()
+    t = np.arange(_PROBE_N) * _PROBE_DT_S
+    v = (1 + gamma) * v_inc
+    i = (1 - gamma) * v_inc / _PROBE_Z0
+    return t, v, i
+
+
+def _thru_pulse_port_signals(tau: float = 1.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Total voltage/current time series for a passively-terminated
+    (matched, no local reflection) SECOND port receiving a transmitted
+    copy of the same Gaussian pulse, scaled by a FREQUENCY-INDEPENDENT
+    real transmission coefficient `tau`: V(t) = tau*v_inc(t), I(t) =
+    -tau*v_inc(t)/Z0 (current sign flipped -- see module docstring's
+    calcLumpedPort.m citation on port current-direction convention).
+
+    By construction: v_inc2(t)=0 (nothing incident from outside this
+    port), v_ref2(t)=tau*v_inc(t), so S21(f) = v_ref2(f)/v_inc1(f) = tau
+    at every frequency -- tau=1.0 (the default) is the lossless, fully-
+    transmitting case, S21 should come back ~1."""
+    v_inc = _gaussian_pulse()
+    t = np.arange(_PROBE_N) * _PROBE_DT_S
+    v = tau * v_inc
+    i = -tau * v_inc / _PROBE_Z0
+    return t, v, i
+
+
+def _port_probe_ascii(t: np.ndarray, val: np.ndarray) -> str:
+    """Render (t, val) as the plain two-column ASCII openEMS port probe
+    dump format this project's parser reads (see simulation/openems.py's
+    module docstring's ReadUI.m citation) -- a '%' comment header line,
+    then one 'time value' row per sample."""
+    lines = ["% t val"]
+    lines.extend(f"{tt:.9e} {vv:.9e}" for tt, vv in zip(t, val, strict=True))
+    return "\n".join(lines) + "\n"
+
+
+def _write_port_probe_files(
+    directory: Path, port_name: str, t: np.ndarray, v: np.ndarray, i: np.ndarray
+) -> None:
+    (directory / f"{port_name}_ut").write_text(_port_probe_ascii(t, v))
+    (directory / f"{port_name}_it").write_text(_port_probe_ascii(t, i))
+
+
+# ---------------------------------------------------------------------------
 # FDTD-XML generation
 # ---------------------------------------------------------------------------
 
@@ -158,6 +246,16 @@ def test_generate_openems_xml_port_excitation_and_lumped_element():
     assert '<Excitation Name="feed_exc" Type="0" Frequency="2.45e+09" Delay="0">' in xml_text
     assert '<Excite X="0" Y="0" Z="1"/>' in xml_text  # z-directed port
     assert '<LumpedElement Name="feed_R" Direction="2" Caps="0" R="50" C="0" L="0" LEtype="0">' in xml_text
+
+
+def test_generate_openems_xml_port_probe_boxes():
+    """The code-review fix (issue #39): each port now also gets Type=0
+    (voltage) and Type=1 (current) ProbeBox properties, whose Name is the
+    dump filename parse_openems_output()'s S-parameter extraction reads --
+    see module docstring citation."""
+    xml_text = generate_openems_xml(PATCH_GEOMETRY)
+    assert '<ProbeBox Name="feed_ut" Type="0" Weight="-1">' in xml_text
+    assert '<ProbeBox Name="feed_it" Type="1" Weight="1" NormDir="2">' in xml_text
 
 
 def test_generate_openems_xml_cylinder_primitive():
@@ -289,13 +387,141 @@ def test_parse_openems_output_missing_data_returns_unknown_and_none():
     assert conv["final_energy_db"] is None
 
 
-def test_parse_openems_output_s_parameters_and_far_field_are_stubbed():
+def test_parse_openems_output_s_parameters_and_far_field_are_stubbed_without_port_data():
+    # No workdir/ports given -- nothing to read port probe dumps from, so
+    # this stays honestly uncomputed (far_field always does, see module
+    # docstring "SCOPE").
     result = parse_openems_output(CONVERGED_LOG)
     assert result["s_parameters"]["computed"] is False
     assert "note" in result["s_parameters"]
     assert result["far_field"]["computed"] is False
     assert "note" in result["far_field"]
     assert result["gain_dbi"] is None
+
+
+# ---------------------------------------------------------------------------
+# Real S-parameter extraction from port ProbeBox time-domain data (code
+# review fix against issue #39's own acceptance criterion). See this
+# file's module docstring and the _matched_pulse_port_signals/
+# _thru_pulse_port_signals helpers above for the closed-form construction
+# these are checked against.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_openems_output_computes_real_s11_for_matched_one_port(tmp_path: Path):
+    t, v, i = _matched_pulse_port_signals(gamma=0.0)
+    _write_port_probe_files(tmp_path, "feed", t, v, i)
+
+    ports = [{"name": "feed", "resistance_ohms": _PROBE_Z0, "excite": True}]
+    result = parse_openems_output(CONVERGED_LOG, workdir=tmp_path, ports=ports)
+    s_params = result["s_parameters"]
+
+    assert s_params["computed"] is True
+    assert s_params["excited_port"] == "feed"
+    assert s_params["z0_ohms"] == _PROBE_Z0
+    assert len(s_params["frequency_hz"]) > 0
+    s11 = [complex(re, im) for re, im in s_params["values"]["S11"]]
+    assert all(abs(v) < 1e-6 for v in s11)  # matched port: S11 ~= 0 exactly
+
+
+def test_parse_openems_output_computes_real_s11_s21_for_matched_two_port_thru(tmp_path: Path):
+    t1, v1, i1 = _matched_pulse_port_signals(gamma=0.0)
+    t2, v2, i2 = _thru_pulse_port_signals(tau=1.0)
+    _write_port_probe_files(tmp_path, "feed", t1, v1, i1)
+    _write_port_probe_files(tmp_path, "thru", t2, v2, i2)
+
+    ports = [
+        {"name": "feed", "resistance_ohms": _PROBE_Z0, "excite": True},
+        {"name": "thru", "resistance_ohms": _PROBE_Z0, "excite": False},
+    ]
+    result = parse_openems_output(CONVERGED_LOG, workdir=tmp_path, ports=ports)
+    s_params = result["s_parameters"]
+
+    assert s_params["computed"] is True
+    assert s_params["excited_port"] == "feed"
+    s11 = [complex(re, im) for re, im in s_params["values"]["S11"]]
+    s21 = [complex(re, im) for re, im in s_params["values"]["S21"]]
+    assert len(s11) == len(s21) == len(s_params["frequency_hz"])
+    assert all(abs(v) < 1e-6 for v in s11)  # matched excited port: S11 ~= 0
+    assert all(abs(v - 1.0) < 1e-6 for v in s21)  # lossless thru: S21 ~= 1
+    # Only the excited port's own column was obtainable from one run.
+    assert set(s_params["values"]) == {"S11", "S21"}
+
+
+def test_parse_openems_output_computes_nonzero_s11_for_mismatched_port(tmp_path: Path):
+    # A real, frequency-independent reflection coefficient (a mismatched,
+    # but still purely resistive, port) -- time-domain voltage/current are
+    # real signals, so gamma itself must be real here (see
+    # _matched_pulse_port_signals' docstring).
+    gamma = 0.3
+    t, v, i = _matched_pulse_port_signals(gamma=gamma)
+    _write_port_probe_files(tmp_path, "feed", t, v, i)
+
+    ports = [{"name": "feed", "resistance_ohms": _PROBE_Z0, "excite": True}]
+    result = parse_openems_output(CONVERGED_LOG, workdir=tmp_path, ports=ports)
+    s11 = [complex(re, im) for re, im in result["s_parameters"]["values"]["S11"]]
+    assert all(abs(v - gamma) < 1e-6 for v in s11)
+
+
+def test_parse_openems_output_1port_computed_writes_touchstone_file(tmp_path: Path):
+    t, v, i = _matched_pulse_port_signals(gamma=0.0)
+    _write_port_probe_files(tmp_path, "feed", t, v, i)
+
+    ports = [{"name": "feed", "resistance_ohms": _PROBE_Z0, "excite": True}]
+    result = parse_openems_output(CONVERGED_LOG, workdir=tmp_path, ports=ports)
+    s_params = result["s_parameters"]
+
+    touchstone_file = s_params.get("touchstone_file")
+    assert touchstone_file is not None
+    assert Path(touchstone_file).exists()
+
+    import skrf as rf
+
+    network = rf.Network(touchstone_file)
+    assert network.nports == 1
+    assert np.max(np.abs(network.s[:, 0, 0])) < 1e-6
+
+
+def test_parse_openems_output_2port_does_not_write_touchstone_file(tmp_path: Path):
+    t1, v1, i1 = _matched_pulse_port_signals(gamma=0.0)
+    t2, v2, i2 = _thru_pulse_port_signals(tau=1.0)
+    _write_port_probe_files(tmp_path, "feed", t1, v1, i1)
+    _write_port_probe_files(tmp_path, "thru", t2, v2, i2)
+
+    ports = [
+        {"name": "feed", "resistance_ohms": _PROBE_Z0, "excite": True},
+        {"name": "thru", "resistance_ohms": _PROBE_Z0, "excite": False},
+    ]
+    result = parse_openems_output(CONVERGED_LOG, workdir=tmp_path, ports=ports)
+    # A full 2-port network needs S12/S22 too (a second, separately-excited
+    # run) -- not fabricated, so no touchstone file is written here.
+    assert "touchstone_file" not in result["s_parameters"]
+
+
+def test_parse_openems_output_s_parameters_computed_false_when_probe_files_missing(tmp_path: Path):
+    ports = [{"name": "feed", "resistance_ohms": 50.0, "excite": True}]
+    result = parse_openems_output(CONVERGED_LOG, workdir=tmp_path, ports=ports)
+    s_params = result["s_parameters"]
+    assert s_params["computed"] is False
+    assert "feed" in s_params["note"]
+
+
+def test_parse_openems_output_s_parameters_computed_false_on_mismatched_port_impedances(
+    tmp_path: Path,
+):
+    t1, v1, i1 = _matched_pulse_port_signals(gamma=0.0)
+    t2, v2, i2 = _thru_pulse_port_signals(tau=1.0)
+    _write_port_probe_files(tmp_path, "feed", t1, v1, i1)
+    _write_port_probe_files(tmp_path, "thru", t2, v2, i2)
+
+    ports = [
+        {"name": "feed", "resistance_ohms": 50.0, "excite": True},
+        {"name": "thru", "resistance_ohms": 75.0, "excite": False},
+    ]
+    result = parse_openems_output(CONVERGED_LOG, workdir=tmp_path, ports=ports)
+    s_params = result["s_parameters"]
+    assert s_params["computed"] is False
+    assert "resistance_ohms" in s_params["note"]
 
 
 # ---------------------------------------------------------------------------
@@ -439,3 +665,99 @@ def test_run_openems_simulation_propagates_simulator_error_on_failure(tmp_path: 
             executable=str(script),
             workdir=str(tmp_path / "run3"),
         )
+
+
+# ---------------------------------------------------------------------------
+# run_openems_simulation end to end with a fake executable EXTENDED to also
+# emit port ProbeBox time-domain dump files (as a real openEMS run would --
+# see simulation/openems.py's module docstring citations), so the real
+# FFT-based S-parameter path is exercised through the full run_openems_
+# simulation() -> parse_openems_output() -> _compute_s_parameters_from_
+# probes() call chain, not just parse_openems_output() directly.
+# ---------------------------------------------------------------------------
+
+_FAKE_OPENEMS_WITH_PORTS_PY = '''#!{python}
+import sys
+
+PORT_FILES = {port_files!r}
+for _name, _content in PORT_FILES.items():
+    with open(_name, "w") as _f:
+        _f.write(_content)
+
+OUTPUT = """{sample}"""
+
+args = sys.argv[1:]
+assert args[0].endswith(".xml"), args
+assert "--disable-dumps" in args, args
+sys.stdout.write(OUTPUT)
+sys.exit(0)
+'''
+
+
+def _make_fake_openems_with_ports_py(
+    tmp_path: Path, sample_output: str, port_files: dict[str, str]
+) -> Path:
+    """Like _make_fake_openems_py, but the fake script ALSO writes
+    `port_files` (dump filename -> full ASCII content) into its cwd before
+    printing OUTPUT -- mimicking a real openEMS run's ProbeBox dumps."""
+    script = tmp_path / "fake_openems_with_ports.py"
+    script.write_text(
+        _FAKE_OPENEMS_WITH_PORTS_PY.format(
+            python=sys.executable, sample=sample_output, port_files=port_files
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_openems_simulation_end_to_end_computes_real_s_parameters(tmp_path: Path):
+    t, v, i = _matched_pulse_port_signals(gamma=0.0)
+    port_files = {
+        "feed_ut": _port_probe_ascii(t, v),
+        "feed_it": _port_probe_ascii(t, i),
+    }
+    script = _make_fake_openems_with_ports_py(tmp_path, CONVERGED_LOG, port_files)
+
+    result = run_openems_simulation(
+        geometry=PATCH_GEOMETRY,
+        fdtd={"max_timesteps": 30000, "end_criteria": 1e-5},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run"),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["convergence"]["terminated_reason"] == "end_criteria"
+    s_params = result["s_parameters"]
+    assert s_params["computed"] is True
+    s11 = [complex(re, im) for re, im in s_params["values"]["S11"]]
+    assert all(abs(v) < 1e-6 for v in s11)  # matched patch feed: S11 ~= 0
+    # far-field genuinely still needs the separate nf2ff tool.
+    assert result["far_field"]["computed"] is False
+    # 1-port + computed -> a real Touchstone file, surfaced at top level
+    # for rf_tools.correlation integration (mirrors simulation/hfss.py).
+    assert "touchstone_file" in result
+    assert os.path.exists(result["touchstone_file"])
+
+    import skrf as rf
+
+    network = rf.Network(result["touchstone_file"])
+    assert network.nports == 1
+    assert np.max(np.abs(network.s[:, 0, 0])) < 1e-6
+
+
+def test_run_openems_simulation_end_to_end_without_port_dumps_stays_uncomputed(tmp_path: Path):
+    # The pre-existing fake executable (no ProbeBox dumps) still leaves
+    # S-parameters honestly uncomputed -- confirms this pass didn't quietly
+    # start fabricating results when the port data just isn't there.
+    script = _make_fake_openems_py(tmp_path, CONVERGED_LOG)
+
+    result = run_openems_simulation(
+        geometry=PATCH_GEOMETRY,
+        fdtd={"max_timesteps": 30000, "end_criteria": 1e-5},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run"),
+    )
+    assert result["s_parameters"]["computed"] is False
+    assert "touchstone_file" not in result

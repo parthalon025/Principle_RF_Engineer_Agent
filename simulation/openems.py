@@ -5,6 +5,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from .base import SimulationResult, Simulator, SimulatorError
 
 
@@ -147,36 +149,122 @@ class OpenemsSimulator(Simulator):
 #     openems.readthedocs.io, "openEMS Python Interface"; thliebig/
 #     openEMS-Project GitHub discussions #64 and #231).
 #
+# ADDITIONAL SOURCES CONSULTED FOR S-PARAMETER EXTRACTION (a code-review
+# finding against issue #39's own acceptance criterion -- "S-parameters and
+# far-field results are exported in the same structured, provenance-tagged
+# form as other simulation results" -- fetched directly from
+# github.com/thliebig/openEMS during this pass):
+#   - <ProbeBox> element shape -- root attributes Number/Type/Weight/
+#     NormDir/StartTime/StopTime/ModeFile, with the parent-class-inherited
+#     tag name "ProbeBox" (per this module's own CSProperties-subclass
+#     citation above): CSPropProbeBox.cpp's Write2XML,
+#     github.com/thliebig/CSXCAD/blob/master/src/CSPropProbeBox.cpp.
+#   - Per-port voltage/current ProbeBox construction -- a Type=0 (voltage)
+#     probe with Weight=-1*V_Probe_Weight, and a Type=1 (current) probe
+#     with a directional Weight and NormDir=<port axis>, both added via
+#     AddProbe(CSX, name, type, ...) on the same port-gap primitive already
+#     used for this module's Excitation/LumpedElement properties; each
+#     probe's dump filename is its own property Name -- openEMS's own
+#     high-level interface defaults these to "port_ut<N>"/"port_it<N>"
+#     (N = 1-based port number): matlab/AddLumpedPort.m,
+#     github.com/thliebig/openEMS/blob/master/matlab/AddLumpedPort.m. This
+#     module uses its own descriptive probe names ("<port_name>_ut"/
+#     "<port_name>_it", matching its existing "<port_name>_exc"/
+#     "<port_name>_R" convention) rather than that numbered default -- any
+#     name is valid as long as XML generation and result parsing agree on
+#     it, which they do here.
+#   - Port probe dump file format -- plain two-column ASCII (time, value),
+#     read via MATLAB's plain `load(fullfile(path, filename))`, i.e. no
+#     special binary/HDF5 encoding for these particular per-port U/I dumps:
+#     matlab/ReadUI.m, github.com/thliebig/openEMS/blob/master/matlab/
+#     ReadUI.m.
+#   - Incident/reflected wave decomposition formula -- v_inc=(V+Z0*I)/2,
+#     v_ref=(V-Z0*I)/2 (equivalently i_inc=(I+V/Z0)/2, i_ref=i_inc-I),
+#     using each port's own reference impedance Z0: matlab/
+#     calcLumpedPort.m, github.com/thliebig/openEMS/blob/master/matlab/
+#     calcLumpedPort.m -- openEMS's own post-processing function for
+#     exactly this module's lumped-port case. This module computes
+#     S_ij(f)=v_ref_i(f)/v_inc_j(f) for the actually-excited port j, the
+#     same ratio openEMS's own example scripts compute from calcPort's
+#     output (e.g. "s11 = port{1}.uf.ref ./ port{1}.uf.inc"); only ports
+#     sharing one common Z0 are supported (see SCOPE below) since a
+#     rigorous mismatched-Z0 power-wave normalization
+#     (sqrt(Z0_i/Z0_j) scaling) was not independently re-verified against
+#     an openEMS worked example in this pass -- rather than guess that
+#     factor, this module requires equal port impedances and says so.
+#   - Time-to-frequency conversion -- matlab/DFT_time2freq.m,
+#     github.com/thliebig/openEMS/blob/master/matlab/DFT_time2freq.m,
+#     computes `sum(val .* exp(-1i*2*pi*f*t)) * dt` (pulse case, then
+#     doubled for a single-sided spectrum). Since this module only ever
+#     uses FFT output as a RATIO (v_ref/v_inc, both from the same kind of
+#     transform applied consistently to every port's V(t)/I(t)), any
+#     shared scale factor cancels -- so `numpy.fft.rfft`/`rfftfreq`
+#     (unscaled) are used directly rather than reproducing that exact
+#     dt/doubling normalization, which does not change the ratio.
+#   - Confirmation that `--disable-dumps` (this module's own default extra
+#     arg, unchanged by this pass) does NOT suppress ProbeBox voltage/
+#     current output -- only field/nf2ff dump boxes check the
+#     Enable_Dumps flag this option sets; ProbeBox-driven ProcessVoltage/
+#     ProcessCurrent processors are constructed unconditionally in
+#     SetupProcessing(): openems.cpp,
+#     github.com/thliebig/openEMS/blob/master/openems.cpp.
+#
 # SCOPE OF THIS IMPLEMENTATION (explicitly narrower than a full openEMS
-# feature set, per this ticket's own guidance to scope down rather than
-# claim full parity):
+# feature set -- a scope decision made during this and the prior #39
+# implementation pass, NOT quoted from GitHub issue #39 itself, which
+# states plainly as an acceptance criterion that "S-parameters and
+# far-field results are exported in the same structured, provenance-tagged
+# form as other simulation results"; an earlier version of this comment
+# incorrectly implied that text came from the ticket body):
 #   - Geometry primitives: axis-aligned Box and Cylinder only (no Sphere/
 #     Polygon/Polyhedron/etc, though CSXCAD supports more).
 #   - Materials: isotropic only (a single epsilon_r/mue_r/kappa applied
 #     identically to X/Y/Z) -- CSXCAD's real per-axis anisotropic tensors
 #     are not exposed here.
-#   - Ports: modeled as one <Excitation> property (the drive signal) plus
-#     one <LumpedElement> property (the R-ohm termination) sharing the same
-#     box, one Gaussian-pulse Frequency term per port. openEMS's own
-#     AddLumpedPort() Python helper additionally attaches a pair of
-#     <ProbeBox> voltage/current-recording properties to the same box for
-#     later post-processing; this module does NOT generate those ProbeBox
-#     elements, because it also does not implement the FFT-based S-
-#     parameter extraction that would consume their output (see below) --
-#     adding unconsumed probe boxes would be XML for its own sake.
-#   - S-parameters and far-field/gain: NOT computed from real field/port
-#     data in this pass. A real S11/S21 extraction requires FFT-processing
-#     the port voltage/current *time-domain* data openEMS writes during the
-#     run, and a real far-field/gain pattern requires openEMS's separate
-#     nf2ff near-field-to-far-field post-processing tool -- both are
-#     explicitly out of scope per this ticket's guidance ("far-field/nf2ff
-#     post-processing is stubbed/simplified"). parse_openems_output()
-#     still returns "s_parameters" and "far_field" keys, structurally
-#     parallel to NEC2++'s "impedance"/"pattern"/"gain_dbi" keys (so
-#     downstream code can treat both simulators' results uniformly without
-#     per-simulator branching), but each carries computed=False and a note
-#     explaining why, rather than fabricated numbers.
-#   - Convergence metadata (this ticket's other acceptance criterion) IS
+#   - Ports: modeled as one <Excitation> property (the drive signal), one
+#     <LumpedElement> property (the R-ohm termination), and now (this pass)
+#     a pair of <ProbeBox> voltage/current-recording properties, all
+#     sharing the same port-gap box -- one Gaussian-pulse Frequency term
+#     per port. openEMS's own AddLumpedPort() Python/MATLAB helper places
+#     its U probe at the exact port midpoint and its I probe on a
+#     perpendicular plane (see AddLumpedPort.m citation above); this module
+#     places both probes on the same full port-gap box as a simplification,
+#     since parse_openems_output() below reads the probes' *time-domain
+#     dump files* (named after each probe's own Name attribute), not their
+#     XML geometry, so this simplification does not affect what gets read.
+#   - S-parameters: NOW COMPUTED (this pass) via FFT of the ProbeBox
+#     voltage/current time-domain dumps -- see _compute_s_parameters_from_
+#     probes() below and the "ADDITIONAL SOURCES" citations above for the
+#     v_inc/v_ref decomposition and S_ij=v_ref_i/v_inc_j formula. Supported
+#     for the port count(s) this module's XML generation already covers
+#     (one or a few lumped ports, one active/excited at a time, matching
+#     generate_openems_xml's own "excite" default), PROVIDED every port
+#     shares one common resistance_ohms (Z0) -- mismatched port impedances
+#     fall back to the honest computed=False path rather than guess at a
+#     power-wave normalization factor not independently re-verified (see
+#     citation above). A single excitation run only ever yields the
+#     S-parameter *column* for the port actually excited (S_i,excited for
+#     every port i) -- a full N-port matrix needs one run per excited port,
+#     which this module does not orchestrate. For the single-port case
+#     (this module's primary supported case, e.g. a patch antenna's S11)
+#     that column IS the full 1x1 S-matrix, so a Touchstone (.s1p) file is
+#     also written and surfaced as "touchstone_file", matching how
+#     simulation/hfss.py's own computed=True S-parameters integrate with
+#     rf_tools/correlation.py.
+#   - Far-field/gain: still NOT computed. A real far-field/gain pattern
+#     requires openEMS's separate nf2ff near-field-to-far-field
+#     post-processing tool, which this pass does not invoke -- this
+#     specific limit (unlike the S-parameter one just fixed) is a genuine
+#     "a whole separate tool would be needed" gap, not something this pass
+#     judged achievable and skipped. parse_openems_output() still returns
+#     an "s_parameters" key structurally parallel to NEC2++'s "impedance"/
+#     "pattern"/"gain_dbi" keys (so downstream code can treat both
+#     simulators' results uniformly without per-simulator branching) even
+#     when S-parameters can't be computed (e.g. no port probe data found,
+#     or mismatched port impedances) -- that fallback carries computed=False
+#     and a note explaining why, rather than fabricated numbers. "far_field"
+#     always carries computed=False and a note, for the reason above.
+#   - Convergence metadata (issue #39's other acceptance criterion) IS
 #     real: it is parsed from openEMS's own progress/summary log text
 #     (format cited above) to report whether a run's exit was end-criteria-
 #     driven (energy decayed below endCriteria -- the mesh/excitation
@@ -195,6 +283,15 @@ class OpenemsSimulator(Simulator):
 # this implementation produced by actually running the real tool. Treat any
 # result -- and in particular the exact wording match on the max-timesteps
 # warning -- as unverified end-to-end until run against the real binary.
+# The S-parameter FFT extraction added this pass is in the same position:
+# the v_inc/v_ref/S_ij formulas and the ProbeBox/ReadUI file-format details
+# are each cited to openEMS's own source above, but this module has never
+# read an actual port_ut/port_it dump openEMS itself produced -- tests
+# exercise it against a fake "openEMS" script extended to emit synthetic
+# port time-domain data in the documented two-column ASCII shape (see
+# tests/test_openems.py), with a closed-form known answer (a
+# frequency-independent reflection/transmission coefficient) checked
+# against this module's FFT output, not against real FDTD physics.
 # ---------------------------------------------------------------------------
 
 
@@ -390,6 +487,25 @@ def generate_openems_xml(
             + _primitive_xml(port)
             + "</Primitives></LumpedElement>"
         )
+        # Voltage (Type=0) and current (Type=1) ProbeBox properties, so a
+        # real openEMS run writes the port_ut/port_it-style time-domain
+        # dump files parse_openems_output()'s S-parameter extraction reads
+        # (see this module's header comment citations for the ProbeBox
+        # attribute shape, the Type=0/Weight=-1 + Type=1/Weight=1/NormDir
+        # convention, and the placement simplification vs. AddLumpedPort.m).
+        # Each probe's own Name is its dump filename.
+        parts.append(
+            f'<ProbeBox Name="{name}_ut" Type="0" Weight="-1">'
+            + "<Primitives>"
+            + _primitive_xml(port)
+            + "</Primitives></ProbeBox>"
+        )
+        parts.append(
+            f'<ProbeBox Name="{name}_it" Type="1" Weight="1" NormDir="{ny}">'
+            + "<Primitives>"
+            + _primitive_xml(port)
+            + "</Primitives></ProbeBox>"
+        )
 
     parts.append("</Properties>")
     parts.append("</ContinuousStructure>")
@@ -424,13 +540,215 @@ _MAX_TS_WARNING_RE = re.compile(
 )
 
 
+# Minimum |v_inc(f)| at the excited port, as a fraction of that spectrum's
+# own peak magnitude, for a frequency point to be reported. A Gaussian
+# excitation pulse (this module's only excitation shape, see
+# generate_openems_xml) carries negligible real energy far outside its
+# designed bandwidth; S_ij(f)=v_ref_i(f)/v_inc_j(f) there divides by FFT
+# noise, not signal, producing meaningless (not merely imprecise) values.
+# This is a standard FDTD S-parameter post-processing practice (excluding
+# the excitation's own low-energy tail), not a fabricated cutoff -- see
+# this module's header comment for the DFT_time2freq.m citation this
+# reasoning is paired with.
+_S_PARAM_MIN_RELATIVE_MAGNITUDE = 1e-3
+
+
+def _excited_port_index(ports: list[dict[str, Any]]) -> int:
+    """Same default as generate_openems_xml's own per-port `excite` field:
+    the first port with excite=True, else port 0."""
+    for idx, port in enumerate(ports):
+        if port.get("excite", idx == 0):
+            return idx
+    return 0
+
+
+def _read_port_time_series(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Read one openEMS port ProbeBox time-domain dump: plain two-column
+    ASCII (time, value), '%'-prefixed comment lines ignored -- see this
+    module's header comment's ReadUI.m citation. Returns (t, val)."""
+    data = np.loadtxt(path, comments="%")
+    data = np.atleast_2d(data)
+    return data[:, 0].astype(float), data[:, 1].astype(float)
+
+
+def _compute_s_parameters_from_probes(
+    workdir: Path, ports: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Compute real S-parameters from openEMS's port_ut/port_it-style
+    ProbeBox time-domain dumps in `workdir`, for the excited port actually
+    driven (see _excited_port_index) -- see this module's header comment
+    for the full v_inc/v_ref/S_ij formula citation. Returns a
+    computed=False dict (with an explanatory note, never a guess) when the
+    dump files aren't present or the ports don't share one common
+    reference impedance -- both real, honestly-reported gaps, not silently
+    worked around."""
+    names = [port.get("name", f"port_{idx + 1}") for idx, port in enumerate(ports)]
+
+    missing = [
+        name
+        for name in names
+        if not (workdir / f"{name}_ut").exists() or not (workdir / f"{name}_it").exists()
+    ]
+    if missing:
+        return {
+            "computed": False,
+            "note": (
+                "S-parameter extraction needs each port's '<name>_ut'/"
+                "'<name>_it' ProbeBox time-domain dump files in the run's "
+                f"workdir; missing for port(s): {missing}. This can mean "
+                "the run didn't actually execute (e.g. --no-simulation), "
+                "the real openEMS binary doesn't dump these files under "
+                "the name/format this module assumes (see module "
+                "docstring's honest caveat), or (for a fake test "
+                "executable) the fake script simply doesn't emit them."
+            ),
+        }
+
+    z0_values = {float(port.get("resistance_ohms", 50.0)) for port in ports}
+    if len(z0_values) != 1:
+        return {
+            "computed": False,
+            "note": (
+                f"ports have differing resistance_ohms {sorted(z0_values)} -- "
+                "this module's S_ij=v_ref_i/v_inc_j formula (see module "
+                "docstring citation) is only implemented for ports sharing "
+                "one common reference impedance; a rigorous mismatched-Z0 "
+                "power-wave normalization was not independently verified "
+                "against an openEMS worked example in this pass, so this "
+                "is an honest gap rather than a guessed formula."
+            ),
+        }
+    z0 = next(iter(z0_values))
+
+    excited_idx = _excited_port_index(ports)
+    excited_name = names[excited_idx]
+
+    t_ref: np.ndarray | None = None
+    voltage_fd: dict[str, np.ndarray] = {}
+    current_fd: dict[str, np.ndarray] = {}
+    freqs: np.ndarray | None = None
+    for name in names:
+        t_v, v = _read_port_time_series(workdir / f"{name}_ut")
+        t_i, i = _read_port_time_series(workdir / f"{name}_it")
+        if len(t_v) != len(t_i) or not np.allclose(t_v, t_i):
+            return {
+                "computed": False,
+                "note": (
+                    f"port {name!r}'s voltage and current probe dumps don't "
+                    "share the same time samples -- can't decompose "
+                    "incident/reflected waves without a common time base."
+                ),
+            }
+        if t_ref is None:
+            t_ref = t_v
+            dt = float(np.mean(np.diff(t_ref))) if len(t_ref) > 1 else 1.0
+            freqs = np.fft.rfftfreq(len(t_ref), d=dt)
+        elif len(t_v) != len(t_ref) or not np.allclose(t_v, t_ref):
+            return {
+                "computed": False,
+                "note": (
+                    f"port {name!r}'s probe dump time samples don't match "
+                    f"port {excited_name!r}'s -- can't FFT ports against a "
+                    "common frequency grid."
+                ),
+            }
+        voltage_fd[name] = np.fft.rfft(v)
+        current_fd[name] = np.fft.rfft(i)
+
+    v_inc = {name: 0.5 * (voltage_fd[name] + z0 * current_fd[name]) for name in names}
+    v_ref = {name: 0.5 * (voltage_fd[name] - z0 * current_fd[name]) for name in names}
+
+    denom = v_inc[excited_name]
+    peak = float(np.max(np.abs(denom))) if len(denom) else 0.0
+    if peak <= 0.0:
+        return {
+            "computed": False,
+            "note": (
+                f"excited port {excited_name!r}'s incident-wave spectrum "
+                "is identically zero -- nothing to normalize S-parameters "
+                "against (check the excitation actually ran)."
+            ),
+        }
+    mask = np.abs(denom) >= _S_PARAM_MIN_RELATIVE_MAGNITUDE * peak
+    if not np.any(mask):
+        return {
+            "computed": False,
+            "note": (
+                "no frequency point met the "
+                f"{_S_PARAM_MIN_RELATIVE_MAGNITUDE:g}x-of-peak incident-wave "
+                "magnitude threshold used to exclude FFT noise outside the "
+                "excitation pulse's bandwidth -- nothing usable to report."
+            ),
+        }
+
+    frequency_hz = freqs[mask]
+    values: dict[str, list[list[float]]] = {}
+    for i_idx, name in enumerate(names):
+        s_name = f"S{i_idx + 1}{excited_idx + 1}"
+        s_vals = (v_ref[name][mask] / denom[mask])
+        values[s_name] = [[complex(v).real, complex(v).imag] for v in s_vals]
+
+    result: dict[str, Any] = {
+        "computed": True,
+        "method": (
+            "FFT (numpy.fft.rfft) of ProbeBox port voltage/current "
+            "time-domain dumps; v_inc=(V+Z0*I)/2, v_ref=(V-Z0*I)/2 per "
+            "openEMS's own calcLumpedPort.m, S_ij(f)=v_ref_i(f)/v_inc_j(f) "
+            "for the excited port j -- see simulation/openems.py's module "
+            "docstring for the full citation."
+        ),
+        "excited_port": excited_name,
+        "z0_ohms": z0,
+        "frequency_hz": frequency_hz.tolist(),
+        "values": values,
+        "note": (
+            "values[name] holds [real, imag] pairs per frequency_hz point. "
+            f"Only the excited port's own column was computed (port "
+            f"{excited_name!r} was the only one driven this run) -- a full "
+            "N-port S-matrix would need one run per excited port, not "
+            "orchestrated here."
+            if len(names) > 1
+            else "values[name] holds [real, imag] pairs per frequency_hz point."
+        ),
+    }
+
+    if len(names) == 1:
+        try:
+            import skrf as rf
+
+            s = np.array(
+                [complex(re, im) for re, im in values["S11"]], dtype=complex
+            ).reshape(-1, 1, 1)
+            network = rf.Network(
+                frequency=rf.Frequency.from_f(frequency_hz / 1e9, unit="ghz"),
+                s=s,
+                z0=z0,
+            )
+            touchstone_path = workdir / "openems_s_parameters.s1p"
+            network.write_touchstone(str(touchstone_path))
+            result["touchstone_file"] = str(touchstone_path)
+        except Exception:
+            # Touchstone export is a convenience for rf_tools/correlation.py
+            # integration (matching simulation/hfss.py's own computed=True
+            # pattern), not the acceptance criterion itself -- a failure
+            # here (e.g. skrf unavailable) must not hide the real, already-
+            # computed S-parameter values above.
+            pass
+
+    return result
+
+
 def parse_openems_output(
     raw_output: str,
     end_criteria: float = 1e-5,
     max_timesteps: int | None = None,
+    workdir: str | Path | None = None,
+    ports: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Parse openEMS console/log text into convergence metadata plus
-    (stubbed, see module docstring "SCOPE") S-parameter and far-field keys.
+    """Parse openEMS console/log text into convergence metadata plus real
+    (when `workdir`+`ports` are given and the port probe dump files are
+    present -- see _compute_s_parameters_from_probes) or honestly-stubbed
+    S-parameter and far-field keys.
 
     Convergence metadata is real, parsed from the progress/summary log
     lines and max-timesteps warning cited in this module's header comment.
@@ -486,15 +804,20 @@ def parse_openems_output(
         "speed_mcells_per_s": speed_mcells_per_s,
     }
 
-    s_parameters = {
-        "computed": False,
-        "note": (
-            "S-parameter extraction requires FFT post-processing of openEMS's "
-            "port voltage/current time-domain output, which this implementation "
-            "does not perform -- see simulation/openems.py's module docstring "
-            "'SCOPE OF THIS IMPLEMENTATION'."
-        ),
-    }
+    if workdir is not None and ports:
+        s_parameters = _compute_s_parameters_from_probes(Path(workdir), ports)
+    else:
+        s_parameters = {
+            "computed": False,
+            "note": (
+                "S-parameter extraction needs the run's workdir and port "
+                "list (to locate each port's ProbeBox time-domain dump "
+                "files) -- neither was given to parse_openems_output(), so "
+                "nothing was read. See simulation/openems.py's module "
+                "docstring 'SCOPE OF THIS IMPLEMENTATION' for what's "
+                "computed when they are."
+            ),
+        }
     far_field = {
         "computed": False,
         "note": (
@@ -522,8 +845,12 @@ def run_openems_simulation(
 ) -> dict[str, Any]:
     """Generate an openEMS FDTD-XML file from structured geometry/materials/
     ports/mesh, run it via OpenemsSimulator, and parse convergence metadata
-    plus (stubbed, see this module's header "SCOPE") S-parameter/far-field
-    results tagged with SIMULATED provenance.
+    plus S-parameter/far-field results tagged with SIMULATED provenance.
+    S-parameters are real (FFT-computed from the run's port ProbeBox
+    time-domain dumps) whenever those dump files are present in the run's
+    workdir; far-field remains not computed (needs openEMS's separate
+    nf2ff tool) -- see this module's header comment "SCOPE OF THIS
+    IMPLEMENTATION" for exactly what's covered.
 
     See this module's header comment for the format-verification citations
     and the honest caveat: XML generation and log parsing are built to the
@@ -544,9 +871,11 @@ def run_openems_simulation(
         result.outputs.get("stdout", ""),
         end_criteria=float(fdtd.get("end_criteria", 1e-5)),
         max_timesteps=int(fdtd.get("max_timesteps", 30000)),
+        workdir=work_dir,
+        ports=geometry.get("ports"),
     )
 
-    return {
+    output: dict[str, Any] = {
         "provenance": "SIMULATED",
         "convergence": parsed["convergence"],
         "s_parameters": parsed["s_parameters"],
@@ -557,3 +886,11 @@ def run_openems_simulation(
         "workdir": str(result.workdir),
         "xml_file": str(xml_file),
     }
+    touchstone_file = parsed["s_parameters"].get("touchstone_file")
+    if touchstone_file:
+        # Surfaced at top level (not just nested under s_parameters) so it
+        # integrates with rf_tools.correlation.correlate_simulation_
+        # measurement's own "touchstone_file"/"file" lookup, the same way
+        # simulation/hfss.py's computed=True result already does.
+        output["touchstone_file"] = touchstone_file
+    return output

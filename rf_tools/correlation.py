@@ -58,18 +58,25 @@ dict carrying a `"touchstone_file"`/`"file"` path, or a dict carrying the
 same generic `"frequency_hz"`/`"s_parameters"`/`"z0"` shape `measurement.vna.
 run_vna_measurement` returns (see `_network_from_generic_result`). That
 generic shape unconditionally covers the MEASURED side (`run_vna_measurement`
-'s own output). It does NOT, as of this ticket, cover `simulation.nec2pp.
-run_nec2_simulation`'s output (single-frequency feed-point impedance only --
-no frequency-swept S-parameter data at all) or `simulation.openems.
-run_openems_simulation`'s output (`s_parameters` is explicitly stubbed,
-`"computed": False` -- see that module's own "SCOPE OF THIS IMPLEMENTATION").
-Handing either of those to this function as-is raises `CorrelationError`
-naming exactly why, rather than fabricating S-parameters from data that
-was never produced. It works today against any source that already carries
-real swept S-parameter data -- a raw Touchstone file/`skrf.Network`, or a
-future simulator export in this generic shape -- and will start working
-against NEC2++/openEMS automatically once/if those adapters gain real
-S-parameter export.
+'s own output). It does NOT cover `simulation.nec2pp.run_nec2_simulation`'s
+output (single-frequency feed-point impedance only -- no frequency-swept
+S-parameter data at all, still true today) or the *fallback* case of
+`simulation.openems.run_openems_simulation`'s output (`s_parameters`
+carries `"computed": False` with an explanatory note when the run's port
+ProbeBox time-domain dumps weren't available -- see that module's own
+"SCOPE OF THIS IMPLEMENTATION"). Handing either of those to this function
+as-is raises `CorrelationError` naming exactly why, rather than fabricating
+S-parameters from data that was never produced. When openEMS DID compute
+real S-parameters (the single-port case, `"computed": True`), its result
+carries a top-level `"touchstone_file"` (mirroring `simulation.hfss.
+run_hfss_simulation`'s own `"computed": True` shape) and is accepted via
+that path, not the generic `"s_parameters"` dict shape (which stays a
+self-describing `{"computed", "values", ...}` structure, not the bare
+`{"S11": [...], ...}` shape this function's generic path expects). This
+function works today against any source that already carries real swept
+S-parameter data -- a raw Touchstone file/`skrf.Network`, a computed
+NEC2++/openEMS/HFSS export, or a future simulator export in this generic
+shape.
 """
 
 import tempfile
@@ -138,12 +145,17 @@ def _network_from_generic_result(result: dict[str, Any], label: str) -> rf.Netwo
             "single-frequency feed-point impedance, no S-parameter sweep, "
             "and simulation/openems.py's parse_openems_output/"
             "run_openems_simulation returns 's_parameters' with "
-            "'computed': False (S-parameter extraction is explicitly "
-            "stubbed there -- see that module's 'SCOPE OF THIS "
-            "IMPLEMENTATION'). Supply a result carrying real "
-            "'frequency_hz'/'s_parameters'/'z0' data (e.g. measurement/"
-            "vna.py's run_vna_measurement output), a 'touchstone_file' "
-            "path, or an already-built skrf.Network via a 'network' key."
+            "'computed': False when the run's port probe time-domain dumps "
+            "weren't available (see that module's 'SCOPE OF THIS "
+            "IMPLEMENTATION') -- when they ARE available, openEMS's result "
+            "instead carries a top-level 'touchstone_file' (like "
+            "simulation/hfss.py's own computed=True results), which this "
+            "function accepts via the 'touchstone_file'/'file' path below, "
+            "not this generic 'frequency_hz'/'s_parameters' shape. Supply "
+            "a result carrying real 'frequency_hz'/'s_parameters'/'z0' "
+            "data (e.g. measurement/vna.py's run_vna_measurement output), "
+            "a 'touchstone_file' path, or an already-built skrf.Network "
+            "via a 'network' key."
         )
 
     if not isinstance(s_parameters, dict):

@@ -573,8 +573,10 @@ def correlate_simulated_and_measured(
     carrying a "touchstone_file" path -- see rf_tools/correlation.py's
     module docstring for exactly which of run_nec2_simulation's/
     run_openems_simulation's current outputs this can and cannot use yet
-    (NEC2++'s single-frequency impedance and openEMS's stubbed S-parameters
-    are both honestly rejected, not fabricated from). Temperature
+    (NEC2++'s single-frequency impedance is always honestly rejected, not
+    fabricated from; openEMS's S-parameters are accepted via its
+    "touchstone_file" output when computed=True -- real port probe data was
+    available -- and honestly rejected when computed=False). Temperature
     normalization is a documented no-op unless both inputs happen to carry
     a "temperature_c" field, since no current simulator/instrument adapter
     populates one -- see the returned temperature_note. Returns
@@ -624,15 +626,16 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     or hit max timesteps -- the latter signals the mesh/excitation may need revision)
     plus S-parameter/far-field result keys. Use this over run_nec2_simulation for
     conformal/curved or metamaterial geometry that NEC2++'s wire method-of-moments
-    can't adequately model. Returns "SIMULATED" provenance. IMPORTANT SCOPE LIMIT:
-    S-parameter and far-field extraction are NOT computed in this implementation --
-    they require FFT post-processing of port time-domain data and openEMS's separate
-    nf2ff tool, both out of scope for this pass (see simulation/openems.py's module
-    docstring); only convergence metadata is real. Format verified against primary
-    openEMS/CSXCAD documentation (see simulation/openems.py's module docstring for
-    citations) but NOT against a real openEMS binary -- none is installed in this
-    environment; treat any result as unverified end-to-end until it has been run
-    against the real tool at least once."""
+    can't adequately model. Returns "SIMULATED" provenance. S-parameters are REAL --
+    FFT-computed from the run's port ProbeBox voltage/current time-domain dumps --
+    when those dump files are present (this module's own XML now requests them);
+    they fall back to an honestly-flagged computed=False when they aren't. IMPORTANT
+    SCOPE LIMIT: far-field extraction is still NOT computed -- it requires openEMS's
+    separate nf2ff tool, out of scope for this pass (see simulation/openems.py's
+    module docstring). Format verified against primary openEMS/CSXCAD documentation
+    (see simulation/openems.py's module docstring for citations) but NOT against a
+    real openEMS binary -- none is installed in this environment; treat any result as
+    unverified end-to-end until it has been run against the real tool at least once."""
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 

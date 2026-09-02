@@ -603,13 +603,16 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     and return convergence metadata (energy end-criteria vs. max-timesteps exit) plus
     S-parameter/far-field result keys. Use this over run_nec2_simulation for
     conformal/curved or metamaterial geometry NEC2++'s wire method-of-moments can't
-    adequately model. Returns "SIMULATED" provenance. SCOPE LIMIT: S-parameter and
-    far-field extraction are NOT computed in this implementation -- they require FFT
-    post-processing of port time-domain data and openEMS's separate nf2ff tool, both
-    out of scope for this pass (see simulation/openems.py's module docstring); only
-    convergence metadata is real. Format verified against primary openEMS/CSXCAD
-    documentation (see simulation/openems.py's module docstring for citations) but
-    NOT against a real openEMS binary -- none is installed in this environment."""
+    adequately model. Returns "SIMULATED" provenance. S-parameters are REAL -- FFT-
+    computed from the run's port ProbeBox voltage/current time-domain dumps -- when
+    those dump files are present (this module's own XML now requests them); they fall
+    back to an honestly-flagged computed=False when they aren't (e.g. a run that
+    genuinely didn't produce them). SCOPE LIMIT: far-field extraction is still NOT
+    computed -- it requires openEMS's separate nf2ff tool, out of scope for this pass
+    (see simulation/openems.py's module docstring). Format verified against primary
+    openEMS/CSXCAD documentation (see simulation/openems.py's module docstring for
+    citations) but NOT against a real openEMS binary -- none is installed in this
+    environment."""
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
