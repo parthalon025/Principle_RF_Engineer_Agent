@@ -10,6 +10,7 @@ Planning reference; not legal advice.
 | scikit-rf | BSD-3-Clause | Free |
 | NEC2++ | GPL | Free; review obligations if redistributed |
 | openEMS | GPLv3 | Free; review obligations if redistributed |
+| OpenParEM | GPL-3.0-or-later | Free; review obligations if redistributed. Confirmed from the license header in every OpenParEM3D source file ("either version 3 of the License, or (at your option) any later version") and the repo's own LICENSE file; source/binary install only, not pip-installable -- see simulation/openparem.py |
 | Qucs-S | GPL-2.0 | Free; review obligations if redistributed |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |

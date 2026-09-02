@@ -119,8 +119,10 @@ def test_registered_tool_count_matches_old_plus_new():
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
-    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
+    # 1 more (run_openparem_simulation) added by #62.
+    expected = 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1
+    assert len(registered_names) == expected
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -141,6 +143,11 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_run_openparem_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_openparem_simulation" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
@@ -777,3 +784,100 @@ def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert Path(result["touchstone_file"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# OpenParEM3D simulation (issue #62)
+#
+# The real OpenParEM3D binary is not installed in this environment, so this
+# exercises the MCP wrapper's call-through to simulation.openparem via a fake
+# "OpenParEM3D" script pointed to by OPENPAREM3D_BIN, mirroring
+# test_run_nec2_simulation_calls_through/test_run_openems_simulation_calls_
+# through above -- same not-verified-against-a-real-binary caveat as
+# tests/test_openparem.py. See that file's/simulation/openparem.py's module
+# docstrings for the *_results.csv/*_FarField_results.csv format citations
+# behind this fake script's written output.
+# ---------------------------------------------------------------------------
+
+_FAKE_OPENPAREM3D_RESULTS_CSV = (
+    "#OpenParEM3D 2.1.0\n"
+    "#Touchstone format,RI\n"
+    "#frequency unit,GHz\n"
+    "#number of frequencies,1\n"
+    "#number of ports,1\n"
+    "#S-port 1,net1,50\n"
+    "#Frequency(GHz),Re(S(1;1)),Im(S(1;1))\n"
+    "2.45,-0.1,0.05\n"
+)
+
+_FAKE_OPENPAREM3D_FARFIELD_CSV = (
+    "#S-port,frequency(GHz),gain,directivity,radiation efficiency\n"
+    "1,2.45,5.23,5.90,0.89\n"
+)
+
+
+def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_openparem3d.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f'with open("{project_name}_results.csv", "w") as f:\n'
+        f'    f.write("""{_FAKE_OPENPAREM3D_RESULTS_CSV}""")\n'
+        f'with open("{project_name}_FarField_results.csv", "w") as f:\n'
+        f'    f.write("""{_FAKE_OPENPAREM3D_FARFIELD_CSV}""")\n'
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_openparem_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_openparem3d(tmp_path, "openparem_project")
+    monkeypatch.setenv("OPENPAREM3D_BIN", str(script))
+
+    ports = {
+        "paths": [
+            {
+                "name": "port",
+                "points": [[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 0.001, 0.0]],
+                "closed": True,
+            },
+            {
+                "name": "front",
+                "points": [
+                    [-0.1, -0.1, -0.1],
+                    [0.1, -0.1, -0.1],
+                    [0.1, -0.1, 0.1],
+                    [-0.1, -0.1, 0.1],
+                ],
+                "closed": True,
+            },
+        ],
+        "boundaries": [{"name": "front", "type": "radiation", "path": "+front"}],
+        "ports": [
+            {
+                "name": "in",
+                "path": "+port",
+                "modes": [{"sport": 1, "integration_path": {"type": "voltage", "path": "+port"}}],
+            }
+        ],
+    }
+    result = server.run_openparem_simulation(
+        mesh_file="model.msh",
+        ports=ports,
+        project={
+            "frequency_plan": {"point": [{"frequency_hz": 2.45e9}]},
+            "far_field": {"quantity": "G"},
+        },
+        timeout_s=10,
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "OpenParEM3D"
+    assert result["status"] == "COMPLETED"
+    assert result["s_parameters"]["computed"] is True
+    assert result["far_field"]["computed"] is True
+    assert result["far_field"]["entries"][0]["gain_dbi"] == pytest.approx(5.23)

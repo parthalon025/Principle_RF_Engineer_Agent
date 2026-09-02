@@ -90,6 +90,7 @@ from rf_tools.touchstone import (
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
+from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -701,6 +702,46 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@mcp.tool()
+def run_openparem_simulation(
+    mesh_file: str,
+    ports: dict,
+    project: dict | None = None,
+    project_name: str = "openparem_project",
+    mpi_processes: int | None = None,
+    timeout_s: int = 3600,
+) -> dict:
+    """Simulate a structure with OpenParEM3D (full-wave FEM): given an already-meshed
+    Gmsh msh22 `mesh_file` (mesh generation is out of scope -- see simulation/
+    openparem.py's module docstring SCOPE; produce one via FreeCAD+gmsh first) and
+    structured `ports` geometry (Path/Boundary/Port definitions -- see
+    simulation.openparem.generate_openparem_ports_file for the full shape), generate
+    the `.proj` project-control file (frequency plan, mesh/refinement settings,
+    reference impedance, Touchstone format -- see simulation.openparem.
+    generate_openparem_project_config for the full `project` shape) plus the ports
+    file, run OpenParEM3D, and parse S-parameters AND antenna far-field gain/
+    directivity/radiation-efficiency from the SAME FEM solve -- no separate tool or
+    manual post-processing step. Set `project["far_field"] = {"quantity": "G"}` (or
+    "D" for directivity) to request far-field metrics; this only actually computes
+    when `ports["boundaries"]` includes a `type="radiation"` boundary. Returns
+    "SIMULATED" provenance with `s_parameters`/`far_field` each honestly flagged
+    computed=True/False (never fabricated) plus a `touchstone_file` key when a
+    single-port renormalized Touchstone was written. `.proj`/ports-file format and
+    CLI invocation verified against OpenParEM's own primary GitHub source and its
+    official Installation Manual PDF (see simulation/openparem.py's module docstring
+    for the full citation list) but NOT against a real OpenParEM3D binary -- none is
+    installed in this environment. OpenParEM is also considerably younger and less
+    battle-tested than NEC2++/openEMS/HFSS (initial release Sept. 2024)."""
+    return _run_openparem_simulation(
+        mesh_file=mesh_file,
+        ports=ports,
+        project=project,
+        project_name=project_name,
+        mpi_processes=mpi_processes,
+        timeout_s=timeout_s,
     )
 
 

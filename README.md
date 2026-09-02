@@ -56,6 +56,8 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- OpenParEM (OpenParEM2D/OpenParEM3D -- source or pre-compiled-binary install only, not
+  pip-installable; see simulation/openparem.py)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -98,6 +100,7 @@ Notable components:
 - scikit-rf: BSD-3-Clause
 - openEMS: GPLv3
 - NEC2++: GPL
+- OpenParEM: GPL-3.0-or-later
 - Qucs-S: GPL-2.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - PostgreSQL: PostgreSQL License
