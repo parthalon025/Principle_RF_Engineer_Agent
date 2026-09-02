@@ -56,6 +56,12 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- CSXCAD (openEMS's own geometry/materials library -- no PyPI package; build
+  from source or install a platform-specific pre-built wheel, see
+  docs.openems.de/python/install.html. `pip install '.[geometry]'` installs
+  gdstk, this repo's other geometry-generation dependency, which IS a
+  regular PyPI package -- see `geometry/unit_cell.py` and
+  `pyproject.toml`'s `geometry` extra)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - VISA/SCPI-capable instruments
@@ -97,6 +103,8 @@ Notable components:
 - MCP Python SDK: MIT
 - scikit-rf: BSD-3-Clause
 - openEMS: GPLv3
+- CSXCAD: LGPLv3 (separate from openEMS's own GPLv3 -- see docs/LICENSE_MATRIX.md)
+- gdstk: Boost Software License 1.0 (BSL-1.0)
 - NEC2++: GPL
 - Qucs-S: GPL-2.0
 - PyAEDT: MIT; requires a legally licensed AEDT installation

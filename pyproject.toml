@@ -68,6 +68,32 @@ measurement = [
   "pyvisa-py",
   "pyvisa-sim",
 ]
+# Metamaterial/FSS unit-cell geometry generation (issue #55) -- see
+# geometry/unit_cell.py. gdstk is a small, freely pip-installable library
+# with prebuilt wheels for every major platform and no license/hardware
+# requirement, so it would be reasonable to make it a hard dependency; it
+# is kept as an explicit optional extra instead, matching this project's
+# existing hfss/measurement pattern for anything most installs (including
+# CI) won't touch by default: install with `uv sync --extra geometry` or
+# `pip install '.[geometry]'`.
+#
+# CSXCAD (the C++/Python library whose own <Polygon> XML element shape
+# simulation/openems.py's polygon primitive was verified against, see that
+# module's docstring citation) is DELIBERATELY NOT listed here even though
+# it is the geometry-format counterpart to gdstk: unlike gdstk, CSXCAD
+# ships no installable package on the PyPI index -- its own install docs
+# (docs.openems.de/python/install.html) require building from source
+# (`python setup.py install`) or downloading a platform-specific pre-built
+# .whl file directly, not `pip install CSXCAD` -- so per this project's own
+# convention (a manual binary/source install, not a `pip install <name>`
+# from the index, belongs in README.md's Optional tools list, not a
+# pyproject extra -- matching how NEC2++/openEMS are already handled
+# there), CSXCAD is documented in README.md instead. Both CSXCAD's and
+# gdstk's licenses are still recorded, as separate rows, in
+# docs/LICENSE_MATRIX.md regardless of which one gets a pyproject extra.
+geometry = [
+  "gdstk",
+]
 
 [dependency-groups]
 dev = [
@@ -84,7 +110,7 @@ package = true
 # name, not a directory prefix -- "knowledge" alone would not pull in the
 # "knowledge.sourcing" subpackage (ticket #68's 3GPP/ETSI/FCC/arXiv thin
 # clients), so it is listed explicitly, same as every other top-level entry.
-include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "knowledge.sourcing", "optimization", "measurement", "orchestration", "designs"]
+include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "knowledge.sourcing", "optimization", "measurement", "orchestration", "designs", "geometry"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
