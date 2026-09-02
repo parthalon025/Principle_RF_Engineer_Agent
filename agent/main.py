@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from agents import Agent, Runner, function_tool
@@ -134,24 +135,214 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
-principal = Agent(
-    name="Principal RF Engineer",
-    model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
-    instructions=SYSTEM_PROMPT,
-    tools=[
-        calculate_wavelength,
-        calculate_vswr,
-        calculate_return_loss,
-        calculate_cascade_gain,
-        calculate_noise_figure,
-        analyze_touchstone_file,
-        ingest_document,
-        index_document,
-        read_document,
-        search_knowledge,
-        extract_components,
-    ],
-)
+# ---------------------------------------------------------------------------
+# Specialist roles (issue #34).
+#
+# The single generalist agent is split into six named roles, each scoped to a
+# tool subset appropriate to its domain. Hand-off/routing *between* roles is
+# explicitly out of scope here (issue #35); `run()` below still drives the
+# whole conversation through the "principal" role, same as before the split.
+#
+# Rationale for the tool split, by role:
+#
+#   - principal:   the coordinating/generalist role. Gets every currently
+#                   wired tool -- it is the one role expected to reach across
+#                   domains, so scoping it down would just recreate the
+#                   single-agent behavior under a different name.
+#   - systems:      link-level/systems-engineering concerns. Gets all five
+#                   calculation tools (wavelength through noise figure --
+#                   link budget math is exactly cascaded gain/NF today) plus
+#                   the two knowledge-base *authoring* tools (ingest_document,
+#                   index_document), since standing up the knowledge base for
+#                   the team is systems-level work. Does NOT get
+#                   analyze_touchstone_file (device-level network data,
+#                   not a systems-level concern) or the knowledge *auditing*
+#                   tools (read_document/extract_components -- verification's
+#                   job, see below).
+#   - microwave:    passive/active RF component and network analysis. Gets
+#                   VSWR, return loss, noise figure, and Touchstone analysis
+#                   -- the closest fit to S-parameter/network-level work
+#                   until S/Z/Y/ABCD conversions are wired as tools (#36).
+#                   Does NOT get calculate_cascade_gain (a system-chain
+#                   concern, not a single component/network concern) or the
+#                   knowledge-authoring tools.
+#   - antenna:      antenna-specific. Gets wavelength (electrical size),
+#                   VSWR/return loss (antenna input match), and Touchstone
+#                   analysis (antenna port measurements) -- the closest
+#                   currently-wired fit; the Phase 1 antenna-synthesis
+#                   functions (resonant frequency, bandwidth, aperture gain)
+#                   are not yet tools (#36). Does NOT get calculate_noise_
+#                   figure or calculate_cascade_gain (receiver-chain
+#                   concerns, not the antenna element itself).
+#   - test:         verification/measurement-adjacent. Gets Touchstone
+#                   analysis (the measured-network artifact), plus VSWR,
+#                   return loss, and cascade gain for comparing a measured
+#                   chain against its predicted/spec values. Does NOT get
+#                   any knowledge-authoring or knowledge-auditing tool --
+#                   test validates hardware against a spec, it doesn't
+#                   ingest or extract documents.
+#   - verification: knowledge/provenance-checking, per the ticket's own
+#                   frame. Gets the knowledge-base *auditing* tools
+#                   (read_document, extract_components) that check what's
+#                   already in the knowledge base against its source and
+#                   provenance. Does NOT get ingest_document/index_document
+#                   (authoring is systems' job -- verification checks the
+#                   result, it doesn't add to the store) or any calculation
+#                   tool (verification audits documented/extracted claims
+#                   and their provenance, it does not itself run RF
+#                   arithmetic).
+#
+#   search_knowledge is shared by every role: literature lookup is useful
+#   regardless of domain, and giving every role its own copy of the same
+#   tool object is the intended (not accidental) overlap the ticket calls
+#   out as fine.
+# ---------------------------------------------------------------------------
+
+_ALL_TOOLS = [
+    calculate_wavelength,
+    calculate_vswr,
+    calculate_return_loss,
+    calculate_cascade_gain,
+    calculate_noise_figure,
+    analyze_touchstone_file,
+    ingest_document,
+    index_document,
+    read_document,
+    search_knowledge,
+    extract_components,
+]
+
+
+@dataclass(frozen=True)
+class RoleSpec:
+    """One specialist role: its display name, tool subset, and the domain
+    note appended to the shared system prompt explaining that scope."""
+
+    key: str
+    display_name: str
+    domain_note: str
+    tools: list = field(default_factory=list)
+
+
+ROLE_SPECS: list[RoleSpec] = [
+    RoleSpec(
+        key="principal",
+        display_name="Principal RF Engineer",
+        domain_note=(
+            "You are the coordinating principal-level reviewer, with access to "
+            "every tool below. Bring in a specialist's perspective (systems, "
+            "microwave, antenna, test, verification) as the problem requires."
+        ),
+        tools=list(_ALL_TOOLS),
+    ),
+    RoleSpec(
+        key="systems",
+        display_name="Systems RF Engineer",
+        domain_note=(
+            "You focus on link-level and systems-engineering concerns: cascaded "
+            "gain/noise-figure budgets, wavelength/electrical-size bookkeeping, "
+            "and standing up the knowledge base (ingesting and indexing "
+            "documents) other roles rely on. Defer network-level S-parameter "
+            "detail to the microwave role and document auditing to the "
+            "verification role."
+        ),
+        tools=[
+            calculate_wavelength,
+            calculate_vswr,
+            calculate_return_loss,
+            calculate_cascade_gain,
+            calculate_noise_figure,
+            ingest_document,
+            index_document,
+            search_knowledge,
+        ],
+    ),
+    RoleSpec(
+        key="microwave",
+        display_name="Microwave Engineer",
+        domain_note=(
+            "You focus on passive/active RF component and network analysis: "
+            "input match (VSWR, return loss), noise figure, and Touchstone "
+            "(.sNp) network data. Defer system-chain-level gain budgeting to "
+            "the systems role."
+        ),
+        tools=[
+            calculate_vswr,
+            calculate_return_loss,
+            calculate_noise_figure,
+            analyze_touchstone_file,
+            search_knowledge,
+        ],
+    ),
+    RoleSpec(
+        key="antenna",
+        display_name="Antenna Engineer",
+        domain_note=(
+            "You focus on antenna-specific concerns: electrical size "
+            "(wavelength), input match at the antenna port (VSWR, return "
+            "loss), and Touchstone measurements of antenna ports. Defer "
+            "receiver-chain noise figure and cascaded gain to the systems "
+            "role."
+        ),
+        tools=[
+            calculate_wavelength,
+            calculate_vswr,
+            calculate_return_loss,
+            analyze_touchstone_file,
+            search_knowledge,
+        ],
+    ),
+    RoleSpec(
+        key="test",
+        display_name="Test Engineer",
+        domain_note=(
+            "You focus on verification and measurement: analyzing Touchstone "
+            "network data and comparing measured VSWR/return loss/cascaded "
+            "gain against predicted or specified values. You do not ingest or "
+            "extract documents -- that is the systems/verification roles' job."
+        ),
+        tools=[
+            analyze_touchstone_file,
+            calculate_vswr,
+            calculate_return_loss,
+            calculate_cascade_gain,
+            search_knowledge,
+        ],
+    ),
+    RoleSpec(
+        key="verification",
+        display_name="Verification Engineer",
+        domain_note=(
+            "You focus on knowledge and provenance checking: reading a stored "
+            "document's full metadata and chunks, and extracting/auditing "
+            "structured component specifications with their per-field "
+            "provenance. You do not run RF calculations yourself and you do "
+            "not add new documents to the knowledge base -- you audit what is "
+            "already there."
+        ),
+        tools=[
+            read_document,
+            search_knowledge,
+            extract_components,
+        ],
+    ),
+]
+
+ROLES: dict[str, Agent] = {
+    spec.key: Agent(
+        name=spec.display_name,
+        model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
+        instructions=f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{spec.domain_note}",
+        tools=list(spec.tools),
+    )
+    for spec in ROLE_SPECS
+}
+
+# Kept as a module-level name for backward compatibility -- issue #35's
+# hand-off/synthesis work is expected to build on top of this, and the
+# existing single-agent entry point below continues to route through it.
+principal = ROLES["principal"]
+
 
 def run(query: str) -> str:
     result = Runner.run_sync(principal, query)
