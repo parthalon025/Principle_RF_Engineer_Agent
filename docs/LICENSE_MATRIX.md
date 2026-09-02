@@ -22,6 +22,8 @@ Planning reference; not legal advice.
 | PyVISA | MIT | Free; requires a VISA backend (vendor or pyvisa-py) for real hardware |
 | PyVISA-py | MIT | Free; pure-Python VISA backend, no vendor install required |
 | PyVISA-sim | MIT | Free; simulated-instrument backend, no hardware or VISA backend required |
+| spicelib | GPLv3 (confirmed against `nunobrum/spicelib`'s own `LICENSE` file) | Free; review obligations if redistributed. Optional `pyproject.toml` extra (`ltspice`), not a hard dependency -- see `simulation/ltspice.py`. |
+| LTspice | Free-of-charge proprietary freeware -- Analog Devices "Click-Through Software License Agreement" (doc ID `20191031-LTS-CTSLA`, https://ltwiki.org/files/LTspiceHelp.chm/html/License.pdf, confirmed against Analog Devices' own license text). Non-exclusive, non-transferable, non-sublicensable internal-use grant (per-workstation, single concurrent user); explicitly prohibits reverse engineering/decompiling; carries a reciprocal patent-license-back clause to ADI. **Closed source -- NOT OSI-approved**, distinct from every other (open-source) tool in this batch. | Free to install and use, but a licensed-terms proprietary EULA, not an open-source license -- do not conflate with the GPL/BSD/MIT entries above. The only non-open-source item in this batch (issue #59); ngspice/Xyce/Qucs-S remain the preferred, fully open-source ADS-alternative targets. |
 | PostgreSQL | PostgreSQL License | Free |
 | pgvector | Permissive | Free |
 | Manufacturer data | Varies | Internal use subject to source terms |

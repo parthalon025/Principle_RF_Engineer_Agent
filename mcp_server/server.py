@@ -89,6 +89,7 @@ from rf_tools.touchstone import (
 )
 from simulation.elmer import run_elmer_simulation as _run_elmer_simulation
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
+from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
@@ -786,6 +787,38 @@ def run_elmer_simulation(
         gmsh_executable=gmsh_executable,
         elmergrid_executable=elmergrid_executable,
         elmersolver_executable=elmersolver_executable,
+    )
+
+
+@mcp.tool()
+def run_ltspice_simulation(
+    netlist: str | None = None,
+    netlist_file: str | None = None,
+    timeout_s: int = 600,
+) -> dict:
+    """Simulate a circuit with LTspice (ADS alternative, part 3 of 3 -- issue
+    #59): run an existing SPICE netlist (either `netlist`, raw netlist text,
+    or `netlist_file`, a path to an existing .net/.cir/.asc file already on
+    disk; exactly one is required) through LTspice's real batch-mode CLI
+    (driven via the spicelib package -- see simulation/ltspice.py's module
+    docstring for the primary-source citation), and parse the resulting
+    .raw output into structured trace data (plot type, axis, and every
+    named trace, complex for an AC analysis or real for a transient/DC
+    sweep) via spicelib's own RawRead. Returns "SIMULATED" provenance.
+    LOWEST PRIORITY / LOWEST INVESTMENT of this batch's "ADS alternative"
+    simulators: LTspice is the one non-open-source item here (free-of-
+    charge proprietary Analog Devices freeware, NOT OSI-approved -- see
+    docs/LICENSE_MATRIX.md) and is capability-redundant with any ngspice/
+    Xyce/Qucs-S adapter this repo may also have. Unlike run_nec2_
+    simulation/run_openems_simulation, this tool does NOT generate a
+    netlist from a structured component dict -- bring your own. spicelib
+    is an OPTIONAL install (`pip install '.[ltspice]'` / `uv sync --extra
+    ltspice`); this tool raises a clear SimulatorError, not a bare
+    ImportError, if it isn't installed. Format/invocation verified against
+    spicelib's own primary GitHub source but NOT against a real LTspice
+    binary -- none is installed in this environment."""
+    return _run_ltspice_simulation(
+        netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s
     )
 
 

@@ -122,8 +122,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # read_design, record_decision, verify_requirement) from a separately-
     # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
     # 1 more (run_openparem_simulation) added by #62, plus 1 more
-    # (run_elmer_simulation) added by #64.
-    expected = 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1
+    # (run_elmer_simulation) added by #64, plus 1 more
+    # (run_ltspice_simulation) added by #59.
+    expected = 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1
     assert len(registered_names) == expected
 
 
@@ -155,6 +156,11 @@ def test_run_openparem_simulation_is_registered():
 def test_run_elmer_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_elmer_simulation" in registered_names
+
+
+def test_run_ltspice_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_ltspice_simulation" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
