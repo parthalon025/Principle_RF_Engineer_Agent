@@ -2,7 +2,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agents import Agent, Runner, function_tool
+from agents import Agent, FunctionTool, Runner, function_tool
+from agents.run import RunResult
 from dotenv import load_dotenv
 
 from knowledge.extract import extract_components as _extract_components
@@ -136,12 +137,14 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
 
 
 # ---------------------------------------------------------------------------
-# Specialist roles (issue #34).
+# Specialist roles (issue #34) + principal delegation/synthesis (issue #35).
 #
 # The single generalist agent is split into six named roles, each scoped to a
-# tool subset appropriate to its domain. Hand-off/routing *between* roles is
-# explicitly out of scope here (issue #35); `run()` below still drives the
-# whole conversation through the "principal" role, same as before the split.
+# tool subset appropriate to its domain. `run()` below still drives the whole
+# conversation through the "principal" role, same as before the split -- but
+# the principal can now delegate a sub-question to any one specialist role
+# and get its result back to synthesize into one answer (see "Principal
+# delegation" below, after ROLES is built).
 #
 # Rationale for the tool split, by role:
 #
@@ -328,19 +331,104 @@ ROLE_SPECS: list[RoleSpec] = [
     ),
 ]
 
+_SPEC_BY_KEY: dict[str, RoleSpec] = {spec.key: spec for spec in ROLE_SPECS}
+_SPECIALIST_KEYS = [key for key in _SPEC_BY_KEY if key != "principal"]
+
+# Build the five specialist agents first (systems, microwave, antenna, test,
+# verification). None of them delegate further -- only the principal role
+# gets delegation tools, below -- so this is a plain, non-circular build.
 ROLES: dict[str, Agent] = {
-    spec.key: Agent(
-        name=spec.display_name,
+    key: Agent(
+        name=_SPEC_BY_KEY[key].display_name,
         model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
-        instructions=f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{spec.domain_note}",
-        tools=list(spec.tools),
+        instructions=f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_SPEC_BY_KEY[key].domain_note}",
+        tools=list(_SPEC_BY_KEY[key].tools),
     )
-    for spec in ROLE_SPECS
+    for key in _SPECIALIST_KEYS
 }
 
-# Kept as a module-level name for backward compatibility -- issue #35's
-# hand-off/synthesis work is expected to build on top of this, and the
-# existing single-agent entry point below continues to route through it.
+# ---------------------------------------------------------------------------
+# Principal delegation and synthesis (issue #35).
+#
+# `openai-agents` (>=0.17.4) offers two distinct mechanisms for one agent to
+# involve another:
+#
+#   - `Agent(handoffs=[...])`: one-way control transfer. The target agent
+#     takes over the *whole* conversation; the original agent never
+#     regains control and never sees a return value.
+#   - `Agent.as_tool(...)`: wraps an agent as a `FunctionTool` callable by
+#     another agent. The nested agent runs on generated input, its result
+#     comes back as the tool's return value, and the *calling* agent keeps
+#     driving the conversation and can call further tools/roles afterward.
+#
+# The ticket's acceptance criteria -- "delegate a sub-question ... and
+# receive its structured/provenance-tagged result back", "keeps composing",
+# "cites which specialist role(s) contributed which part" -- describes the
+# second shape, not the first: the principal must stay in control and weave
+# multiple specialists' answers into one response, not hand off and vanish.
+# So this uses `Agent.as_tool()`, confirmed present on the installed SDK
+# (agents.Agent.as_tool, see agents/agent.py) rather than `handoffs`.
+#
+# Each specialist is wrapped as a `consult_<role>_role` tool on the
+# principal only (specialists do not delegate to each other, avoiding
+# delegation cycles). `custom_output_extractor` prefixes every nested run's
+# final output with that role's display name in square brackets --
+# deterministic code, not LLM cooperation -- so any specialist contribution
+# that reaches the principal's tool-call history is already citable by role
+# by construction; the principal's instructions additionally ask it to
+# carry that citation through into its own final answer.
+# ---------------------------------------------------------------------------
+
+
+def _specialist_output_tag(spec: RoleSpec, run_result: RunResult) -> str:
+    """Prefix a nested specialist run's final output with its role name, so
+    a delegated result is citable by role wherever it is quoted or logged."""
+    return f"[{spec.display_name}] {run_result.final_output}"
+
+
+def _make_delegation_tool(key: str) -> FunctionTool:
+    spec = _SPEC_BY_KEY[key]
+    role_agent = ROLES[key]
+
+    async def _tag_output(run_result: RunResult) -> str:
+        return _specialist_output_tag(spec, run_result)
+
+    return role_agent.as_tool(
+        tool_name=f"consult_{key}_role",
+        tool_description=(
+            f"Delegate a sub-question to the {spec.display_name} specialist role "
+            f"and receive its structured, provenance-tagged result back so you can "
+            f"synthesize it into your own answer. {spec.domain_note} Its response "
+            f"is prefixed with '[{spec.display_name}]' -- carry that citation "
+            f"through into your final answer so the reader can see which "
+            f"specialist role(s) contributed which part."
+        ),
+        custom_output_extractor=_tag_output,
+    )
+
+
+DELEGATION_TOOLS: dict[str, FunctionTool] = {
+    key: _make_delegation_tool(key) for key in _SPECIALIST_KEYS
+}
+
+_principal_spec = _SPEC_BY_KEY["principal"]
+ROLES["principal"] = Agent(
+    name=_principal_spec.display_name,
+    model=os.getenv("OPENAI_MODEL", "gpt-5.5"),
+    instructions=(
+        f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_principal_spec.domain_note}"
+        "\n\n## Delegating to specialists\n\n"
+        "For a multi-domain question, call the relevant `consult_<role>_role` "
+        "tool(s) (systems, microwave, antenna, test, verification) instead of "
+        "guessing at their domain expertise yourself. Each tool's result comes "
+        "back prefixed with '[<Role Name>]'; when you synthesize your final "
+        "answer, keep that attribution visible so it is clear which "
+        "specialist role(s) contributed which part of the answer."
+    ),
+    tools=list(_ALL_TOOLS) + list(DELEGATION_TOOLS.values()),
+)
+
+# Kept as a module-level name for backward compatibility.
 principal = ROLES["principal"]
 
 
