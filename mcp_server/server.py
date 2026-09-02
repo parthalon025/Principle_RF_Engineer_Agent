@@ -33,6 +33,7 @@ from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from orchestration.policy import assert_all_tools_categorized
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
@@ -1019,19 +1020,33 @@ def optimize_patch_length_for_target_frequency(
 # there is no tool here (or anywhere in this project) that can produce a
 # granted loop-step approval, and no code path from this loop to a
 # manufacturing-release action.
+#
+# start_design_loop creates a real `designs` row backing the loop, and
+# advance_design_loop_step's REDESIGN_DECISION transition flushes that
+# iteration's decisions to the database (docs/adr/0011) -- see
+# orchestration/tooling.py's module docstring for the persistence design.
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool()
-def start_design_loop(requirements: dict) -> dict:
-    """Start a new controlled design-iteration loop from a customer
-    requirement (frequency band, gain/VSWR/bandwidth target, form factor,
-    host-surface curvature, platform). Returns the new loop's state,
-    positioned at the ARCHITECTURE step -- hold onto this dict and pass it
-    back into advance_design_loop_step for every subsequent call; it is the
-    whole loop's session token (this project has no long-running server
-    process, so state is not persisted server-side)."""
-    return _start_new_design_loop(requirements)
+def start_design_loop(design_key: str, name: str, revision: str, requirements: dict) -> dict:
+    """Start a new controlled design-iteration loop, backed by a real
+    `designs` row created in `DRAFT` status (docs/adr/0011). `design_key`/
+    `name`/`revision` are exactly `designs.service.create_design`'s own
+    fields. `requirements` must be in that function's shape -- a dict
+    keyed by `requirement_id`, each value a dict carrying a non-empty
+    string `requirement` field -- not the older free-form "customer
+    requirement" shape (frequency band, gain/VSWR/bandwidth target, form
+    factor, host-surface curvature, platform); those details can still go
+    in each requirement's extra keys or its `requirement` prose. A
+    rejected `requirements` shape raises DesignLoopPersistenceError and no
+    loop is started. Returns the new loop's state, positioned at the
+    ARCHITECTURE step and carrying `design_id` -- hold onto this dict and
+    pass it back into advance_design_loop_step for every subsequent call;
+    it is the whole loop's session token (this project has no long-running
+    server process, so the state itself is not persisted server-side --
+    only the loop's history, once flushed at an iteration boundary, is)."""
+    return _start_new_design_loop(design_key, name, revision, requirements)
 
 
 @mcp.tool()
@@ -1046,7 +1061,13 @@ def advance_design_loop_step(state: dict, step_input: dict, approval: dict | Non
     calculation or simulation run -- and must be bound to this exact loop/
     iteration/step/step_input combination or this raises and the loop does
     not advance. Check the returned state's "pending_approval" key to see,
-    at any point, whether the loop is blocked on an approval."""
+    at any point, whether the loop is blocked on an approval.
+
+    A REDESIGN_DECISION transition also flushes that iteration's decisions
+    to the database and advances the backing design's status (docs/adr/
+    0011). A failed flush raises DesignLoopPersistenceError instead of
+    returning -- the caller's already-held `state` remains the only valid
+    state."""
     return _advance_design_loop_step(state, step_input, approval=approval)
 
 
@@ -1056,7 +1077,7 @@ def inspect_design_loop_state(state: dict) -> dict:
     every decision recorded so far with its own provenance, and whether an
     approval is currently pending (and for which step). Safe to call at any
     point mid-loop, not just at completion; does not mutate or advance the
-    loop."""
+    loop, and does not touch the database."""
     return _inspect_design_loop_state(state)
 
 
@@ -1216,6 +1237,9 @@ def verify_requirement(
         evidence_uri=evidence_uri,
         notes=notes,
     )
+
+
+assert_all_tools_categorized([tool.name for tool in mcp._tool_manager.list_tools()])
 
 
 if __name__ == "__main__":

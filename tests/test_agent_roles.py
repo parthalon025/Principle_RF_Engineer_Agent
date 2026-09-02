@@ -24,6 +24,7 @@ to carry through into its final answer.
 from types import SimpleNamespace
 
 from agent.main import (
+    _ALL_TOOLS,
     _SPEC_BY_KEY,
     DELEGATION_TOOLS,
     ROLE_SPECS,
@@ -31,6 +32,7 @@ from agent.main import (
     _specialist_output_tag,
     principal,
 )
+from orchestration.policy import assert_all_tools_categorized
 
 
 def _tool_names(agent) -> set[str]:
@@ -78,6 +80,13 @@ def test_principal_role_has_broad_access():
 
 def test_principal_module_alias_matches_registry():
     assert principal is ROLES["principal"]
+
+
+def test_every_tool_in_all_tools_is_categorized_in_tool_policy():
+    # Mirrors the import-time assert_all_tools_categorized() call right
+    # after _ALL_TOOLS is built in agent/main.py -- this test makes the
+    # same guarantee explicit and independently re-checkable here.
+    assert_all_tools_categorized([tool.name for tool in _ALL_TOOLS])
 
 
 def test_systems_role_gets_calculations_and_knowledge_authoring():

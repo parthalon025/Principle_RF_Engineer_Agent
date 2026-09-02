@@ -44,15 +44,20 @@ persistence calls are added there, not inside `advance_loop_step` itself.
   alongside `requirements`, to create the backing `designs` row — a
   breaking change to that tool's input shape (issue #46 predates any real
   caller, so no compatibility shim was added).
-- `designs.status` now has real transition logic for the first time,
-  advancing as the loop's steps and `REDESIGN_DECISION` outcome progress —
-  this is new work `docs/adr/0007` explicitly deferred ("no transition
-  logic between the other states... exists yet"), not a contradiction of
-  it. `MEASUREMENT`/`CORRELATION` map to `VERIFICATION` status (no
-  dedicated status value exists for either); `REDESIGN_DECISION`'s
-  `iterate` maps back to `ANALYSIS`, `accept_design` maps to `PASS` — none
-  of this reaches `RELEASED`, which stays exclusively
-  `manufacturing_release`'s concern (not yet built, per ADR-0005).
+- `designs.status` now has real transition logic for the first time — this
+  is new work `docs/adr/0007` explicitly deferred ("no transition logic
+  between the other states... exists yet"), not a contradiction of it. It
+  is set exactly once per flush, not per individual loop step: since
+  nothing persists until a flush boundary anyway, an intermediate
+  per-step mapping (ANALYSIS/SIMULATION/OPTIMIZATION/VERIFICATION/
+  MEASUREMENT/CORRELATION each setting their own status value as reached)
+  would only ever be visible for the instant before the same flush
+  immediately overwrote it with the transition's own final value — so
+  `REDESIGN_DECISION`'s `iterate` sets `designs.status` directly to
+  `ANALYSIS` (the next iteration's first real step), and `accept_design`
+  sets it directly to `PASS`. None of this reaches `RELEASED`, which stays
+  exclusively `manufacturing_release`'s concern (not yet built, per
+  ADR-0005).
 - `designs.db.record_engineering_result` gains an optional explicit
   `provenance` override for trusted internal callers, rather than only its
   existing `tool_name`-keyed lookup (`designs/provenance.py`). The

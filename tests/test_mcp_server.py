@@ -17,6 +17,7 @@ import pytest
 import skrf as rf
 
 import mcp_server.server as server
+from orchestration.policy import assert_all_tools_categorized
 from rf_tools.calculations import (
     abcd_to_s,
     aperture_gain,
@@ -140,6 +141,14 @@ def test_run_openems_simulation_is_registered():
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_every_registered_tool_is_categorized_in_tool_policy():
+    # Mirrors the import-time assert_all_tools_categorized() call at the
+    # bottom of mcp_server/server.py -- this test makes the same guarantee
+    # explicit and independently re-checkable here.
+    registered_names = [t.name for t in server.mcp._tool_manager.list_tools()]
+    assert_all_tools_categorized(registered_names)
 
 
 def test_optimize_patch_length_for_target_frequency_is_registered():

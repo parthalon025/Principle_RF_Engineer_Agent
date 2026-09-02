@@ -58,11 +58,6 @@ from orchestration.design_loop import (
     advance_loop_step,
     start_design_loop,
 )
-from orchestration.tooling import (
-    advance_design_loop_step,
-    inspect_design_loop_state,
-    start_new_design_loop,
-)
 
 REQUIREMENTS = {
     "band_ghz": [2.4, 2.5],
@@ -399,32 +394,11 @@ def test_completed_loop_has_no_further_action_available_but_to_start_a_new_one()
 
 
 # ---------------------------------------------------------------------------
-# Group 4: orchestration/tooling.py's three agent/MCP-facing functions --
-# plain dict in, plain dict out.
+# Group 4 (orchestration/tooling.py's three agent/MCP-facing dict-in/
+# dict-out functions) moved to tests/test_tooling.py: since docs/adr/0011,
+# those functions call designs.db/designs.service and need a real
+# Postgres, unlike every test in this file -- see that file's own header.
 # ---------------------------------------------------------------------------
-
-
-def test_tooling_functions_round_trip_plain_dicts():
-    state_dict = start_new_design_loop(REQUIREMENTS)
-    assert isinstance(state_dict, dict)
-    assert state_dict["current_step"] == DesignStep.ARCHITECTURE.value
-
-    inspected = inspect_design_loop_state(state_dict)
-    assert inspected == state_dict
-
-    step_input = {"decision": "patch antenna", "rationale": "simple, meets band", "eps_r": 4.4}
-    with pytest.raises(OrchestrationError):
-        advance_design_loop_step(state_dict, step_input)
-
-    fields = {
-        "loop_id": state_dict["loop_id"],
-        "iteration": state_dict["iteration"],
-        "step": DesignStep.ARCHITECTURE.value,
-        "content": step_input,
-    }
-    receipt = request_loop_step_approval(fields, approved_by="jane", approval_callback=lambda f: True)
-    new_state_dict = advance_design_loop_step(state_dict, step_input, approval=receipt.to_dict())
-    assert new_state_dict["current_step"] == DesignStep.ANALYSIS.value
 
 
 # ---------------------------------------------------------------------------
