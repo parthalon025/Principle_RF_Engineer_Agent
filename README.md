@@ -65,6 +65,10 @@ Optional:
 - OpenParEM (OpenParEM2D/OpenParEM3D -- source or pre-compiled-binary install only, not
   pip-installable; see simulation/openparem.py)
 - Elmer FEM (ElmerSolver, VectorHelmholtz module) + Gmsh + ElmerGrid
+- Qucs-S / qucsator_rf (manual build from source -- see
+  github.com/ra3xdh/qucsator_rf; the CLI binary this repo's
+  `simulation/qucs.py` shells out to is named `qucsator_rf`, not the bare
+  `qucsator` its upstream project is colloquially called)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
 - LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
@@ -112,7 +116,7 @@ Notable components:
 - gdstk: Boost Software License 1.0 (BSL-1.0)
 - NEC2++: GPL
 - OpenParEM: GPL-3.0-or-later
-- Qucs-S: GPL-2.0
+- Qucs-S / qucsator_rf: GPL-2.0-or-later (see docs/LICENSE_MATRIX.md for the primary-source verification)
 - Elmer (ElmerSolver core, incl. VectorHelmholtz): LGPL-2.1; ElmerGUI/ElmerGrid/ElmerParam: GPL-2.0
 - Gmsh: GPL-2.0-or-later
 - PyAEDT: MIT; requires a legally licensed AEDT installation

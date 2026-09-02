@@ -112,6 +112,7 @@ from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
 from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
+from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
 
 load_dotenv()
 
@@ -786,6 +787,34 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     real openEMS binary -- none is installed in this environment; treat any result as
     unverified end-to-end until it has been run against the real tool at least once."""
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
+
+
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# circuit's shape (variable-length ports/components lists) does not fit the SDK's
+# strict-schema requirement.
+def run_qucs_simulation(circuit: dict, analysis: dict, timeout_s: int = 600) -> dict:
+    """Simulate a lumped-element/transmission-line circuit (a matching network,
+    filter, or feed network -- schematic-level circuit simulation, the free/GPL
+    alternative to Keysight ADS this repo has no adapter for) with Qucs-S's
+    qucsator_rf engine: generate a netlist from structured circuit input (ports
+    with node/impedance, plus R/L/C/TLIN components with node connections -- see
+    simulation.qucs.generate_qucs_netlist for the full shape), run it via
+    qucsator_rf, and parse the FULL native N-port S-parameter matrix out of the
+    result in one run (unlike run_openems_simulation, which only yields the
+    excited port's own column per run). Returns "SIMULATED" provenance, plus a
+    "touchstone_file" (any port count) when the ports are contiguously numbered
+    1..N, ready for correlate_simulated_and_measured/compare_touchstone_files.
+    `analysis` sets the frequency sweep: {"sweep_type": "lin"|"log" (default
+    "lin"), "start_hz", "stop_hz" (both required), "points" (default 201)}.
+    Netlist/dataset format verified against qucsator_rf's own primary source (a
+    real test-suite fixture netlist plus its CLI/netlist-grammar/output-format
+    source -- see simulation/qucs.py's module docstring for the full citation
+    list) but NOT against a real qucsator_rf binary -- none is installed in this
+    environment; treat any result as unverified end-to-end until it has been run
+    against the real tool at least once. IMPORTANT: the real executable this
+    adapter shells out to is named "qucsator_rf", not the bare "qucsator" its
+    upstream project is colloquially called -- see that module docstring for why."""
+    return _run_qucs_simulation(circuit=circuit, analysis=analysis, timeout_s=timeout_s)
 
 
 @function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
@@ -1832,6 +1861,7 @@ _ALL_TOOLS = [
     correlate_simulated_and_measured,
     run_nec2_simulation,
     run_openems_simulation,
+    run_qucs_simulation,
     run_hfss_simulation,
     run_openparem_simulation,
     run_elmer_simulation,
@@ -1944,13 +1974,17 @@ ROLE_SPECS: list[RoleSpec] = [
             "input match (VSWR, return loss), noise figure, Touchstone (.sNp) "
             "network data, S/Z/Y/ABCD two-port parameter conversions, "
             "stability (K-factor, Delta, stability circles), impedance-"
-            "matching synthesis (quarter-wave transformer, L-network), and "
-            "IP3/IM3 linearity. Also gets LTspice circuit simulation "
-            "(run_ltspice_simulation, issue #59) for SPICE-level "
-            "transistor/matching-network circuit validation against a "
-            "vendor device-model library -- the lowest-priority, lowest-"
-            "investment item in this repo's 'ADS alternative' batch (its "
-            "value is vendor-model-library familiarity, not new "
+            "matching synthesis (quarter-wave transformer, L-network), "
+            "IP3/IM3 linearity, and (issue #58) schematic-level circuit "
+            "simulation of a matching network/filter/feed network via "
+            "Qucs-S's qucsator_rf engine (run_qucs_simulation) -- the free/"
+            "GPL alternative to Keysight ADS, returning the full native "
+            "N-port S-parameter matrix from a single run. Also gets LTspice "
+            "circuit simulation (run_ltspice_simulation, issue #59) for "
+            "SPICE-level transistor/matching-network circuit validation "
+            "against a vendor device-model library -- the lowest-priority, "
+            "lowest-investment item in this repo's 'ADS alternative' batch "
+            "(its value is vendor-model-library familiarity, not new "
             "capability). Defer system-chain-level gain/link budgeting to "
             "the systems role."
         ),
@@ -1979,6 +2013,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_input_stability_circle,
             calculate_quarter_wave_transformer_impedance,
             calculate_l_network_match,
+            run_qucs_simulation,
             run_ltspice_simulation,
             search_knowledge,
         ],
@@ -2067,9 +2102,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "only), Elmer FEM VectorHelmholtz (run_elmer_simulation, "
             "issue #64 -- a general multiphysics-ready cross-check with no "
             "native S-parameter/far-field/gain post-processing, see "
-            "simulation/elmer.py), and LTspice (run_ltspice_simulation, "
-            "issue #59) reference results to validate hardware "
-            "against. Use "
+            "simulation/elmer.py), LTspice (run_ltspice_simulation, "
+            "issue #59), and Qucs-S/qucsator_rf circuit simulation "
+            "(run_qucs_simulation, issue #58) reference results to "
+            "validate hardware against. Use "
             "correlate_simulated_and_measured (issue #45) to quantify how "
             "well a simulated result matches a measured one -- common "
             "frequency grid/reference impedance normalization, optional "
@@ -2120,6 +2156,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_cascade_gain,
             run_nec2_simulation,
             run_openems_simulation,
+            run_qucs_simulation,
             run_hfss_simulation,
             run_openparem_simulation,
             run_elmer_simulation,

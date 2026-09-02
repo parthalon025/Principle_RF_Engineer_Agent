@@ -90,12 +90,16 @@ simulation_auto:
   # simulation (issue #59) belongs here, not approval_self_gated: it has
   # no comparable per-run physical/licensed-seat gate -- LTspice is free-
   # of-charge freeware with no workstation-confinement concern like HFSS's
-  # paid AEDT license.
+  # paid AEDT license. run_qucs_simulation (issue #58, Qucs-S/qucsator_rf)
+  # is free/GPL software with no license-confinement concern (unlike
+  # run_ads under approval_required below), matching run_nec2_simulation/
+  # run_openems_simulation exactly.
   - run_nec2_simulation
   - run_openems_simulation
   - run_openparem_simulation
   - run_elmer_simulation
   - run_ltspice_simulation
+  - run_qucs_simulation
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

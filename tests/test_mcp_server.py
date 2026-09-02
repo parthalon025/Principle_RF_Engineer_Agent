@@ -123,10 +123,13 @@ def test_registered_tool_count_matches_old_plus_new():
     # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
     # 1 more (run_openparem_simulation) added by #62, plus 1 more
     # (run_elmer_simulation) added by #64, plus 1 more
-    # (run_ltspice_simulation) added by #59, plus 4 more
+    # (run_ltspice_simulation) added by #59, plus 1 more
+    # (run_qucs_simulation) added by #58, plus 4 more
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by #67.
-    expected = 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 4
+    expected = (
+        11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 4
+    )
     assert len(registered_names) == expected
 
 
