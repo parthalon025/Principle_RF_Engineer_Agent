@@ -16,43 +16,82 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
   (`prompts/principal_engineer.md`), backed by deterministic RF tools
   (`rf_tools/`) and an equivalent standalone MCP server (`mcp_server/`)
   exposing the same tools for other MCP clients.
-- **Core capabilities implemented so far**: wavelength, VSWR, return loss,
-  cascaded gain, cascaded noise figure (Friis), and Touchstone (`.sNp`)
-  network analysis (port count, frequency range, S11/S21 extrema). See
-  `docs/ROADMAP.md` for the much larger list of RF functions (S/Z/Y/ABCD
-  conversions, stability/noise/gain circles, matching networks, link
-  budget, IP2/IP3/P1dB, etc.) still to be added.
+- **Core capabilities implemented so far**: the full deterministic RF
+  calculation suite (`rf_tools/calculations.py`: wavelength, VSWR, return
+  loss, cascaded gain, cascaded noise figure/Friis, S/Z/Y/ABCD conversions,
+  stability/noise/gain circles, matching networks, link budget, IP2/IP3/
+  P1dB) and Touchstone (`.sNp`) network analysis/interpolation/de-embedding/
+  cascading/comparison (`rf_tools/touchstone.py`); a knowledge-ingestion
+  pipeline (`knowledge/`: parse → chunk → provenance-tag → embed → index →
+  hybrid lexical/semantic search, plus automatic per-field-provenanced
+  component extraction from datasheets); a design/decision/verification
+  layer (`designs/`: `create_design`, `record_decision`,
+  `verify_requirement`, design/decision-record retrieval); full-wave
+  simulation dispatch for NEC2++ and openEMS (`simulation/nec2pp.py`,
+  `simulation/openems.py` — both open-source tools the adapters actually
+  shell out to and can run in this environment) and for HFSS/PyAEDT
+  (`simulation/hfss.py` — code is written and citation-sourced against the
+  real PyAEDT API, but gated behind a workstation-confinement check that
+  requires a real licensed AEDT install; it cannot execute, and has never
+  been exercised against real HFSS, in this or any unlicensed environment);
+  simulation/measurement correlation (`rf_tools/correlation.py`);
+  optimization (`optimization/`: parameter sweep, grid search, Bayesian,
+  genetic, gradient); SCPI/VISA instrument adapters for VNA, spectrum
+  analyzer, signal generator, and power meter (`measurement/`,
+  approval-gated per `orchestration/approval.py` — these require real lab
+  hardware and have never been exercised against a real instrument); and an
+  opt-in controlled autonomous design-iteration loop (`orchestration/
+  design_loop.py`, Phase 12; see ADR-0009/0010/0011). All of the above are
+  exposed as tools in both `agent/main.py` and `mcp_server/server.py`
+  (~65 tools total).
 - **Inputs**: plain numeric parameters for calculations; local Touchstone
-  files for network analysis. Datasheets, schematics, and simulator inputs
-  (NEC2++/openEMS/HFSS job files) are handled by the simulation adapters in
-  `simulation/` but the adapters themselves are thin (NEC2++/openEMS shell
-  out to the real tool via `subprocess`; HFSS is an intentionally
-  unimplemented boundary pending a licensed AEDT host — see
-  `simulation/hfss.py`).
+  files for network analysis; uploaded documents (PDF datasheets,
+  standards, textbooks, papers) for knowledge ingestion; structured
+  geometry dicts for simulator jobs.
 - **Correctness bar**: the design principle is that the LLM is never
-  trusted to do RF arithmetic itself — it calls a deterministic tool
-  (`rf_tools/calculations.py`, `rf_tools/touchstone.py`) and every
-  significant result carries a `provenance` tag (`MEASURED`, `SIMULATED`,
-  `CALCULATED`, `MANUFACTURER-SPECIFIED`, `LITERATURE-SUPPORTED`,
-  `INFERRED`, `ASSUMED`, `UNKNOWN`). `tests/` currently covers the
-  calculation and Touchstone-analysis functions; there is no verification
-  corpus yet for the simulator adapters or the agent's end-to-end behavior.
+  trusted to do RF arithmetic itself — it calls a deterministic tool and
+  every significant result carries a `provenance` tag (`MEASURED`,
+  `SIMULATED`, `CALCULATED`, `MANUFACTURER-SPECIFIED`,
+  `LITERATURE-SUPPORTED`, `INFERRED`, `ASSUMED`, `UNKNOWN`). `tests/`
+  covers the calculation, Touchstone, knowledge, and design-layer
+  functions with real fixtures (Postgres integration tests for `knowledge/
+  db.py`/`designs/db.py`, hand-built fakes for the simulator/instrument I/O
+  seams) — but there is still no verification corpus (a golden-query
+  fixture with expected results, and a recall/quality gate run before an
+  embedding-model, chunking, or ranking change ships) for the knowledge
+  pipeline, the simulator adapters, or the agent's end-to-end behavior. See
+  `docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md` for a fuller gap analysis of
+  the knowledge pipeline specifically (embedding-model/version tracking,
+  chunk-level content-hash dedup, and a retrieval-feedback/citation log are
+  also flagged there as not yet built).
 
 ## What's still open
 
 This is a foundation, not a finished system. `docs/BUILD_PLAN.md` and
-`docs/ROADMAP.md` lay out the build order (deterministic math → Touchstone
-→ knowledge base → simulators → measurement correlation → optimization).
-Notably not yet implemented: the RF knowledge base / pgvector ingestion
-pipeline (schema exists in `db/schema.sql`, no ingestion code yet),
-component/manufacturer intelligence, antenna geometry generators, HFSS/ADS
-adapters, instrument (VISA/SCPI) integration, and simulation/measurement
-correlation. Treat anything not listed under "implemented" above as not
-yet built, regardless of what the docs describe as the eventual system.
+`docs/ROADMAP.md` lay out the build order, and — as of this revision —
+Phases 0 through 12 (deterministic math, Touchstone, knowledge, the agent,
+MCP, NEC2++, openEMS, HFSS/PyAEDT, optimization, measurement, correlation,
+and the controlled autonomous loop) each have a code-level implementation;
+see "Surface and scope" above for what actually exists and, for HFSS and
+the instrument adapters specifically, what "implemented" does and doesn't
+mean absent a licensed AEDT host or real lab hardware. Genuinely not yet
+built: antenna/metamaterial-unit-cell geometry generators, a verification/
+eval corpus for the knowledge pipeline and simulator adapters (see above),
+and the design-status transitions between `DRAFT` and the later lifecycle
+states (see **Design** below). Do not infer "not yet built" from
+`docs/ROADMAP.md`'s version numbering (e.g. its "0.6"/"0.7" labels) — that
+document describes an intended sequence, not the actual implementation
+order or current state; check the actual code before assuming a phase is
+unbuilt.
 
 Originally tracked as a `needs-info` scope question in issue #3; that issue
 is resolved by this implementation landing — see the PR that introduced it
-for history.
+for history. A prior revision of this section (before this fix) claimed
+knowledge ingestion, components, decision records, verification, and
+instrument/correlation adapters were unbuilt; that was stale within about
+an hour of being written — see `docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`
+for the session that caught it. Cross-check "what's still open" against the
+actual code before trusting it, the same way that review did.
 
 ## Vocabulary
 
