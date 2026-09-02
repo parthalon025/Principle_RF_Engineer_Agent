@@ -1,0 +1,343 @@
+# Repo-specific pyvisa-sim device definitions (issue #56) -- NOT pyvisa-sim's
+# own bundled generic devices.yaml/default.yaml example. Every dialogue and
+# property below matches one entry from this project's own adapters' real
+# SCPI command vocabulary (each adapter's own DEFAULT_SCPI_COMMANDS dict):
+#   measurement/vna.py                (vna_device)
+#   measurement/spectrum_analyzer.py  (spectrum_analyzer_device)
+#   measurement/signal_generator.py   (signal_generator_device)
+#   measurement/power_meter.py        (power_meter_device)
+# The intent (per this ticket): a developer without a lab bench exercises
+# each adapter's real run_*_measurement/run_*_output function end-to-end
+# against a simulated instrument that speaks these adapters' ACTUAL SCPI
+# vocabulary, so a passing test is genuine evidence the real SCPI
+# parsing/formatting logic works -- not evidence that pyvisa-sim's own
+# generic example instrument works. See tests/test_pyvisa_sim.py.
+#
+# YAML schema/mechanics verified directly against pyvisa-sim's own docs and
+# source (accessed 2026-09-02), not guessed:
+#   - Overall devices/resources structure, `dialogues` (q/r exact-match
+#     pairs, `r` omitted -> no response), `properties` (getter/setter with
+#     PEP3101-style format specs, parsed on the setter side via the
+#     `stringparser` library), `eom` (per interface-type/resource-class
+#     query/response terminators), and `error` (default message for an
+#     unmatched command): pyvisa-sim's own
+#     docs/source/definitions.rst ("Building your own simulated
+#     instruments"), fetched from the pyvisa/pyvisa-sim GitHub `main`
+#     branch, and its own bundled pyvisa_sim/default.yaml example (same
+#     source) for concrete, known-working syntax.
+#   - `delimiter: ""` on every device below is a deliberate, verified
+#     choice, not copied from pyvisa-sim's own examples (which leave it at
+#     the default `";"`): pyvisa_sim/devices.py's Device.write() splits an
+#     incoming message on `self.delimiter` (default `";"`) into MULTIPLE
+#     separately-matched sub-queries, which would break this project's own
+#     `trigger` command (`"INIT:IMM;*WAI"` -- see measurement/vna.py,
+#     measurement/spectrum_analyzer.py, measurement/power_meter.py's shared
+#     DEFAULT_SCPI_COMMANDS["trigger"]), a single literal SCPI command line
+#     this project's adapters always send as ONE write() call, not two
+#     compound queries expecting two combined responses (the use case
+#     pyvisa-sim's default `;`-delimiter splitting is actually for). An
+#     empty `delimiter` makes `self.delimiter` an empty `bytes` object,
+#     which Device.write()'s `if self.delimiter:` treats as falsy, so the
+#     whole message is matched as one literal string instead -- verified by
+#     reading pyvisa_sim/devices.py directly on GitHub, then confirmed
+#     against a real `pyvisa.ResourceManager(f"{this_file}@sim")` run before
+#     this file was relied on by any test.
+#   - Every `setter:` below deliberately omits its own `r:` key (rather than
+#     following pyvisa-sim's own docs' example of `r: OK`), which
+#     pyvisa_sim/parser.py's `_get_triplet` resolves to `NoResponse` --
+#     meaning the simulated device queues NO reply for that command at all.
+#     This matches how this project's adapters actually use these commands:
+#     every one of them is a plain `transport.write(...)` with no
+#     accompanying `transport.read()`/`.query()` (mirroring how a real SCPI
+#     instrument does not reply to a bare "set" command with no trailing
+#     "?"). If a setter instead queued an "OK"-style reply here (as
+#     pyvisa-sim's own docs' example does), that reply would sit unread in
+#     pyvisa-sim's FIFO output-buffer deque (Device._output_buffers) and
+#     would be returned by this device's NEXT unrelated `.query()` call
+#     instead of that query's real answer -- verified directly by reading
+#     Device.write()/Device.read() in pyvisa_sim/devices.py, not assumed.
+#   - `q: "!SOME {:.0f}"`-style setter templates are parsed via the
+#     `stringparser` library (PEP3101 format-mini-language based) rather
+#     than matched as regex/wildcards -- same citation as above. This file
+#     mirrors each adapter's own DEFAULT_SCPI_COMMANDS format-spec choice
+#     (`:.0f` for frequencies/points-as-float commands, `:d` for an
+#     integer-typed command, unqualified `{}`/bare-str for
+#     power_dbm -- see signal_generator_device's `power` property, chosen
+#     to match measurement/signal_generator.py's own
+#     `"POW {power_dbm}"` unformatted template) exactly.
+#   - `@sim` resource-manager resolution and the bare
+#     `pyvisa.ResourceManager()` call's `PYVISA_LIBRARY` env-var fallback:
+#     pyvisa's own `pyvisa/highlevel.py` (`open_visa_library`, which checks
+#     `os.environ["PYVISA_LIBRARY"]` when no explicit specification is
+#     given) and (`get_wrapper_class`, which resolves an "@sim" backend name
+#     to the installed `pyvisa_sim` package's `WRAPPER_CLASS` by pyvisa's
+#     own `pyvisa_<backend>` package-naming convention) -- fetched from the
+#     pyvisa/pyvisa GitHub `main` branch. This is exactly why
+#     measurement/vna.py, measurement/spectrum_analyzer.py,
+#     measurement/signal_generator.py, and measurement/power_meter.py's
+#     bare `pyvisa.ResourceManager()` calls (see each module's
+#     `_real_transport_factory`) need NO code change at all to run against
+#     this fixture: tests/test_pyvisa_sim.py sets `PYVISA_LIBRARY` to
+#     `"<this file>@sim"` before calling each adapter's real
+#     run_*_measurement/run_*_output function.
+#
+# ASRL (serial) INSTR is used as the simulated resource class for all four
+# instruments below -- the exact resource class pyvisa-sim's own
+# definitions.rst example (`ASRL1::INSTR`) and default.yaml both use, and
+# the simplest of the interface types pyvisa-sim implements
+# (pyvisa_sim/sessions/serial.py) that needs no additional VISA-address
+# structure (unlike GPIB's board::primary-address or TCPIP's hostname).
+# This is a resource-string/class choice for the simulated fixture only --
+# it says nothing about what interface type a real instrument on a real
+# bench would use; a real deployment overrides `resource`/the adapter's
+# `*_VISA_RESOURCE` env var with whatever real GPIB/TCPIP/USB address its
+# actual hardware needs, exactly as it already does today.
+
+spec: "1.1"
+
+devices:
+  # ---------------------------------------------------------------------
+  # measurement/vna.py's VnaAdapter -- see its DEFAULT_SCPI_COMMANDS.
+  # tests/test_pyvisa_sim.py drives this with start_hz=2.4e9, stop_hz=2.5e9,
+  # points=3, sparams=["S11","S12","S21","S22"] (full 2-port sweep, so
+  # every select_sparam dialogue below actually gets exercised).
+  # ---------------------------------------------------------------------
+  vna_device:
+    delimiter: ""
+    eom:
+      ASRL INSTR:
+        q: "\r\n"
+        r: "\n"
+    error: ERROR
+    dialogues:
+      - q: "*IDN?"
+        r: "SIMFIXTURE,VNA-SIM-1,SN-VNA-0001,FW1.0"
+      # trigger: DEFAULT_SCPI_COMMANDS["trigger"] == "INIT:IMM;*WAI", sent
+      # as one write() -- see this file's header note on delimiter: "".
+      - q: "INIT:IMM;*WAI"
+      # select_sparam: DEFAULT_SCPI_COMMANDS["select_sparam"] ==
+      # "CALC:PAR:SEL '{sparam}'" -- enumerated per this project's own
+      # supported S-parameter sets (measurement/vna.py's _ONE_PORT/
+      # _TWO_PORT), a plain literal dialogue per value rather than a
+      # templated property, since VnaAdapter.measure() only ever writes
+      # this command (never queries it back), so no getter/setter-with-
+      # memory semantics are needed here.
+      - q: "CALC:PAR:SEL 'S11'"
+      - q: "CALC:PAR:SEL 'S12'"
+      - q: "CALC:PAR:SEL 'S21'"
+      - q: "CALC:PAR:SEL 'S22'"
+      # sdata_query: DEFAULT_SCPI_COMMANDS["sdata_query"] ==
+      # "CALC:DATA? SDATA" -- comma-separated interleaved real,imag pairs,
+      # the exact shape measurement/vna.py's _parse_sdata_response expects
+      # (see that function's docstring/module citation). Fixed regardless
+      # of which S-parameter was most recently selected (pyvisa-sim has no
+      # mechanism to vary one dialogue's response by another property's
+      # state without a shared templated property -- see this file's
+      # header note); real per-sparam differentiation is exercised on the
+      # Python side by measurement/vna.py's own per-sparam dict-keying
+      # loop, not by this fixture. 3 points, matching the test's
+      # points=3.
+      - q: "CALC:DATA? SDATA"
+        r: "0.1,0.01,0.2,0.02,0.3,0.03"
+      # cal_state_query: DEFAULT_SCPI_COMMANDS["cal_state_query"] ==
+      # "SENS:CORR:STAT?".
+      - q: "SENS:CORR:STAT?"
+        r: "1"
+    properties:
+      # freq_start/freq_stop/sweep_points are genuine templated properties
+      # (rather than fixed per-value dialogues) so this fixture exercises
+      # the adapter's REAL format spec (":.0f" / bare int) against
+      # stringparser's parsing of it, not merely a hardcoded string this
+      # one test happens to send.
+      freq_start:
+        default: 0.0
+        setter:
+          # DEFAULT_SCPI_COMMANDS["freq_start"] ==
+          # "SENS:FREQ:STAR {start_hz:.0f}"
+          q: "SENS:FREQ:STAR {:.0f}"
+        specs:
+          type: float
+      freq_stop:
+        default: 0.0
+        setter:
+          # DEFAULT_SCPI_COMMANDS["freq_stop"] ==
+          # "SENS:FREQ:STOP {stop_hz:.0f}"
+          q: "SENS:FREQ:STOP {:.0f}"
+        specs:
+          type: float
+      sweep_points:
+        default: 0
+        setter:
+          # DEFAULT_SCPI_COMMANDS["sweep_points"] ==
+          # "SENS:SWE:POIN {points}" (bare int -- str(int)); ":d" is the
+          # closest stringparser/PEP3101 format spec for "a plain integer".
+          q: "SENS:SWE:POIN {:d}"
+        specs:
+          type: int
+
+  # ---------------------------------------------------------------------
+  # measurement/spectrum_analyzer.py's SpectrumAnalyzerAdapter -- see its
+  # DEFAULT_SCPI_COMMANDS. tests/test_pyvisa_sim.py drives this with
+  # center_hz=1.0e9, span_hz=2.0e8, res_bw_hz=1.0e5, points=4.
+  # ---------------------------------------------------------------------
+  spectrum_analyzer_device:
+    delimiter: ""
+    eom:
+      ASRL INSTR:
+        q: "\r\n"
+        r: "\n"
+    error: ERROR
+    dialogues:
+      - q: "*IDN?"
+        r: "SIMFIXTURE,SA-SIM-1,SN-SA-0001,FW1.0"
+      # trigger: same "INIT:IMM;*WAI" literal as vna_device above.
+      - q: "INIT:IMM;*WAI"
+      # trace_query: DEFAULT_SCPI_COMMANDS["trace_query"] ==
+      # "TRAC:DATA? TRACE1" -- comma-separated real-valued amplitudes
+      # (dBm), the shape measurement/spectrum_analyzer.py's
+      # _parse_trace_response expects. 4 points, matching the test's
+      # points=4, with a distinct peak value (-15.25 at index 2) so the
+      # adapter's own peak-detection (np.argmax) is genuinely exercised
+      # against real parsed data, not merely a flat/ambiguous trace.
+      - q: "TRAC:DATA? TRACE1"
+        r: "-50.0,-42.5,-15.25,-60.0"
+    properties:
+      freq_center:
+        default: 0.0
+        setter:
+          # DEFAULT_SCPI_COMMANDS["freq_center"] == "FREQ:CENT {center_hz:.0f}"
+          q: "FREQ:CENT {:.0f}"
+        specs:
+          type: float
+      freq_span:
+        default: 0.0
+        setter:
+          # DEFAULT_SCPI_COMMANDS["freq_span"] == "FREQ:SPAN {span_hz:.0f}"
+          q: "FREQ:SPAN {:.0f}"
+        specs:
+          type: float
+      res_bandwidth:
+        default: 0.0
+        setter:
+          # DEFAULT_SCPI_COMMANDS["res_bandwidth"] == "BAND:RES {res_bw_hz:.0f}"
+          q: "BAND:RES {:.0f}"
+        specs:
+          type: float
+
+  # ---------------------------------------------------------------------
+  # measurement/signal_generator.py's SignalGeneratorAdapter -- see its
+  # DEFAULT_SCPI_COMMANDS. tests/test_pyvisa_sim.py drives this with
+  # frequency_hz=2.45e9, power_dbm=5.0, output_on=True.
+  # ---------------------------------------------------------------------
+  signal_generator_device:
+    delimiter: ""
+    eom:
+      ASRL INSTR:
+        q: "\r\n"
+        r: "\n"
+    error: ERROR
+    dialogues:
+      - q: "*IDN?"
+        r: "SIMFIXTURE,SIGGEN-SIM-1,SN-SG-0001,FW1.0"
+      # output_on/output_off: DEFAULT_SCPI_COMMANDS["output_on"]/
+      # ["output_off"] == "OUTP:STAT ON" / "OUTP:STAT OFF" -- fixed
+      # literals (no format placeholder in either), so modeled as two
+      # plain dialogues rather than one templated property (pyvisa-sim's
+      # Component.add_property only accepts a single setter template per
+      # property -- see pyvisa_sim/component.py -- which cannot represent
+      # two independent literal commands).
+      - q: "OUTP:STAT ON"
+      - q: "OUTP:STAT OFF"
+      # output_query: DEFAULT_SCPI_COMMANDS["output_query"] ==
+      # "OUTP:STAT?" -- a fixed "1" (ON) readback rather than a genuinely
+      # stateful property, for the same reason (output_on/off aren't a
+      # single templated setter this fixture could track state through);
+      # this project's own adapter already treats this readback as
+      # best-effort/non-load-bearing (see SignalGeneratorAdapter.measure's
+      # try/except around it), which this fixture's fixed-value simplicity
+      # matches honestly rather than papering over.
+      - q: "OUTP:STAT?"
+        r: "1"
+    properties:
+      # frequency/power ARE genuinely stateful templated properties (both
+      # freq_set/freq_query and power_set/power_query share one property
+      # each), since each is backed by exactly one setter template --
+      # unlike output_on/off above -- so a query after a set genuinely
+      # reads back what was just set, exercising real state round-trip.
+      frequency:
+        default: 0.0
+        getter:
+          # DEFAULT_SCPI_COMMANDS["freq_query"] == "FREQ?"
+          q: "FREQ?"
+          r: "{:.0f}"
+        setter:
+          # DEFAULT_SCPI_COMMANDS["freq_set"] == "FREQ {frequency_hz:.0f}"
+          q: "FREQ {:.0f}"
+        specs:
+          type: float
+      power:
+        default: 0.0
+        getter:
+          # DEFAULT_SCPI_COMMANDS["power_query"] == "POW?"
+          q: "POW?"
+          r: "{:.1f}"
+        setter:
+          # DEFAULT_SCPI_COMMANDS["power_set"] == "POW {power_dbm}" (bare
+          # str(float) -- e.g. str(5.0) == "5.0", one decimal digit, which
+          # is why tests/test_pyvisa_sim.py's signal-generator test uses
+          # power_dbm=5.0 specifically: this fixture's "{:.1f}" setter
+          # template must match the EXACT text the adapter's unformatted
+          # `{power_dbm}` produces, and Python's bare str(float) is not
+          # representable by one single fixed PEP3101 format spec for
+          # every possible float -- see measurement/signal_generator.py's
+          # own vendor-variability caveat on this same
+          # unformatted-power-argument choice.
+          q: "POW {:.1f}"
+        specs:
+          type: float
+
+  # ---------------------------------------------------------------------
+  # measurement/power_meter.py's PowerMeterAdapter -- see its
+  # DEFAULT_SCPI_COMMANDS. tests/test_pyvisa_sim.py drives this with
+  # frequency_hz=1.5e9.
+  # ---------------------------------------------------------------------
+  power_meter_device:
+    delimiter: ""
+    eom:
+      ASRL INSTR:
+        q: "\r\n"
+        r: "\n"
+    error: ERROR
+    dialogues:
+      - q: "*IDN?"
+        r: "SIMFIXTURE,PWRMTR-SIM-1,SN-PM-0001,FW1.0"
+      # trigger: same "INIT:IMM;*WAI" literal as vna_device/
+      # spectrum_analyzer_device above.
+      - q: "INIT:IMM;*WAI"
+      # fetch_query: DEFAULT_SCPI_COMMANDS["fetch_query"] == "FETC?" -- a
+      # single ASCII float, the shape measurement/power_meter.py's
+      # _parse_power_reading expects.
+      - q: "FETC?"
+        r: "-12.34"
+      # cal_factor_query: DEFAULT_SCPI_COMMANDS["cal_factor_query"] ==
+      # "SENS:CORR:CFAC?".
+      - q: "SENS:CORR:CFAC?"
+        r: "0.98"
+    properties:
+      freq_set:
+        default: 0.0
+        setter:
+          # DEFAULT_SCPI_COMMANDS["freq_set"] == "SENS:FREQ {frequency_hz:.0f}"
+          q: "SENS:FREQ {:.0f}"
+        specs:
+          type: float
+
+resources:
+  ASRL1::INSTR:
+    device: vna_device
+  ASRL2::INSTR:
+    device: spectrum_analyzer_device
+  ASRL3::INSTR:
+    device: signal_generator_device
+  ASRL4::INSTR:
+    device: power_meter_device
