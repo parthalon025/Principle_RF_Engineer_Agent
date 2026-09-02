@@ -58,9 +58,10 @@ def test_principal_role_has_broad_access():
     assert "analyze_touchstone_file" in names
     # principal is the coordinating role and is deliberately unscoped: the
     # 11 pre-#36 calculation/knowledge tools, the 35 Phase 1-2 tools added
-    # by issue #36, plus 5 consult_<role>_role delegation tools (issue #35),
-    # one per non-principal specialist.
-    assert len(names) == 51
+    # by issue #36, the search_design_records tool added by issue #37, plus
+    # 5 consult_<role>_role delegation tools (issue #35), one per
+    # non-principal specialist.
+    assert len(names) == 52
 
 
 def test_principal_module_alias_matches_registry():
@@ -113,6 +114,16 @@ def test_verification_role_gets_knowledge_auditing_tools():
     assert "calculate_wavelength" not in names
     # authoring belongs to systems, not verification
     assert "ingest_document" not in names
+
+
+def test_search_design_records_is_scoped_to_principal_and_verification():
+    # issue #37: precedent lookup is a knowledge-audit concern, same family
+    # as read_document/extract_components -- narrower than search_knowledge,
+    # which every role shares.
+    assert "search_design_records" in _tool_names(ROLES["principal"])
+    assert "search_design_records" in _tool_names(ROLES["verification"])
+    for key in ("systems", "microwave", "antenna", "test"):
+        assert "search_design_records" not in _tool_names(ROLES[key])
 
 
 # ---------------------------------------------------------------------------

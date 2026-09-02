@@ -7,6 +7,13 @@ index) and `search_semantic` against each of the two embedding columns --
 into one ranked list, each result tagged with which kind of match it is.
 No logic of its own beyond that composition and the final ordering.
 
+Ticket #37 adds `source_types` (threaded straight through to `knowledge.db`'s
+optional `source_types` filter) and `search_design_records`, a thin wrapper
+around `search_knowledge` pinned to `SourceType.DESIGN_RECORD` -- so an
+engineer (or an external MCP client) can look up a prior design/decision
+record before proposing a new one, reusing this module's existing ranking
+and match-type semantics rather than duplicating them.
+
 Query embedding: computed by this function itself (via ticket #9's same two
 adapters, `knowledge.embedding._embed_via_local` / `_embed_via_external`),
 not required as an argument from the caller. `agent/main.py` exposes no
@@ -40,6 +47,7 @@ from typing import Any
 
 from knowledge import db
 from knowledge.embedding import _embed_via_external, _embed_via_local
+from knowledge.models import SourceType
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
 
@@ -66,6 +74,7 @@ def search_knowledge(
     document_id: int | None = None,
     limit: int = 20,
     *,
+    source_types: list[SourceType] | None = None,
     query_embedding_external: list[float] | None = None,
     query_embedding_local: list[float] | None = None,
     embed_local: EmbedFn = _embed_via_local,
@@ -77,23 +86,37 @@ def search_knowledge(
 
     Defaults to `documents.status = 'ACTIVE'` only. Pass `document_id` to
     search a specific document/revision instead -- including a SUPERSEDED
-    one (ADR-0002) -- regardless of its status.
+    one (ADR-0002) -- regardless of its status. Pass `source_types` (ticket
+    #37) to further restrict results to documents of those source types
+    (e.g. `[SourceType.DESIGN_RECORD]`); None (default) searches every
+    source type, same as before this filter existed -- see
+    `search_design_records` below for the pinned convenience wrapper.
 
     Ordering: `authority_rank` ascending first, then match_type group, then
     each match's own native score descending within its group -- never a
     single blended score across match types (see module docstring).
     """
+    source_type_values = (
+        [st.value for st in source_types] if source_types is not None else None
+    )
     conn = db.get_connection()
     try:
         results: list[dict[str, Any]] = []
 
-        for row in db.search_lexical(conn, query_text, document_id=document_id, limit=limit):
+        for row in db.search_lexical(
+            conn, query_text, document_id=document_id, source_types=source_type_values, limit=limit
+        ):
             results.append({**row, "match_type": "lexical"})
 
         ext_vector = _query_vector(query_embedding_external, query_text, embed_external)
         if ext_vector is not None:
             rows = db.search_semantic(
-                conn, "embedding", ext_vector, document_id=document_id, limit=limit
+                conn,
+                "embedding",
+                ext_vector,
+                document_id=document_id,
+                source_types=source_type_values,
+                limit=limit,
             )
             for row in rows:
                 results.append({**row, "match_type": "semantic_external"})
@@ -101,7 +124,12 @@ def search_knowledge(
         local_vector = _query_vector(query_embedding_local, query_text, embed_local)
         if local_vector is not None:
             rows = db.search_semantic(
-                conn, "embedding_local", local_vector, document_id=document_id, limit=limit
+                conn,
+                "embedding_local",
+                local_vector,
+                document_id=document_id,
+                source_types=source_type_values,
+                limit=limit,
             )
             for row in rows:
                 results.append({**row, "match_type": "semantic_local"})
@@ -113,3 +141,37 @@ def search_knowledge(
 
     results.sort(key=sort_key)
     return results[:limit]
+
+
+def search_design_records(
+    query_text: str,
+    document_id: int | None = None,
+    limit: int = 20,
+    *,
+    query_embedding_external: list[float] | None = None,
+    query_embedding_local: list[float] | None = None,
+    embed_local: EmbedFn = _embed_via_local,
+    embed_external: EmbedFn = _embed_via_external,
+) -> list[dict[str, Any]]:
+    """Search for prior design/decision records relevant to `query_text` --
+    e.g. by component, frequency band, or design pattern -- so an engineer
+    can find precedent before proposing a new design (ticket #37).
+
+    A thin wrapper around `search_knowledge`, pinned to
+    `source_types=[SourceType.DESIGN_RECORD]`: same ranking, match-type
+    tagging, and ACTIVE-by-default/`document_id`-pinning semantics, just
+    scoped to documents ingested with `source_type="design_record"`
+    (internally-authored design notes and decision write-ups -- CONTEXT.md's
+    "internal engineering history" evidence tier) rather than every source
+    type. No separate query path or duplicated ranking logic.
+    """
+    return search_knowledge(
+        query_text,
+        document_id=document_id,
+        limit=limit,
+        source_types=[SourceType.DESIGN_RECORD],
+        query_embedding_external=query_embedding_external,
+        query_embedding_local=query_embedding_local,
+        embed_local=embed_local,
+        embed_external=embed_external,
+    )

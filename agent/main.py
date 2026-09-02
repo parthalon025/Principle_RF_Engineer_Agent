@@ -11,6 +11,7 @@ from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
+from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from rf_tools.calculations import (
     abcd_to_s,
@@ -565,6 +566,16 @@ def search_knowledge(query_text: str, document_id: int | None = None, limit: int
 
 
 @function_tool
+def search_design_records(query_text: str, document_id: int | None = None, limit: int = 20) -> list:
+    """Search for prior design/decision records relevant to query_text -- e.g. by
+    component, frequency band, or design pattern -- so you can find precedent before
+    proposing a new design instead of starting from nothing. A thin wrapper around
+    search_knowledge scoped to source_type="design_record" documents (internally-authored
+    design notes and decision write-ups); same ranking and match_type semantics."""
+    return _search_design_records(query_text=query_text, document_id=document_id, limit=limit)
+
+
+@function_tool
 def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
     """Extract structured component specifications from a stored datasheet/application_note
     and upsert a components row per part, keyed by (manufacturer, part_number). Runs
@@ -643,17 +654,24 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
 #                   frame. Gets the knowledge-base *auditing* tools
 #                   (read_document, extract_components) that check what's
 #                   already in the knowledge base against its source and
-#                   provenance. Does NOT get ingest_document/index_document
-#                   (authoring is systems' job -- verification checks the
-#                   result, it doesn't add to the store) or any calculation
-#                   tool (verification audits documented/extracted claims
-#                   and their provenance, it does not itself run RF
-#                   arithmetic).
+#                   provenance, plus (issue #37) search_design_records --
+#                   looking up whether a prior design/decision record exists
+#                   for a given precedent is itself a knowledge-audit
+#                   question, same family as read_document/extract_components,
+#                   not an authoring action. Does NOT get ingest_document/
+#                   index_document (authoring is systems' job -- verification
+#                   checks the result, it doesn't add to the store) or any
+#                   calculation tool (verification audits documented/
+#                   extracted claims and their provenance, it does not
+#                   itself run RF arithmetic).
 #
 #   search_knowledge is shared by every role: literature lookup is useful
 #   regardless of domain, and giving every role its own copy of the same
 #   tool object is the intended (not accidental) overlap the ticket calls
-#   out as fine.
+#   out as fine. search_design_records (issue #37) is scoped more narrowly
+#   than search_knowledge -- it is a knowledge-audit tool (see verification,
+#   above), so it is only on the principal (which gets every tool) and
+#   verification, not every specialist.
 # ---------------------------------------------------------------------------
 
 _ALL_TOOLS = [
@@ -702,6 +720,7 @@ _ALL_TOOLS = [
     index_document,
     read_document,
     search_knowledge,
+    search_design_records,
     extract_components,
 ]
 
@@ -861,15 +880,17 @@ ROLE_SPECS: list[RoleSpec] = [
         display_name="Verification Engineer",
         domain_note=(
             "You focus on knowledge and provenance checking: reading a stored "
-            "document's full metadata and chunks, and extracting/auditing "
+            "document's full metadata and chunks, extracting/auditing "
             "structured component specifications with their per-field "
-            "provenance. You do not run RF calculations yourself and you do "
+            "provenance, and looking up prior design/decision records for "
+            "precedent. You do not run RF calculations yourself and you do "
             "not add new documents to the knowledge base -- you audit what is "
             "already there."
         ),
         tools=[
             read_document,
             search_knowledge,
+            search_design_records,
             extract_components,
         ],
     ),

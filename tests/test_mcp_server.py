@@ -104,8 +104,9 @@ def test_all_new_tools_are_registered():
 def test_registered_tool_count_matches_old_plus_new():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     # 11 tools wired before issue #36 (6 calc/touchstone + 5 knowledge) plus
-    # the 35 new ones this ticket adds.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES)
+    # the 35 new ones this ticket adds, plus 1 more (search_design_records)
+    # added by issue #37.
+    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1
 
 
 # ---------------------------------------------------------------------------

@@ -73,9 +73,9 @@ for history.
   engineering history > general web material > LLM inference. Higher wins
   when evidence conflicts.
 - **Source type**: the classification of an ingested knowledge document —
-  `datasheet`, `application_note`, `standard`, `textbook`, or `paper`.
-  Fixed at ingest time; determines the document's default provenance and
-  authority rank.
+  `datasheet`, `application_note`, `standard`, `textbook`, `paper`, or
+  `design_record`. Fixed at ingest time; determines the document's default
+  provenance and authority rank.
 - **Authority rank**: a per-document integer position in the evidence
   hierarchy, defaulted from source type (datasheet/application_note sit at
   the manufacturer-spec tier; standard/textbook/paper sit at the
@@ -124,6 +124,21 @@ for history.
   gain) with rationale tracing back to CALCULATED results and/or
   LITERATURE-SUPPORTED sources. Not a fabrication-ready CAD file or mesh;
   a human still builds the prototype from it.
+- **Design/decision record**: an internally-authored write-up of what was
+  decided for a prior design, why, and what alternatives were considered —
+  ingested as an ordinary `documents` row (`source_type = design_record`,
+  CONTEXT.md: Source type) through the same `ingest_document` pipeline as
+  any other document, and retrieved via `search_design_records`, a
+  `search_knowledge` wrapper scoped to that source type — so a design can be
+  checked against precedent before it's proposed. Sits at the "internal
+  engineering history" evidence tier (see Evidence hierarchy above): below
+  authoritative reference, since it is the team's own experience rather than
+  a published authority.
+  _Avoid_: conflating with the `decision_records` table (`db/schema.sql`) —
+  that table tracks one specific design's own approval-gated decisions
+  (`design_id`, `approval_status`) as the design is being made; a
+  design/decision record is a separate, searchable knowledge-base document
+  about a *past* design, consulted for precedent, not an approval workflow.
 - **Test iteration**: evaluating a physical prototype's measured data (a
   Touchstone file from bench/range testing) against the customer
   requirement it was built to meet, and recommending specific design

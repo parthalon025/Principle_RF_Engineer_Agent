@@ -14,13 +14,25 @@ from enum import StrEnum
 
 
 class SourceType(StrEnum):
-    """Classification of an ingested knowledge document (CONTEXT.md: Source type)."""
+    """Classification of an ingested knowledge document (CONTEXT.md: Source type).
+
+    Ticket #37 adds `DESIGN_RECORD`: an internally-authored design/decision
+    write-up (what was decided, why, and for what design), ingested through
+    the same `ingest_document` pipeline as any other document -- not a new
+    table. It sits at CONTEXT.md's "internal engineering history" evidence
+    tier (see `knowledge/provenance.py`), distinct from both the
+    manufacturer-spec tier (datasheet/application_note) and the
+    authoritative-reference tier (standard/textbook/paper): it is the
+    engineering team's own precedent, not a manufacturer's or a published
+    authority's.
+    """
 
     DATASHEET = "datasheet"
     APPLICATION_NOTE = "application_note"
     STANDARD = "standard"
     TEXTBOOK = "textbook"
     PAPER = "paper"
+    DESIGN_RECORD = "design_record"
 
 
 class Classification(StrEnum):

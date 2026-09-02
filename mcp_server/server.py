@@ -5,6 +5,7 @@ from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.read import read_document as _read_document
+from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from rf_tools.calculations import (
     abcd_to_s,
@@ -545,6 +546,15 @@ def search_knowledge(query_text: str, document_id: int | None = None, limit: int
     Defaults to ACTIVE documents only; pass document_id to search a specific
     document/revision (including a SUPERSEDED one) instead."""
     return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
+
+
+@mcp.tool()
+def search_design_records(query_text: str, document_id: int | None = None, limit: int = 20) -> list:
+    """Search for prior design/decision records relevant to query_text -- e.g. by
+    component, frequency band, or design pattern -- to find precedent before proposing
+    a new design. A thin wrapper around search_knowledge scoped to
+    source_type="design_record" documents; same ranking and match_type semantics."""
+    return _search_design_records(query_text=query_text, document_id=document_id, limit=limit)
 
 
 @mcp.tool()
