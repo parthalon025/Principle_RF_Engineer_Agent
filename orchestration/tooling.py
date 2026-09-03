@@ -85,21 +85,35 @@ from .design_loop import (
 
 # LoopDecision.step (a DesignStep value) -> the real function name that
 # produced its result, for engineering_results.tool_name -- see
-# design_loop.py's own module docstring for which Phase 1/6/9/10/11
-# function each step calls. Deliberately NOT reusing designs/provenance.py's
+# design_loop.py's own module docstring for which Phase 1/6/9/11 function
+# each step calls. Deliberately NOT reusing designs/provenance.py's
 # tool-name table: these are the design loop's own internal function
 # names (patch_resonant_frequency_hz, run_nec2_simulation, ...), a
 # different vocabulary than the ~65 agent/MCP tool names that table maps,
 # and provenance for every one of these is passed explicitly from the
 # loop's own already-computed LoopDecision.provenance (docs/adr/0011),
 # never looked up from this table.
+#
+# MEASUREMENT maps to record_external_measurement (issue #89/ADR-0013).
+# Issue #89 briefly needed a result-inspecting discriminator here, because
+# _handle_measurement could route to either the live instrument or an
+# externally-obtained Touchstone file and the step alone no longer said
+# which. Ticket #90 removed the instrument-control package, making the
+# external path the ONLY one _handle_measurement can take, so a straight
+# per-step lookup is once again sufficient.
 _STEP_TO_TOOL_NAME: dict[str, str] = {
     DesignStep.ANALYSIS.value: "patch_resonant_frequency_hz",
     DesignStep.SIMULATION.value: "run_nec2_simulation",
     DesignStep.OPTIMIZATION.value: "optimize_patch_length_for_target_frequency",
-    DesignStep.MEASUREMENT.value: "run_vna_measurement",
+    DesignStep.MEASUREMENT.value: "record_external_measurement",
     DesignStep.CORRELATION.value: "correlate_simulation_measurement",
 }
+
+
+def _tool_name_for(decision: LoopDecision) -> str:
+    """The real function name that produced `decision`'s result, for
+    `engineering_results.tool_name` -- a straight per-step lookup."""
+    return _STEP_TO_TOOL_NAME[decision.step]
 
 # LoopDecision.kind values that carry a computed result, bound for
 # engineering_results -- everything else (architecture_decision,
@@ -206,7 +220,7 @@ def _flush_target_for(
             designs_db.record_engineering_result,
             {
                 "design_id": design_id,
-                "tool_name": _STEP_TO_TOOL_NAME[decision.step],
+                "tool_name": _tool_name_for(decision),
                 "value": decision.result,
                 "provenance": decision.provenance,
             },

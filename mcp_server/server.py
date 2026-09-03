@@ -4,6 +4,13 @@ from typing import Any
 import numpy as np
 from mcp.server.fastmcp import FastMCP
 
+from designs.requirement_targets import confirm_requirement_target as _confirm_requirement_target
+from designs.requirement_targets import (
+    mark_requirement_unscoreable as _mark_requirement_unscoreable,
+)
+from designs.requirement_targets import (
+    propose_requirement_target as _propose_requirement_target,
+)
 from designs.service import create_design as _create_design
 from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
@@ -22,26 +29,12 @@ from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
-from measurement.power_meter import (
-    request_power_meter_measurement_approval as _request_power_meter_measurement_approval,
-)
-from measurement.power_meter import run_power_meter_measurement as _run_power_meter_measurement
-from measurement.signal_generator import (
-    request_signal_generator_output_approval as _request_signal_generator_output_approval,
-)
-from measurement.signal_generator import run_signal_generator_output as _run_signal_generator_output
-from measurement.spectrum_analyzer import (
-    request_spectrum_analyzer_measurement_approval as _request_sa_measurement_approval,
-)
-from measurement.spectrum_analyzer import (
-    run_spectrum_analyzer_measurement as _run_sa_measurement,
-)
-from measurement.vna import request_vna_measurement_approval as _request_vna_measurement_approval
-from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
 from orchestration.policy import assert_all_tools_categorized
+from orchestration.solver import run_candidate_search as _run_candidate_search
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
@@ -632,13 +625,14 @@ def correlate_simulated_and_measured(
     fixture_path is given (reusing deembed_touchstone -- SKIPPED, and said so in the
     result, when omitted), and returns a quantified per-S-parameter comparison, not a
     bare pass/fail. `simulated`/`measured` each accept a dict shaped like
-    measure_vna_s_parameters' output (frequency_hz/s_parameters/z0), or one carrying a
-    "touchstone_file" path -- see rf_tools/correlation.py's module docstring for exactly
-    which of run_nec2_simulation's/run_openems_simulation's current outputs this can and
-    cannot use yet (NEC2++'s single-frequency impedance and openEMS's stubbed
-    S-parameters are both honestly rejected, not fabricated from). Temperature
-    normalization is a documented no-op unless both inputs happen to carry a
-    "temperature_c" field, since no current simulator/instrument adapter populates one --
+    measurement/external.py's record_external_measurement output
+    (frequency_hz/s_parameters/z0), or one carrying a "touchstone_file" path -- see
+    rf_tools/correlation.py's module docstring for exactly which of run_nec2_simulation's/
+    run_openems_simulation's current outputs this can and cannot use yet (NEC2++'s
+    single-frequency impedance and openEMS's stubbed S-parameters are both honestly
+    rejected, not fabricated from). Temperature normalization is a documented no-op
+    unless both inputs happen to carry a "temperature_c" field, since no current
+    simulator/external-measurement source populates one --
     see the returned temperature_note. Returns "CALCULATED" provenance for the
     correlation result itself, alongside the input results' own SIMULATED/MEASURED
     provenance tags."""
@@ -1081,277 +1075,6 @@ def run_meep_simulation(
     )
 
 
-# ---------------------------------------------------------------------------
-# VNA measurement (issue #43, Phase 10 ticket 1 of 2) -- TWO separate
-# tools, not one with a boolean flag, mirroring measurement/base.py's
-# structural approval-gate design and agent/main.py's same split. See
-# measurement/base.py's module docstring for the full approval-gate design.
-#
-# request_vna_measurement_approval below ALWAYS raises when actually
-# invoked through this tool surface: no real human-facing approval
-# UI/workflow is wired into this codebase yet, and a Python
-# approval_callback cannot cross this JSON tool-call boundary. Physical lab
-# instruments are never controlled autonomously in this project (README.md,
-# docs/BUILD_PLAN.md's Phase 10 "Physical control remains
-# approval-required", docs/SECURITY.md).
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool()
-def request_vna_measurement_approval(
-    resource: str,
-    start_hz: float,
-    stop_hz: float,
-    points: int = 201,
-    sparams: list[str] | None = None,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    ANY VNA S-parameter measurement can physically actuate a real
-    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no
-    instrument I/O. On success, returns an approval receipt (a plain dict)
-    to pass UNCHANGED as measure_vna_s_parameters' `approval` argument, for
-    THIS EXACT resource/start_hz/stop_hz/points/sparams combination.
-    CURRENTLY ALWAYS RAISES: no real human-facing approval workflow is
-    wired into this codebase yet."""
-    return _request_vna_measurement_approval(
-        resource=resource,
-        start_hz=start_hz,
-        stop_hz=stop_hz,
-        points=points,
-        sparams=sparams,
-        approved_by=approved_by or None,
-    )
-
-
-@mcp.tool()
-def measure_vna_s_parameters(
-    resource: str,
-    start_hz: float,
-    stop_hz: float,
-    approval: dict,
-    points: int = 201,
-    sparams: list[str] | None = None,
-    z0: float = 50.0,
-    calibration: dict | None = None,
-) -> dict:
-    """Perform a real VNA S-parameter measurement over SCPI/VISA, GIVEN a
-    valid approval receipt already obtained from a separate, prior call to
-    request_vna_measurement_approval for this EXACT resource/start_hz/
-    stop_hz/points/sparams combination. Returns a "MEASURED"-provenance
-    result with instrument identity and calibration metadata attached,
-    structured Touchstone-compatibly (an in-memory skrf.Network is built
-    from the parsed data -- see measurement/vna.py). Refuses to run
-    without ALL of: ALLOW_INSTRUMENT_CONTROL=true, a configured VISA
-    resource, pyvisa installed, AND a cryptographically valid approval
-    receipt for this exact request. Exact SCPI command syntax is
-    documented, generic, and vendor-variable (see measurement/vna.py's
-    module docstring); NOT verified against any real instrument here."""
-    return _run_vna_measurement(
-        resource=resource,
-        start_hz=start_hz,
-        stop_hz=stop_hz,
-        approval=approval,
-        points=points,
-        sparams=sparams,
-        z0=z0,
-        calibration=calibration,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Spectrum analyzer, signal generator, and power meter measurement (issue
-# #44, Phase 10 ticket 2 of 2) -- three MORE instrument classes, each
-# wired as TWO separate tools (an approval-request tool + a measure/
-# actuate tool), mirroring the VNA tools above and measurement/base.py's
-# structural approval-gate design, unmodified. See measurement/
-# spectrum_analyzer.py, measurement/signal_generator.py, and measurement/
-# power_meter.py's module docstrings for the SCPI command citations and
-# vendor-variability caveats.
-#
-# The signal generator tools are the one pair of these six that actively
-# commands RF output onto the physical world -- its approval fingerprint
-# deliberately includes power_dbm and output_on, not just frequency_hz
-# (see measurement/signal_generator.py's module docstring).
-#
-# Every request_*_approval tool below ALWAYS raises when actually invoked
-# through this tool surface: no real human-facing approval UI/workflow is
-# wired into this codebase yet, and a Python approval_callback cannot cross
-# this JSON tool-call boundary. Physical lab instruments are never
-# controlled autonomously in this project (README.md, docs/BUILD_PLAN.md's
-# Phase 10 "Physical control remains approval-required", docs/SECURITY.md).
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool()
-def request_spectrum_analyzer_measurement_approval(
-    resource: str,
-    center_hz: float,
-    span_hz: float,
-    res_bw_hz: float | None = None,
-    points: int = 401,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    ANY spectrum analyzer trace measurement can physically actuate a real
-    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no
-    instrument I/O. On success, returns an approval receipt (a plain dict)
-    to pass UNCHANGED as measure_spectrum_analyzer_trace's `approval`
-    argument, for THIS EXACT resource/center_hz/span_hz/res_bw_hz/points
-    combination. CURRENTLY ALWAYS RAISES: no real human-facing approval
-    workflow is wired into this codebase yet."""
-    return _request_sa_measurement_approval(
-        resource=resource,
-        center_hz=center_hz,
-        span_hz=span_hz,
-        res_bw_hz=res_bw_hz,
-        points=points,
-        approved_by=approved_by or None,
-    )
-
-
-@mcp.tool()
-def measure_spectrum_analyzer_trace(
-    resource: str,
-    center_hz: float,
-    span_hz: float,
-    approval: dict,
-    res_bw_hz: float | None = None,
-    points: int = 401,
-    calibration: dict | None = None,
-) -> dict:
-    """Perform a real spectrum analyzer trace measurement over SCPI/VISA,
-    GIVEN a valid approval receipt already obtained from a separate, prior
-    call to request_spectrum_analyzer_measurement_approval for this EXACT
-    resource/center_hz/span_hz/res_bw_hz/points combination. Returns a
-    "MEASURED"-provenance result (amplitude-vs-frequency trace) with
-    instrument identity and calibration metadata attached (see
-    measurement/spectrum_analyzer.py). Refuses to run without ALL of:
-    ALLOW_INSTRUMENT_CONTROL=true, a configured VISA resource, pyvisa
-    installed, AND a cryptographically valid approval receipt for this
-    exact request. Exact SCPI command syntax is documented, generic, and
-    vendor-variable (see measurement/spectrum_analyzer.py's module
-    docstring); NOT verified against any real instrument here."""
-    return _run_sa_measurement(
-        resource=resource,
-        center_hz=center_hz,
-        span_hz=span_hz,
-        approval=approval,
-        res_bw_hz=res_bw_hz,
-        points=points,
-        calibration=calibration,
-    )
-
-
-@mcp.tool()
-def request_signal_generator_output_approval(
-    resource: str,
-    frequency_hz: float,
-    power_dbm: float,
-    output_on: bool = True,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    a signal generator can be commanded to output RF power onto a real
-    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no RF
-    output. On success, returns an approval receipt (a plain dict) to pass
-    UNCHANGED as set_signal_generator_output's `approval` argument, for
-    THIS EXACT resource/frequency_hz/power_dbm/output_on combination -- an
-    approval requested for a different frequency, power level, OR on/off
-    state is rejected there (see measurement/signal_generator.py's module
-    docstring: a signal generator actively outputs RF power, so this
-    fingerprint is held to be at least as strict as the VNA adapter's).
-    CURRENTLY ALWAYS RAISES: no real human-facing approval workflow is
-    wired into this codebase yet."""
-    return _request_signal_generator_output_approval(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        power_dbm=power_dbm,
-        output_on=output_on,
-        approved_by=approved_by or None,
-    )
-
-
-@mcp.tool()
-def set_signal_generator_output(
-    resource: str,
-    frequency_hz: float,
-    power_dbm: float,
-    approval: dict,
-    output_on: bool = True,
-) -> dict:
-    """Command a real signal generator's output frequency/power/on-off
-    state over SCPI/VISA, GIVEN a valid approval receipt already obtained
-    from a separate, prior call to request_signal_generator_output_approval
-    for this EXACT resource/frequency_hz/power_dbm/output_on combination.
-    Returns a "MEASURED"-provenance result confirming the actuated state
-    plus best-effort instrument readback (see measurement/
-    signal_generator.py). Refuses to run without ALL of: ALLOW_INSTRUMENT_
-    CONTROL=true, a configured VISA resource, pyvisa installed, AND a
-    cryptographically valid approval receipt for this EXACT
-    frequency/power/output-on-off combination -- this is the one tool pair
-    in this project that commands a physical instrument to actively output
-    RF power rather than merely observe. Exact SCPI command syntax is
-    documented, generic, and vendor-variable (see measurement/
-    signal_generator.py's module docstring); NOT verified against any real
-    instrument here."""
-    return _run_signal_generator_output(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        power_dbm=power_dbm,
-        approval=approval,
-        output_on=output_on,
-    )
-
-
-@mcp.tool()
-def request_power_meter_measurement_approval(
-    resource: str,
-    frequency_hz: float,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    ANY RF power meter reading can physically actuate a real instrument.
-    Does nothing dangerous itself -- no SCPI, no VISA, no instrument I/O.
-    On success, returns an approval receipt (a plain dict) to pass
-    UNCHANGED as measure_power_meter_reading's `approval` argument, for
-    THIS EXACT resource/frequency_hz combination. CURRENTLY ALWAYS RAISES:
-    no real human-facing approval workflow is wired into this codebase
-    yet."""
-    return _request_power_meter_measurement_approval(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        approved_by=approved_by or None,
-    )
-
-
-@mcp.tool()
-def measure_power_meter_reading(
-    resource: str,
-    frequency_hz: float,
-    approval: dict,
-    calibration: dict | None = None,
-) -> dict:
-    """Perform a real RF power meter reading over SCPI/VISA, GIVEN a valid
-    approval receipt already obtained from a separate, prior call to
-    request_power_meter_measurement_approval for this EXACT resource/
-    frequency_hz combination. Returns a "MEASURED"-provenance result (a
-    scalar power reading with units, frequency, and correction-factor
-    metadata) with instrument identity attached (see measurement/
-    power_meter.py). Refuses to run without ALL of: ALLOW_INSTRUMENT_
-    CONTROL=true, a configured VISA resource, pyvisa installed, AND a
-    cryptographically valid approval receipt for this exact request. Exact
-    SCPI command syntax is documented, generic, and vendor-variable (see
-    measurement/power_meter.py's module docstring); NOT verified against
-    any real instrument here."""
-    return _run_power_meter_measurement(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        approval=approval,
-        calibration=calibration,
-    )
-
-
 @mcp.tool()
 def optimize_patch_length_for_target_frequency(
     eps_r: float,
@@ -1457,6 +1180,82 @@ def inspect_design_loop_state(state: dict) -> dict:
     point mid-loop, not just at completion; does not mutate or advance the
     loop, and does not touch the database."""
     return _inspect_design_loop_state(state)
+
+
+@mcp.tool()
+def compile_lab_test_plan(state: dict) -> dict:
+    """Compile a batched lab-test plan (issue #94) for every requirement on
+    this design: what to measure, by what method, and what value this
+    iteration's own recorded CALCULATED/SIMULATED engineering results
+    already predict -- so one lab trip is enough. A requirement with no
+    proposed target, an explicitly UNSCOREABLE one, one whose quantity a
+    Touchstone S-parameter sweep cannot report (e.g. antenna gain or
+    radiation pattern -- needs a range/chamber, not a bench VNA), or one
+    with nothing computed this iteration to predict from is flagged with a
+    distinguishing reason, not silently dropped -- see
+    orchestration/lab_test_plan.py's own docstring for the full design.
+
+    `state` is a state dict from start_design_loop/advance_design_loop_step/
+    inspect_design_loop_state -- safe to call at any point in the loop, on
+    any current_step. Read-only: advances nothing, writes nothing to the
+    database, and needs no approval receipt."""
+    return _compile_lab_test_plan(state)
+
+
+@mcp.tool()
+def run_candidate_search(
+    state: dict,
+    candidates: list,
+    score_specs: dict,
+    evaluation_budget: int | None = None,
+    plateau_window: int = 5,
+    plateau_epsilon: float = 0.5,
+    target_satisfaction_threshold: float = 100.0,
+) -> dict:
+    """The candidate solver (issue #95, docs/adr/0014): drive a batch of
+    proposed candidate parameter sets through a design loop's ungated
+    ANALYSIS -> SIMULATION -> OPTIMIZATION span, scoring each scoreable
+    step against a stated requirement target, candidate after candidate,
+    stopping on target satisfaction, a score plateau, or the evaluation
+    budget -- see orchestration/solver.py's module docstring for the full
+    design.
+
+    `state` must already be positioned past ARCHITECTURE (inside an
+    approved architecture) and must be a tooling-shaped state dict (from
+    start_design_loop or a prior advance_design_loop_step call, carrying
+    design_id). `candidates` is a non-empty list of dicts, each supplying
+    the fields the driven steps need. `score_specs` names which steps to
+    score and against what target (a designs.requirement_targets
+    PROPOSED/CONFIRMED target), keyed by step name ("analysis"/
+    "simulation"/"optimization").
+
+    This tool NEVER constructs, forges, or accepts an approval receipt,
+    and never calls request_loop_step_approval -- every step it drives is,
+    by construction, outside GATED_STEPS. If the state handed in is
+    already sitting at a gated step (ARCHITECTURE/MEASUREMENT/
+    REDESIGN_DECISION), this returns normally with
+    stop_reason="gated_step_pending_approval" and the loop's own
+    pending_approval report -- it never raises to signal this. Reaching
+    VERIFICATION/CORRELATION/REQUIREMENTS similarly halts with
+    stop_reason="out_of_scope_step".
+
+    Returns a report dict: stop_reason/stop_detail naming exactly why the
+    search stopped, an ordered `trail` (one entry per candidate actually
+    evaluated, each carrying its own per-step score trail), and
+    best_candidate_state -- the winning candidate's own tooling-shaped
+    state dict, ready to hand straight back into advance_design_loop_step
+    to continue the design (its decisions persist at the existing
+    REDESIGN_DECISION flush once that continuation reaches it, docs/adr/
+    0011 -- this tool itself never flushes anything)."""
+    return _run_candidate_search(
+        state,
+        candidates,
+        score_specs,
+        evaluation_budget=evaluation_budget,
+        plateau_window=plateau_window,
+        plateau_epsilon=plateau_epsilon,
+        target_satisfaction_threshold=target_satisfaction_threshold,
+    )
 
 
 @mcp.tool()
@@ -1664,6 +1463,85 @@ def verify_requirement(
         actual=actual,
         evidence_uri=evidence_uri,
         notes=notes,
+    )
+
+
+@mcp.tool()
+def propose_requirement_target(
+    design_id: int,
+    requirement_id: str,
+    value: float,
+    comparator: str,
+    unit: str,
+    tolerance: float | None = None,
+) -> dict:
+    """Propose a structured requirement target for one of a design's
+    requirements, interpreted from that requirement's own prose (issue #92).
+    YOU (the calling agent) read the requirement's prose yourself and decide
+    what value/comparator/unit/tolerance it means -- this tool does not read
+    prose or call any model itself; it only validates the shape of what you
+    propose, tags it ASSUMED (never a stronger provenance -- it is your
+    reading of prose, not the customer's own stated number), and stores it
+    on the design next to that requirement's original prose text (which is
+    left untouched). comparator must be one of: EQUALS (a point target to
+    hit, e.g. resonant frequency = 2.45 GHz), AT_LEAST (a minimum bound,
+    e.g. gain >= 5 dBi), or AT_MOST (a maximum bound, e.g. VSWR <= 2.0).
+    tolerance is optional and must be >= 0 if given. If the prose yields no
+    defensible numeric target at all, call mark_requirement_unscoreable
+    instead of guessing a value here. Calling this again for the same
+    requirement_id corrects/replaces whatever target (proposed or
+    confirmed) was there before -- nothing is scored against a target until
+    a human calls confirm_requirement_target on it."""
+    return _propose_requirement_target(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        value=value,
+        comparator=comparator,
+        unit=unit,
+        tolerance=tolerance,
+    )
+
+
+@mcp.tool()
+def mark_requirement_unscoreable(
+    design_id: int,
+    requirement_id: str,
+    reason: str,
+) -> dict:
+    """Record that one of a design's requirements has prose with no
+    defensible numeric target to propose (issue #92) -- e.g. a purely
+    qualitative statement with no comparable value, comparator, or unit.
+    reason must explain why, in enough detail for a human reader to agree
+    or disagree with the call. Never invents a placeholder number: use this
+    instead of propose_requirement_target whenever you cannot honestly
+    defend a value/comparator/unit reading of the prose."""
+    return _mark_requirement_unscoreable(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        reason=reason,
+    )
+
+
+@mcp.tool()
+def confirm_requirement_target(
+    design_id: int,
+    requirement_id: str,
+    confirmed_by: str,
+) -> dict:
+    """Confirm the currently-proposed target on one of a design's
+    requirements (issue #92) -- records that it was confirmed and by whom
+    (confirmed_by), so a later reader can see a human vouched that the
+    proposed reading matches what the customer meant. Only a target with
+    status PROPOSED can be confirmed here: an UNSCOREABLE target has no
+    number to confirm, and an already-CONFIRMED target should be corrected
+    via propose_requirement_target (which resets it to PROPOSED) rather
+    than re-confirmed, so a stale confirmation is never silently
+    overwritten. Nothing should be scored against a target that has not
+    been confirmed."""
+    return _confirm_requirement_target(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        confirmed_by=confirmed_by,
     )
 
 

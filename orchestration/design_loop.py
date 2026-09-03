@@ -18,15 +18,20 @@ built and tested -- not reimplementing any of them:
                 frequency (Phase 9), the one named optimization use case
                 that ticket wired against this same patch-resonant-
                 frequency calculation.
-  - MEASUREMENT calls measurement.vna.run_vna_measurement (Phase 10) --
-                which independently enforces its OWN instrument-actuation
-                approval gate (measurement/base.py, ticket #43) before any
-                SCPI/VISA traffic. This loop's own MEASUREMENT gate (see
-                GATED_STEPS below) is a SEPARATE, higher-level approval: the
-                business decision "should this design proceed to physical
-                measurement at all", not the instrument-actuation decision
-                "may this exact SCPI command sequence run" -- both are
-                required, neither substitutes for the other.
+  - MEASUREMENT routes to measurement.external.record_external_measurement
+                (issue #89, ADR-0012/ADR-0013): a Touchstone file an
+                engineer measured on independent equipment and brought
+                back -- no live instrument, no VISA resource, and no
+                instrument-actuation approval anywhere in this system
+                (ticket #90 removed the instrument-control package
+                entirely; ADR-0013's "no dual-mode branching is needed"
+                is this END state, not an aspiration). This loop's own
+                MEASUREMENT gate (see GATED_STEPS below) still applies: a
+                SEPARATE, higher-level approval from anything an
+                instrument-actuation gate would have checked -- the
+                business decision "should this design accept this
+                measurement evidence at all", unrelated to how the data
+                was physically obtained.
   - CORRELATION calls rf_tools.correlation.correlate_simulation_measurement
                 (Phase 11) against the loop's own recorded SIMULATION/
                 MEASUREMENT decisions (or an explicit override -- see
@@ -86,7 +91,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
-from measurement.vna import run_vna_measurement as _run_vna_measurement
+from measurement.external import record_external_measurement as _record_external_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -160,7 +165,51 @@ class LoopDecision:
     MEASURED/SIMULATED/CALCULATED/... tag when the underlying Phase 1-11
     function supplied one (None for the two step kinds -- architecture and
     redesign decisions -- that are human/agent-authored records, not
-    computed results)."""
+    computed results).
+
+    `iteration` (issue #88 prefactor) is the `DesignLoopState.iteration`
+    this decision was recorded UNDER -- i.e. the iteration whose evidence
+    this decision IS, not necessarily the iteration the loop is in by the
+    time some later reader looks. This matters exactly once per cycle: the
+    REDESIGN_DECISION decision with `next_action="iterate"` is what closes
+    out an iteration and increments `DesignLoopState.iteration` (see
+    advance_loop_step's REDESIGN_DECISION branch), so that decision's own
+    `iteration` is tagged with the iteration it closes, not the new one the
+    loop moves to immediately afterward -- `advance_loop_step` stamps
+    `iteration` from `state.iteration` (the pre-transition value) onto the
+    decision it is about to append, before ever computing the post-
+    transition state.
+
+    This exists so a later reader (planned: a batched lab-test-plan ticket
+    and a candidate-solver ticket, both of which need "every decision this
+    iteration recorded so far") can filter `DesignLoopState.decisions` by
+    `iteration` directly against this pure state machine's own state --
+    without reaching into `orchestration/tooling.py`'s
+    `persisted_decision_count`, which answers a DIFFERENT question (how
+    much of `decisions` has been flushed to the database as of the last
+    REDESIGN_DECISION boundary, docs/adr/0011) and is this module's
+    caller's bookkeeping, not this module's own. `persisted_decision_count`
+    is NOT replaced or superseded by this field -- the two answer unrelated
+    questions and both remain necessary.
+
+    `.get("iteration", 1)` on from_dict, matching this dataclass's existing
+    optional-field convention (`provenance`/`approved_by` are also read via
+    `.get`). Be honest about what that default is worth: for a
+    `DesignLoopState` serialized BEFORE this field existed, 1 is correct
+    only if that state never completed a REDESIGN_DECISION
+    `next_action="iterate"` transition. A pre-field dump that cycled twice
+    carries decisions from iterations 1, 2 and 3 with no per-decision
+    `iteration` recorded anywhere, and this default silently reports all of
+    them as iteration 1. That is accepted rather than solved because there
+    are no such dumps: docs/adr/0011 records that this loop "predates any
+    real caller, so no compatibility shim was added", and the same holds
+    here. If a real pre-field multi-iteration state ever does turn up, its
+    boundaries are recoverable without this field -- decisions accumulate
+    in STEP_ORDER order and each iteration contributes exactly one
+    ARCHITECTURE-through-REDESIGN_DECISION cycle, so counting
+    REDESIGN_DECISION entries reconstructs them -- but nothing in this
+    module does that today, and nothing should until there is a dump that
+    needs it."""
 
     step: str
     kind: str
@@ -169,6 +218,7 @@ class LoopDecision:
     provenance: str | None
     approved_by: str | None
     recorded_at: float
+    iteration: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -179,6 +229,7 @@ class LoopDecision:
             "provenance": self.provenance,
             "approved_by": self.approved_by,
             "recorded_at": self.recorded_at,
+            "iteration": self.iteration,
         }
 
     @staticmethod
@@ -191,6 +242,7 @@ class LoopDecision:
             provenance=data.get("provenance"),
             approved_by=data.get("approved_by"),
             recorded_at=data["recorded_at"],
+            iteration=data.get("iteration", 1),
         )
 
 
@@ -285,6 +337,7 @@ def start_design_loop(requirements: dict[str, Any]) -> DesignLoopState:
         provenance="ASSUMED",
         approved_by=None,
         recorded_at=now,
+        iteration=1,
     )
     return DesignLoopState(
         loop_id=uuid.uuid4().hex,
@@ -311,8 +364,7 @@ def _decision_fingerprint_fields(
     """The exact decision this step's approval must be bound to: which
     loop, which iteration, which step, and the decision content itself --
     so an approval granted for one loop/iteration/step/content combination
-    cannot be replayed for a different one (same discipline as measurement/
-    base.py's own fingerprint_fields)."""
+    cannot be replayed for a different one."""
     return {
         "loop_id": state.loop_id,
         "iteration": state.iteration,
@@ -323,9 +375,7 @@ def _decision_fingerprint_fields(
 
 def _coerce_receipt(approval: Any) -> Any:
     """dict -> LoopStepApprovalReceipt coercion for a receipt that already
-    crossed an agent/MCP JSON tool boundary and back -- same pattern as
-    measurement/vna.py's run_vna_measurement coercing an approval dict into
-    an ApprovalReceipt before calling the gate."""
+    crossed an agent/MCP JSON tool boundary and back."""
     if isinstance(approval, dict):
         return LoopStepApprovalReceipt(**approval)
     return approval
@@ -412,28 +462,33 @@ def _handle_verification(
 
 
 def _handle_measurement(
-    state: DesignLoopState,
-    step_input: dict[str, Any],
-    instrument_transport_factory: Any = None,
-    instrument_confinement_check: Any = None,
+    state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    _require_fields(
-        step_input, {"resource", "start_hz", "stop_hz", "instrument_approval"}, "measurement"
-    )
-    result = _run_vna_measurement(
-        resource=step_input["resource"],
-        start_hz=step_input["start_hz"],
-        stop_hz=step_input["stop_hz"],
-        approval=step_input["instrument_approval"],
-        points=step_input.get("points", 201),
-        sparams=step_input.get("sparams"),
-        z0=step_input.get("z0", 50.0),
-        calibration=step_input.get("calibration"),
-        touchstone_path=step_input.get("touchstone_path"),
-        transport_factory=instrument_transport_factory,
-        confinement_check=instrument_confinement_check,
-    )
+    """Delegates entirely to measurement.external.record_external_measurement
+    (issue #89, ADR-0012/ADR-0013) -- a Touchstone file an engineer measured
+    on independent equipment and brought back. No live instrument, no VISA
+    resource, no instrument-actuation approval/gate of any kind is involved
+    or possible: ticket #90 removed the instrument-control package this
+    step used to have a second path through, so external results are now
+    the ONLY path, not a fallback alongside one (ADR-0013: "no dual-mode
+    branching is needed"). `lab_report`/`notes`, if given, ride along on
+    the result untouched -- never parsed for numbers.
+
+    `state` is unused (measurement is stateless with respect to prior
+    decisions -- unlike CORRELATION, which reads back the loop's own prior
+    SIMULATION/MEASUREMENT decisions). The loop's own MEASUREMENT approval
+    gate (GATED_STEPS, checked in advance_loop_step BEFORE this handler
+    ever runs) still applies -- the business decision "should this design
+    accept this measurement evidence at all", unaffected by how the data
+    was physically obtained.
+    """
     del state
+    _require_fields(step_input, {"touchstone_file"}, "measurement")
+    result = _record_external_measurement(
+        touchstone_file=step_input["touchstone_file"],
+        lab_report=step_input.get("lab_report"),
+        notes=step_input.get("notes"),
+    )
     return "measurement", result, result.get("provenance", "MEASURED")
 
 
@@ -531,8 +586,6 @@ def advance_loop_step(
     state: DesignLoopState,
     step_input: dict[str, Any],
     approval: LoopStepApprovalReceipt | dict[str, Any] | None = None,
-    instrument_transport_factory: Any = None,
-    instrument_confinement_check: Any = None,
 ) -> DesignLoopState:
     """Advance the loop from its current step to the next one, per
     STEP_ORDER. Returns a NEW DesignLoopState (never mutates `state`).
@@ -543,19 +596,10 @@ def advance_loop_step(
     step_input combination (see _decision_fingerprint_fields) -- obtained
     from a prior, separate call to
     orchestration.approval.request_loop_step_approval(). The gate is
-    checked BEFORE the step's action runs or any state changes, exactly
-    mirroring measurement/base.py's check_physical_actuation_gate; a
-    missing or invalid approval raises OrchestrationError and `state` is
-    left completely untouched (the caller's existing `state` reference is
-    still valid and still shows the loop parked at the gated step).
-
-    `instrument_transport_factory`/`instrument_confinement_check` are
-    test-only injection seams for the MEASUREMENT step ONLY (passed through
-    to measurement.vna.run_vna_measurement unchanged) -- omit both for a
-    real call, exactly as measurement/vna.py's own functions document. They
-    are NEVER exposed on the agent/MCP tool wrapper (see
-    orchestration/tooling.py), so a real invocation always goes through the
-    real instrument-actuation gate too.
+    checked BEFORE the step's action runs or any state changes; a missing
+    or invalid approval raises OrchestrationError and `state` is left
+    completely untouched (the caller's existing `state` reference is still
+    valid and still shows the loop parked at the gated step).
     """
     if state.completed:
         raise OrchestrationError(
@@ -576,12 +620,7 @@ def advance_loop_step(
         approved_by = receipt.approved_by
 
     if current_step is DesignStep.MEASUREMENT:
-        kind, result, provenance = _handle_measurement(
-            state,
-            step_input,
-            instrument_transport_factory=instrument_transport_factory,
-            instrument_confinement_check=instrument_confinement_check,
-        )
+        kind, result, provenance = _handle_measurement(state, step_input)
     else:
         handler = _STEP_HANDLERS.get(current_step)
         if handler is None:
@@ -602,6 +641,13 @@ def advance_loop_step(
         provenance=provenance,
         approved_by=approved_by,
         recorded_at=now,
+        # The PRE-transition iteration -- i.e. the iteration this decision
+        # is evidence FOR, not whatever iteration the loop moves to right
+        # after (only REDESIGN_DECISION's next_action="iterate" branch,
+        # below, ever changes state.iteration, and it does so only in the
+        # replace() it returns, after this decision is already built). See
+        # LoopDecision's own docstring's "iteration" paragraph.
+        iteration=state.iteration,
     )
     new_decisions = [*state.decisions, decision]
 

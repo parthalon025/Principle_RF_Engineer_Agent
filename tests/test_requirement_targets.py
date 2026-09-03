@@ -1,0 +1,283 @@
+"""Tests for designs/requirement_targets.py (issue #92).
+
+Pure-function tests only, following tests/test_calculations.py's
+deterministic in/out style -- no database needed, matching this repo's own
+instruction to keep this file DB-free where the criterion under test is
+genuinely pure logic. `propose_target`/`mark_unscoreable`/`confirm_target`/
+`attach_target` carry all of the ticket's actual validation/tagging logic
+and are exercised directly here.
+
+`propose_requirement_target`/`mark_requirement_unscoreable`/
+`confirm_requirement_target` (the I/O wrappers that actually read/write a
+stored design's `requirements` column) are NOT tested here: they need a
+live Postgres via DATABASE_URL, and there is no database in this sandbox
+(same constraint tests/test_designs_service.py and tests/test_tooling.py
+already document for themselves). Were a live DATABASE_URL available, a
+test for them would follow tests/test_designs_service.py's own
+`cleanup_designs` fixture convention -- open a real connection, create a
+design via designs.service.create_design, call
+propose_requirement_target/confirm_requirement_target/
+mark_requirement_unscoreable against it, assert the returned
+`requirements` (via designs.service.read_design) carries the expected
+`target` dict, and delete the design afterward. Not written here because it
+cannot run in this sandbox and the pure functions it would exercise
+end-to-end are already fully covered directly below -- the I/O wrappers
+themselves are thin glue (open connection, fetch, validate via the pure
+functions, attach, write, translate exceptions), the same shape
+designs/service.py's already-integration-tested wrappers use.
+"""
+
+from __future__ import annotations
+
+import math
+
+import pytest
+
+from designs.requirement_targets import (
+    InvalidRequirementTargetError,
+    TargetComparator,
+    TargetStatus,
+    UnknownRequirementError,
+    attach_target,
+    confirm_target,
+    mark_unscoreable,
+    propose_target,
+)
+
+# ---------------------------------------------------------------------------
+# propose_target -- comparator vocabulary and shape validation
+# ---------------------------------------------------------------------------
+
+
+def test_propose_target_point_target_is_tagged_assumed_and_proposed():
+    target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz")
+    assert target["target_status"] == "PROPOSED"
+    assert target["provenance"] == "ASSUMED"
+    assert target["value"] == 2.45e9
+    assert target["comparator"] == "EQUALS"
+    assert target["unit"] == "Hz"
+    assert target["tolerance"] is None
+    assert target["reason"] is None
+    assert target["confirmed_by"] is None
+    assert target["confirmed_at"] is None
+
+
+def test_propose_target_covers_minimum_bound_comparator():
+    target = propose_target(value=5.0, comparator="AT_LEAST", unit="dBi")
+    assert target["comparator"] == TargetComparator.AT_LEAST.value
+
+
+def test_propose_target_covers_maximum_bound_comparator():
+    target = propose_target(value=2.0, comparator="AT_MOST", unit="ratio")
+    assert target["comparator"] == TargetComparator.AT_MOST.value
+
+
+def test_propose_target_accepts_optional_tolerance():
+    target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e6)
+    assert target["tolerance"] == 5e6
+
+
+def test_propose_target_rejects_unknown_comparator():
+    with pytest.raises(InvalidRequirementTargetError, match="comparator"):
+        propose_target(value=1.0, comparator="ABOUT_THE_SAME_AS", unit="Hz")
+
+
+def test_propose_target_rejects_non_numeric_value():
+    with pytest.raises(InvalidRequirementTargetError, match="value"):
+        propose_target(value="2.45 GHz", comparator="EQUALS", unit="Hz")
+
+
+def test_propose_target_rejects_bool_as_value():
+    # bool is technically an int subclass in Python -- explicitly excluded,
+    # same guard designs.validation applies to component_id.
+    with pytest.raises(InvalidRequirementTargetError, match="value"):
+        propose_target(value=True, comparator="EQUALS", unit="Hz")
+
+
+def test_propose_target_rejects_non_finite_value():
+    with pytest.raises(InvalidRequirementTargetError, match="finite"):
+        propose_target(value=math.inf, comparator="EQUALS", unit="Hz")
+
+
+def test_propose_target_rejects_empty_unit():
+    with pytest.raises(InvalidRequirementTargetError, match="unit"):
+        propose_target(value=1.0, comparator="EQUALS", unit="")
+
+
+def test_propose_target_rejects_whitespace_only_unit():
+    with pytest.raises(InvalidRequirementTargetError, match="unit"):
+        propose_target(value=1.0, comparator="EQUALS", unit="   ")
+
+
+def test_propose_target_rejects_negative_tolerance():
+    with pytest.raises(InvalidRequirementTargetError, match="tolerance"):
+        propose_target(value=1.0, comparator="EQUALS", unit="Hz", tolerance=-0.1)
+
+
+def test_propose_target_rejects_non_finite_tolerance():
+    with pytest.raises(InvalidRequirementTargetError, match="finite"):
+        propose_target(value=1.0, comparator="EQUALS", unit="Hz", tolerance=math.nan)
+
+
+def test_propose_target_allows_negative_value():
+    # RF quantities (dB/dBi/dBm) are routinely negative -- must not be
+    # rejected as if a physical-plausibility bound applied here.
+    target = propose_target(value=-3.0, comparator="AT_LEAST", unit="dB")
+    assert target["value"] == -3.0
+
+
+# ---------------------------------------------------------------------------
+# mark_unscoreable -- the "no defensible target" path
+# ---------------------------------------------------------------------------
+
+
+def test_mark_unscoreable_records_reason_with_no_fabricated_value():
+    target = mark_unscoreable("prose states a qualitative goal with no numeric bound")
+    assert target["target_status"] == "UNSCOREABLE"
+    assert target["provenance"] == "ASSUMED"
+    assert target["reason"] == "prose states a qualitative goal with no numeric bound"
+    assert target["value"] is None
+    assert target["comparator"] is None
+    assert target["unit"] is None
+    assert target["tolerance"] is None
+
+
+def test_mark_unscoreable_rejects_empty_reason():
+    with pytest.raises(InvalidRequirementTargetError, match="reason"):
+        mark_unscoreable("")
+
+
+def test_mark_unscoreable_rejects_whitespace_only_reason():
+    with pytest.raises(InvalidRequirementTargetError, match="reason"):
+        mark_unscoreable("   ")
+
+
+# ---------------------------------------------------------------------------
+# confirm_target -- confirmation records who and when, and only from PROPOSED
+# ---------------------------------------------------------------------------
+
+
+def test_confirm_target_records_confirmed_by_and_confirmed_at():
+    proposed = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz")
+    confirmed = confirm_target(
+        proposed, confirmed_by="j.mcfarland", confirmed_at="2026-09-03T00:00:00+00:00"
+    )
+    assert confirmed["target_status"] == "CONFIRMED"
+    assert confirmed["confirmed_by"] == "j.mcfarland"
+    assert confirmed["confirmed_at"] == "2026-09-03T00:00:00+00:00"
+
+
+def test_confirm_target_preserves_the_confirmed_value_and_provenance():
+    proposed = propose_target(value=5.0, comparator="AT_LEAST", unit="dBi", tolerance=0.5)
+    confirmed = confirm_target(proposed, confirmed_by="j.mcfarland")
+    assert confirmed["value"] == 5.0
+    assert confirmed["comparator"] == "AT_LEAST"
+    assert confirmed["unit"] == "dBi"
+    assert confirmed["tolerance"] == 0.5
+    # provenance is deliberately still ASSUMED after confirmation -- see the
+    # module docstring's "WHY PROVENANCE STAYS ASSUMED" section.
+    assert confirmed["provenance"] == "ASSUMED"
+
+
+def test_confirm_target_does_not_mutate_its_input():
+    proposed = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz")
+    confirm_target(proposed, confirmed_by="j.mcfarland")
+    assert proposed["target_status"] == "PROPOSED"
+    assert proposed["confirmed_by"] is None
+
+
+def test_confirm_target_fills_in_a_real_timestamp_by_default():
+    proposed = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz")
+    confirmed = confirm_target(proposed, confirmed_by="j.mcfarland")
+    assert confirmed["confirmed_at"] is not None
+    assert isinstance(confirmed["confirmed_at"], str)
+
+
+def test_confirm_target_rejects_an_unscoreable_target():
+    unscoreable = mark_unscoreable("no numeric bound stated")
+    with pytest.raises(InvalidRequirementTargetError, match="UNSCOREABLE|target_status"):
+        confirm_target(unscoreable, confirmed_by="j.mcfarland")
+
+
+def test_confirm_target_rejects_an_already_confirmed_target():
+    proposed = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz")
+    confirmed_once = confirm_target(proposed, confirmed_by="j.mcfarland")
+    with pytest.raises(InvalidRequirementTargetError):
+        confirm_target(confirmed_once, confirmed_by="someone.else")
+
+
+def test_confirm_target_rejects_empty_confirmed_by():
+    proposed = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz")
+    with pytest.raises(InvalidRequirementTargetError, match="confirmed_by"):
+        confirm_target(proposed, confirmed_by="")
+
+
+# ---------------------------------------------------------------------------
+# attach_target -- prose is preserved alongside every target, no migration
+# ---------------------------------------------------------------------------
+
+
+def test_attach_target_preserves_the_original_prose():
+    requirements = {
+        "req-1": {"requirement": "needs to work at 2.4 GHz without losing gain"},
+    }
+    target = propose_target(value=2.4e9, comparator="EQUALS", unit="Hz")
+    updated = attach_target(requirements, "req-1", target)
+    assert updated["req-1"]["requirement"] == "needs to work at 2.4 GHz without losing gain"
+    assert updated["req-1"]["target"] == target
+
+
+def test_attach_target_does_not_mutate_its_input():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    target = propose_target(value=1.0, comparator="EQUALS", unit="Hz")
+    attach_target(requirements, "req-1", target)
+    assert "target" not in requirements["req-1"]
+
+
+def test_attach_target_replaces_a_prior_target_on_correction():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    first = propose_target(value=1.0, comparator="EQUALS", unit="Hz")
+    with_first = attach_target(requirements, "req-1", first)
+    second = propose_target(value=2.0, comparator="EQUALS", unit="Hz")
+    with_second = attach_target(with_first, "req-1", second)
+    assert with_second["req-1"]["target"]["value"] == 2.0
+    assert with_second["req-1"]["requirement"] == "some prose"
+
+
+def test_attach_target_preserves_other_keys_on_the_requirement_entry():
+    requirements = {
+        "req-1": {"requirement": "some prose", "priority": "high"},
+    }
+    target = propose_target(value=1.0, comparator="EQUALS", unit="Hz")
+    updated = attach_target(requirements, "req-1", target)
+    assert updated["req-1"]["priority"] == "high"
+
+
+def test_attach_target_rejects_unknown_requirement_id():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    target = propose_target(value=1.0, comparator="EQUALS", unit="Hz")
+    with pytest.raises(UnknownRequirementError, match="req-does-not-exist"):
+        attach_target(requirements, "req-does-not-exist", target)
+
+
+def test_attach_target_can_attach_an_unscoreable_result():
+    requirements = {
+        "req-1": {"requirement": "should feel robust when flexed"},
+    }
+    target = mark_unscoreable("no numeric bound in the prose")
+    updated = attach_target(requirements, "req-1", target)
+    assert updated["req-1"]["target"]["target_status"] == "UNSCOREABLE"
+    assert updated["req-1"]["target"]["reason"] == "no numeric bound in the prose"
+
+
+# ---------------------------------------------------------------------------
+# TargetComparator / TargetStatus -- the fixed vocabularies themselves
+# ---------------------------------------------------------------------------
+
+
+def test_target_comparator_covers_point_minimum_and_maximum():
+    assert {c.value for c in TargetComparator} == {"EQUALS", "AT_LEAST", "AT_MOST"}
+
+
+def test_target_status_covers_the_three_lifecycle_states():
+    assert {s.value for s in TargetStatus} == {"PROPOSED", "CONFIRMED", "UNSCOREABLE"}

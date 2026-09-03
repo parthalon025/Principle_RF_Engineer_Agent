@@ -82,11 +82,17 @@ Optional:
   resting on one solver alone. No PyPI wheel: install via conda-forge
   (`conda create -n mp -c conda-forge pymeep`); no native Windows support (WSL
   required on Windows). See `simulation/meep.py`.)
-- Ansys AEDT/HFSS + PyAEDT
-- Keysight ADS
+- Ansys AEDT/HFSS + PyAEDT -- commercial; requires a paid AEDT license.
+  `simulation/hfss.py` is a real, working `HfssSimulator` adapter for teams
+  that already hold one (confined to a controlled licensed workstation, see
+  `check_hfss_workstation_confinement`), but it is not required to reach a
+  working, verified design -- see "Development order" below and
+  `docs/adr/0012-hardware-removed-paid-eda-tooling-stays-out-of-roadmap.md`
+- Keysight ADS -- commercial; no code adapter exists in this repo. ngspice /
+  Xyce / Qucs-S (above) are the free/OSS circuit-level alternatives -- see
+  `docs/FREE_AND_OPEN_SOURCE_TOOLING.md`
 - LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
   `uv sync --extra ltspice` -- see `simulation/ltspice.py`)
-- VISA/SCPI-capable instruments
 - KiCad (application + `kicad-cli`) -- for PCB geometry export via kicad-python's IPC API (issue #65)
 - gerbv -- Gerber rasterizer gerber2ems shells out to internally
 - gerber2ems -- PCB trace signal-integrity simulation front end for openEMS; not on PyPI, install from github.com/antmicro/gerber2ems
@@ -121,7 +127,8 @@ uv run python -m agent.main "Analyze the requirements for a 2.45 GHz PCB antenna
 4. MCP tools
 5. Principal-agent orchestration
 6. NEC2++ / openEMS
-7. HFSS / ADS
+7. HFSS / PyAEDT (optional -- requires a paid AEDT license; the free/OSS
+   stack from step 6 already reaches a working, verified design without it)
 8. Measurement interfaces
 9. Simulation/measurement correlation
 10. Controlled optimization

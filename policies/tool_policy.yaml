@@ -122,8 +122,7 @@ simulation_auto:
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without
-  # their own independent gate -- measurement/base.py's ApprovalReceipt
-  # (the four measure_* tools), simulation/hfss.py's workstation
+  # their own independent gate -- simulation/hfss.py's workstation
   # confinement check (run_hfss_simulation), or (ticket #67)
   # knowledge/sourcing_common.py's require_external_network_tools_enabled()
   # -- ALLOW_EXTERNAL_NETWORK_TOOLS=true, checked before any credential is
@@ -136,28 +135,19 @@ approval_self_gated:
   # double-gate (and, with no approval callback wired anywhere in this
   # codebase, permanently break) a tool that already works correctly
   # today.
+  #
+  # ticket #90 removed the SCPI/VISA instrument-actuation approval gate
+  # (measurement/base.py) and its four measure_*/set_signal_generator_
+  # output tools from this category -- and the instrument-approval-receipt
+  # category below it (request_vna_measurement_approval and its three
+  # siblings) entirely -- along with the instrument adapters themselves
+  # (measurement/vna.py, spectrum_analyzer.py, signal_generator.py,
+  # power_meter.py): this project no longer offers any physical-instrument
+  # actuation capability, so there is nothing left to categorize here.
   - run_hfss_simulation
-  - measure_vna_s_parameters
-  - measure_spectrum_analyzer_trace
-  - set_signal_generator_output
-  - measure_power_meter_reading
   - lookup_digikey_component
   - lookup_mouser_component
   - lookup_nexar_component
-
-approval_workflow:
-  # Request-an-approval-receipt tools. These never touch an instrument or
-  # mutate state themselves -- they only ever decide whether to grant a
-  # receipt for one of the approval_self_gated tools above to consume, and
-  # (per measurement/base.py's own module docstring) always refuse today
-  # since no approval_callback is wired anywhere in this project's
-  # agent/MCP tool surface. Listed separately from approval_required
-  # because they are not the dangerous action being gated -- they're part
-  # of the gate itself.
-  - request_vna_measurement_approval
-  - request_spectrum_analyzer_measurement_approval
-  - request_signal_generator_output_approval
-  - request_power_meter_measurement_approval
 
 ingestion_auto:
   - ingest_document
@@ -169,6 +159,16 @@ design_tracking:
   - create_design
   - record_decision
   - verify_requirement
+  # issue #92: interpreting a prose customer requirement into a proposed/
+  # confirmed/unscoreable requirement target. Same informational-only
+  # category as create_design/verify_requirement -- no runtime gate: the
+  # only thing that could make a fabricated target dangerous (an LLM
+  # inventing a number) is prevented deterministically inside
+  # designs/requirement_targets.py itself (shape validation, ASSUMED
+  # tagging), not by a policy-layer gate.
+  - propose_requirement_target
+  - mark_requirement_unscoreable
+  - confirm_requirement_target
 
 design_loop:
   # The controlled design-iteration loop (orchestration/design_loop.py,
@@ -179,6 +179,22 @@ design_loop:
   - start_design_loop
   - advance_design_loop_step
   - inspect_design_loop_state
+  # issue #94: compiles a batched lab-test plan from a loop's own already-
+  # recorded requirements/decisions. Read-only like inspect_design_loop_
+  # state above -- no mutation, no database write beyond an optional fresh
+  # read, no LoopStepApprovalReceipt of any kind (there is nothing gated
+  # for it to check).
+  - compile_lab_test_plan
+  # issue #95: the candidate solver. Drives ONLY the loop's already-
+  # ungated ANALYSIS/SIMULATION/OPTIMIZATION span (orchestration/
+  # solver.py's _ORDERED_UNGATED_SPAN) via advance_design_loop_step --
+  # never GATED_STEPS, never an approval receipt. Same informational-only
+  # category as its sibling design-loop tools: the real defense is
+  # structural (this tool never constructs or accepts a
+  # LoopStepApprovalReceipt, and halts with a pending-approval report the
+  # instant the loop state handed to it sits at a gated step), not a
+  # policy-layer gate.
+  - run_candidate_search
 
 approval_required:
   # Real gate, no exceptions -- but every entry here is a capability that

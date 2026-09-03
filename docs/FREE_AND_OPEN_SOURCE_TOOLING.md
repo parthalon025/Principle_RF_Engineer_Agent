@@ -14,6 +14,29 @@ repositories, license files, vendor developer docs) rather than secondhand summa
 Every claim below is either sourced inline or flagged where two research passes
 disagreed — nothing here is presented as settled that wasn't independently confirmed.
 
+## Status: this is a research snapshot, and adapters have been built since
+
+Read the "Fit for this repo" assessments below as the record of *why* each tool was
+chosen, written before the adapters existed — not as a current inventory. Their
+forward-looking phrasing ("would need a new `simulation/meep.py` subclass", "natural
+`simulation/openparem.py` candidate", "no existing `simulation/elmer.py`") was accurate
+when researched and is deliberately preserved rather than rewritten, because the
+reasoning is the value here and editing it away would leave the conclusions with no
+visible basis.
+
+Built since this survey was compiled: `simulation/meep.py`, `simulation/elmer.py`,
+`simulation/palace.py`, `simulation/openparem.py`, `simulation/gprmax.py`,
+`simulation/qucs.py`, `simulation/ngspice.py`, `simulation/xyce.py`,
+`simulation/ltspice.py`, `simulation/kicad_gerber2ems.py`, plus
+`geometry/unit_cell.py` and `geometry/freecad_curved.py`. `simulation/hfss.py` is also
+real, working code — license-confined to a controlled AEDT workstation, and per
+ADR-0012 not on this project's default free/OSS path.
+
+Still genuinely unbuilt, as of this note: FEniCSx/DOLFINx and the openEMS-CUDA fork
+(neither recommended below), Sonnet Lite (not automatable), and
+`rf_tools/filter_synthesis.py` (the closed-form filter-prototype synthesis identified
+as absent from both scikit-rf and this repo).
+
 ## Already free/open-source in this repo
 
 Context, not the deliverable — so the rest of this document doesn't re-suggest adding
@@ -122,7 +145,7 @@ None of the items below should become a hard `[project.dependencies]` default. T
 - MEEP (GPLv2), Palace (Apache-2.0), OpenParEM (GPLv3), gprMax (GPLv3, though it's pip-installable and could go under the `geometry`/a new `simulation-extra` extra instead), ngspice (mixed BSD/MIT/GPL/LGPL per-subtree), Xyce (GPLv3), FreeCAD (LGPL-2.1), KiCad (GPL-3.0-or-later)
 - Ollama (MIT) and llama.cpp/`llama-server` (MIT) as standalone local-LLM servers; Hugging Face TEI (Apache-2.0) as a Docker image
 - For all local-LLM/embedding servers: **no new pip package is needed** — the `openai`-compatible client code path ADR-0004 already requires for OpenAI itself works unmodified against any OpenAI-wire-format server. Just install the binary/image and point `LOCAL_LLM_BASE_URL` (and, if TEI is split onto its own port, a second embedding-specific base-URL env var — a small real code change against ADR-0004's current single-URL contract) at it.
-- Elmer FEM and Qucs-S: only if their respective adapters actually get built. Elmer is lower priority per its fidelity notes; Qucs-S is blocked on hand-resolving the flagged CLI/headless contradiction above before any adapter work starts.
+- Elmer FEM (ElmerSolver + ElmerGrid, plus Gmsh) and Qucs-S/`qucsator_rf`: install these to exercise `simulation/elmer.py` and `simulation/qucs.py`, both of which are now built — this line previously said "only if their respective adapters actually get built", which is no longer true. Qucs-S's flagged CLI/headless contradiction was resolved in the course of building that adapter: the binary `simulation/qucs.py` shells out to is named `qucsator_rf`, not the bare `qucsator` the upstream project is colloquially called (see README's own note).
 
 **Free-of-charge but not open source** — usable today, but track distinctly in `docs/LICENSE_MATRIX.md` rather than alongside the MIT/Apache/GPL rows:
 - LM Studio (proprietary EULA, free-of-charge since July 2025) — already running on this machine for an unrelated project; reusable here with its own model(s) loaded
@@ -152,7 +175,22 @@ Synthesized against CONTEXT.md's five explicitly open gaps. For each: whether a 
 
 **Antenna geometry generators (metamaterial unit-cell / conformal antenna)** — mixed, leaning custom for the domain-specific core. Wire-up: gdstk gives array/polygon primitives for planar unit-cell layout; CSXCAD gives the `<Polygon>` primitive `simulation/openems.py`'s `_primitive_xml()` doesn't emit today (Box/Cylinder only) — extending that function with a `polygon` branch is small and well-scoped; EMStudio's Element Designer already wires conventional wire/patch/Yagi/LPDA synthesis into openEMS/NEC2/Elmer/Palace. Custom: no tool surveyed synthesizes a metamaterial unit cell's actual geometry (SRR gap/split-ring dimensions, Jerusalem-cross arm lengths) from a target effective-permittivity/permeability requirement, or maps a flat unit-cell layout onto a curved conformal host surface — EMStudio's own antenna families are explicitly conventional, not metamaterial. This parametrization math belongs in `designs/` or a new `simulation/geometry_generators.py`, built on gdstk (planar tiling) + CSXCAD (3D primitive emission) + FreeCAD (curved-surface mapping) as building blocks, not replacing them.
 
-**HFSS/ADS adapters beyond the current stub** — split by target. HFSS: no change recommended — Ansys AEDT is the intentional paid boundary per this repo's own stance; `simulation/hfss.py` stays a confinement stub until a licensed workstation is available. Not a free/OSS gap to close. ADS: wire-up for the nearest free substitutes — `simulation/ngspice.py` and/or `simulation/xyce.py`, following the exact `Simulator` ABC + subprocess pattern `simulation/nec2pp.py`/`simulation/openems.py` already use (netlist writer + `.raw`/`.PRINT` parser); a shared `simulation/spice_common.py` helper is worth factoring if both get built. Qucs-S is **not** recommended as an adapter target until the flagged CLI-vs-GUI-only contradiction above is resolved by hand-verifying the installed `qucsator` binary's real command-line behavior. Custom: closed-form Chebyshev/Butterworth/Bessel filter-prototype synthesis (order/ripple/cutoff → g-value table → ladder network) — confirmed absent from both scikit-rf and this repo's `rf_tools/` by direct grep. Deterministic, well-specified math; belongs in a new `rf_tools/filter_synthesis.py` built on scikit-rf's existing `Circuit`/`Media` primitives, not a new external dependency.
+**HFSS/ADS adapters** — split by target, both now closed. HFSS:
+`simulation/hfss.py` is a real, working `HfssSimulator` adapter (geometry,
+setup/solve, extraction, archiving), gated by
+`check_hfss_workstation_confinement` — implemented, not a stub, just
+license-confined; not a free/OSS gap, and not on this repo's default
+roadmap path per ADR-0012. ADS: `simulation/ngspice.py` and
+`simulation/xyce.py` now cover the nearest free/OSS substitutes for its
+circuit-level role, following the exact `Simulator` ABC + subprocess
+pattern `simulation/nec2pp.py`/`simulation/openems.py` already use.
+`simulation/qucs.py` (Qucs-S/`qucsator_rf`) is also now built. Custom:
+closed-form Chebyshev/Butterworth/Bessel filter-prototype synthesis
+(order/ripple/cutoff → g-value table → ladder network) — confirmed absent
+from both scikit-rf and this repo's `rf_tools/` by direct grep.
+Deterministic, well-specified math; belongs in a new
+`rf_tools/filter_synthesis.py` built on scikit-rf's existing
+`Circuit`/`Media` primitives, not a new external dependency.
 
 **Instrument (VISA/SCPI) integration beyond current scaffolding** — mostly wire-up for exercising the existing adapters: pyvisa-sim needs zero adapter code changes, just the `measurement` extra, a `PYVISA_LIBRARY=@sim` (or custom YAML resource string) setting, and an explicit `approval_callback` in the calling test. Custom: (a) a repo-specific YAML fixture (e.g. `tests/fixtures/pyvisa_sim_vna.yaml` and equivalents for the other three adapters) whose `dialogues:`/`properties:` entries match this repo's actual `DEFAULT_SCPI_COMMANDS` — nothing upstream provides this; (b) real hardware integration stays blocked on the physical instruments themselves (payment) and on the human-facing approval UI that `measurement/base.py`'s own docstring already says doesn't exist yet — no free/OSS tool in this research addresses that gap, since it isn't a licensing problem, it's unwritten application code.
 

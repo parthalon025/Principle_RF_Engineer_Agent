@@ -65,10 +65,7 @@ def test_principal_role_has_broad_access():
     # tool added by issue #39, the run_hfss_simulation tool added by issue
     # #40, the run_meep_simulation tool added by issue #60, the
     # optimize_patch_length_for_target_frequency tool added by
-    # issue #41, the request_vna_measurement_approval and
-    # measure_vna_s_parameters tools added by issue #43, the 6 spectrum
-    # analyzer/signal generator/power meter approval+measure/actuate tools
-    # added by issue #44, the correlate_simulated_and_measured tool added
+    # issue #41, the correlate_simulated_and_measured tool added
     # by issue #45, the 3 design-iteration-loop tools (start_design_loop,
     # advance_design_loop_step, inspect_design_loop_state) added by issue
     # #46, the 4 design-lifecycle tools (create_design, read_design,
@@ -85,8 +82,32 @@ def test_principal_role_has_broad_access():
     # lookup_nexar_component, reconcile_component_sources) added by ticket
     # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
     # non-principal specialist, plus the generate_freecad_curved_geometry
-    # tool added by issue #66.
-    assert len(names) == 87
+    # tool added by issue #66, plus the 3 requirement-target tools
+    # (propose_requirement_target, mark_requirement_unscoreable,
+    # confirm_requirement_target) added by issue #92 -- principal-only,
+    # matching the create_design/verify_requirement design-tracking
+    # precedent rather than scoping them into a specialist role.
+    #
+    # issue #43 added request_vna_measurement_approval/
+    # measure_vna_s_parameters and issue #44 added 6 more spectrum
+    # analyzer/signal generator/power meter approval+measure/actuate tools
+    # (8 total) -- ticket #90 REMOVED all 8: the SCPI/VISA instrument-
+    # actuation approval gate and every tool built on it are gone (this
+    # system offers no physical-instrument actuation capability at all --
+    # see ADR-0012).
+    #
+    # So the running total is 87 (pre-#92) + 3 (#92) - 8 (#90) = 82. #90's
+    # own branch computed 87 - 8 = 79 against a base that predated #92;
+    # both tickets landed, so both adjustments apply.
+    #
+    # issue #94 adds 1 more (compile_lab_test_plan -- a read-only batched
+    # lab-test-plan compiler, also shared with the test role below), and
+    # issue #95 adds 1 more (run_candidate_search, the candidate solver --
+    # principal-only, same cross-cutting-orchestration reasoning as the
+    # 3 design-iteration-loop tools above). Both were implemented in
+    # parallel against the same 82 baseline and each computed 82 + 1 = 83
+    # on its own branch; both landed, so both apply: 82 + 1 + 1 = 84.
+    assert len(names) == 84
 
 
 def test_principal_module_alias_matches_registry():
@@ -456,6 +477,21 @@ def test_test_role_gets_new_touchstone_tools():
     # antenna synthesis and link budget are not test's job
     assert "calculate_aperture_gain" not in names
     assert "calculate_link_budget_margin" not in names
+
+
+def test_test_and_principal_roles_get_lab_test_plan_tool():
+    # issue #94: read-only (no mutation, no approval) -- shared with test
+    # (which owns lab-test-plan work day to day), unlike the mutating
+    # design-loop tools (start_design_loop/advance_design_loop_step/
+    # inspect_design_loop_state), which stay principal-only.
+    assert "compile_lab_test_plan" in _tool_names(ROLES["principal"])
+    assert "compile_lab_test_plan" in _tool_names(ROLES["test"])
+    for key in ("systems", "microwave", "antenna", "verification"):
+        assert "compile_lab_test_plan" not in _tool_names(ROLES[key])
+    for key in ("systems", "microwave", "antenna", "test", "verification"):
+        assert "start_design_loop" not in _tool_names(ROLES[key])
+        assert "advance_design_loop_step" not in _tool_names(ROLES[key])
+        assert "inspect_design_loop_state" not in _tool_names(ROLES[key])
 
 
 def test_verification_role_gets_no_new_calculation_tools():
