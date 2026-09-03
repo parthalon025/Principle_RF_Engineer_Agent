@@ -14,6 +14,29 @@ repositories, license files, vendor developer docs) rather than secondhand summa
 Every claim below is either sourced inline or flagged where two research passes
 disagreed — nothing here is presented as settled that wasn't independently confirmed.
 
+## Status: this is a research snapshot, and adapters have been built since
+
+Read the "Fit for this repo" assessments below as the record of *why* each tool was
+chosen, written before the adapters existed — not as a current inventory. Their
+forward-looking phrasing ("would need a new `simulation/meep.py` subclass", "natural
+`simulation/openparem.py` candidate", "no existing `simulation/elmer.py`") was accurate
+when researched and is deliberately preserved rather than rewritten, because the
+reasoning is the value here and editing it away would leave the conclusions with no
+visible basis.
+
+Built since this survey was compiled: `simulation/meep.py`, `simulation/elmer.py`,
+`simulation/palace.py`, `simulation/openparem.py`, `simulation/gprmax.py`,
+`simulation/qucs.py`, `simulation/ngspice.py`, `simulation/xyce.py`,
+`simulation/ltspice.py`, `simulation/kicad_gerber2ems.py`, plus
+`geometry/unit_cell.py` and `geometry/freecad_curved.py`. `simulation/hfss.py` is also
+real, working code — license-confined to a controlled AEDT workstation, and per
+ADR-0012 not on this project's default free/OSS path.
+
+Still genuinely unbuilt, as of this note: FEniCSx/DOLFINx and the openEMS-CUDA fork
+(neither recommended below), Sonnet Lite (not automatable), and
+`rf_tools/filter_synthesis.py` (the closed-form filter-prototype synthesis identified
+as absent from both scikit-rf and this repo).
+
 ## Already free/open-source in this repo
 
 Context, not the deliverable — so the rest of this document doesn't re-suggest adding
@@ -122,7 +145,7 @@ None of the items below should become a hard `[project.dependencies]` default. T
 - MEEP (GPLv2), Palace (Apache-2.0), OpenParEM (GPLv3), gprMax (GPLv3, though it's pip-installable and could go under the `geometry`/a new `simulation-extra` extra instead), ngspice (mixed BSD/MIT/GPL/LGPL per-subtree), Xyce (GPLv3), FreeCAD (LGPL-2.1), KiCad (GPL-3.0-or-later)
 - Ollama (MIT) and llama.cpp/`llama-server` (MIT) as standalone local-LLM servers; Hugging Face TEI (Apache-2.0) as a Docker image
 - For all local-LLM/embedding servers: **no new pip package is needed** — the `openai`-compatible client code path ADR-0004 already requires for OpenAI itself works unmodified against any OpenAI-wire-format server. Just install the binary/image and point `LOCAL_LLM_BASE_URL` (and, if TEI is split onto its own port, a second embedding-specific base-URL env var — a small real code change against ADR-0004's current single-URL contract) at it.
-- Elmer FEM and Qucs-S: only if their respective adapters actually get built. Elmer is lower priority per its fidelity notes; Qucs-S is blocked on hand-resolving the flagged CLI/headless contradiction above before any adapter work starts.
+- Elmer FEM (ElmerSolver + ElmerGrid, plus Gmsh) and Qucs-S/`qucsator_rf`: install these to exercise `simulation/elmer.py` and `simulation/qucs.py`, both of which are now built — this line previously said "only if their respective adapters actually get built", which is no longer true. Qucs-S's flagged CLI/headless contradiction was resolved in the course of building that adapter: the binary `simulation/qucs.py` shells out to is named `qucsator_rf`, not the bare `qucsator` the upstream project is colloquially called (see README's own note).
 
 **Free-of-charge but not open source** — usable today, but track distinctly in `docs/LICENSE_MATRIX.md` rather than alongside the MIT/Apache/GPL rows:
 - LM Studio (proprietary EULA, free-of-charge since July 2025) — already running on this machine for an unrelated project; reusable here with its own model(s) loaded
