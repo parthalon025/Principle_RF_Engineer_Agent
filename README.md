@@ -119,6 +119,20 @@ uv run pytest
 uv run python -m agent.main "Analyze the requirements for a 2.45 GHz PCB antenna."
 ```
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull
+request against it: `ruff check` and `ruff format --check`, plus the full
+`pytest` suite against a `pgvector/pgvector:pg17` service container with
+`db/schema.sql` applied via `db/apply_schema.py`.
+
+CI has no LLM credential (no `OPENAI_API_KEY`, no `ANTHROPIC_API_KEY`, no
+`LOCAL_LLM_BASE_URL`) and installs none of the optional extras (`hfss`,
+`measurement`, `geometry`, `ltspice`, `kicad`). No test needs a live model
+or embedding backend to pass; the extras' tests skip themselves with a
+stated reason, and `pytest -rs` prints every skip reason in the run log, so
+nothing is silently unverified.
+
 ## Development order
 
 1. Deterministic calculations
