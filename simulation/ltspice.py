@@ -168,12 +168,12 @@ class LtspiceSimulator(Simulator):
 
         `simulator_cls`, if given, is used AS-IS instead of resolving
         anything through spicelib at all -- a test-only constructor-
-        injection seam (mirrors simulation/hfss.py's `hfss_factory` and
-        measurement/vna.py's `transport_factory`) so tests can supply a
-        class whose `run()`/`is_available()` already point at a fake/stub
-        executable, or (as tests/test_ltspice.py mostly does instead) a
-        REAL spicelib-derived class pre-bound to one -- see that file for
-        why the latter is preferred here, unlike those other two adapters.
+        injection seam (mirrors simulation/hfss.py's `hfss_factory`) so
+        tests can supply a class whose `run()`/`is_available()` already
+        point at a fake/stub executable, or (as tests/test_ltspice.py
+        mostly does instead) a REAL spicelib-derived class pre-bound to
+        one -- see that file for why the latter is preferred here, unlike
+        that other adapter.
         """
         self.executable = executable or os.getenv("LTSPICE_BIN")
         if simulator_cls is not None:

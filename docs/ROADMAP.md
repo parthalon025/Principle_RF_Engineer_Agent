@@ -7,7 +7,7 @@
 0.5: HFSS/PyAEDT, licensed-worker execution, project archival (optional --
      for teams holding a paid AEDT license; the free/OSS stack built through
      0.4 already reaches a working, verified design without this milestone)
-0.6: measurement adapters, VNA correlation, SCPI policy engine
+0.6: externally-obtained measurement ingestion, simulation/measurement correlation
 0.7: Monte Carlo/tolerance analysis, design history, failure-case retrieval
 0.8: decision-approval review UI, manufacturing-release gate
 1.0: repeatable design workflows, evaluation benchmark, audited provenance,

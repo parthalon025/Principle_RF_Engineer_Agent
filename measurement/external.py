@@ -3,12 +3,12 @@ directly from ADR-0012 (physical-instrument control leaves this codebase)
 and ADR-0013 (the design loop's MEASUREMENT step's replacement data source).
 
 WHY THIS LIVES IN `measurement/`: ADR-0012's own "Consequences" section says
-it plainly -- once ticket #90 deletes `measurement/vna.py` and the rest of
-the SCPI/VISA instrument-actuation package, this module is the only thing
-left in the package, and the package's own purpose inverts: instead of
-"this system reaches out to a physical instrument," it becomes "measured
-data enters this system from outside it." That is a deliberate placement,
-not a leftover.
+it plainly -- ticket #90 deleted `measurement/vna.py` and the rest of the
+SCPI/VISA instrument-actuation package, leaving this module the only thing
+in the package, and the package's own purpose inverted: instead of "this
+system reaches out to a physical instrument," it is now "measured data
+enters this system from outside it." That is a deliberate placement, not a
+leftover.
 
 WHAT THIS MODULE DOES: an engineer who measured a prototype on equipment
 this system never touched -- a bench VNA, a range, a chamber, anything --
@@ -25,12 +25,9 @@ real instrument reading of a real prototype -- not by whether THIS SYSTEM
 was the one that actuated the instrument. A Touchstone file from a range
 test run entirely by a human, on hardware this codebase has never seen,
 still reports what a real device actually did in the real world, which is
-exactly the property that earns the top evidence tier. `measurement/vna.py`
-'s own module docstring makes the same point about instrument identity and
-calibration metadata riding along for audit trail, not for provenance
-justification -- provenance here is justified by "a physical instrument
-produced this number," which is just as true whether this system or a
-human hand turned the knobs.
+exactly the property that earns the top evidence tier -- provenance here
+is justified by "a physical instrument produced this number," which is
+just as true whether this system or a human hand turned the knobs.
 
 THE RESULT SHAPE THIS PRODUCES, ON PURPOSE, MATCHES WHAT `rf_tools.
 correlation._result_to_network` ALREADY ACCEPTS: that function already
@@ -58,10 +55,16 @@ second, competing data-extraction path. A value only enters this system
 when a human puts it into the structured Touchstone data itself.
 
 WHAT THIS MODULE DELIBERATELY DOES NOT DO: no VISA resource, no live
-instrument, no SCPI traffic, no `measurement.base.check_physical_actuation_
-gate` call -- there is no instrument-actuation decision to gate here at all
-("may this exact SCPI command sequence run" is meaningless when no SCPI
-command is ever sent). The design loop's OWN, separate, higher-level
+instrument, no SCPI traffic, and no instrument-actuation gate call. There
+is no instrument-actuation decision to gate here at all -- "may this exact
+SCPI command sequence run" is meaningless when no SCPI command is ever
+sent. (Ticket #90 removed the gate that question belonged to, along with
+the whole SCPI/VISA package: `measurement/base.py`'s
+`check_physical_actuation_gate` no longer exists anywhere in this
+codebase, so do not go looking for it -- see ADR-0012 and
+`docs/SECURITY.md`, which keeps the reasoning for why such a gate matters
+as a design principle for whenever instrument control returns to scope.)
+The design loop's OWN, separate, higher-level
 MEASUREMENT gate (`orchestration/design_loop.py`'s `GATED_STEPS`, checked by
 `orchestration.approval.check_loop_step_approval_gate` before
 `_handle_measurement` ever runs) still applies unchanged -- "should this
@@ -126,12 +129,13 @@ def record_external_measurement(
         (see this module's docstring).
       - `provenance`: always `"MEASURED"` -- see this module's docstring for
         why externally-obtained data still earns the top evidence tier.
-      - `source`: always `"external_test_iteration"` -- an honest marker
-        distinguishing this path from a live-instrument
-        `measurement.vna.run_vna_measurement` result (which instead carries
-        an `"instrument"` identity string), for any future caller that
-        wants to tell the two apart without guessing from which optional
-        keys happen to be present.
+      - `source`: always `"external_test_iteration"` -- an honest marker of
+        how this evidence was obtained, kept even though this is now the
+        only MEASUREMENT path (ticket #90 removed the instrument-actuation
+        package this module's docstring describes ADR-0012/ADR-0013
+        replacing), so a decision's own result stays self-describing
+        without depending on the caller already knowing which module
+        produced it.
       - `lab_report` / `notes`: passed through exactly as given (including
         `None` when omitted) -- never read for numeric values.
     """

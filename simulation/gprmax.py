@@ -205,9 +205,9 @@ class GprmaxSimulator(Simulator):
 # extra -- there is no pip-installable "gprMax" package such an extra could
 # even name. `h5py` (needed by parse_gprmax_output() below to read gprMax's
 # own native .out format) IS separately pip-installable, is free/open
-# source with no special hardware or license requirement (unlike pyaedt/
-# pyvisa), and this module's own tests construct synthetic .out files with
-# it -- so, unlike pyaedt/pyvisa, it is added as an ordinary hard
+# source with no special hardware or license requirement (unlike pyaedt),
+# and this module's own tests construct synthetic .out files with
+# it -- so, unlike pyaedt, it is added as an ordinary hard
 # dependency in pyproject.toml, not an optional extra (see that file's own
 # comment on this decision).
 #

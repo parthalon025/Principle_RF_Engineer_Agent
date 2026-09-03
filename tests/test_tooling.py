@@ -12,11 +12,9 @@ track every `design_id` created and delete it (cascade-deleting its
 decision_records/engineering_results/verification_items) afterward.
 
 Reuses tests/test_design_loop.py's proven end-to-end step sequence (fake
-NEC2++ executable, real approval receipts) rather than re-deriving a new
-one -- duplicated, not imported, matching this test suite's existing
-per-file convention. MEASUREMENT is faked at a different seam than that
-file's own end-to-end test -- see _patch_vna_transport's docstring below
-for why.
+NEC2++ executable, real approval receipts, a real Touchstone file for
+MEASUREMENT) rather than re-deriving a new one -- duplicated, not
+imported, matching this test suite's existing per-file convention.
 """
 
 from __future__ import annotations
@@ -27,8 +25,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import psycopg
 import pytest
+import skrf as rf
 from dotenv import load_dotenv
 
 from designs.service import read_design
@@ -103,14 +103,12 @@ def test_advance_design_loop_step_requires_design_id_in_state():
 # ---------------------------------------------------------------------------
 # engineering_results.tool_name for a MEASUREMENT decision (issue #89).
 #
-# These two reach for the private _tool_name_for rather than going through a
-# flush, which is a deliberate exception to this suite's own "exercise the
-# public dict-in/dict-out functions" habit: the only public path that reads
-# a tool name is _flush_decisions, which commits to a real Postgres, and
-# this environment has none (see the module docstring, and issue #97 for the
-# absent CI that would). Asserting on the discriminator directly is the only
-# coverage available for a defect whose whole consequence is a false claim
-# sitting in a table nothing here can read back.
+# Reaches for the private _tool_name_for rather than going through a flush,
+# which is a deliberate exception to this suite's own "exercise the public
+# dict-in/dict-out functions" habit: the only public path that reads a tool
+# name is _flush_decisions, which commits to a real Postgres, and this
+# environment has none (see the module docstring, and issue #97 for the
+# absent CI that would).
 # ---------------------------------------------------------------------------
 
 
@@ -128,11 +126,11 @@ def _measurement_decision(result: dict[str, Any]) -> Any:
     )
 
 
-def test_external_measurement_is_not_recorded_as_a_vna_run():
-    """An externally-measured Touchstone file must not be persisted as
-    though run_vna_measurement produced it -- the design's permanent
-    evidence trail would then claim this system drove an instrument to get
-    data a human measured elsewhere and carried back."""
+def test_external_measurement_is_recorded_as_record_external_measurement():
+    """A MEASUREMENT decision's evidence -- a Touchstone file an engineer
+    measured elsewhere and carried back (ticket #90: the only MEASUREMENT
+    path there is) -- is persisted under the real function name that
+    produced it."""
     from orchestration.tooling import _tool_name_for
 
     decision = _measurement_decision(
@@ -143,13 +141,6 @@ def test_external_measurement_is_not_recorded_as_a_vna_run():
         }
     )
     assert _tool_name_for(decision) == "record_external_measurement"
-
-
-def test_live_instrument_measurement_is_still_recorded_as_a_vna_run():
-    from orchestration.tooling import _tool_name_for
-
-    decision = _measurement_decision({"frequency_hz": [2.4e9], "s_parameters": {"S11": ["0.1+0j"]}})
-    assert _tool_name_for(decision) == "run_vna_measurement"
 
 
 def test_inspect_design_loop_state_passes_through_design_fields(cleanup_designs):
@@ -211,6 +202,22 @@ def _make_fake_nec2pp(tmp_path: Path) -> Path:
     script.write_text(_FAKE_NEC2PP_PY.format(python=sys.executable, sample=_GUIDE_SAMPLE_OUTPUT))
     script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return script
+
+
+def _write_measured_touchstone(tmp_path: Path, name: str = "measured") -> Path:
+    """A real one-port Touchstone file for the MEASUREMENT step -- same
+    construction as tests/test_design_loop.py's own helper of the same
+    name (duplicated, not imported, matching this suite's per-file
+    convention). One-port (S11 only) to match this file's own CORRELATION
+    `simulated_override` shape."""
+    freqs_hz = [2.0e9, 2.5e9, 3.0e9]
+    f = rf.Frequency.from_f(freqs_hz, unit="hz")
+    s = np.zeros((3, 1, 1), dtype=complex)
+    s[:, 0, 0] = 10 ** (-15 / 20)
+    ntwk = rf.Network(frequency=f, s=s, z0=50)
+    path = tmp_path / f"{name}.s1p"
+    ntwk.write_touchstone(path.with_suffix(""))
+    return path
 
 
 def _fingerprint(state: dict[str, Any], step: DesignStep, step_input: dict) -> dict:
@@ -284,26 +291,14 @@ def _drive_to_redesign_decision(
             "status": verification_status,
         },
     )
-    # instrument_approval only needs to be PRESENT (_handle_measurement's
-    # _require_fields check) -- its authenticity would normally be
-    # verified inside the real measurement.vna.run_vna_measurement, which
-    # _patch_vna_transport (see below) replaces entirely with a fake, so a
-    # placeholder is enough here. The LOOP's own separate MEASUREMENT gate
-    # (a real LoopStepApprovalReceipt) is still enforced by
-    # _grant_and_advance below, same as every other GATED_STEPS member.
-    measurement_input = {
-        "resource": "TCPIP0::192.0.2.10::INSTR",
-        "start_hz": 2.0e9,
-        "stop_hz": 3.0e9,
-        "points": 3,
-        "sparams": ["S11"],
-        "instrument_approval": {
-            "token": "placeholder",
-            "job_fingerprint": "placeholder",
-            "approved_by": "jane",
-            "granted_at": 0.0,
-        },
-    }
+    # A real Touchstone file brought back from external testing (ticket
+    # #90: the only MEASUREMENT path there is). The LOOP's own separate
+    # MEASUREMENT gate (a real LoopStepApprovalReceipt) is still enforced
+    # by _grant_and_advance below, same as every other GATED_STEPS member.
+    touchstone_path = _write_measured_touchstone(
+        tmp_path, name=f"tooling-{state['design_key']}-iter{state['iteration']}"
+    )
+    measurement_input = {"touchstone_file": str(touchstone_path)}
     state = _grant_and_advance(state, DesignStep.MEASUREMENT, measurement_input)
     simulated_override = {
         "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
@@ -320,8 +315,7 @@ def _drive_to_redesign_decision(
 # ---------------------------------------------------------------------------
 
 
-def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path, monkeypatch):
-    _patch_vna_transport(monkeypatch)
+def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path):
     state = start_new_design_loop("TOOL-ACCEPT", "Accept Flush Test", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])
     design_id = state["design_id"]
@@ -350,12 +344,12 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path,
         "patch_resonant_frequency_hz",
         "run_nec2_simulation",
         "optimize_patch_length_for_target_frequency",
-        "run_vna_measurement",
+        "record_external_measurement",
         "correlate_simulation_measurement",
     }
     assert results_by_tool["patch_resonant_frequency_hz"]["provenance"] == "CALCULATED"
     assert results_by_tool["run_nec2_simulation"]["provenance"] == "SIMULATED"
-    assert results_by_tool["run_vna_measurement"]["provenance"] == "MEASURED"
+    assert results_by_tool["record_external_measurement"]["provenance"] == "MEASURED"
 
     assert stored["verification_items"][0]["status"] == "PASS"
     assert stored["verification_items"][0]["method"] == "analysis"
@@ -366,14 +360,13 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path,
     [("CONDITIONAL PASS", "MARGINAL"), ("BLOCKED", "FAIL")],
 )
 def test_flush_maps_verification_statuses_designs_models_does_not_accept(
-    cleanup_designs, tmp_path, monkeypatch, loop_status, expected_designs_status
+    cleanup_designs, tmp_path, loop_status, expected_designs_status
 ):
     """design_loop.py's VERIFICATION_STATUSES accepts CONDITIONAL PASS/
     BLOCKED, but designs.models.VerificationStatus doesn't -- a mismatch
     the flush's own status-remapping (orchestration/tooling.py's
     _VERIFICATION_STATUS_MAP) must reconcile, or every future flush for
     this iteration would fail permanently (found in code review)."""
-    _patch_vna_transport(monkeypatch)
     state = start_new_design_loop("TOOL-VSTAT", "Verification Status Map Test", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])
     design_id = state["design_id"]
@@ -398,9 +391,8 @@ def test_flush_maps_verification_statuses_designs_models_does_not_accept(
 
 
 def test_flush_at_iterate_persists_that_iteration_and_moves_status_to_analysis(
-    cleanup_designs, tmp_path, monkeypatch
+    cleanup_designs, tmp_path
 ):
-    _patch_vna_transport(monkeypatch)
     state = start_new_design_loop("TOOL-ITER", "Iterate Flush Test", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])
     design_id = state["design_id"]
@@ -451,10 +443,7 @@ def test_flush_at_iterate_persists_that_iteration_and_moves_status_to_analysis(
 # ---------------------------------------------------------------------------
 
 
-def test_flush_failure_is_atomic_and_leaves_design_status_untouched(
-    cleanup_designs, tmp_path, monkeypatch
-):
-    _patch_vna_transport(monkeypatch)
+def test_flush_failure_is_atomic_and_leaves_design_status_untouched(cleanup_designs, tmp_path):
     state = start_new_design_loop("TOOL-FAIL", "Flush Failure Test", "A", REQUIREMENTS)
     design_id = state["design_id"]
     cleanup_designs.append(design_id)
@@ -493,36 +482,3 @@ def test_flush_failure_is_atomic_and_leaves_design_status_untouched(
     assert stored["status"] == "DRAFT"  # never reached PASS -- the whole flush rolled back
     assert len(stored["decision_records"]) == 1  # only the sabotage row -- nothing else landed
     assert stored["engineering_results"] == []  # none of the 5 computed results landed either
-
-
-def _patch_vna_transport(monkeypatch: pytest.MonkeyPatch) -> None:
-    """MEASUREMENT's real handler (`orchestration.design_loop._handle_measurement`)
-    goes through `measurement.vna.run_vna_measurement`'s real pyvisa transport
-    path when called through `orchestration.tooling` -- the
-    `instrument_transport_factory` test seam `advance_loop_step` accepts is
-    deliberately NOT exposed at this tool-surface level (see
-    design_loop.py's own advance_loop_step docstring), by the same design
-    that keeps a real invocation honest. pyvisa isn't even installed in
-    this environment (an optional extra -- see pyproject.toml), so this
-    test suite can't route a fake transport through that seam the way
-    tests/test_design_loop.py's end-to-end test does (it calls the pure
-    `advance_loop_step` directly, which DOES accept that kwarg).
-
-    Persistence, not VNA transport correctness, is what this file tests --
-    that's already covered by tests/test_vna.py and tests/test_design_loop.py.
-    So patch design_loop.py's own module-level `_run_vna_measurement` alias
-    directly, in the same frequency_hz/s_parameters/z0 shape
-    `rf_tools.correlation.correlate_simulation_measurement` already accepts
-    for `measured` (proven by the existing end-to-end test's `simulated`
-    override using this exact shape)."""
-    import orchestration.design_loop as design_loop_module
-
-    def _fake_run_vna_measurement(**_kwargs: Any) -> dict[str, Any]:
-        return {
-            "provenance": "MEASURED",
-            "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
-            "s_parameters": {"S11": ["0.11+0.01j", "0.21+0.02j", "0.31+0.03j"]},
-            "z0": 50.0,
-        }
-
-    monkeypatch.setattr(design_loop_module, "_run_vna_measurement", _fake_run_vna_measurement)

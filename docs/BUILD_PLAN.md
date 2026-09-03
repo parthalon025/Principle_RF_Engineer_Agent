@@ -66,8 +66,11 @@ and differentiable methods where appropriate.
 
 ## Phase 10 — measurement
 
-Add SCPI/VISA adapters for VNA, spectrum analyzer, signal generator,
-and power meter. Physical control remains approval-required.
+Accept measured results only as Touchstone files an engineer brought back
+from testing run on independent equipment (ADR-0012/ADR-0013). This system
+never actuates a physical instrument itself; the design loop's own
+MEASUREMENT step stays approval-required regardless of how the evidence
+was obtained.
 
 ## Phase 11 — correlation
 

@@ -93,7 +93,6 @@ Optional:
   `docs/FREE_AND_OPEN_SOURCE_TOOLING.md`
 - LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
   `uv sync --extra ltspice` -- see `simulation/ltspice.py`)
-- VISA/SCPI-capable instruments
 - KiCad (application + `kicad-cli`) -- for PCB geometry export via kicad-python's IPC API (issue #65)
 - gerbv -- Gerber rasterizer gerber2ems shells out to internally
 - gerber2ems -- PCB trace signal-integrity simulation front end for openEMS; not on PyPI, install from github.com/antmicro/gerber2ems

@@ -42,22 +42,6 @@ from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
-from measurement.power_meter import (
-    request_power_meter_measurement_approval as _request_power_meter_measurement_approval,
-)
-from measurement.power_meter import run_power_meter_measurement as _run_power_meter_measurement
-from measurement.signal_generator import (
-    request_signal_generator_output_approval as _request_signal_generator_output_approval,
-)
-from measurement.signal_generator import run_signal_generator_output as _run_signal_generator_output
-from measurement.spectrum_analyzer import (
-    request_spectrum_analyzer_measurement_approval as _request_sa_measurement_approval,
-)
-from measurement.spectrum_analyzer import (
-    run_spectrum_analyzer_measurement as _run_sa_measurement,
-)
-from measurement.vna import request_vna_measurement_approval as _request_vna_measurement_approval
-from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -716,7 +700,7 @@ def compare_touchstone_files(path_a: str, path_b: str) -> dict:
 
 
 @function_tool(strict_mode=False)  # `simulated`/`measured`'s shape (free-form
-# dicts from whatever simulator/instrument-adapter output the caller has --
+# dicts from whatever simulator/external-measurement output the caller has --
 # an skrf.Network can't itself cross this JSON boundary) doesn't fit the
 # SDK's strict-schema requirement -- same rationale as run_nec2_simulation's
 # geometry parameter above.
@@ -735,8 +719,9 @@ def correlate_simulated_and_measured(
     (reusing deembed_touchstone -- SKIPPED, and said so in the result, when
     omitted), and returns a quantified per-S-parameter comparison, not a
     bare pass/fail. `simulated`/`measured` each accept a dict shaped like
-    measure_vna_s_parameters' output (frequency_hz/s_parameters/z0), or one
-    carrying a "touchstone_file" path -- see rf_tools/correlation.py's
+    measurement/external.py's record_external_measurement output
+    (frequency_hz/s_parameters/z0), or one carrying a "touchstone_file"
+    path -- see rf_tools/correlation.py's
     module docstring for exactly which of run_nec2_simulation's/
     run_openems_simulation's current outputs this can and cannot use yet
     (NEC2++'s single-frequency impedance is always honestly rejected, not
@@ -744,8 +729,8 @@ def correlate_simulated_and_measured(
     "touchstone_file" output when computed=True -- real port probe data was
     available -- and honestly rejected when computed=False). Temperature
     normalization is a documented no-op unless both inputs happen to carry
-    a "temperature_c" field, since no current simulator/instrument adapter
-    populates one -- see the returned temperature_note. Returns
+    a "temperature_c" field, since no current simulator/external-measurement
+    source populates one -- see the returned temperature_note. Returns
     "CALCULATED" provenance for the correlation result itself, alongside
     the input results' own SIMULATED/MEASURED provenance tags."""
     result = _correlate_simulation_measurement(
@@ -1231,346 +1216,6 @@ def run_meep_simulation(
     )
 
 
-# ---------------------------------------------------------------------------
-# VNA measurement (issue #43, Phase 10 ticket 1 of 2) -- deliberately TWO
-# separate tools, not one tool with an easily-flippable boolean parameter,
-# per this ticket's design guidance and mirroring measurement/base.py's
-# structural approval-gate design: request_vna_measurement_approval() is
-# the ONLY way to obtain an approval receipt, and does nothing dangerous
-# itself; measure_vna_s_parameters() is the only tool that can actually
-# reach the instrument, and it cryptographically verifies (via
-# measurement/base.py's check_physical_actuation_gate) that the `approval`
-# it was given is a genuine, unmodified receipt granted for this EXACT
-# resource/start_hz/stop_hz/points/sparams combination -- a receipt for a
-# different request, a forged token, or a bare string/boolean in place of
-# a real receipt are all rejected, not silently accepted.
-#
-# IMPORTANT: this codebase does not yet wire up any real human-facing
-# approval UI/workflow (see measurement/base.py's module docstring), so
-# request_vna_measurement_approval below ALWAYS raises when actually
-# invoked through this tool surface -- a Python approval_callback cannot
-# cross this JSON tool-call boundary, so there is currently no way for an
-# agent invocation of this tool to produce a granted approval. This is
-# intentional: physical lab instruments are never controlled autonomously
-# in this project (README.md, docs/BUILD_PLAN.md's Phase 10 "Physical
-# control remains approval-required", docs/SECURITY.md). Wiring a real
-# approval_callback (a genuine human-facing confirmation workflow) is a
-# project for later.
-# ---------------------------------------------------------------------------
-
-
-@function_tool
-def request_vna_measurement_approval(
-    resource: str,
-    start_hz: float,
-    stop_hz: float,
-    points: int = 201,
-    sparams: list[str] | None = None,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    ANY VNA S-parameter measurement can physically actuate a real
-    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no
-    instrument I/O of any kind. On success, returns an approval receipt
-    (a plain dict) to pass UNCHANGED as measure_vna_s_parameters'
-    `approval` argument, for THIS EXACT resource/start_hz/stop_hz/points/
-    sparams combination -- a receipt requested for a different combination
-    will be rejected there.
-
-    THIS TOOL CURRENTLY ALWAYS RAISES: no real human-facing approval
-    workflow is wired into this codebase yet (see this module's comment
-    above and measurement/base.py's module docstring). Do not attempt to
-    work around this by fabricating a token yourself -- measure_vna_
-    s_parameters cryptographically verifies the receipt and rejects
-    anything that did not genuinely come from this function having
-    actually granted an approval."""
-    return _request_vna_measurement_approval(
-        resource=resource,
-        start_hz=start_hz,
-        stop_hz=stop_hz,
-        points=points,
-        sparams=sparams,
-        approved_by=approved_by or None,
-    )
-
-
-@function_tool(strict_mode=False)  # `approval`'s shape (an opaque receipt
-# dict passed through unchanged from request_vna_measurement_approval's
-# output) and `calibration` (free-form caller metadata) don't fit the
-# SDK's strict-schema requirement -- same rationale as run_nec2_
-# simulation's geometry parameter above.
-def measure_vna_s_parameters(
-    resource: str,
-    start_hz: float,
-    stop_hz: float,
-    approval: dict,
-    points: int = 201,
-    sparams: list[str] | None = None,
-    z0: float = 50.0,
-    calibration: dict | None = None,
-) -> dict:
-    """Perform a real VNA S-parameter measurement over SCPI/VISA, GIVEN a
-    valid approval receipt already obtained from a separate, prior call to
-    request_vna_measurement_approval for this EXACT resource/start_hz/
-    stop_hz/points/sparams combination. Configures the frequency sweep,
-    triggers a measurement, and reads back S-parameter data, returning a
-    "MEASURED"-provenance result (this project's top evidence tier --
-    README.md's "Design goals") with instrument identity and calibration
-    metadata attached, structured Touchstone-compatibly (an in-memory
-    skrf.Network is built from the parsed data -- see measurement/vna.py,
-    which reuses this project's existing rf_tools/touchstone.py
-    conventions). Refuses to run without ALL of: ALLOW_INSTRUMENT_
-    CONTROL=true, a configured VISA resource, pyvisa installed, AND a
-    cryptographically valid approval receipt for this exact request (see
-    measurement/base.py's check_physical_actuation_gate) -- none of this
-    is optional or bypassable from this tool surface. Exact SCPI command
-    syntax is documented, generic, and explicitly vendor-variable (see
-    measurement/vna.py's module docstring's citations and caveat); it is
-    NOT verified against any real instrument in this environment -- none
-    is installed or available here."""
-    return _run_vna_measurement(
-        resource=resource,
-        start_hz=start_hz,
-        stop_hz=stop_hz,
-        approval=approval,
-        points=points,
-        sparams=sparams,
-        z0=z0,
-        calibration=calibration,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Spectrum analyzer, signal generator, and power meter measurement (issue
-# #44, Phase 10 ticket 2 of 2) -- three MORE instrument classes, each
-# wired as TWO separate tools (an approval-request tool + a measure/
-# actuate tool), exactly mirroring the VNA tools above and measurement/
-# base.py's structural approval-gate design. See measurement/
-# spectrum_analyzer.py, measurement/signal_generator.py, and measurement/
-# power_meter.py's module docstrings for the SCPI command citations and
-# vendor-variability caveats.
-#
-# The signal generator tools are the one pair of these six that actively
-# commands RF output onto the physical world (a spectrum analyzer and a
-# power meter only observe whatever is already present) -- see
-# measurement/signal_generator.py's module docstring for why its approval
-# fingerprint deliberately includes power_dbm and output_on, not just
-# frequency_hz, so an approval for one power/frequency/on-off combination
-# cannot be silently reused for a different one.
-#
-# IMPORTANT: exactly as with the VNA tools above, none of the three
-# request_*_approval tools below can currently produce a granted approval
-# through this tool surface -- no real human-facing approval UI/workflow is
-# wired into this codebase yet (see measurement/base.py's module
-# docstring), and a Python approval_callback cannot cross this JSON tool-
-# call boundary. Physical lab instruments are never controlled
-# autonomously in this project (README.md, docs/BUILD_PLAN.md's Phase 10
-# "Physical control remains approval-required", docs/SECURITY.md).
-# ---------------------------------------------------------------------------
-
-
-@function_tool
-def request_spectrum_analyzer_measurement_approval(
-    resource: str,
-    center_hz: float,
-    span_hz: float,
-    res_bw_hz: float | None = None,
-    points: int = 401,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    ANY spectrum analyzer trace measurement can physically actuate a real
-    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no
-    instrument I/O of any kind. On success, returns an approval receipt (a
-    plain dict) to pass UNCHANGED as measure_spectrum_analyzer_trace's
-    `approval` argument, for THIS EXACT resource/center_hz/span_hz/
-    res_bw_hz/points combination.
-
-    THIS TOOL CURRENTLY ALWAYS RAISES: no real human-facing approval
-    workflow is wired into this codebase yet. Do not attempt to work
-    around this by fabricating a token yourself --
-    measure_spectrum_analyzer_trace cryptographically verifies the receipt
-    and rejects anything that did not genuinely come from this function
-    having actually granted an approval."""
-    return _request_sa_measurement_approval(
-        resource=resource,
-        center_hz=center_hz,
-        span_hz=span_hz,
-        res_bw_hz=res_bw_hz,
-        points=points,
-        approved_by=approved_by or None,
-    )
-
-
-@function_tool(strict_mode=False)  # `approval` (an opaque receipt dict) and
-# `calibration` (free-form caller metadata) don't fit the SDK's strict-
-# schema requirement -- same rationale as measure_vna_s_parameters above.
-def measure_spectrum_analyzer_trace(
-    resource: str,
-    center_hz: float,
-    span_hz: float,
-    approval: dict,
-    res_bw_hz: float | None = None,
-    points: int = 401,
-    calibration: dict | None = None,
-) -> dict:
-    """Perform a real spectrum analyzer trace measurement over SCPI/VISA,
-    GIVEN a valid approval receipt already obtained from a separate, prior
-    call to request_spectrum_analyzer_measurement_approval for this EXACT
-    resource/center_hz/span_hz/res_bw_hz/points combination. Configures
-    center frequency/span/resolution bandwidth, triggers a sweep, and reads
-    back an amplitude-vs-frequency trace, returning a "MEASURED"-provenance
-    result with instrument identity and calibration metadata attached (see
-    measurement/spectrum_analyzer.py). Refuses to run without ALL of:
-    ALLOW_INSTRUMENT_CONTROL=true, a configured VISA resource, pyvisa
-    installed, AND a cryptographically valid approval receipt for this
-    exact request -- none of this is optional or bypassable from this tool
-    surface. Exact SCPI command syntax is documented, generic, and
-    explicitly vendor-variable (see measurement/spectrum_analyzer.py's
-    module docstring's citations and caveat); it is NOT verified against
-    any real instrument in this environment."""
-    return _run_sa_measurement(
-        resource=resource,
-        center_hz=center_hz,
-        span_hz=span_hz,
-        approval=approval,
-        res_bw_hz=res_bw_hz,
-        points=points,
-        calibration=calibration,
-    )
-
-
-@function_tool
-def request_signal_generator_output_approval(
-    resource: str,
-    frequency_hz: float,
-    power_dbm: float,
-    output_on: bool = True,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    a signal generator can be commanded to output RF power onto a real
-    instrument. Does nothing dangerous itself -- no SCPI, no VISA, no RF
-    output of any kind. On success, returns an approval receipt (a plain
-    dict) to pass UNCHANGED as set_signal_generator_output's `approval`
-    argument, for THIS EXACT resource/frequency_hz/power_dbm/output_on
-    combination -- an approval requested for a different frequency, power
-    level, OR on/off state will be rejected there (see measurement/
-    signal_generator.py's module docstring: a signal generator actively
-    outputs RF power, arguably a more consequential physical actuation
-    than a VNA's own low, calibrated stimulus, so this fingerprint is held
-    to be at least as strict).
-
-    THIS TOOL CURRENTLY ALWAYS RAISES: no real human-facing approval
-    workflow is wired into this codebase yet. Do not attempt to work
-    around this by fabricating a token yourself --
-    set_signal_generator_output cryptographically verifies the receipt and
-    rejects anything that did not genuinely come from this function having
-    actually granted an approval."""
-    return _request_signal_generator_output_approval(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        power_dbm=power_dbm,
-        output_on=output_on,
-        approved_by=approved_by or None,
-    )
-
-
-@function_tool(strict_mode=False)  # `approval` (an opaque receipt dict)
-# doesn't fit the SDK's strict-schema requirement -- same rationale as
-# measure_vna_s_parameters above.
-def set_signal_generator_output(
-    resource: str,
-    frequency_hz: float,
-    power_dbm: float,
-    approval: dict,
-    output_on: bool = True,
-) -> dict:
-    """Command a real signal generator's output frequency/power/on-off
-    state over SCPI/VISA, GIVEN a valid approval receipt already obtained
-    from a separate, prior call to request_signal_generator_output_approval
-    for this EXACT resource/frequency_hz/power_dbm/output_on combination.
-    Returns a "MEASURED"-provenance result confirming the actuated state
-    plus best-effort instrument readback (see measurement/
-    signal_generator.py). Refuses to run without ALL of: ALLOW_INSTRUMENT_
-    CONTROL=true, a configured VISA resource, pyvisa installed, AND a
-    cryptographically valid approval receipt for this EXACT
-    frequency/power/output-on-off combination -- none of this is optional
-    or bypassable from this tool surface, and this is the one tool pair in
-    this project that commands a physical instrument to actively output RF
-    power rather than merely observe or apply a low, calibrated stimulus,
-    so its approval gate is held to be at least as strict as
-    measure_vna_s_parameters'. Exact SCPI command syntax is documented,
-    generic, and explicitly vendor-variable (see measurement/
-    signal_generator.py's module docstring's citations and caveat); it is
-    NOT verified against any real instrument in this environment."""
-    return _run_signal_generator_output(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        power_dbm=power_dbm,
-        approval=approval,
-        output_on=output_on,
-    )
-
-
-@function_tool
-def request_power_meter_measurement_approval(
-    resource: str,
-    frequency_hz: float,
-    approved_by: str = "",
-) -> dict:
-    """Request the distinct, auditable human-approval step required before
-    ANY RF power meter reading can physically actuate a real instrument.
-    Does nothing dangerous itself -- no SCPI, no VISA, no instrument I/O of
-    any kind. On success, returns an approval receipt (a plain dict) to
-    pass UNCHANGED as measure_power_meter_reading's `approval` argument,
-    for THIS EXACT resource/frequency_hz combination.
-
-    THIS TOOL CURRENTLY ALWAYS RAISES: no real human-facing approval
-    workflow is wired into this codebase yet. Do not attempt to work
-    around this by fabricating a token yourself --
-    measure_power_meter_reading cryptographically verifies the receipt and
-    rejects anything that did not genuinely come from this function having
-    actually granted an approval."""
-    return _request_power_meter_measurement_approval(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        approved_by=approved_by or None,
-    )
-
-
-@function_tool(strict_mode=False)  # `approval` (an opaque receipt dict) and
-# `calibration` (free-form caller metadata) don't fit the SDK's strict-
-# schema requirement -- same rationale as measure_vna_s_parameters above.
-def measure_power_meter_reading(
-    resource: str,
-    frequency_hz: float,
-    approval: dict,
-    calibration: dict | None = None,
-) -> dict:
-    """Perform a real RF power meter reading over SCPI/VISA, GIVEN a valid
-    approval receipt already obtained from a separate, prior call to
-    request_power_meter_measurement_approval for this EXACT resource/
-    frequency_hz combination. Sets the measurement frequency (used for the
-    meter's stored calibration-factor lookup), triggers a measurement, and
-    reads back a scalar power value, returning a "MEASURED"-provenance
-    result with instrument identity, units, and calibration-factor
-    metadata attached (see measurement/power_meter.py). Refuses to run
-    without ALL of: ALLOW_INSTRUMENT_CONTROL=true, a configured VISA
-    resource, pyvisa installed, AND a cryptographically valid approval
-    receipt for this exact request -- none of this is optional or
-    bypassable from this tool surface. Exact SCPI command syntax is
-    documented, generic, and explicitly vendor-variable (see measurement/
-    power_meter.py's module docstring's citations and caveat); it is NOT
-    verified against any real instrument in this environment."""
-    return _run_power_meter_measurement(
-        resource=resource,
-        frequency_hz=frequency_hz,
-        approval=approval,
-        calibration=calibration,
-    )
-
-
 @function_tool
 def ingest_document(
     file_path: str,
@@ -1954,10 +1599,8 @@ def optimize_patch_length_for_target_frequency(
 # deliberately NOT wired up as a fourth tool here (see
 # orchestration/tooling.py's module docstring): it always raises without a
 # real human-facing approval_callback, which no agent/MCP tool boundary in
-# this project can supply, exactly as measurement/base.py's own instrument-
-# actuation approval gate (issue #43) always raises through this tool
-# surface. There is no code path from this loop to a manufacturing-release
-# action -- see tests/test_design_loop.py's
+# this project can supply. There is no code path from this loop to a
+# manufacturing-release action -- see tests/test_design_loop.py's
 # test_no_manufacturing_release_step_exists and its sibling tests.
 #
 # start_design_loop now creates a real `designs` row backing the loop
@@ -2219,14 +1862,6 @@ _ALL_TOOLS = [
     run_palace_simulation,
     run_meep_simulation,
     generate_freecad_curved_geometry,
-    request_vna_measurement_approval,
-    measure_vna_s_parameters,
-    request_spectrum_analyzer_measurement_approval,
-    measure_spectrum_analyzer_trace,
-    request_signal_generator_output_approval,
-    set_signal_generator_output,
-    request_power_meter_measurement_approval,
-    measure_power_meter_reading,
     ingest_document,
     index_document,
     read_document,
@@ -2535,34 +2170,13 @@ ROLE_SPECS: list[RoleSpec] = [
             "simulation for similar future designs, including OpenParEM3D "
             "(run_openparem_simulation, issue #62) reference results, whose "
             "S-parameters and far-field gain/directivity/efficiency come "
-            "from the same solve. You also "
-            "get the real physical-instrument measurement tools for the "
-            "full standard test-bench set (issue #43's VNA adapter plus "
-            "issue #44's spectrum analyzer, signal generator, and power "
-            "meter adapters) -- request_vna_measurement_approval/"
-            "measure_vna_s_parameters, "
-            "request_spectrum_analyzer_measurement_approval/"
-            "measure_spectrum_analyzer_trace, "
-            "request_signal_generator_output_approval/"
-            "set_signal_generator_output, and "
-            "request_power_meter_measurement_approval/"
-            "measure_power_meter_reading -- for pulling real "
-            "MEASURED-provenance data off physical instruments via SCPI/"
-            "VISA (or, for the signal generator, commanding one). Each "
-            "instrument is deliberately TWO separate tools, not one with a "
-            "boolean flag: physical lab instruments are never controlled "
-            "autonomously in this project (README.md, docs/BUILD_PLAN.md's "
-            "Phase 10, docs/SECURITY.md), so a real instrument actuation "
-            "requires a distinct approval receipt from the first tool of "
-            "each pair before the second will run -- and in this "
-            "codebase's current state, every one of these four "
-            "approval-request tools always raises, since no human-facing "
-            "approval workflow is wired up yet. The signal generator pair "
-            "is the one that actively outputs RF power (not just observes, "
-            "like the others), so its approval fingerprint additionally "
-            "binds to the exact power level and on/off state requested, "
-            "not just frequency. You do not ingest or extract documents -- "
-            "that is the systems/verification roles' job."
+            "from the same solve. MEASURED-provenance data enters this "
+            "system only from outside it (a Touchstone file from an "
+            "external test bench, ingested through the design loop's "
+            "measurement step -- see measurement/external.py and ADR-0013); "
+            "this project does not actuate physical lab instruments itself "
+            "(README.md, docs/SECURITY.md). You do not ingest or extract "
+            "documents -- that is the systems/verification roles' job."
         ),
         tools=[
             analyze_touchstone_file,
@@ -2587,14 +2201,6 @@ ROLE_SPECS: list[RoleSpec] = [
             run_xyce_simulation,
             run_palace_simulation,
             run_meep_simulation,
-            request_vna_measurement_approval,
-            measure_vna_s_parameters,
-            request_spectrum_analyzer_measurement_approval,
-            measure_spectrum_analyzer_trace,
-            request_signal_generator_output_approval,
-            set_signal_generator_output,
-            request_power_meter_measurement_approval,
-            measure_power_meter_reading,
             search_knowledge,
         ],
     ),

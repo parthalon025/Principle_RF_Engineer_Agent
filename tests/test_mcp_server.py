@@ -110,13 +110,8 @@ def test_registered_tool_count_matches_old_plus_new():
     # added by issue #37, plus 1 more (run_nec2_simulation) added by #38,
     # plus 1 more (run_openems_simulation) added by #39, plus 1 more
     # (run_hfss_simulation) added by #40, plus 1 more
-    # (optimize_patch_length_for_target_frequency) added by #41, plus 2 more
-    # (request_vna_measurement_approval, measure_vna_s_parameters) added by
-    # #43, plus 6 more (request_spectrum_analyzer_measurement_approval,
-    # measure_spectrum_analyzer_trace,
-    # request_signal_generator_output_approval, set_signal_generator_output,
-    # request_power_meter_measurement_approval, measure_power_meter_reading)
-    # added by #44, plus 1 more (correlate_simulated_and_measured) added by
+    # (optimize_patch_length_for_target_frequency) added by #41, plus 1 more
+    # (correlate_simulated_and_measured) added by
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
@@ -135,10 +130,24 @@ def test_registered_tool_count_matches_old_plus_new():
     # (generate_freecad_curved_geometry) added by #66, plus 3 more
     # (propose_requirement_target, mark_requirement_unscoreable,
     # confirm_requirement_target) added by #92.
+    #
+    # #43 added 2 (request_vna_measurement_approval, measure_vna_s_parameters)
+    # and #44 added 6 more (request_spectrum_analyzer_measurement_approval,
+    # measure_spectrum_analyzer_trace,
+    # request_signal_generator_output_approval, set_signal_generator_output,
+    # request_power_meter_measurement_approval, measure_power_meter_reading)
+    # -- ticket #90 REMOVED all 8: the SCPI/VISA instrument-actuation
+    # approval gate and every tool built on it are gone (this system offers
+    # no physical-instrument actuation capability at all -- see ADR-0012),
+    # so the "+ 2" and "+ 6" terms those tickets added are gone with them.
+    #
+    # Running total: 82 (pre-#92) + 3 (#92) - 8 (#90) = 77. #90's own branch
+    # computed 82 - 8 = 74 against a base that predated #92; both tickets
+    # landed, so both adjustments apply.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
-        + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
+        + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
         + 3
     )
     assert len(registered_names) == expected
