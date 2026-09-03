@@ -96,10 +96,20 @@ document; the rest were made during analysis, several of them mine.**
    registration on rigid FR1, and does not transfer to a compliant sheet. The
    architecture survives only because the reflector is unpatterned and has
    nothing to align to.
-9. **WR-90 waveguide is the wrong fixture to design coupons for.** Its
-   22.86 × 10.16 mm aperture gives ~7 × 3 cells at a 3 mm pitch. **Free-space
-   measurement with two horns is the documented method, and 11 × 11 cells is a
-   demonstrated sufficient sample.**
+9. ~~**WR-90 waveguide is the wrong fixture to design coupons for**, and
+   11 × 11 cells is a demonstrated sufficient sample.~~ **Superseded
+   2026-09-03 — both halves were wrong.**
+   - **A coupon is specified in wavelengths, not cells.** 11 × 11 was carried
+     across from a 28 GHz paper where it measured 55 mm ≈ **5.1 λ**. At X-band
+     the same count is 33 mm ≈ **1.1 λ**, which no free-space method can
+     measure. NPL good practice requires **> 20 λ unfocused (600 mm at
+     10 GHz — impossible on a 220 × 300 mm bed) or 6 λ focused (180 mm — fits)**.
+     Revised spec: **≈ 180 × 180 mm, ≈ 60 × 60 cells at 3 mm pitch.**
+   - **WR-90 was dismissed too fast.** A *waveguide simulator* images a few
+     cells into a virtual infinite array, and at 2.54 mm pitch gives exactly
+     9 × 4 cells. It measures **element phase under oblique incidence sweeping
+     55° → 33°**, not broadside absorption — a different measurement, not a
+     cheaper one.
 10. **Aircraft wing, hull and sUAS body are not fixed targets.** They are
     *examples of what a requirement might state*. The host surface is a
     per-requirement input, and treating it as a project constant silently fixes
@@ -114,6 +124,12 @@ document; the rest were made during analysis, several of them mine.**
 12. **"Phase quantisation is well characterised" — only for beam-forming.**
     Not for absorption or backscatter reduction, which is what this effort
     actually optimises.
+13. **Costanzo et al. *IJAP* 2019 is not "numerically validated only".** A
+    research pass concluded this from the abstract alone, Wiley having blocked
+    the full text. The paper's **Section 4 is an experimental validation** —
+    an 11 × 11 array on DiClad 880, two horns, a VNA, broadside far-field.
+    Verified from the manually-retrieved PDF. **A conclusion drawn from an
+    abstract is not a conclusion about the paper.**
 
 ### Errors found in published sources
 
