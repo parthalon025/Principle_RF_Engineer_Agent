@@ -852,7 +852,10 @@ def test_run_ngspice_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["provenance"] == "SIMULATED"
     assert result["simulator"] == "ngspice"
     assert result["scale_name"] == "frequency_hz"
-    assert result["values"]["v(out)"] == pytest.approx([[2.0, 0.0], [1.5, -0.5]])
+    assert result["values"]["v(out)"] == [
+        [pytest.approx(2.0), pytest.approx(0.0)],
+        [pytest.approx(1.5), pytest.approx(-0.5)],
+    ]
 
 
 def _write_fake_xyce(tmp_path: Path) -> Path:
@@ -1126,7 +1129,7 @@ def _write_fake_palace(tmp_path: Path) -> Path:
         "import sys\n"
         "from pathlib import Path\n"
         f'CSV = """{csv_text}"""\n'
-        "config_path = Path(sys.argv[2])\n"
+        "config_path = Path(sys.argv[3])\n"
         "config = json.loads(config_path.read_text())\n"
         'output_dir = Path(config["Problem"]["Output"])\n'
         "output_dir.mkdir(parents=True, exist_ok=True)\n"
