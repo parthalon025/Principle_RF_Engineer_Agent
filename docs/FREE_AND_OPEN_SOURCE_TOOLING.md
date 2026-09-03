@@ -152,7 +152,22 @@ Synthesized against CONTEXT.md's five explicitly open gaps. For each: whether a 
 
 **Antenna geometry generators (metamaterial unit-cell / conformal antenna)** — mixed, leaning custom for the domain-specific core. Wire-up: gdstk gives array/polygon primitives for planar unit-cell layout; CSXCAD gives the `<Polygon>` primitive `simulation/openems.py`'s `_primitive_xml()` doesn't emit today (Box/Cylinder only) — extending that function with a `polygon` branch is small and well-scoped; EMStudio's Element Designer already wires conventional wire/patch/Yagi/LPDA synthesis into openEMS/NEC2/Elmer/Palace. Custom: no tool surveyed synthesizes a metamaterial unit cell's actual geometry (SRR gap/split-ring dimensions, Jerusalem-cross arm lengths) from a target effective-permittivity/permeability requirement, or maps a flat unit-cell layout onto a curved conformal host surface — EMStudio's own antenna families are explicitly conventional, not metamaterial. This parametrization math belongs in `designs/` or a new `simulation/geometry_generators.py`, built on gdstk (planar tiling) + CSXCAD (3D primitive emission) + FreeCAD (curved-surface mapping) as building blocks, not replacing them.
 
-**HFSS/ADS adapters beyond the current stub** — split by target. HFSS: no change recommended — Ansys AEDT is the intentional paid boundary per this repo's own stance; `simulation/hfss.py` stays a confinement stub until a licensed workstation is available. Not a free/OSS gap to close. ADS: wire-up for the nearest free substitutes — `simulation/ngspice.py` and/or `simulation/xyce.py`, following the exact `Simulator` ABC + subprocess pattern `simulation/nec2pp.py`/`simulation/openems.py` already use (netlist writer + `.raw`/`.PRINT` parser); a shared `simulation/spice_common.py` helper is worth factoring if both get built. Qucs-S is **not** recommended as an adapter target until the flagged CLI-vs-GUI-only contradiction above is resolved by hand-verifying the installed `qucsator` binary's real command-line behavior. Custom: closed-form Chebyshev/Butterworth/Bessel filter-prototype synthesis (order/ripple/cutoff → g-value table → ladder network) — confirmed absent from both scikit-rf and this repo's `rf_tools/` by direct grep. Deterministic, well-specified math; belongs in a new `rf_tools/filter_synthesis.py` built on scikit-rf's existing `Circuit`/`Media` primitives, not a new external dependency.
+**HFSS/ADS adapters** — split by target, both now closed. HFSS:
+`simulation/hfss.py` is a real, working `HfssSimulator` adapter (geometry,
+setup/solve, extraction, archiving), gated by
+`check_hfss_workstation_confinement` — implemented, not a stub, just
+license-confined; not a free/OSS gap, and not on this repo's default
+roadmap path per ADR-0012. ADS: `simulation/ngspice.py` and
+`simulation/xyce.py` now cover the nearest free/OSS substitutes for its
+circuit-level role, following the exact `Simulator` ABC + subprocess
+pattern `simulation/nec2pp.py`/`simulation/openems.py` already use.
+`simulation/qucs.py` (Qucs-S/`qucsator_rf`) is also now built. Custom:
+closed-form Chebyshev/Butterworth/Bessel filter-prototype synthesis
+(order/ripple/cutoff → g-value table → ladder network) — confirmed absent
+from both scikit-rf and this repo's `rf_tools/` by direct grep.
+Deterministic, well-specified math; belongs in a new
+`rf_tools/filter_synthesis.py` built on scikit-rf's existing
+`Circuit`/`Media` primitives, not a new external dependency.
 
 **Instrument (VISA/SCPI) integration beyond current scaffolding** — mostly wire-up for exercising the existing adapters: pyvisa-sim needs zero adapter code changes, just the `measurement` extra, a `PYVISA_LIBRARY=@sim` (or custom YAML resource string) setting, and an explicit `approval_callback` in the calling test. Custom: (a) a repo-specific YAML fixture (e.g. `tests/fixtures/pyvisa_sim_vna.yaml` and equivalents for the other three adapters) whose `dialogues:`/`properties:` entries match this repo's actual `DEFAULT_SCPI_COMMANDS` — nothing upstream provides this; (b) real hardware integration stays blocked on the physical instruments themselves (payment) and on the human-facing approval UI that `measurement/base.py`'s own docstring already says doesn't exist yet — no free/OSS tool in this research addresses that gap, since it isn't a licensing problem, it's unwritten application code.
 

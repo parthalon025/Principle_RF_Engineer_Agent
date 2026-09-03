@@ -47,11 +47,17 @@ and provenance.
 Add geometry, materials, ports, mesh, execution, S-parameters, far fields,
 and convergence metadata.
 
-## Phase 8 — HFSS/PyAEDT
+## Phase 8 — HFSS/PyAEDT (optional, licensed workstation only)
 
-On a controlled licensed workstation:
-create project, geometry, materials, ports, mesh, solve, extract reports,
-export Touchstone, and archive project.
+Not on the critical path: Phases 9 onward do not require this phase to be
+complete. The free/OSS stack built in Phases 6-7 (NEC2++, openEMS, and the
+other free/OSS solvers -- see `docs/FREE_AND_OPEN_SOURCE_TOOLING.md`)
+already reaches a working, verified design without a paid license. For teams
+that do hold an AEDT license: on a controlled licensed workstation, create
+project, geometry, materials, ports, mesh, solve, extract reports, export
+Touchstone, and archive project. `simulation/hfss.py` already implements
+this -- a real, working `HfssSimulator` adapter gated by
+`check_hfss_workstation_confinement`, not a stub awaiting completion.
 
 ## Phase 9 — optimization
 
