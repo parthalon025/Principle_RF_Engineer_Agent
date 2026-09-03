@@ -84,8 +84,9 @@ def test_principal_role_has_broad_access():
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by ticket
     # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
-    # non-principal specialist.
-    assert len(names) == 86
+    # non-principal specialist, plus the generate_freecad_curved_geometry
+    # tool added by issue #66.
+    assert len(names) == 87
 
 
 def test_principal_module_alias_matches_registry():
@@ -373,6 +374,22 @@ def test_antenna_role_gets_patch_length_optimization_tool():
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["microwave"])
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["test"])
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_role_gets_freecad_curved_geometry_tool():
+    # issue #66: mapping a flat unit-cell/array layout onto a curved host
+    # surface is a geometry-prep step that feeds run_openems_simulation's/
+    # run_palace_simulation's own geometry dict -- same antenna-geometry-
+    # generator family as optimize_patch_length_for_target_frequency, not a
+    # SIMULATED-provenance reference result test would validate hardware
+    # against.
+    assert "generate_freecad_curved_geometry" in _tool_names(ROLES["antenna"])
+    assert "generate_freecad_curved_geometry" in _tool_names(ROLES["principal"])
+    # not systems/microwave/test/verification's job
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["systems"])
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["microwave"])
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["test"])
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["verification"])
 
 
 def test_test_role_gets_new_touchstone_tools():

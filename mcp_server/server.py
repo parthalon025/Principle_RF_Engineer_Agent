@@ -9,6 +9,7 @@ from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
 from designs.service import verify_requirement as _verify_requirement
+from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
 from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
@@ -854,6 +855,52 @@ def run_elmer_simulation(
         gmsh_executable=gmsh_executable,
         elmergrid_executable=elmergrid_executable,
         elmersolver_executable=elmersolver_executable,
+    )
+
+
+@mcp.tool()
+def generate_freecad_curved_geometry(
+    primitives: list[dict],
+    curvature: dict,
+    timeout_s: int = 600,
+    executable: str | None = None,
+) -> dict:
+    """Map a FLAT unit-cell/array layout (a list of this repo's own "box"/"polygon"
+    geometry-dict primitives -- e.g. straight out of geometry.unit_cell.
+    generate_unit_cell_array()/generate_metamaterial_array(), issue #55) onto a curved
+    host surface (a cylinder or a sphere, described by `curvature`) -- the case a
+    perfectly flat unit-cell layout gets physically wrong: an antenna wrapped around a
+    real fuselage/missile-body/radome has its elements stretched, tilted, and
+    repositioned by the host's own curvature, which a flat layout ignores. Returns
+    THIS REPO'S OWN existing geometry-dict "polygon" primitive shape (drops straight
+    into run_openems_simulation's/run_palace_simulation's own
+    geometry["conductors"]/geometry["materials"] list) -- computed via pure curvature
+    trigonometry, always available even without FreeCAD installed -- PLUS drives a
+    headless FreeCADCmd Python macro (no GUI dependency, see geometry/
+    freecad_curved.py's module docstring for the FreeCAD-source citations) that builds
+    the SAME array as a real, exact 3D solid model (each cell correctly tilted to the
+    surface's true local normal, a "box" primitive's thickness correctly extruded
+    along that true normal rather than the flat layout's own Z axis) and exports it to
+    a STEP file. CRITICAL SCOPE LIMIT: CSXCAD's own Polygon primitive can only lie in
+    a plane perpendicular to a global x/y/z axis, so the returned geometry-dict is a
+    "staircase"-style approximation -- each cell individually snapped to whichever
+    cardinal axis its own true local surface normal is closest to (the same kind of
+    approximation an FDTD solver's own rectilinear mesh already makes for any curved
+    boundary), NOT the exact tilted plane the FreeCAD-built STEP model represents; each
+    returned primitive carries a non-standard, informational `approx_sag_m` field
+    quantifying exactly how much that approximation cost for that cell. Returns
+    "SIMULATED" provenance. FreeCADCmd's headless invocation and every FreeCAD Python
+    API call used were verified directly against FreeCAD's own C++/`.pyi` source on
+    GitHub (see geometry/freecad_curved.py's module docstring for the full citation
+    list) but NOT against a real FreeCADCmd binary -- none is installed in this
+    environment; treat the FreeCAD-built STEP model as unverified end-to-end until it
+    has been run against the real tool at least once (the geometry-dict mapping itself
+    is pure Python, exercised directly in tests, and needs no FreeCAD install)."""
+    return _run_freecad_curved_geometry(
+        primitives=primitives,
+        curvature=curvature,
+        timeout_s=timeout_s,
+        executable=executable,
     )
 
 

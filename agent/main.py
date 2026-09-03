@@ -22,6 +22,7 @@ from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
 from designs.service import verify_requirement as _verify_requirement
+from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
 from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
@@ -1016,6 +1017,50 @@ def run_elmer_simulation(
     )
 
 
+@function_tool(strict_mode=False)  # same rationale as run_elmer_simulation above --
+# `primitives`/`curvature`'s shape (box/polygon primitive dicts, curvature params)
+# does not fit the SDK's strict-schema requirement.
+def generate_freecad_curved_geometry(
+    primitives: list[dict],
+    curvature: dict,
+    timeout_s: int = 600,
+) -> dict:
+    """Map a FLAT unit-cell/array layout (a list of this repo's own "box"/"polygon"
+    geometry-dict primitives -- e.g. straight out of geometry.unit_cell.
+    generate_unit_cell_array()/generate_metamaterial_array(), issue #55) onto a curved
+    host surface (a cylinder or a sphere, described by `curvature`) -- the case a
+    perfectly flat unit-cell layout gets physically wrong: an antenna wrapped around a
+    real fuselage/missile-body/radome has its elements stretched, tilted, and
+    repositioned by the host's own curvature, which a flat layout ignores. Returns
+    THIS REPO'S OWN existing geometry-dict "polygon" primitive shape (drops straight
+    into run_openems_simulation's/run_palace_simulation's own
+    geometry["conductors"]/geometry["materials"] list) -- computed via pure curvature
+    trigonometry, always available even without FreeCAD installed -- PLUS drives a
+    headless FreeCADCmd Python macro (no GUI dependency, see geometry/
+    freecad_curved.py's module docstring for the FreeCAD-source citations) that builds
+    the SAME array as a real, exact 3D solid model (each cell correctly tilted to the
+    surface's true local normal, a "box" primitive's thickness correctly extruded
+    along that true normal rather than the flat layout's own Z axis) and exports it to
+    a STEP file. CRITICAL SCOPE LIMIT: CSXCAD's own Polygon primitive can only lie in
+    a plane perpendicular to a global x/y/z axis, so the returned geometry-dict is a
+    "staircase"-style approximation -- each cell individually snapped to whichever
+    cardinal axis its own true local surface normal is closest to (the same kind of
+    approximation an FDTD solver's own rectilinear mesh already makes for any curved
+    boundary), NOT the exact tilted plane the FreeCAD-built STEP model represents; each
+    returned primitive carries a non-standard, informational `approx_sag_m` field
+    quantifying exactly how much that approximation cost for that cell. Returns
+    "SIMULATED" provenance. FreeCADCmd's headless invocation and every FreeCAD Python
+    API call used were verified directly against FreeCAD's own C++/`.pyi` source on
+    GitHub (see geometry/freecad_curved.py's module docstring for the full citation
+    list) but NOT against a real FreeCADCmd binary -- none is installed in this
+    environment; treat the FreeCAD-built STEP model as unverified end-to-end until it
+    has been run against the real tool at least once (the geometry-dict mapping itself
+    is pure Python, exercised directly in tests, and needs no FreeCAD install)."""
+    return _run_freecad_curved_geometry(
+        primitives=primitives, curvature=curvature, timeout_s=timeout_s
+    )
+
+
 @function_tool
 def run_ltspice_simulation(
     netlist: str | None = None,
@@ -1975,7 +2020,12 @@ def inspect_design_loop_state(state: dict) -> dict:
 #                   half-space FDTD counterpart for when the host surface
 #                   is a real lossy dielectric (soil, concrete, a vehicle
 #                   hull) neither NEC2++'s ground models nor openEMS's
-#                   adapter can represent, and (issue
+#                   adapter can represent, and (issue #66)
+#                   generate_freecad_curved_geometry, mapping a flat unit-cell/
+#                   array layout onto a curved host surface (cylinder/sphere) --
+#                   the geometry-prep step for a real conformal antenna, feeding
+#                   straight into run_openems_simulation's/run_palace_simulation's
+#                   own geometry dict, and (issue
 #                   #41) optimize_patch_length_for_target_frequency --
 #                   searching patch length against a target resonant
 #                   frequency via the generic optimization/ package's
@@ -2082,6 +2132,7 @@ _ALL_TOOLS = [
     run_xyce_simulation,
     run_palace_simulation,
     run_meep_simulation,
+    generate_freecad_curved_geometry,
     request_vna_measurement_approval,
     measure_vna_s_parameters,
     request_spectrum_analyzer_measurement_approval,
@@ -2310,7 +2361,16 @@ ROLE_SPECS: list[RoleSpec] = [
             "run_openems_simulation's output instead of resting on one "
             "solver alone -- power-reflectance/|S11| magnitude only, no "
             "phase or S21 (see simulation/meep.py). Also gets "
-            "optimize_patch_length_for_target_frequency (issue #41) "
+            "generate_freecad_curved_geometry (issue #66) to map a flat unit-cell/"
+            "array layout (e.g. from geometry.unit_cell, issue #55) onto a curved "
+            "host surface (cylinder or sphere) -- the flat-vs-conformal geometry "
+            "prep step for a real wrap-around antenna, feeding straight into "
+            "run_openems_simulation's/run_palace_simulation's own geometry dict; "
+            "drives a headless FreeCADCmd macro to also build a real, exact 3D "
+            "STEP model, but the returned geometry-dict is itself a staircase-"
+            "style approximation since CSXCAD's Polygon primitive cannot express "
+            "an arbitrarily tilted plane (see geometry/freecad_curved.py). Also "
+            "gets optimize_patch_length_for_target_frequency (issue #41) "
             "to search patch length against a target resonant frequency "
             "via parameter sweep, grid search, or Bayesian optimization "
             "(all built on the generic optimization/ package). Defer "
@@ -2343,6 +2403,7 @@ ROLE_SPECS: list[RoleSpec] = [
             run_kicad_gerber2ems_simulation,
             run_palace_simulation,
             run_meep_simulation,
+            generate_freecad_curved_geometry,
             optimize_patch_length_for_target_frequency,
             search_knowledge,
         ],

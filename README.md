@@ -90,6 +90,11 @@ Optional:
 - KiCad (application + `kicad-cli`) -- for PCB geometry export via kicad-python's IPC API (issue #65)
 - gerbv -- Gerber rasterizer gerber2ems shells out to internally
 - gerber2ems -- PCB trace signal-integrity simulation front end for openEMS; not on PyPI, install from github.com/antmicro/gerber2ems
+- FreeCAD (headless `FreeCADCmd`) -- for `geometry/freecad_curved.py`'s curved/
+  conformal host-surface geometry mapping (issue #66); not pip-installable, install
+  from freecad.org/downloads.php (or your OS package manager -- e.g. `apt install
+  freecad` on Ubuntu) and confirm `FreeCADCmd` is on `PATH`, or point the
+  `FREECAD_BIN` env var at it
 
 ## Quick start
 
@@ -145,6 +150,7 @@ Notable components:
 - kicad-python: MIT
 - gerber2ems: Apache-2.0
 - gerbv: GPL-2.0
+- FreeCAD: LGPL-2.1-or-later
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license
 

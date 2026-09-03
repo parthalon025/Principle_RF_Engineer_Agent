@@ -27,6 +27,7 @@ Planning reference; not legal advice.
 | gprMax | GPLv3-or-later | Free; review obligations if redistributed. Not pip-installable (conda + C compiler build) -- see `simulation/gprmax.py`. Confirmed from its own `LICENSE` file, `setup.py`'s `License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)` classifier, and its README ("released under the GNU General Public License v3 or higher"), all fetched from github.com/gprMax/gprMax's `master` branch. Its bundled antenna-model library (`user_libs/antennas/`) is separately licensed CC-BY-SA-4.0 -- not used by this repo's adapter, see that module's docstring. |
 | h5py | BSD-3-Clause | Free; reads gprMax's own .out HDF5 result format |
 | MEEP | GPLv2 | Free; review obligations if redistributed; Python library (conda-forge), no PyPI wheel |
+| FreeCAD | LGPL-2.1-or-later | Free; review obligations if redistributed. Verified directly against the verbatim `LICENSE` file at github.com/FreeCAD/FreeCAD's `main` branch (FSF "GNU LESSER GENERAL PUBLIC LICENSE, Version 2.1, February 1999" text), corroborated by the SPDX `LGPL-2.1` header on `src/Main/MainCmd.cpp` itself -- the specific source file that builds the headless `FreeCADCmd` executable `geometry/freecad_curved.py` (issue #66) shells out to. Not pip-installable -- manual source/binary install only, see README.md. |
 | PyAEDT | MIT | Requires legally licensed AEDT |
 | HFSS/AEDT | Commercial | License required |
 | PyVISA | MIT | Free; requires a VISA backend (vendor or pyvisa-py) for real hardware |

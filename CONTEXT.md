@@ -47,10 +47,15 @@ This is a foundation, not a finished system. `docs/BUILD_PLAN.md` and
 → knowledge base → simulators → measurement correlation → optimization).
 Notably not yet implemented: the RF knowledge base / pgvector ingestion
 pipeline (schema exists in `db/schema.sql`, no ingestion code yet),
-component/manufacturer intelligence, antenna geometry generators, HFSS/ADS
-adapters, instrument (VISA/SCPI) integration, and simulation/measurement
+component/manufacturer intelligence, and simulation/measurement
 correlation. Treat anything not listed under "implemented" above as not
 yet built, regardless of what the docs describe as the eventual system.
+(Antenna geometry generators -- flat unit-cell/array tiling via
+`geometry/unit_cell.py`, issue #55, and flat-to-curved-host-surface mapping
+plus headless FreeCAD 3D-model generation via `geometry/freecad_curved.py`,
+issue #66 -- and HFSS/ADS adapters are now implemented; this list is not
+otherwise re-audited against the rest of this repo's simulator adapters as
+part of this pass.)
 
 Originally tracked as a `needs-info` scope question in issue #3; that issue
 is resolved by this implementation landing — see the PR that introduced it

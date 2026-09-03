@@ -111,6 +111,14 @@ simulation_auto:
   - run_palace_simulation
   - run_gprmax_simulation
   - run_meep_simulation
+  # generate_freecad_curved_geometry (issue #66) is a geometry generator, not
+  # a simulator run, but shares the same non-destructive/sandboxed threat
+  # model as everything else in this category: it only writes to a local
+  # workdir (no network, no credentials) and shells out to a locally-
+  # installed, free/open-source tool (FreeCAD, LGPL-2.1-or-later) with no
+  # licensing/workstation-confinement gate of its own -- see geometry/
+  # freecad_curved.py.
+  - generate_freecad_curved_geometry
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

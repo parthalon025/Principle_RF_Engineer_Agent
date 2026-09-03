@@ -131,11 +131,12 @@ def test_registered_tool_count_matches_old_plus_new():
     # (lookup_digikey_component, lookup_mouser_component,
     # lookup_nexar_component, reconcile_component_sources) added by #67,
     # plus 1 more (run_gprmax_simulation) added by #63, plus 1 more
-    # (run_meep_simulation) added by #60.
+    # (run_meep_simulation) added by #60, plus 1 more
+    # (generate_freecad_curved_geometry) added by #66.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
-        + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1
+        + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
     )
     assert len(registered_names) == expected
 
@@ -201,6 +202,11 @@ def test_run_palace_simulation_is_registered():
 def test_run_gprmax_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_gprmax_simulation" in registered_names
+
+
+def test_generate_freecad_curved_geometry_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "generate_freecad_curved_geometry" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
@@ -1398,3 +1404,65 @@ def test_run_meep_simulation_calls_through(monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert result["s_parameters"]["s11_magnitude"] == pytest.approx([0.5])
+
+
+# ---------------------------------------------------------------------------
+# FreeCAD curved/conformal host-surface geometry generation (issue #66)
+#
+# FreeCADCmd is not installed in this environment (matching this repo's
+# other manually-installed simulator/geometry tools). This exercises the MCP
+# wrapper's call-through to geometry.freecad_curved.run_freecad_curved_
+# geometry against a small fake "FreeCADCmd" Python-shebang script, standing
+# in for the real binary -- same fake-executable pattern as the Elmer
+# section above (tests/test_elmer.py's own module docstring documents the
+# discipline this mirrors).
+# ---------------------------------------------------------------------------
+
+_FAKE_FREECADCMD_FOR_MCP_TEST = """
+import sys, json
+status = {
+    "objects_built": ["patch_0"],
+    "errors": [],
+    "step_file": "curved_unit_cell_array.step",
+    "total_input": 1,
+}
+with open("curved_unit_cell_array_status.json", "w") as f:
+    json.dump(status, f)
+with open("curved_unit_cell_array.step", "w") as f:
+    f.write("ISO-10303-21;\\nfake step file\\nEND-ISO-10303-21;\\n")
+sys.exit(0)
+"""
+
+
+def _write_fake_freecadcmd(tmp_path: Path) -> Path:
+    import stat
+
+    script = tmp_path / "fake_freecadcmd.py"
+    script.write_text(f"#!{sys.executable}\n" + _FAKE_FREECADCMD_FOR_MCP_TEST)
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_freecad_curved_geometry_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_freecadcmd(tmp_path)
+    monkeypatch.setenv("FREECAD_BIN", str(script))
+
+    primitives = [
+        {
+            "name": "patch",
+            "shape": "box",
+            "p1_m": [-0.001, -0.001, 0.0],
+            "p2_m": [0.001, 0.001, 0.0016],
+        }
+    ]
+    curvature = {"kind": "cylinder", "radius_m": 0.05, "axis": "z"}
+    result = server.generate_freecad_curved_geometry(primitives, curvature, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "FreeCADCmd"
+    assert result["status"] == "COMPLETED"
+    assert len(result["primitives"]) == 1
+    assert result["primitives"][0]["shape"] == "polygon"
+    assert result["freecad"]["objects_built"] == ["patch_0"]
+    assert result["freecad"]["errors"] == []
+    assert result["freecad"]["step_file"] is not None
