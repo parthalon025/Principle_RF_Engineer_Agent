@@ -145,12 +145,16 @@ def test_registered_tool_count_matches_old_plus_new():
     # computed 82 - 8 = 74 against a base that predated #92; both tickets
     # landed, so both adjustments apply.
     #
-    # issue #94 adds 1 more (compile_lab_test_plan). Running total: 77 + 1 = 78.
+    # issue #94 adds 1 more (compile_lab_test_plan) and issue #95 adds 1
+    # more (run_candidate_search, the candidate solver). Both were built in
+    # parallel against the same 77 baseline and each computed 77 + 1 = 78 on
+    # its own branch; both landed, so both apply: 77 + 1 + 1 = 79.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
         + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
         + 3
+        + 1
         + 1
     )
     assert len(registered_names) == expected

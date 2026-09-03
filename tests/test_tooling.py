@@ -31,15 +31,18 @@ import pytest
 import skrf as rf
 from dotenv import load_dotenv
 
+from designs.requirement_targets import propose_target
 from designs.service import read_design
 from orchestration.approval import request_loop_step_approval
 from orchestration.design_loop import DesignStep
+from orchestration.solver import run_candidate_search
 from orchestration.tooling import (
     DesignLoopPersistenceError,
     advance_design_loop_step,
     inspect_design_loop_state,
     start_new_design_loop,
 )
+from rf_tools.calculations import patch_resonant_frequency_hz
 
 load_dotenv()
 
@@ -482,3 +485,137 @@ def test_flush_failure_is_atomic_and_leaves_design_status_untouched(cleanup_desi
     assert stored["status"] == "DRAFT"  # never reached PASS -- the whole flush rolled back
     assert len(stored["decision_records"]) == 1  # only the sabotage row -- nothing else landed
     assert stored["engineering_results"] == []  # none of the 5 computed results landed either
+
+
+# ---------------------------------------------------------------------------
+# The candidate solver's decisions persist at the existing flush (issue #95).
+#
+# orchestration/solver.py's own module docstring ("WHICH LAYER THIS MODULE
+# DRIVES") argues this should already work, by construction, with zero new
+# persistence code: run_candidate_search drives via THIS module's own
+# advance_design_loop_step, so a winning candidate's ANALYSIS/SIMULATION/
+# OPTIMIZATION LoopDecisions land in state["decisions"] exactly as if an
+# engineer had called advance_design_loop_step by hand for each one --
+# nothing downstream of that (this file's _flush_decisions) can tell the
+# difference. This test is the live-Postgres proof of that argument -- it
+# CANNOT run in the sandbox this ticket was implemented in (no DATABASE_URL,
+# see this module's own docstring); it is written to this suite's existing
+# convention and should be run in CI/a real environment before being relied
+# on. NOT run as part of this ticket's own verification for that reason.
+# ---------------------------------------------------------------------------
+
+
+def test_solver_produced_decisions_persist_at_the_redesign_decision_flush(
+    cleanup_designs, tmp_path
+):
+    """Drives ANALYSIS/SIMULATION/OPTIMIZATION for one candidate via
+    orchestration.solver.run_candidate_search (not by hand, unlike every
+    other test in this file), then continues that winning candidate's own
+    returned state through VERIFICATION/MEASUREMENT/CORRELATION/
+    REDESIGN_DECISION exactly like test_flush_at_accept_design_persists_
+    full_history does -- and asserts the same five engineering_results
+    tool_names land, proving the solver's decisions are indistinguishable,
+    at the flush, from ones an engineer recorded one call at a time."""
+    state = start_new_design_loop("TOOL-SOLVER", "Solver Persistence Test", "A", REQUIREMENTS)
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    architecture_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target with a simple, low-cost fabrication",
+    }
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, architecture_input)
+    assert state["current_step"] == DesignStep.ANALYSIS.value
+
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = {
+        "eps_r": 4.4,
+        "w_m": 0.03,
+        "h_m": 0.0016,
+        "l_m": 0.0286,
+        "geometry": _DIPOLE_GEOMETRY,
+        "frequency_hz": 300e6,
+        "executable": str(fake_nec2pp),
+        "workdir": str(tmp_path / "nec2_run"),
+        "target_frequency_hz": 2.45e9,
+        "length_lower_m": 0.02,
+        "length_upper_m": 0.04,
+        "method": "sweep",
+        "n_evaluations": 5,
+    }
+    achieved_analysis_freq = patch_resonant_frequency_hz(
+        candidate["eps_r"], candidate["w_m"], candidate["h_m"], candidate["l_m"]
+    )
+    analysis_target = propose_target(
+        value=achieved_analysis_freq, comparator="EQUALS", unit="Hz", tolerance=5e7
+    )
+    optimization_target = propose_target(
+        value=candidate["target_frequency_hz"], comparator="EQUALS", unit="Hz", tolerance=5e7
+    )
+    score_specs = {
+        "analysis": {"target": analysis_target},
+        "optimization": {"target": optimization_target},
+    }
+
+    solver_result = run_candidate_search(state, [candidate], score_specs)
+    assert solver_result["candidates_evaluated"] == 1
+    assert solver_result["trail"][0]["status"] == "evaluated"
+    assert solver_result["best_candidate_index"] == 0
+    won_state = solver_result["best_candidate_state"]
+    assert won_state["current_step"] == DesignStep.VERIFICATION.value
+    assert won_state["design_id"] == design_id
+    assert won_state["persisted_decision_count"] == 0  # nothing flushed yet
+
+    state = advance_design_loop_step(
+        won_state,
+        {
+            "requirement_id": "R1",
+            "requirement": "gain >= 5 dBi over 2.4-2.5 GHz",
+            "method": "analysis",
+            "expected": candidate["target_frequency_hz"],
+            "actual": won_state["decisions"][-1]["result"]["achieved_frequency_hz"],
+            "status": "PASS",
+        },
+    )
+    touchstone_path = _write_measured_touchstone(tmp_path, name="solver-persistence")
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, {"touchstone_file": str(touchstone_path)}
+    )
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_design_loop_step(state, {"simulated": simulated_override})
+    assert state["current_step"] == DesignStep.REDESIGN_DECISION.value
+
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "solver-driven candidate met both requirement targets",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    assert state["completed"] is True
+    assert state["persisted_decision_count"] == len(state["decisions"])
+
+    stored = read_design(design_id)
+    assert stored["status"] == "PASS"
+
+    results_by_tool = {r["tool_name"]: r for r in stored["engineering_results"]}
+    # The exact same five tool_names test_flush_at_accept_design_persists_
+    # full_history asserts for a hand-driven cycle -- the solver's ANALYSIS/
+    # SIMULATION/OPTIMIZATION decisions are here too, indistinguishable from
+    # ones recorded one advance_design_loop_step call at a time.
+    assert set(results_by_tool) == {
+        "patch_resonant_frequency_hz",
+        "run_nec2_simulation",
+        "optimize_patch_length_for_target_frequency",
+        "record_external_measurement",
+        "correlate_simulation_measurement",
+    }
+    assert results_by_tool["patch_resonant_frequency_hz"]["provenance"] == "CALCULATED"
+    assert (
+        results_by_tool["optimize_patch_length_for_target_frequency"]["provenance"] == "CALCULATED"
+    )
+    assert stored["verification_items"][0]["status"] == "PASS"
