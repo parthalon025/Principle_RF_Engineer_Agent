@@ -6,11 +6,29 @@ marked **SETTLED**. Everything else is open, and several of my own earlier
 claims were wrong and are corrected below — read the "Corrections" section
 before building on anything.
 
+> ### Four claims in this document were later overturned
+>
+> Research done after this file was written disproved four of its numbers.
+> Each is struck through and corrected in place below; the consolidated
+> record is [`RUNNING-LISTS.md` §3](RUNNING-LISTS.md).
+>
+> 1. Example 1's permittivity — the prose figure drops a loss term the
+>    drawing carries.
+> 2. Whether the cells sit at the printer's feature floor — they do not.
+> 3. The cure-compatibility table's silver row — silver prints on PET and
+>    TPU after all.
+> 4. MXene's loss penalty against copper at radio frequencies — overstated
+>    by roughly ten times.
+>
+> **The live map for this effort is issue #104, not this file.** This is the
+> starting point that grew into it, kept for its arithmetic and its record of
+> what was believed when.
+
 ## Why this exists separately from PR #86
 
 PR #86 (`claude/iterative-prototype-testing-7hbkwr`) implemented spec #87 —
 requirement targets, Success score, batched lab test plan, candidate solver,
-instrument-package removal. It is complete and merged.
+instrument-package removal. It merged to `main` as `ccb4f5c`.
 
 This is a different thing: the project's actual target turns out to be
 **printed metamaterial electromagnetic skins**, and PR #86's loop optimizes
@@ -33,7 +51,9 @@ Key patent numbers: **X-band 8–12 GHz** primary (examples span 8.3–17 GHz);
 thickness 0.87–2.0 mm; surface conformity <10–20 µm; minimum bend radius
 **R = 3T** with embedded elements (also `R = T(50/r − 1)`); metamaterial
 insert εr ≥ 2.9, or >50 for the high-permittivity examples (strontium
-titanate at εr = 310); host polymer εr 2–5, loss tangent <0.2.
+titanate at ~~εr = 310~~ **ε₁ = 250 − 1.25j**, from FIG. 5C — the prose
+figure omits the loss term the drawing carries; Example 2 is 294 − 0.5j);
+host polymer εr 2–5, loss tangent <0.2.
 
 The uploaded PDF is a **scan with no text layer** (32 pages, zero extractable
 characters; `pdftoppm`/poppler unavailable in this environment). Patent text
@@ -48,7 +68,7 @@ so which one you target changes everything downstream.
 
 | # | What it does | Element geometry | Band |
 |---|---|---|---|
-| 1 | Magnetic mirror — reflects with zero phase shift, so an antenna can sit flush on metal | Strontium titanate cubes, εr = 310; Mie resonance gives µ ≈ 5→20 | 8.3–8.7 GHz |
+| 1 | Magnetic mirror — reflects with zero phase shift, so an antenna can sit flush on metal | Strontium titanate cubes, ~~εr = 310~~ **ε₁ = 250 − 1.25j** (FIG. 5C, not the prose); Mie resonance gives µ ≈ 5→20 | 8.3–8.7 GHz |
 | 2 | Impedance-matched to free space, no refraction | Dual cubes, ε and µ resonances matched | 9–10 GHz |
 | 3 | **Absorber** — no reflection, no transmission | I-shape electric ring resonators over rectangular wire resonators, on FR4 (εr 4.8, **tanδ 0.017**) | 8.5–10.5 GHz |
 | 4 | Reflection phase tuned per cell → steers the bounce | Cylinders; **diameter** is the knob | 10 GHz |
@@ -114,19 +134,37 @@ explicit statements of what could not be verified:
   same thickness ≈ 0.0007 Ω/sq.
 - At 10 GHz, λ₀ = 30 mm; on εr ≈ 3 the guided wavelength is ~17 mm, so
   sub-wavelength cells land around 1.7–6 mm with intra-cell gaps typically
-  100–300 µm — i.e. **right at the machine's floor, not comfortably below it**.
+  100–300 µm.
+
+> ~~"Right at the machine's floor, not comfortably below it."~~
+> **Overturned.** That gap range was a generic estimate, never checked
+> against what the patent's drawings actually specify. Read from the
+> drawings, the smallest feature across all seven examples is **0.2 mm —
+> 2 to 6 times *above* the NOVA's 100 µm floor.** In plain terms: the
+> printer can draw these shapes with room to spare, so feature size is not
+> the binding fabrication constraint this document took it for.
 
 ### Cure compatibility — prunes the material/substrate space for free
 
 | | PET (~80 °C) | TPU | Polyimide (400 °C) | Glass/ceramic |
 |---|---|---|---|---|
-| **Silver** (120–200 °C cure) | ✗ | ✗ | ✓ | ✓ |
+| **Silver** (120–200 °C cure) | ~~✗~~ **✓** | ~~✗~~ **✓** | ✓ | ✓ |
 | **Copper** (sinter + oxidation) | ✗ | ✗ | ✓ | ✓ |
 | **MXene** (room temp) | ✓ | ✓ | ✓ | ✓ |
 
+> **The silver row was wrong.** Silver cures at 120 °C for 30 min on PET, and
+> Intexar PE874 — already on Voltera's own materials list — cures at 130 °C
+> on TPU film. Substrate class does not rule silver out.
+>
+> **What rules silver out is whether the finished part can leave the host and
+> go into an oven.** A skin printed onto an aircraft where it sits cannot; a
+> coupon printed on a loose sheet can. That is a property of the job, not of
+> the substrate. It narrows MXene's decisive advantage to printing *in place*
+> on something that cannot be baked — and leaves silver competitive
+> everywhere else, PET and TPU included.
+
 The NOVA reaches only 40 °C, so silver and copper must be sintered
-off-machine. **The sinter step, not the printing, is what rules out the most
-pliable substrates.**
+off-machine.
 
 ## Corrections — do not inherit these errors
 
@@ -135,9 +173,17 @@ pliable substrates.**
    thickness, MXene is ~0.06 Ω/sq, a *conductor*. A resistive-sheet absorber
    wants ~377 Ω/sq, which MXene would only reach at ~4 nm — far below what
    dispensing can produce. In Example 3, MXene behaves as a slightly lossier
-   copper (~85×), which **damps the resonance: broader band, shallower peak**.
-   That may be desirable, but it is a different claim. MXene's justification
-   is the 40 °C cure, not the loss.
+   copper — ~~85×~~ **about 9× at 10 GHz** — which **damps the resonance:
+   broader band, shallower peak**. That may be desirable, but it is a
+   different claim. MXene's justification is the 40 °C cure, not the loss.
+
+   > **The 85× was a direct-current ratio quoted at 10 GHz.** At radio
+   > frequencies the current does not fill the conductor; it rides the top
+   > few micrometres. Once the film is thicker than about three skin depths,
+   > what matters is surface resistance, which scales as 1/√σ rather than
+   > 1/σ — so the square root halves the exponent and the honest RF penalty
+   > is **~9× versus copper and ~3.8× versus silver**, roughly ten times
+   > smaller than every comparison built on 85× assumed.
 2. **"Fix the material, don't let the solver search it" — overruled.**
    Material and substrate are process variables. For an absorber especially,
    the substrate's loss tangent is a primary design input (FR4's 0.017 does
@@ -146,7 +192,8 @@ pliable substrates.**
 3. **`CONTEXT.md` contradicts the patent.** The "Metamaterial unit cell"
    entry says geometry "— not material composition —" produces the effective
    permittivity/permeability. The patent's Example 1 gets its magnetic
-   response from Mie resonance in **strontium titanate at εr = 310**, and
+   response from Mie resonance in **strontium titanate at ε₁ = 250 − 1.25j**
+   (FIG. 5C; this document first recorded the prose's 310), and
    Example 5 uses tunable BST. Material composition is doing the work. This
    glossary entry needs correcting.
 4. **50 µm is almost certainly not feature resolution.** Best demonstrated
@@ -154,7 +201,14 @@ pliable substrates.**
    silver. But ±20 µm positioning accuracy × a safety factor lands close to
    50 µm as a **placement/registration budget**. Unconfirmed — see Q3.
 
-## The architectural gap in PR #86's loop
+## The architectural gap in the merged loop
+
+> **This is now a gap on `main`, not on a branch.** PR #86 merged as
+> `ccb4f5c`, so everything below describes shipped code rather than a
+> proposal. It is also in direct tension with issue #104's stated
+> destination — "unit-cell periodicity rather than patch length as the
+> degree of freedom" — which makes closing it implementation work someone
+> has to budget for, not a footnote.
 
 `orchestration/design_loop.py` hardwires `ANALYSIS` to
 `rf_tools.calculations.patch_resonant_frequency_hz` (~line 403) and
