@@ -53,7 +53,9 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 - 1 TB SSD recommended
 - OpenAI API access, or another supported provider
 
-Optional:
+Optional -- free/open-source tooling (the default path through this
+project end to end; see `docs/FREE_AND_OPEN_SOURCE_TOOLING.md` for the full
+survey and `docs/LICENSE_MATRIX.md` for licensing):
 - NEC2++
 - openEMS
 - CSXCAD (openEMS's own geometry/materials library -- no PyPI package; build
@@ -82,11 +84,10 @@ Optional:
   resting on one solver alone. No PyPI wheel: install via conda-forge
   (`conda create -n mp -c conda-forge pymeep`); no native Windows support (WSL
   required on Windows). See `simulation/meep.py`.)
-- Ansys AEDT/HFSS + PyAEDT
-- Keysight ADS
-- LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
-  `uv sync --extra ltspice` -- see `simulation/ltspice.py`)
-- VISA/SCPI-capable instruments
+- VISA/SCPI-capable instruments -- or, with zero lab hardware, the
+  `measurement` extra's `pyvisa-sim` backend (`uv sync --extra measurement`,
+  `PYVISA_LIBRARY=@sim`) exercises `measurement/*.py` end-to-end against
+  `tests/fixtures/pyvisa_sim_instruments.yaml`
 - KiCad (application + `kicad-cli`) -- for PCB geometry export via kicad-python's IPC API (issue #65)
 - gerbv -- Gerber rasterizer gerber2ems shells out to internally
 - gerber2ems -- PCB trace signal-integrity simulation front end for openEMS; not on PyPI, install from github.com/antmicro/gerber2ems
@@ -102,6 +103,15 @@ Optional:
   `lookup_*_component` tools additionally require `ALLOW_EXTERNAL_NETWORK_TOOLS=true`
   (they place a real, credentialed call to a third party) -- see
   `policies/tool_policy.yaml`'s `approval_self_gated` category.
+
+Optional -- paid alternatives (not required for any step above; supported
+for anyone who already holds a license -- see `simulation/hfss.py`):
+- Ansys AEDT/HFSS + PyAEDT
+- Keysight ADS
+- LTspice -- free-of-charge proprietary freeware (not open source), driven
+  via the optional `ltspice` extra -- `uv sync --extra ltspice` -- see
+  `simulation/ltspice.py`; ngspice/Xyce/Qucs-S above remain the preferred
+  free/OSS ADS-alternative targets
 
 ## Quick start
 
@@ -120,13 +130,17 @@ uv run python -m agent.main "Analyze the requirements for a 2.45 GHz PCB antenna
 3. Knowledge database
 4. MCP tools
 5. Principal-agent orchestration
-6. NEC2++ / openEMS
-7. HFSS / ADS
+6. Full-wave EM: NEC2++ / openEMS, cross-checked with Palace / OpenParEM / Elmer / gprMax / MEEP
+7. Circuit-level: ngspice / Xyce / Qucs-S
 8. Measurement interfaces
 9. Simulation/measurement correlation
 10. Controlled optimization
 
 Do not give the agent unrestricted control of laboratory instruments or production release.
+
+HFSS/PyAEDT (`simulation/hfss.py`) and Keysight ADS are supported for
+anyone holding a paid license, confined to a controlled workstation -- an
+optional alternative to the free/OSS path above, not required for any step.
 
 See `docs/BUILD_PLAN.md` and `docs/ROADMAP.md` for the detailed sequence, and
 `docs/SECURITY.md` / `policies/tool_policy.yaml` for the tool-permission model.

@@ -45,13 +45,20 @@ and provenance.
 ## Phase 7 — openEMS
 
 Add geometry, materials, ports, mesh, execution, S-parameters, far fields,
-and convergence metadata.
+and convergence metadata. Cross-check independently against Palace,
+OpenParEM, Elmer, and gprMax (FEM/FDTD alternatives) and MEEP (a second
+FDTD engine) instead of resting on one solver alone -- `simulation/palace.py`,
+`openparem.py`, `elmer.py`, `gprmax.py`, `meep.py`.
 
-## Phase 8 — HFSS/PyAEDT
+## Phase 8 — circuit-level simulation
 
-On a controlled licensed workstation:
-create project, geometry, materials, ports, mesh, solve, extract reports,
-export Touchstone, and archive project.
+Add nonlinear/active-device circuit-level simulation via ngspice and Xyce,
+and schematic-level simulation via Qucs-S/qucsator_rf --
+`simulation/ngspice.py`, `xyce.py`, `qucs.py`. This phase completes on the
+free/OSS path above. HFSS/PyAEDT (`simulation/hfss.py`) and Keysight ADS
+remain supported, confined to a controlled licensed workstation, for
+anyone holding a paid license -- an optional alternative, not required to
+complete this or any later phase.
 
 ## Phase 9 — optimization
 

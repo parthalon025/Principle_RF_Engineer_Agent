@@ -2,6 +2,13 @@
 
 Planning reference; not legal advice.
 
+The free/open-source stack below (NEC2++, openEMS/CSXCAD, OpenParEM, Elmer,
+Qucs-S/ngspice/Xyce, Palace, gprMax, MEEP, KiCad/kicad-python, FreeCAD,
+gerber2ems, gerbv) is this repo's default, working path end to end -- see
+`docs/FREE_AND_OPEN_SOURCE_TOOLING.md`. HFSS/AEDT and LTspice are recorded
+here for anyone who already holds a license or wants the free-of-charge
+freeware option, not as required tooling.
+
 | Component | License/status | Internal-use note |
 |---|---|---|
 | Python | PSF | Free |
