@@ -34,6 +34,7 @@ from optimization.rf_objectives import (
 )
 from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
 from orchestration.policy import assert_all_tools_categorized
+from orchestration.solver import run_candidate_search as _run_candidate_search
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
@@ -1199,6 +1200,62 @@ def compile_lab_test_plan(state: dict) -> dict:
     any current_step. Read-only: advances nothing, writes nothing to the
     database, and needs no approval receipt."""
     return _compile_lab_test_plan(state)
+
+
+@mcp.tool()
+def run_candidate_search(
+    state: dict,
+    candidates: list,
+    score_specs: dict,
+    evaluation_budget: int | None = None,
+    plateau_window: int = 5,
+    plateau_epsilon: float = 0.5,
+    target_satisfaction_threshold: float = 100.0,
+) -> dict:
+    """The candidate solver (issue #95, docs/adr/0014): drive a batch of
+    proposed candidate parameter sets through a design loop's ungated
+    ANALYSIS -> SIMULATION -> OPTIMIZATION span, scoring each scoreable
+    step against a stated requirement target, candidate after candidate,
+    stopping on target satisfaction, a score plateau, or the evaluation
+    budget -- see orchestration/solver.py's module docstring for the full
+    design.
+
+    `state` must already be positioned past ARCHITECTURE (inside an
+    approved architecture) and must be a tooling-shaped state dict (from
+    start_design_loop or a prior advance_design_loop_step call, carrying
+    design_id). `candidates` is a non-empty list of dicts, each supplying
+    the fields the driven steps need. `score_specs` names which steps to
+    score and against what target (a designs.requirement_targets
+    PROPOSED/CONFIRMED target), keyed by step name ("analysis"/
+    "simulation"/"optimization").
+
+    This tool NEVER constructs, forges, or accepts an approval receipt,
+    and never calls request_loop_step_approval -- every step it drives is,
+    by construction, outside GATED_STEPS. If the state handed in is
+    already sitting at a gated step (ARCHITECTURE/MEASUREMENT/
+    REDESIGN_DECISION), this returns normally with
+    stop_reason="gated_step_pending_approval" and the loop's own
+    pending_approval report -- it never raises to signal this. Reaching
+    VERIFICATION/CORRELATION/REQUIREMENTS similarly halts with
+    stop_reason="out_of_scope_step".
+
+    Returns a report dict: stop_reason/stop_detail naming exactly why the
+    search stopped, an ordered `trail` (one entry per candidate actually
+    evaluated, each carrying its own per-step score trail), and
+    best_candidate_state -- the winning candidate's own tooling-shaped
+    state dict, ready to hand straight back into advance_design_loop_step
+    to continue the design (its decisions persist at the existing
+    REDESIGN_DECISION flush once that continuation reaches it, docs/adr/
+    0011 -- this tool itself never flushes anything)."""
+    return _run_candidate_search(
+        state,
+        candidates,
+        score_specs,
+        evaluation_budget=evaluation_budget,
+        plateau_window=plateau_window,
+        plateau_epsilon=plateau_epsilon,
+        target_satisfaction_threshold=target_satisfaction_threshold,
+    )
 
 
 @mcp.tool()

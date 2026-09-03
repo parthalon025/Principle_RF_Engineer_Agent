@@ -101,9 +101,13 @@ def test_principal_role_has_broad_access():
     # both tickets landed, so both adjustments apply.
     #
     # issue #94 adds 1 more (compile_lab_test_plan -- a read-only batched
-    # lab-test-plan compiler, also shared with the test role below). Running
-    # total: 82 + 1 = 83.
-    assert len(names) == 83
+    # lab-test-plan compiler, also shared with the test role below), and
+    # issue #95 adds 1 more (run_candidate_search, the candidate solver --
+    # principal-only, same cross-cutting-orchestration reasoning as the
+    # 3 design-iteration-loop tools above). Both were implemented in
+    # parallel against the same 82 baseline and each computed 82 + 1 = 83
+    # on its own branch; both landed, so both apply: 82 + 1 + 1 = 84.
+    assert len(names) == 84
 
 
 def test_principal_module_alias_matches_registry():

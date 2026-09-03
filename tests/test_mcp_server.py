@@ -145,12 +145,16 @@ def test_registered_tool_count_matches_old_plus_new():
     # computed 82 - 8 = 74 against a base that predated #92; both tickets
     # landed, so both adjustments apply.
     #
-    # issue #94 adds 1 more (compile_lab_test_plan). Running total: 77 + 1 = 78.
+    # issue #94 adds 1 more (compile_lab_test_plan) and issue #95 adds 1
+    # more (run_candidate_search, the candidate solver). Both were built in
+    # parallel against the same 77 baseline and each computed 77 + 1 = 78 on
+    # its own branch; both landed, so both apply: 77 + 1 + 1 = 79.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
         + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
         + 3
+        + 1
         + 1
     )
     assert len(registered_names) == expected
@@ -848,7 +852,10 @@ def test_run_ngspice_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["provenance"] == "SIMULATED"
     assert result["simulator"] == "ngspice"
     assert result["scale_name"] == "frequency_hz"
-    assert result["values"]["v(out)"] == pytest.approx([[2.0, 0.0], [1.5, -0.5]])
+    assert result["values"]["v(out)"] == [
+        [pytest.approx(2.0), pytest.approx(0.0)],
+        [pytest.approx(1.5), pytest.approx(-0.5)],
+    ]
 
 
 def _write_fake_xyce(tmp_path: Path) -> Path:
@@ -1122,7 +1129,7 @@ def _write_fake_palace(tmp_path: Path) -> Path:
         "import sys\n"
         "from pathlib import Path\n"
         f'CSV = """{csv_text}"""\n'
-        "config_path = Path(sys.argv[2])\n"
+        "config_path = Path(sys.argv[3])\n"
         "config = json.loads(config_path.read_text())\n"
         'output_dir = Path(config["Problem"]["Output"])\n'
         "output_dir.mkdir(parents=True, exist_ok=True)\n"

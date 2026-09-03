@@ -18,8 +18,26 @@ OPTIMIZATION → VERIFICATION → MEASUREMENT → CORRELATION →
 REDESIGN_DECISION`), its handlers, and `GATED_STEPS` are untouched by this
 decision. The new tool orchestrates that existing loop from outside it: the
 LLM proposes a candidate, the tool drives the proposal through the loop's
-already-ungated steps (`ANALYSIS`/`SIMULATION`/`OPTIMIZATION`/
-`CORRELATION`) to test it, and surfaces a score. Considered and rejected:
+already-ungated steps (`ANALYSIS`/`SIMULATION`/`OPTIMIZATION`) to test it,
+and surfaces a score.
+
+**Corrected after implementation (issue #95):** this paragraph originally
+named `CORRELATION` in that span as well. It is not, and the narrowing is
+load-bearing rather than an oversight, so the ADR is amended here rather
+than left to read as a dropped requirement. `CORRELATION` compares a
+simulated result against a *measured* one, so the solver could only reach
+it two ways: after a real `MEASUREMENT` decision, which is gated and needs
+the lab trip the solver exists to defer — making it moot — or via a
+caller-supplied `measured=` override, which would let an agent hand the
+loop "measured" values that never passed through the `MEASUREMENT` gate.
+The second is a softer, easier-to-miss version of exactly the bypass this
+ADR forbids: no receipt is forged, but unapproved evidence enters the
+design's record anyway. Excluding `CORRELATION` from the solver's span
+closes that path by construction. Note this narrows only what the SOLVER
+drives; `CORRELATION` remains a scoreable step (see below) when a human
+reaches it through the loop's normal, gated route.
+
+Considered and rejected:
 building this as new branches or shortcuts inside `design_loop.py` itself —
 rejected because every one of this project's existing design-loop ADRs
 (0009, 0010, 0011) and its module docstring already establish that state

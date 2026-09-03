@@ -185,6 +185,16 @@ design_loop:
   # read, no LoopStepApprovalReceipt of any kind (there is nothing gated
   # for it to check).
   - compile_lab_test_plan
+  # issue #95: the candidate solver. Drives ONLY the loop's already-
+  # ungated ANALYSIS/SIMULATION/OPTIMIZATION span (orchestration/
+  # solver.py's _ORDERED_UNGATED_SPAN) via advance_design_loop_step --
+  # never GATED_STEPS, never an approval receipt. Same informational-only
+  # category as its sibling design-loop tools: the real defense is
+  # structural (this tool never constructs or accepts a
+  # LoopStepApprovalReceipt, and halts with a pending-approval report the
+  # instant the loop state handed to it sits at a gated step), not a
+  # policy-layer gate.
+  - run_candidate_search
 
 approval_required:
   # Real gate, no exceptions -- but every entry here is a capability that

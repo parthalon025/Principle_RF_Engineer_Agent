@@ -1,0 +1,167 @@
+# Automated verification for this repository (issue #97).
+#
+# Before this workflow existed the only Actions run on this repo was
+# Dependabot's dependency-graph job, so a pull request's combined status came
+# back with `total_count: 0` -- a branch that broke every test merged as green
+# as one that passed. Two jobs run here:
+#
+#   lint  -- `ruff check` + `ruff format --check`, no database needed.
+#   test  -- the full `pytest` suite against a real Postgres service container
+#            with `db/schema.sql` applied, so the persistence suites
+#            (tests/test_designs_db.py, test_tooling.py, test_search.py,
+#            test_extract.py, ADR-0011's iteration-boundary flush, ...)
+#            actually execute instead of erroring on a missing DATABASE_URL.
+#
+# They are separate jobs, not steps of one job, so a lint failure and a test
+# failure are distinguishable at a glance in the checks list, and so lint can
+# report without waiting on a database or on the full dependency install
+# (docling pulls torch -- 169 packages, against 8 for `--only-group dev`).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A force-push to a branch supersedes the run already in flight for it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          # pyproject.toml's requires-python is ">=3.12"; pin the minor
+          # version so a future interpreter release cannot change results
+          # between two runs of the same commit.
+          python-version: "3.12"
+
+      # --only-group dev: ruff and nothing else. Neither ruff step imports
+      # this project, so the runtime dependencies (scikit-rf, docling, and
+      # the torch docling drags in) would be pure install time here.
+      # --frozen: install exactly what uv.lock records, and fail rather than
+      # silently re-resolving if the lockfile has drifted from pyproject.toml.
+      - name: Install ruff
+        run: uv sync --frozen --only-group dev
+
+      # --no-sync on every `uv run` below: a bare `uv run` re-syncs the
+      # environment to the project's default set first, which would undo
+      # the --only-group install above and pull the full 169 packages back
+      # in before ruff ever starts.
+      - name: ruff check
+        run: uv run --no-sync ruff check .
+
+      # NOTE (issue #97 -> issue #99): this repo currently has pre-existing
+      # formatting drift -- `ruff format --check` reports 56 files at the time
+      # this workflow was written. Issue #99's repo-wide `ruff format` pass is
+      # what makes this step green; until it lands this step is expected to
+      # fail, and the fix is that pass, not a change here.
+      - name: ruff format --check
+        run: uv run --no-sync ruff format --check .
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        # Same image as docker-compose.yml's `postgres` service: stock
+        # Postgres plus the pgvector extension, which db/schema.sql's very
+        # first statement (`CREATE EXTENSION IF NOT EXISTS vector`) and the
+        # document_chunks.embedding / .embedding_local vector columns require.
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: rfengineer
+          POSTGRES_USER: rf
+          POSTGRES_PASSWORD: rf_dev_password
+          # The suite reads TEXT columns back as `str`. Under a SQL_ASCII
+          # cluster psycopg hands them back as `bytes` instead and ~70 tests
+          # fail on `assert b'ACTIVE' == 'ACTIVE'`, so the encoding is stated
+          # explicitly rather than inherited from whatever locale the image
+          # happens to ship with.
+          POSTGRES_INITDB_ARGS: --encoding=UTF8
+        ports:
+          - 5432:5432
+        # Steps run on the runner host, not inside a container, so the job
+        # must not start issuing queries before the server accepts them --
+        # mirrors docker-compose.yml's healthcheck for the same service.
+        options: >-
+          --health-cmd "pg_isready -U rf -d rfengineer"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # Matches .env.example's DATABASE_URL, against the service container
+      # published on the runner's localhost by the port mapping above.
+      # tests/conftest.py's db_conn fixture and every test module that calls
+      # psycopg.connect(os.environ["DATABASE_URL"]) read exactly this.
+      DATABASE_URL: postgresql://rf:rf_dev_password@localhost:5432/rfengineer
+      #
+      # EMBEDDING_DIM_EXTERNAL / EMBEDDING_DIM_LOCAL are deliberately NOT set
+      # here. db/apply_schema.py defaults both to 1536, and the knowledge
+      # tests' embedding spies (tests/test_index.py, test_extract.py) produce
+      # 1536-element vectors for BOTH the external and the local column.
+      # Setting EMBEDDING_DIM_LOCAL=1024 -- the real bge-m3 dimension that
+      # docker-compose.yml and .env.example use for actual local embedding --
+      # would make document_chunks.embedding_local a vector(1024) and those
+      # tests would fail with `expected 1024 dimensions, not 1536`.
+      #
+      # No LLM credential is set either (no OPENAI_API_KEY, no
+      # ANTHROPIC_API_KEY, no LOCAL_LLM_BASE_URL) and none can be: this
+      # project has no CI-usable LLM backend. The suite is already written
+      # for that: no test needs a live model or embedding backend to pass.
+      # tests/test_agent_roles.py's module docstring records which delegation
+      # behaviour is verified without a live model call and which is not, and
+      # tests/test_literature_corpus.py skips on the INVERSE condition
+      # ("an embedding backend is configured in this environment") -- so an
+      # LLM credential appearing in this environment later would skip a test
+      # with a stated reason, never silently change what is verified.
+      #
+      # The pyproject optional extras (hfss, measurement, geometry, ltspice,
+      # kicad) are likewise not installed by `uv sync --frozen --group dev`,
+      # so their tests skip with their own stated reasons -- e.g.
+      # tests/test_pyvisa_sim.py "could not import 'pyvisa'" and
+      # tests/test_geometry_unit_cell.py "gdstk not installed -- run
+      # `uv sync --extra geometry` first". `-rs` on the pytest step below
+      # prints every skip reason in the run log, so a skipped test is always
+      # visible and attributable rather than quietly absent from the count.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      # The repo's own schema step. docker-compose.yml applies schema.sql via
+      # db/docker-init.sh at container-init time, which a service container
+      # cannot do (the repo is not checked out when the service starts), so
+      # this uses db/apply_schema.py -- the script that exists precisely for
+      # applying the schema to an already-running Postgres. It is idempotent.
+      - name: Apply db/schema.sql
+        run: uv run --no-sync python db/apply_schema.py
+
+      # -rs prints the reason for every skipped test (see the env note above).
+      - name: Run tests
+        run: uv run --no-sync pytest -q -rs
