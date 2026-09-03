@@ -106,7 +106,14 @@ from spicelib.raw.raw_write import Trace
 args = sys.argv[1:]
 assert args[0] == "-Run", args
 assert args[1] == "-b", args
-netlist_path = Path(args[2])
+# spicelib's own LTspice.run() (non-macOS-native branch -- the one this
+# fake executable is bound into on Linux) always prepends "Z:" to the
+# netlist path, treating this fake executable as if it were the real
+# LTspice.exe running under wine (see ltspice_simulator.py's own "Drive
+# letter 'Z' is the link from wine to the host platform's root directory"
+# comment) -- strip it back off, exactly as wine itself would resolve it.
+netlist_arg = args[2][2:] if args[2].startswith("Z:") else args[2]
+netlist_path = Path(netlist_arg)
 netlist_path.with_suffix(".log").write_text(
     "Fake LTspice run OK\\nDirect Newton iteration for .op point succeeded.\\n"
 )
@@ -129,7 +136,10 @@ import sys
 from pathlib import Path
 
 args = sys.argv[1:]
-netlist_path = Path(args[2])
+# See _FAKE_SUCCESS_BODY's comment above on stripping spicelib's own
+# wine-style "Z:" netlist-path prefix.
+netlist_arg = args[2][2:] if args[2].startswith("Z:") else args[2]
+netlist_path = Path(netlist_arg)
 netlist_path.with_suffix(".log").write_text("Fatal error: circuit does not converge\\n")
 sys.exit(1)
 '''
