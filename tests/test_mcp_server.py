@@ -852,10 +852,10 @@ def test_run_ngspice_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["provenance"] == "SIMULATED"
     assert result["simulator"] == "ngspice"
     assert result["scale_name"] == "frequency_hz"
-    values = result["values"]["v(out)"]
-    assert len(values) == 2
-    assert values[0] == pytest.approx([2.0, 0.0])
-    assert values[1] == pytest.approx([1.5, -0.5])
+    assert result["values"]["v(out)"] == [
+        [pytest.approx(2.0), pytest.approx(0.0)],
+        [pytest.approx(1.5), pytest.approx(-0.5)],
+    ]
 
 
 def _write_fake_xyce(tmp_path: Path) -> Path:
