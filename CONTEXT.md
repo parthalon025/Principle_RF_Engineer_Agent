@@ -54,18 +54,38 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
 This is a foundation, not a finished system. `docs/BUILD_PLAN.md` and
 `docs/ROADMAP.md` lay out the build order (deterministic math → Touchstone
 → knowledge base → simulators → measurement correlation → optimization).
-Notably not yet implemented: the RF knowledge base / pgvector ingestion
-pipeline (schema exists in `db/schema.sql`, no ingestion code yet),
-component/manufacturer intelligence, and simulation/measurement
-correlation. Treat anything not listed under "implemented" above as not
-yet built, regardless of what the docs describe as the eventual system.
-(Antenna geometry generators -- flat unit-cell/array tiling via
-`geometry/unit_cell.py`, issue #55, and flat-to-curved-host-surface mapping
-plus headless FreeCAD 3D-model generation via `geometry/freecad_curved.py`,
-issue #66 -- and the HFSS adapter are now implemented (ADS never had a code
-adapter, only doc/licensing mentions -- see ADR-0012); this list is not
-otherwise re-audited against the rest of this repo's simulator adapters as
-part of this pass.)
+
+As of a full integration pass (real Postgres+pgvector, and every free/
+no-hardware open-source tool this repo's non-measurement adapters shell
+out to actually installed and exercised for real, not just against fake
+test doubles — `gdstk`, `spicelib`+LTspice-adapter logic, `kicad-python`/
+`kicad-cli`, `ngspice`, `gmsh`, `gerbv`), the RF knowledge base / pgvector
+ingestion pipeline (`knowledge/ingest.py`, `index.py`, `search.py`),
+component/manufacturer intelligence (`knowledge/digikey.py`, `mouser.py`,
+`nexar.py`, `component_resolution.py`, plus the arXiv/ETSI/3GPP/FCC-eCFR
+sourcing clients under `knowledge/sourcing/`), and simulation/measurement
+correlation (`rf_tools/correlation.py`) are all now implemented and
+covered by passing tests -- this section previously called all three "not
+yet implemented," which was stale. (Antenna geometry generators -- flat
+unit-cell/array tiling via `geometry/unit_cell.py`, issue #55, and
+flat-to-curved-host-surface mapping plus headless FreeCAD 3D-model
+generation via `geometry/freecad_curved.py`, issue #66 -- and the HFSS
+adapter are also implemented; ADS never had a code adapter, only doc/
+licensing mentions -- see ADR-0012.)
+
+Genuinely still open: closed-form filter-prototype synthesis (order/
+ripple/cutoff → g-value table → ladder network -- no `rf_tools/
+filter_synthesis.py` or equivalent exists); and, per this repo's own
+stance (see README's licensing table, `docs/FREE_AND_OPEN_SOURCE_TOOLING.md`,
+and ADR-0012 below), the paid/licensed/hardware-only boundaries that stay
+contract-level-verified only, never installed here: NEC2++, openEMS+CSXCAD,
+OpenParEM, Elmer, Xyce, Palace, gprMax, MEEP, FreeCAD (all needing a
+from-source/conda/PPA build this sandbox didn't attempt beyond a
+source-availability check), and Ansys AEDT/HFSS (confined to a licensed
+workstation this sandbox doesn't have, per `check_hfss_workstation_
+confinement`). Physical instrument actuation (VNA/spectrum analyzer/
+signal generator/power meter) is not a gap in this list -- see below,
+that whole capability was deliberately removed, not left unbuilt.
 
 Originally tracked as a `needs-info` scope question in issue #3; that issue
 is resolved by this implementation landing — see the PR that introduced it

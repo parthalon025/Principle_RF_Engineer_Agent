@@ -13,10 +13,18 @@ from knowledge.models import ChunkDraft, Classification, DocumentDraft, SourceTy
 load_dotenv()
 
 _DIM = 1536
+_LOCAL_DIM = int(os.environ.get("EMBEDDING_DIM_LOCAL", "1536"))
 
 
 def _vector(seed: float) -> list[float]:
     return [seed] * _DIM
+
+
+def _local_vector(seed: float) -> list[float]:
+    """Sized for the `embedding_local` column, which -- per this repo's own
+    .env.example/docker-compose.yml default (EMBEDDING_DIM_LOCAL=1024, BAAI/
+    bge-m3's actual dimension) -- is independent of `embedding`'s (_DIM)."""
+    return [seed] * _LOCAL_DIM
 
 
 @pytest.fixture
@@ -102,7 +110,7 @@ def test_public_document_defaults_to_local(cleanup_documents, monkeypatch):
     doc_id = _seed_document(Classification.PUBLIC, "1" * 64)
     cleanup_documents.append(doc_id)
 
-    local_spy = _Spy(result=[_vector(0.5), _vector(0.5)])
+    local_spy = _Spy(result=[_local_vector(0.5), _local_vector(0.5)])
     external_spy = _Spy()
 
     result = index_document(doc_id, embed_local=local_spy, embed_external=external_spy)
@@ -179,7 +187,7 @@ def test_restricted_document_uses_local_only(cleanup_documents, classification):
     doc_id = _seed_document(classification, f"{classification.value[0].lower()}5" * 32)
     cleanup_documents.append(doc_id)
 
-    local_spy = _Spy(result=[_vector(0.7), _vector(0.7)])
+    local_spy = _Spy(result=[_local_vector(0.7), _local_vector(0.7)])
     external_spy = _Spy()
 
     result = index_document(doc_id, embed_local=local_spy, embed_external=external_spy)
