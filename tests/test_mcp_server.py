@@ -132,11 +132,14 @@ def test_registered_tool_count_matches_old_plus_new():
     # lookup_nexar_component, reconcile_component_sources) added by #67,
     # plus 1 more (run_gprmax_simulation) added by #63, plus 1 more
     # (run_meep_simulation) added by #60, plus 1 more
-    # (generate_freecad_curved_geometry) added by #66.
+    # (generate_freecad_curved_geometry) added by #66, plus 3 more
+    # (propose_requirement_target, mark_requirement_unscoreable,
+    # confirm_requirement_target) added by #92.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
         + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
+        + 3
     )
     assert len(registered_names) == expected
 

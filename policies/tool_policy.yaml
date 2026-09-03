@@ -169,6 +169,16 @@ design_tracking:
   - create_design
   - record_decision
   - verify_requirement
+  # issue #92: interpreting a prose customer requirement into a proposed/
+  # confirmed/unscoreable requirement target. Same informational-only
+  # category as create_design/verify_requirement -- no runtime gate: the
+  # only thing that could make a fabricated target dangerous (an LLM
+  # inventing a number) is prevented deterministically inside
+  # designs/requirement_targets.py itself (shape validation, ASSUMED
+  # tagging), not by a policy-layer gate.
+  - propose_requirement_target
+  - mark_requirement_unscoreable
+  - confirm_requirement_target
 
 design_loop:
   # The controlled design-iteration loop (orchestration/design_loop.py,

@@ -85,8 +85,12 @@ def test_principal_role_has_broad_access():
     # lookup_nexar_component, reconcile_component_sources) added by ticket
     # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
     # non-principal specialist, plus the generate_freecad_curved_geometry
-    # tool added by issue #66.
-    assert len(names) == 87
+    # tool added by issue #66, plus the 3 requirement-target tools
+    # (propose_requirement_target, mark_requirement_unscoreable,
+    # confirm_requirement_target) added by issue #92 -- principal-only,
+    # matching the create_design/verify_requirement design-tracking
+    # precedent rather than scoping them into a specialist role.
+    assert len(names) == 90
 
 
 def test_principal_module_alias_matches_registry():

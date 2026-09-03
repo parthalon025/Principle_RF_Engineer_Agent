@@ -17,6 +17,13 @@ from agents import (
 from agents.run import RunResult
 from dotenv import load_dotenv
 
+from designs.requirement_targets import confirm_requirement_target as _confirm_requirement_target
+from designs.requirement_targets import (
+    mark_requirement_unscoreable as _mark_requirement_unscoreable,
+)
+from designs.requirement_targets import (
+    propose_requirement_target as _propose_requirement_target,
+)
 from designs.service import create_design as _create_design
 from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
@@ -1818,6 +1825,85 @@ def verify_requirement(
 
 
 @function_tool
+def propose_requirement_target(
+    design_id: int,
+    requirement_id: str,
+    value: float,
+    comparator: str,
+    unit: str,
+    tolerance: float | None = None,
+) -> dict:
+    """Propose a structured requirement target for one of a design's
+    requirements, interpreted from that requirement's own prose (issue #92).
+    YOU (the calling agent) read the requirement's prose yourself and decide
+    what value/comparator/unit/tolerance it means -- this tool does not read
+    prose or call any model itself; it only validates the shape of what you
+    propose, tags it ASSUMED (never a stronger provenance -- it is your
+    reading of prose, not the customer's own stated number), and stores it
+    on the design next to that requirement's original prose text (which is
+    left untouched). comparator must be one of: EQUALS (a point target to
+    hit, e.g. resonant frequency = 2.45 GHz), AT_LEAST (a minimum bound,
+    e.g. gain >= 5 dBi), or AT_MOST (a maximum bound, e.g. VSWR <= 2.0).
+    tolerance is optional and must be >= 0 if given. If the prose yields no
+    defensible numeric target at all, call mark_requirement_unscoreable
+    instead of guessing a value here. Calling this again for the same
+    requirement_id corrects/replaces whatever target (proposed or
+    confirmed) was there before -- nothing is scored against a target until
+    a human calls confirm_requirement_target on it."""
+    return _propose_requirement_target(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        value=value,
+        comparator=comparator,
+        unit=unit,
+        tolerance=tolerance,
+    )
+
+
+@function_tool
+def mark_requirement_unscoreable(
+    design_id: int,
+    requirement_id: str,
+    reason: str,
+) -> dict:
+    """Record that one of a design's requirements has prose with no
+    defensible numeric target to propose (issue #92) -- e.g. a purely
+    qualitative statement with no comparable value, comparator, or unit.
+    reason must explain why, in enough detail for a human reader to agree
+    or disagree with the call. Never invents a placeholder number: use this
+    instead of propose_requirement_target whenever you cannot honestly
+    defend a value/comparator/unit reading of the prose."""
+    return _mark_requirement_unscoreable(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        reason=reason,
+    )
+
+
+@function_tool
+def confirm_requirement_target(
+    design_id: int,
+    requirement_id: str,
+    confirmed_by: str,
+) -> dict:
+    """Confirm the currently-proposed target on one of a design's
+    requirements (issue #92) -- records that it was confirmed and by whom
+    (confirmed_by), so a later reader can see a human vouched that the
+    proposed reading matches what the customer meant. Only a target with
+    status PROPOSED can be confirmed here: an UNSCOREABLE target has no
+    number to confirm, and an already-CONFIRMED target should be corrected
+    via propose_requirement_target (which resets it to PROPOSED) rather
+    than re-confirmed, so a stale confirmation is never silently
+    overwritten. Nothing should be scored against a target that has not
+    been confirmed."""
+    return _confirm_requirement_target(
+        design_id=design_id,
+        requirement_id=requirement_id,
+        confirmed_by=confirmed_by,
+    )
+
+
+@function_tool
 def optimize_patch_length_for_target_frequency(
     eps_r: float,
     w_m: float,
@@ -2155,6 +2241,9 @@ _ALL_TOOLS = [
     read_design,
     record_decision,
     verify_requirement,
+    propose_requirement_target,
+    mark_requirement_unscoreable,
+    confirm_requirement_target,
     optimize_patch_length_for_target_frequency,
     start_design_loop,
     advance_design_loop_step,
