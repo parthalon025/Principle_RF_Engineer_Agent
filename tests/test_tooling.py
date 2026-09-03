@@ -100,6 +100,58 @@ def test_advance_design_loop_step_requires_design_id_in_state():
         advance_design_loop_step({"loop_id": "x"}, {})
 
 
+# ---------------------------------------------------------------------------
+# engineering_results.tool_name for a MEASUREMENT decision (issue #89).
+#
+# These two reach for the private _tool_name_for rather than going through a
+# flush, which is a deliberate exception to this suite's own "exercise the
+# public dict-in/dict-out functions" habit: the only public path that reads
+# a tool name is _flush_decisions, which commits to a real Postgres, and
+# this environment has none (see the module docstring, and issue #97 for the
+# absent CI that would). Asserting on the discriminator directly is the only
+# coverage available for a defect whose whole consequence is a false claim
+# sitting in a table nothing here can read back.
+# ---------------------------------------------------------------------------
+
+
+def _measurement_decision(result: dict[str, Any]) -> Any:
+    from orchestration.design_loop import LoopDecision
+
+    return LoopDecision(
+        step=DesignStep.MEASUREMENT.value,
+        kind="measurement",
+        input={},
+        result=result,
+        provenance="MEASURED",
+        approved_by="jane.engineer",
+        recorded_at=0.0,
+    )
+
+
+def test_external_measurement_is_not_recorded_as_a_vna_run():
+    """An externally-measured Touchstone file must not be persisted as
+    though run_vna_measurement produced it -- the design's permanent
+    evidence trail would then claim this system drove an instrument to get
+    data a human measured elsewhere and carried back."""
+    from orchestration.tooling import _tool_name_for
+
+    decision = _measurement_decision(
+        {
+            "touchstone_file": "/tmp/dut.s2p",
+            "provenance": "MEASURED",
+            "source": "external_test_iteration",
+        }
+    )
+    assert _tool_name_for(decision) == "record_external_measurement"
+
+
+def test_live_instrument_measurement_is_still_recorded_as_a_vna_run():
+    from orchestration.tooling import _tool_name_for
+
+    decision = _measurement_decision({"frequency_hz": [2.4e9], "s_parameters": {"S11": ["0.1+0j"]}})
+    assert _tool_name_for(decision) == "run_vna_measurement"
+
+
 def test_inspect_design_loop_state_passes_through_design_fields(cleanup_designs):
     state = start_new_design_loop("TOOL-2", "Inspect Test", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])

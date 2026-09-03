@@ -33,14 +33,18 @@ Mirrors tests/test_vna.py's own discipline for ticket #43's approval gate:
      already established for those tickets' own tests.
 """
 
+import re
 import stat
 import sys
 from dataclasses import replace as _dc_replace
 from pathlib import Path
 
+import numpy as np
 import pytest
+import skrf as rf
 
 from measurement.base import request_physical_measurement_approval
+from measurement.external import ExternalMeasurementError
 from measurement.vna import _vna_fingerprint_fields
 from orchestration.approval import (
     LoopStepApprovalReceipt,
@@ -749,6 +753,306 @@ def test_end_to_end_full_requirements_to_redesign_cycle(tmp_path: Path):
     # And there is genuinely nowhere further this completed loop can go.
     with pytest.raises(OrchestrationError, match="already reached its terminal state"):
         advance_loop_step(state, {})
+
+
+# ---------------------------------------------------------------------------
+# Group 6 (issue #89): MEASUREMENT accepts a Touchstone file brought back
+# from external testing -- CONTEXT.md's "Test iteration". See
+# measurement/external.py's module docstring for ADR-0012/ADR-0013's design.
+# Mirrors Group 5's overall discipline (real Touchstone data, real approval
+# gate, real CORRELATION call) but proves the NEW branch specifically: no
+# instrument, no VISA resource, no instrument-actuation approval anywhere on
+# this path.
+# ---------------------------------------------------------------------------
+
+
+def _write_measured_touchstone(tmp_path: Path, name: str = "measured") -> Path:
+    """A real one-port Touchstone file, built with skrf the same way
+    tests/test_touchstone.py does -- this exercises the actual
+    rf_tools.touchstone.analyze_touchstone parse path (reused unmodified by
+    measurement/external.py), not a stub or a hand-rolled fake. One-port
+    (S11 only) to match this file's own CORRELATION `simulated_override`
+    shape (S11-only, same convention Group 5's end-to-end test uses for its
+    live-instrument MEASUREMENT result -- see rf_tools/correlation.py's own
+    "same port count" requirement)."""
+    freqs_hz = [2.0e9, 2.5e9, 3.0e9]
+    f = rf.Frequency.from_f(freqs_hz, unit="hz")
+    s = np.zeros((3, 1, 1), dtype=complex)
+    s[:, 0, 0] = 10 ** (-15 / 20)
+    ntwk = rf.Network(frequency=f, s=s, z0=50)
+    path = tmp_path / f"{name}.s1p"
+    ntwk.write_touchstone(path.with_suffix(""))
+    return path
+
+
+def test_measurement_accepts_external_touchstone_file_with_measured_provenance(tmp_path: Path):
+    touchstone_path = _write_measured_touchstone(tmp_path)
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+
+    step_input = {
+        "touchstone_file": str(touchstone_path),
+        "lab_report": "s3://lab-reports/2026-09-03-patch-A.pdf",
+        "notes": "Anechoic chamber, 23C ambient, cal kit lot 4471, test date 2026-09-03.",
+    }
+    state = _grant_and_advance(state, DesignStep.MEASUREMENT, step_input_override=step_input)
+
+    assert state.current_step == DesignStep.CORRELATION.value
+    decision = state.decisions[-1]
+    assert decision.kind == "measurement"
+    assert decision.provenance == "MEASURED"
+    assert decision.approved_by == "jane.engineer"
+    # The shape rf_tools.correlation._result_to_network already accepts,
+    # with zero changes to rf_tools/correlation.py.
+    assert decision.result["touchstone_file"] == str(touchstone_path.resolve())
+    # The lab report and notes are stored on the decision verbatim...
+    assert decision.result["lab_report"] == step_input["lab_report"]
+    assert decision.result["notes"] == step_input["notes"]
+    # ...and neither was read for numeric values: nothing in the parsed
+    # result depends on their content (they're plain strings, never fed to
+    # analyze_touchstone or otherwise interpreted).
+    assert decision.result["ports"] == 1
+    # No instrument was ever involved on this path.
+    assert "instrument" not in decision.result
+    assert "resource" not in decision.result
+
+
+def test_external_measurement_lab_report_and_notes_are_optional(tmp_path: Path):
+    touchstone_path = _write_measured_touchstone(tmp_path, name="no_report")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+
+    step_input = {"touchstone_file": str(touchstone_path)}
+    state = _grant_and_advance(state, DesignStep.MEASUREMENT, step_input_override=step_input)
+
+    decision = state.decisions[-1]
+    assert decision.provenance == "MEASURED"
+    assert decision.result["lab_report"] is None
+    assert decision.result["notes"] is None
+
+
+def test_correlation_consumes_external_measurement_result_with_no_changes(tmp_path: Path):
+    touchstone_path = _write_measured_touchstone(tmp_path, name="for_correlation")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, step_input_override={"touchstone_file": str(touchstone_path)}
+    )
+
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    # No 'measured' override supplied -- CORRELATION must pick up the
+    # loop's own just-recorded external MEASUREMENT decision on its own.
+    state = advance_loop_step(state, {"simulated": simulated_override})
+
+    assert state.current_step == DesignStep.REDESIGN_DECISION.value
+    decision = state.decisions[-1]
+    assert decision.kind == "correlation"
+    assert decision.provenance == "CALCULATED"
+    assert decision.result["measured_provenance"] == "MEASURED"
+    assert "s11" in decision.result["comparison"]
+
+
+def test_advance_loop_step_rejects_external_measurement_with_no_approval(tmp_path: Path):
+    touchstone_path = _write_measured_touchstone(tmp_path, name="no_approval")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+
+    step_input = {"touchstone_file": str(touchstone_path)}
+    with pytest.raises(OrchestrationError, match="Design-loop step advancement refused"):
+        advance_loop_step(state, step_input)
+    # Nothing advanced: still parked at MEASUREMENT, no decision recorded.
+    assert state.current_step == DesignStep.MEASUREMENT.value
+
+
+def test_external_measurement_reaches_no_live_instrument_or_actuation_gate(tmp_path: Path):
+    """Passing intentionally-exploding instrument seams proves the
+    external path never reaches them -- not just that it wasn't asked to
+    use real hardware, but that it structurally cannot."""
+    touchstone_path = _write_measured_touchstone(tmp_path, name="no_instrument")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+
+    step_input = {"touchstone_file": str(touchstone_path)}
+    fields = _fingerprint(state, DesignStep.MEASUREMENT, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane.engineer", approval_callback=lambda f: True
+    )
+
+    def _boom_transport_factory(resource):
+        raise AssertionError("no live instrument should ever be reached on the external path")
+
+    def _boom_confinement_check(*_a, **_kw):
+        raise AssertionError(
+            "no instrument-actuation gate should ever be reached on the external path"
+        )
+
+    state = advance_loop_step(
+        state,
+        step_input,
+        approval=receipt,
+        instrument_transport_factory=_boom_transport_factory,
+        instrument_confinement_check=_boom_confinement_check,
+    )
+    assert state.current_step == DesignStep.CORRELATION.value
+    assert state.decisions[-1].provenance == "MEASURED"
+
+
+def test_external_measurement_missing_file_names_it_and_records_nothing(tmp_path: Path):
+    missing_path = tmp_path / "missing.s2p"
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+
+    step_input = {"touchstone_file": str(missing_path)}
+    fields = _fingerprint(state, DesignStep.MEASUREMENT, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane.engineer", approval_callback=lambda f: True
+    )
+
+    with pytest.raises(ExternalMeasurementError, match=re.escape(str(missing_path))):
+        advance_loop_step(state, step_input, approval=receipt)
+    # No evidence was recorded -- the loop is still parked at MEASUREMENT.
+    assert state.current_step == DesignStep.MEASUREMENT.value
+    assert all(d.step != DesignStep.MEASUREMENT.value for d in state.decisions)
+
+
+def test_external_measurement_unreadable_file_names_it_and_records_nothing(tmp_path: Path):
+    bad_path = tmp_path / "corrupt.s2p"
+    bad_path.write_text("this is not a touchstone file at all\n")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+
+    step_input = {"touchstone_file": str(bad_path)}
+    fields = _fingerprint(state, DesignStep.MEASUREMENT, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane.engineer", approval_callback=lambda f: True
+    )
+
+    with pytest.raises(ExternalMeasurementError, match=re.escape(str(bad_path))):
+        advance_loop_step(state, step_input, approval=receipt)
+    assert state.current_step == DesignStep.MEASUREMENT.value
+    assert all(d.step != DesignStep.MEASUREMENT.value for d in state.decisions)
+
+
+def test_end_to_end_full_cycle_with_external_measurement_no_instrument_involved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Acceptance criterion, verbatim: 'A full requirements-to-redesign
+    loop cycle completes with no instrument involved.' Walks all nine
+    DesignStep values exactly like Group 5's end-to-end test, except
+    MEASUREMENT is supplied a Touchstone file instead of instrument
+    fields -- and measurement.vna.run_vna_measurement itself is
+    monkeypatched to explode if ever called, so this doesn't just omit
+    live-instrument step_input, it proves that code path is unreachable."""
+
+    def _boom_vna(*_a, **_kw):
+        raise AssertionError(
+            "run_vna_measurement must never be called on the external-measurement path"
+        )
+
+    monkeypatch.setattr("orchestration.design_loop._run_vna_measurement", _boom_vna)
+
+    state = start_design_loop(REQUIREMENTS)
+    seen_steps = [DesignStep.REQUIREMENTS]
+
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    seen_steps.append(DesignStep.ARCHITECTURE)
+
+    state = advance_loop_step(state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286})
+    seen_steps.append(DesignStep.ANALYSIS)
+
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "executable": str(fake_nec2pp),
+            "workdir": str(tmp_path / "nec2_run"),
+        },
+    )
+    seen_steps.append(DesignStep.SIMULATION)
+
+    state = advance_loop_step(
+        state,
+        {
+            "eps_r": 4.4,
+            "w_m": 0.03,
+            "h_m": 0.0016,
+            "target_frequency_hz": 2.45e9,
+            "length_lower_m": 0.02,
+            "length_upper_m": 0.04,
+            "method": "sweep",
+            "n_evaluations": 5,
+        },
+    )
+    seen_steps.append(DesignStep.OPTIMIZATION)
+
+    state = advance_loop_step(
+        state,
+        {
+            "requirement_id": "R1",
+            "requirement": "resonant frequency within band",
+            "method": "analysis",
+            "expected": 2.45e9,
+            "actual": state.decisions[-1].result["achieved_frequency_hz"],
+            "status": "PASS",
+            "notes": "within tolerance of optimized length",
+        },
+    )
+    seen_steps.append(DesignStep.VERIFICATION)
+    assert state.current_step == DesignStep.MEASUREMENT.value
+
+    # --- MEASUREMENT: a Touchstone file brought back from external
+    # testing -- no resource, no VISA, no instrument_approval, no
+    # instrument seams passed at all. ---
+    touchstone_path = _write_measured_touchstone(tmp_path, name="full_cycle_external")
+    measurement_input = {
+        "touchstone_file": str(touchstone_path),
+        "lab_report": "range-report-2026-09-03.pdf",
+        "notes": "Outdoor range, 23C, calibrated with a known-good short/open/load standard.",
+    }
+    state = _grant_and_advance(state, DesignStep.MEASUREMENT, step_input_override=measurement_input)
+    seen_steps.append(DesignStep.MEASUREMENT)
+    assert state.current_step == DesignStep.CORRELATION.value
+    assert state.decisions[-1].kind == "measurement"
+    assert state.decisions[-1].provenance == "MEASURED"
+    assert state.decisions[-1].approved_by == "jane.engineer"
+
+    # --- CORRELATION (calls rf_tools.correlation, ungated, unmodified). ---
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_loop_step(state, {"simulated": simulated_override})
+    seen_steps.append(DesignStep.CORRELATION)
+    assert state.current_step == DesignStep.REDESIGN_DECISION.value
+    assert state.decisions[-1].kind == "correlation"
+    assert state.decisions[-1].provenance == "CALCULATED"
+    assert "s11" in state.decisions[-1].result["comparison"]
+
+    # --- REDESIGN_DECISION (gated) ---
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(
+        state, DesignStep.REDESIGN_DECISION, step_input_override=redesign_input
+    )
+    seen_steps.append(DesignStep.REDESIGN_DECISION)
+
+    assert state.completed is True
+    assert set(seen_steps) == set(DesignStep)
+    assert [DesignStep(d.step) for d in state.decisions] == list(STEP_ORDER)
+
+    import json
+
+    json.dumps(state.to_dict())
 
 
 # ---------------------------------------------------------------------------

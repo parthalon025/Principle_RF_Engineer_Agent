@@ -18,15 +18,32 @@ built and tested -- not reimplementing any of them:
                 frequency (Phase 9), the one named optimization use case
                 that ticket wired against this same patch-resonant-
                 frequency calculation.
-  - MEASUREMENT calls measurement.vna.run_vna_measurement (Phase 10) --
-                which independently enforces its OWN instrument-actuation
-                approval gate (measurement/base.py, ticket #43) before any
-                SCPI/VISA traffic. This loop's own MEASUREMENT gate (see
-                GATED_STEPS below) is a SEPARATE, higher-level approval: the
-                business decision "should this design proceed to physical
-                measurement at all", not the instrument-actuation decision
-                "may this exact SCPI command sequence run" -- both are
-                required, neither substitutes for the other.
+  - MEASUREMENT branches on step_input (issue #89, ADR-0012/ADR-0013):
+                a `touchstone_file` key routes to measurement.external.
+                record_external_measurement -- a Touchstone file an
+                engineer measured on independent equipment and brought
+                back, requiring no live instrument, no VISA resource, and
+                no instrument-actuation approval at all. Anything else
+                keeps routing to measurement.vna.run_vna_measurement
+                (Phase 10) exactly as before, which independently enforces
+                its OWN instrument-actuation approval gate (measurement/
+                base.py, ticket #43) before any SCPI/VISA traffic. This is
+                a deliberate expand-then-contract straddle, not the
+                steady state: ADR-0013's "no dual-mode branching is
+                needed" describes the END state AFTER ticket #90 deletes
+                measurement/vna.py and the rest of the instrument-control
+                package -- until then, both paths must keep working, since
+                _handle_measurement importing measurement.vna today means
+                the external path must exist FIRST for #90 to have
+                anything to remove the live-instrument branch down to.
+                Either way, this loop's own MEASUREMENT gate (see
+                GATED_STEPS below) is a SEPARATE, higher-level approval
+                from any instrument-actuation gate: the business decision
+                "should this design accept this measurement evidence at
+                all", not "may this exact SCPI command sequence run" --
+                the loop-level gate applies to BOTH paths identically,
+                since GATED_STEPS membership is keyed on `current_step`,
+                never on step_input content.
   - CORRELATION calls rf_tools.correlation.correlate_simulation_measurement
                 (Phase 11) against the loop's own recorded SIMULATION/
                 MEASUREMENT decisions (or an explicit override -- see
@@ -86,6 +103,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
+from measurement.external import record_external_measurement as _record_external_measurement
 from measurement.vna import run_vna_measurement as _run_vna_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
@@ -465,6 +483,44 @@ def _handle_measurement(
     instrument_transport_factory: Any = None,
     instrument_confinement_check: Any = None,
 ) -> tuple[str, dict[str, Any], str | None]:
+    """Branches on whether `step_input` carries a `touchstone_file` -- see
+    this module's docstring's MEASUREMENT bullet for why this straddle
+    exists and what ends it (ticket #90).
+
+    EXTERNAL PATH (`"touchstone_file"` present, issue #89): a test
+    iteration (CONTEXT.md) an engineer ran on equipment this system never
+    touched. Delegates entirely to measurement.external.
+    record_external_measurement -- no live instrument, no VISA resource,
+    no instrument-actuation approval/gate of any kind is involved or
+    possible on this path; `instrument_transport_factory`/
+    `instrument_confinement_check` (this function's OTHER two parameters)
+    are simply unused here, exactly as they would be for any other
+    ungated/non-instrument step. `lab_report`/`notes`, if given, ride
+    along on the result untouched (ADR-0013: never parsed for numbers).
+
+    LIVE-INSTRUMENT PATH (no `"touchstone_file"`, everything else
+    unchanged): the pre-#89 behavior, calling measurement.vna.
+    run_vna_measurement exactly as before, which independently enforces
+    its OWN instrument-actuation approval gate (measurement/base.py,
+    ticket #43) before any SCPI/VISA traffic.
+
+    Either way, `state` is unused (measurement is stateless with respect
+    to prior decisions -- unlike CORRELATION, which reads back the loop's
+    own prior SIMULATION/MEASUREMENT decisions) and the loop's own
+    MEASUREMENT approval gate (GATED_STEPS, checked in advance_loop_step
+    BEFORE this handler ever runs) already applies identically to both
+    paths, since it is keyed on `current_step`, never on step_input
+    content.
+    """
+    del state
+    if "touchstone_file" in step_input:
+        result = _record_external_measurement(
+            touchstone_file=step_input["touchstone_file"],
+            lab_report=step_input.get("lab_report"),
+            notes=step_input.get("notes"),
+        )
+        return "measurement", result, result.get("provenance", "MEASURED")
+
     _require_fields(
         step_input, {"resource", "start_hz", "stop_hz", "instrument_approval"}, "measurement"
     )
@@ -481,7 +537,6 @@ def _handle_measurement(
         transport_factory=instrument_transport_factory,
         confinement_check=instrument_confinement_check,
     )
-    del state
     return "measurement", result, result.get("provenance", "MEASURED")
 
 
@@ -598,12 +653,15 @@ def advance_loop_step(
     still valid and still shows the loop parked at the gated step).
 
     `instrument_transport_factory`/`instrument_confinement_check` are
-    test-only injection seams for the MEASUREMENT step ONLY (passed through
-    to measurement.vna.run_vna_measurement unchanged) -- omit both for a
-    real call, exactly as measurement/vna.py's own functions document. They
-    are NEVER exposed on the agent/MCP tool wrapper (see
-    orchestration/tooling.py), so a real invocation always goes through the
-    real instrument-actuation gate too.
+    test-only injection seams for the MEASUREMENT step's LIVE-INSTRUMENT
+    path ONLY (passed through to measurement.vna.run_vna_measurement
+    unchanged; ignored entirely when step_input carries a
+    `"touchstone_file"`, which routes to measurement.external.
+    record_external_measurement instead -- see _handle_measurement) --
+    omit both for a real call, exactly as measurement/vna.py's own
+    functions document. They are NEVER exposed on the agent/MCP tool
+    wrapper (see orchestration/tooling.py), so a real invocation always
+    goes through the real instrument-actuation gate too.
     """
     if state.completed:
         raise OrchestrationError(

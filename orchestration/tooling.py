@@ -101,6 +101,34 @@ _STEP_TO_TOOL_NAME: dict[str, str] = {
     DesignStep.CORRELATION.value: "correlate_simulation_measurement",
 }
 
+# MEASUREMENT is the one step whose tool name cannot be read off the step
+# alone (issue #89): _handle_measurement now routes either to
+# measurement.vna.run_vna_measurement or to measurement.external.
+# record_external_measurement depending on step_input, so the table above --
+# keyed only by step -- would record a VNA run this system drove for a
+# Touchstone file a human measured on independent equipment and carried
+# back. That is a false claim about how the evidence was obtained, sitting
+# in the permanent engineering_results trail, in a project whose whole
+# premise is that a stated value's provenance is traceable. The external
+# path's own result marks itself (measurement/external.py sets `source`),
+# so the discriminator reads that rather than re-deriving it from
+# step_input, which the flush no longer has by then.
+_EXTERNAL_MEASUREMENT_SOURCE = "external_test_iteration"
+_EXTERNAL_MEASUREMENT_TOOL_NAME = "record_external_measurement"
+
+
+def _tool_name_for(decision: LoopDecision) -> str:
+    """The real function name that produced `decision`'s result, for
+    `engineering_results.tool_name`. Everything but MEASUREMENT is a
+    straight per-step lookup; see `_EXTERNAL_MEASUREMENT_SOURCE` above for
+    why MEASUREMENT has to inspect the result itself."""
+    if (
+        decision.step == DesignStep.MEASUREMENT.value
+        and decision.result.get("source") == _EXTERNAL_MEASUREMENT_SOURCE
+    ):
+        return _EXTERNAL_MEASUREMENT_TOOL_NAME
+    return _STEP_TO_TOOL_NAME[decision.step]
+
 # LoopDecision.kind values that carry a computed result, bound for
 # engineering_results -- everything else (architecture_decision,
 # redesign_decision -> decision_records; verification_record ->
@@ -206,7 +234,7 @@ def _flush_target_for(
             designs_db.record_engineering_result,
             {
                 "design_id": design_id,
-                "tool_name": _STEP_TO_TOOL_NAME[decision.step],
+                "tool_name": _tool_name_for(decision),
                 "value": decision.result,
                 "provenance": decision.provenance,
             },
