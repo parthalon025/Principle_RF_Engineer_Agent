@@ -732,15 +732,18 @@ regression checks.
 ```python
 import math
 
-C = 299.792458          # mm*GHz
+C = 299.792458  # mm*GHz
 TWO_PI2 = 2 * math.pi**2
 
-def abs_ln_rho(db):     # |ln rho_0| from a reflectivity target in dB
+
+def abs_ln_rho(db):  # |ln rho_0| from a reflectivity target in dB
     return abs(db) * math.log(10.0) / 20.0
+
 
 def d_min(db, f_lo, f_hi, mu_s=1.0):
     """Least thickness (mm) the bound allows for this band and level."""
-    return abs_ln_rho(db) * (C/f_lo - C/f_hi) / (TWO_PI2 * mu_s)
+    return abs_ln_rho(db) * (C / f_lo - C / f_hi) / (TWO_PI2 * mu_s)
+
 
 def max_fbw(db, d_mm, f_c, mu_s=1.0):
     """Largest fractional bandwidth, band symmetric in frequency about f_c.
@@ -748,7 +751,7 @@ def max_fbw(db, d_mm, f_c, mu_s=1.0):
     K = 2 pi^2 mu_s d / (|ln rho_0| lambda_c), B/(1-B^2/4) <= K solves to
     B = 2 (sqrt(1+K^2) - 1) / K."""
     K = TWO_PI2 * mu_s * d_mm / (abs_ln_rho(db) * (C / f_c))
-    return K, 2 * (math.sqrt(1 + K*K) - 1) / K
+    return K, 2 * (math.sqrt(1 + K * K) - 1) / K
 ```
 
 Verified output:
