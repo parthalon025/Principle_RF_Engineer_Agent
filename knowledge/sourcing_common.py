@@ -29,12 +29,11 @@ class ExternalNetworkToolsDisabledError(PermissionError):
     """Raised when a distributor client is invoked without
     ALLOW_EXTERNAL_NETWORK_TOOLS=true.
 
-    Every one of this repo's other real-world-reaching tools refuses by
-    default behind an explicit env-var gate -- HFSS_ENABLED
-    (simulation/hfss.py), ALLOW_INSTRUMENT_CONTROL
-    (measurement/base.py's check_physical_actuation_gate()). The three
-    distributor clients place a real, credentialed outbound HTTP call to a
-    third party the instant they run, so they get the same posture.
+    This repo's other real-world-reaching tools refuse by default behind
+    an explicit env-var gate too -- HFSS_ENABLED (simulation/hfss.py). The
+    three distributor clients place a real, credentialed outbound HTTP
+    call to a third party the instant they run, so they get the same
+    posture.
     ALLOW_EXTERNAL_NETWORK_TOOLS was already declared in .env.example
     (defaulting to "false") before this ticket, but nothing read it yet --
     this is the first thing that does.

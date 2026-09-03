@@ -61,27 +61,44 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
   mapping in pure Python, plus an optional headless FreeCAD/`FreeCADCmd`
   path for an exact 3D STEP export); simulation/measurement correlation
   (`rf_tools/correlation.py`); optimization (`optimization/`: parameter
-  sweep, grid search, Bayesian, genetic, gradient); SCPI/VISA instrument
-  adapters for VNA, spectrum analyzer, signal generator, and power meter
-  (`measurement/`, approval-gated per `orchestration/approval.py` for real
-  hardware — never exercised against a real instrument — plus a hardware-
-  free `pyvisa-sim` backend, selected via pyvisa's own resource-manager
-  string/`PYVISA_LIBRARY`, that exercises the same adapter parsing logic
-  against a simulated instrument for testing; `pyvisa-sim` output is not a
-  substitute for `MEASURED` provenance, which still requires real
-  hardware); and an opt-in controlled autonomous design-iteration loop
-  (`orchestration/design_loop.py`, Phase 12; see ADR-0009/0010/0011). All
-  of the above are exposed as tools in both `agent/main.py` and
-  `mcp_server/server.py`. See `docs/FREE_AND_OPEN_SOURCE_TOOLING.md` for a
-  sourced survey of free/open-source alternatives to paid solvers, lab
-  instruments, and data subscriptions (the source of most of this wave).
+  sweep, grid search, Bayesian, genetic, gradient); a fast, additive
+  candidate solver (`orchestration/solver.py`) that scores LLM-proposed
+  candidates against a confirmable requirement target (`designs/
+  requirement_targets.py`, `designs/success_score.py`) without ever
+  bypassing the design loop's approval gates, plus a batched lab test plan
+  (`orchestration/lab_test_plan.py`) naming what to measure before a
+  prototype leaves for the bench (ADR-0014); an opt-in controlled
+  autonomous design-iteration loop (`orchestration/design_loop.py`, Phase
+  12; see ADR-0009/0010/0011) whose `MEASUREMENT` step accepts only an
+  externally-obtained Touchstone file a human brings back from real lab
+  equipment (ADR-0013) — the former SCPI/VISA instrument-control package
+  (VNA, spectrum analyzer, signal generator, power meter) has been removed
+  outright, not left dormant (ADR-0012); `measurement/external.py`
+  survives as that package's inverted purpose, ingesting the brought-back
+  file rather than driving hardware. All of the above are exposed as tools
+  in both `agent/main.py` and `mcp_server/server.py`. See
+  `docs/FREE_AND_OPEN_SOURCE_TOOLING.md` for a sourced survey of free/
+  open-source alternatives to paid solvers, lab instruments, and data
+  subscriptions (the source of most of this wave).
 - **Inputs**: plain numeric parameters for calculations; local Touchstone
   files for network analysis; uploaded documents (PDF datasheets,
   standards, textbooks, papers) for knowledge ingestion; a manufacturer
   part number for distributor-client lookup; structured geometry dicts
   (hand-built, or produced by `geometry/unit_cell.py`/`freecad_curved.py`,
   or derived from real KiCad PCB files via `kicad_gerber2ems.py`) for
-  simulator jobs.
+  simulator jobs; an externally-measured Touchstone file a human brings
+  back from real lab equipment, for the design loop's `MEASUREMENT` step
+  (ADR-0013). HFSS (`simulation/hfss.py`) is a real, working PyAEDT
+  adapter, confined to a controlled licensed workstation via
+  `check_hfss_workstation_confinement` — it is implemented, not a stub,
+  but per ADR-0012 is no longer part of this project's roadmap-narrated
+  default path, since it requires a paid AEDT license; the free/OSS
+  simulator stack is the assumed path now. ADS has no code adapter at all
+  — it is mentioned only in licensing docs, never implemented. Physical
+  measurement instrument control (VNA/spectrum analyzer/signal generator/
+  power meter over SCPI/VISA) does not exist in this codebase — removed
+  per ADR-0012; `measurement/external.py` survives, inverted from driving
+  hardware to ingesting the Touchstone file above.
 - **Correctness bar**: the design principle is that the LLM is never
   trusted to do RF arithmetic itself — it calls a deterministic tool and
   every significant result carries a `provenance` tag (`MEASURED`,
@@ -106,25 +123,31 @@ This is a foundation, not a finished system. `docs/BUILD_PLAN.md` and
 grown well past what either document names — see "Surface and scope"
 above for what actually exists, including a whole second wave of simulators
 (Palace/MEEP/gprMax/Elmer/OpenParEM/ngspice/Xyce/LTspice/Qucs-S/
-kicad_gerber2ems), geometry generators, and knowledge-sourcing clients that
-neither planning doc mentions by name. Do not infer "not yet built" from
-`docs/ROADMAP.md`'s version numbering (e.g. its "0.6"/"0.7" labels), and do
-not infer "built" from a doc naming something either — both docs describe
-an intended sequence, not the actual implementation order or current
-state; check the actual code before trusting either direction.
+kicad_gerber2ems), geometry generators, the fast candidate-solver loop
+(ADR-0014), and knowledge-sourcing clients that neither planning doc
+mentions by name. Do not infer "not yet built" from `docs/ROADMAP.md`'s
+version numbering (e.g. its "0.6"/"0.7" labels), and do not infer "built"
+from a doc naming something either — both docs describe an intended
+sequence, not the actual implementation order or current state; check the
+actual code before trusting either direction.
 
-Genuinely not yet built, as of this revision: a verification/eval corpus
-(a golden-query fixture with expected results and a recall/quality gate
-for the knowledge pipeline; reference-case validation against independently
--sourced expected values for the simulator adapters — see "Correctness
-bar" above) and the design-status transitions between `DRAFT` and the
-later lifecycle states (see **Design** below). For HFSS, the real-hardware
-SCPI/VISA instrument path, and the three distributor knowledge clients
-specifically: the code is implemented and tested against fakes, but each
-is gated on a resource this environment doesn't have (a licensed AEDT
-workstation; real lab hardware; a registered distributor API credential)
-and has never been exercised for real — see "Surface and scope" for which
-is which.
+Genuinely not yet built, as of this revision: closed-form filter-prototype
+synthesis (order/ripple/cutoff → g-value table → ladder network -- no
+`rf_tools/filter_synthesis.py` or equivalent exists); a verification/eval
+corpus (a golden-query fixture with expected results and a recall/quality
+gate for the knowledge pipeline; reference-case validation against
+independently-sourced expected values for the simulator adapters — see
+"Correctness bar" above); and the design-status transitions between
+`DRAFT` and the later lifecycle states (see **Design** below). For HFSS
+and the three distributor knowledge clients specifically: the code is
+implemented and tested against fakes, but each is gated on a resource this
+environment doesn't have (a licensed AEDT workstation; a registered
+distributor API credential) and has never been exercised for real — see
+"Surface and scope" for which is which. Physical instrument actuation
+(VNA/spectrum analyzer/signal generator/power meter over SCPI/VISA) is
+not a gap in this list — that whole capability was deliberately removed,
+not left unbuilt (ADR-0012); see "Surface and scope" and below for what
+replaced it.
 
 Originally tracked as a `needs-info` scope question in issue #3; that issue
 is resolved by this implementation landing — see the PR that introduced it
@@ -224,10 +247,26 @@ times in a row from taking a doc or a commit message at face value instead.
   design/decision record is a separate, searchable knowledge-base document
   about a *past* design, consulted for precedent, not an approval workflow.
 - **Test iteration**: evaluating a physical prototype's measured data (a
-  Touchstone file from bench/range testing) against the customer
-  requirement it was built to meet, and recommending specific design
-  revisions. Distinct from simulation — the input is real measured
-  hardware data, not a simulated result.
+  Touchstone file from bench/range testing a human ran independently and
+  brought back — this system has no live instrument-control path of its
+  own, see ADR-0012/ADR-0013) against the customer requirement it was built
+  to meet, and recommending specific design revisions. Distinct from
+  simulation — the input is real measured hardware data, not a simulated
+  result. A lab report may accompany the Touchstone file as unparsed
+  supporting context (test conditions, calibration, notes); it is not
+  itself a source of extracted numeric data (ADR-0013).
+- **Success score**: a `CALCULATED`-provenance, deterministic proximity
+  metric — how close a design-loop step's actual numeric result (an
+  achieved frequency, a simulated gain, an optimized dimension) lands to
+  the customer requirement's own stated numeric target. Computed only for
+  steps whose result is numeric and comparable to a stated target
+  (`ANALYSIS`/`SIMULATION`/`OPTIMIZATION`/`VERIFICATION`/`CORRELATION`); a
+  human judgment step (`ARCHITECTURE`/`REDESIGN_DECISION`) has no success
+  score. Never an LLM-estimated confidence number standing in for the real
+  metric — an optional `INFERRED`-tagged narrative note may ride alongside
+  one for context a formula can't capture, but never replaces it (ADR-0014).
+  _Avoid_: confidence, probability — both suggest a subjective estimate,
+  which this explicitly is not.
 - **Design**: a `designs` row — a named, revisioned unit of engineering work
   (`design_key`, `name`, `revision`, `status`) that `requirements`,
   `architecture`, engineering results, decisions, and verification all hang

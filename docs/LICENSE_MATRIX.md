@@ -28,8 +28,9 @@ Planning reference; not legal advice.
 | h5py | BSD-3-Clause | Free; reads gprMax's own .out HDF5 result format |
 | MEEP | GPLv2 | Free; review obligations if redistributed; Python library (conda-forge), no PyPI wheel |
 | FreeCAD | LGPL-2.1-or-later | Free; review obligations if redistributed. Verified directly against the verbatim `LICENSE` file at github.com/FreeCAD/FreeCAD's `main` branch (FSF "GNU LESSER GENERAL PUBLIC LICENSE, Version 2.1, February 1999" text), corroborated by the SPDX `LGPL-2.1` header on `src/Main/MainCmd.cpp` itself -- the specific source file that builds the headless `FreeCADCmd` executable `geometry/freecad_curved.py` (issue #66) shells out to. Not pip-installable -- manual source/binary install only, see README.md. |
-| PyAEDT | MIT | Requires legally licensed AEDT |
-| HFSS/AEDT | Commercial | License required |
+| PyAEDT | MIT | Requires legally licensed AEDT; optional -- `simulation/hfss.py` is a real, working adapter for teams that hold a license, but AEDT/HFSS is not on the default free/OSS path to a working, verified design (ADR-0012) |
+| HFSS/AEDT | Commercial | License required; optional, not on the default free/OSS path (ADR-0012) |
+| Keysight ADS | Commercial | License required; optional, not on the default free/OSS path (ADR-0012). No code adapter exists in this repo -- ngspice/Xyce/Qucs-S (above) are the free/OSS circuit-level alternatives |
 | PyVISA | MIT | Free; requires a VISA backend (vendor or pyvisa-py) for real hardware |
 | PyVISA-py | MIT | Free; pure-Python VISA backend, no vendor install required |
 | PyVISA-sim | MIT | Free; simulated-instrument backend, no hardware or VISA backend required |

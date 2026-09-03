@@ -3,12 +3,12 @@
 `/grill-with-docs` on the RF tool orchestration flow found that file was
 never programmatically loaded anywhere -- it existed only as prose read by
 humans (README.md, docs/adr/0005, a knowledge/read.py docstring), while the
-real gates that exist (`measurement/base.py`'s `ApprovalReceipt`,
-`orchestration/approval.py`'s `LoopStepApprovalReceipt`) were each built
-independently, tool by tool, never consulting it. This module is the single
-place both `agent/main.py` and `mcp_server/server.py` import for policy
-enforcement, so the two tool surfaces cannot drift the way their (already
-duplicated) tool *definitions* could.
+real gates that exist (`simulation/hfss.py`'s workstation-confinement
+check, `orchestration/approval.py`'s `LoopStepApprovalReceipt`) were each
+built independently, tool by tool, never consulting it. This module is the
+single place both `agent/main.py` and `mcp_server/server.py` import for
+policy enforcement, so the two tool surfaces cannot drift the way their
+(already duplicated) tool *definitions* could.
 
 TWO SEPARATE CHECKS, TWO SEPARATE PURPOSES:
 
@@ -39,17 +39,17 @@ TWO SEPARATE CHECKS, TWO SEPARATE PURPOSES:
          mirroring how this project always defines an approval seam
          before wiring a real approval workflow behind it.)
      Every other category (`read_only`, `calculation`, `simulation_auto`,
-     `approval_self_gated`, `approval_workflow`, `ingestion_auto`,
-     `design_tracking`, `design_loop`) is a no-op here -- those tools
-     either have no dangerous action to gate, or (approval_self_gated)
-     already enforce their own independent gate
-     (`measurement/base.py`/`simulation/hfss.py`), which this function
-     deliberately does not duplicate or interfere with. `enforce()` is not
-     currently called from any of the ~65 tool wrapper bodies in
-     agent/main.py or mcp_server/server.py, because none of them fall in
-     a category that would change behavior today -- it is here, tested,
-     and ready for the wrapper a future `blocked_by_default`/
-     `approval_required` tool would need.
+     `approval_self_gated`, `ingestion_auto`, `design_tracking`,
+     `design_loop`) is a no-op here -- those tools either have no
+     dangerous action to gate, or (approval_self_gated) already enforce
+     their own independent gate (`simulation/hfss.py`'s workstation-
+     confinement check, `knowledge/sourcing_common.py`'s external-network-
+     tools check), which this function deliberately does not duplicate or
+     interfere with. `enforce()` is not currently called from any of the
+     tool wrapper bodies in agent/main.py or mcp_server/server.py, because
+     none of them fall in a category that would change behavior today --
+     it is here, tested, and ready for the wrapper a future
+     `blocked_by_default`/`approval_required` tool would need.
 
 Both checks share one loaded copy of the policy file (`_load_policy`,
 cached) so a malformed `tool_policy.yaml` is caught the same way at either
@@ -134,6 +134,8 @@ def enforce(tool_name: str) -> None:
         "approval_required tools have no implementation reachable through "
         "this policy layer yet (see tool_policy.yaml's approval_required "
         "comment) -- a tool that already enforces its own approval gate "
-        "(measurement/base.py, simulation/hfss.py) is categorized "
-        "approval_self_gated instead, and is not affected by this check."
+        "(simulation/hfss.py's workstation-confinement check, "
+        "knowledge/sourcing_common.py's external-network-tools check) is "
+        "categorized approval_self_gated instead, and is not affected by "
+        "this check."
     )

@@ -18,10 +18,18 @@ from knowledge.search import search_design_records, search_knowledge
 load_dotenv()
 
 _DIM = 1536
+_LOCAL_DIM = int(os.environ.get("EMBEDDING_DIM_LOCAL", "1536"))
 
 
 def _vector(seed: float) -> list[float]:
     return [seed] * _DIM
+
+
+def _local_vector(seed: float) -> list[float]:
+    """Sized for the `embedding_local` column, which -- per this repo's own
+    .env.example/docker-compose.yml default (EMBEDDING_DIM_LOCAL=1024, BAAI/
+    bge-m3's actual dimension) -- is independent of `embedding`'s (_DIM)."""
+    return [seed] * _LOCAL_DIM
 
 
 def _draft(**overrides) -> DocumentDraft:
@@ -327,14 +335,14 @@ def test_search_knowledge_tags_semantic_matches_by_backend(cleanup_documents):
     conn = psycopg.connect(os.environ["DATABASE_URL"])
     try:
         write_chunk_embeddings(conn, "embedding", [chunks[0]["id"]], [_vector(1.0)])
-        write_chunk_embeddings(conn, "embedding_local", [chunks[1]["id"]], [_vector(1.0)])
+        write_chunk_embeddings(conn, "embedding_local", [chunks[1]["id"]], [_local_vector(1.0)])
         conn.commit()
     finally:
         conn.close()
 
     results = search_knowledge(
         "attenuator power handling",
-        embed_local=_Spy(result=[_vector(1.0)]),
+        embed_local=_Spy(result=[_local_vector(1.0)]),
         embed_external=_Spy(result=[_vector(1.0)]),
     )
 
