@@ -303,6 +303,61 @@ def test_antenna_and_test_roles_get_elmer_simulation():
     assert "run_elmer_simulation" not in _tool_names(ROLES["verification"])
 
 
+def test_antenna_and_test_roles_get_openparem_simulation():
+    # issue #62: OpenParEM3D full-wave FEM simulation, computing antenna
+    # far-field gain/directivity/radiation-efficiency from the same solve
+    # as its S-parameters, is the same antenna-element/test-reference-
+    # result family as run_nec2_simulation/run_openems_simulation/run_hfss_
+    # simulation.
+    assert "run_openparem_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_openparem_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_openparem_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_openparem_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_openparem_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_kicad_gerber2ems_simulation():
+    # issue #65: deriving PCB signal-integrity simulation geometry from a
+    # real, as-laid-out KiCad PCB design (trace impedance, via/stackup
+    # S-parameters) is antenna-feed-network geometry-prep/reference-result
+    # work, same family as run_nec2_simulation/run_openems_simulation.
+    assert "run_kicad_gerber2ems_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_kicad_gerber2ems_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_palace_simulation():
+    # issue #61: Palace's native Floquet/periodic-boundary full-wave
+    # simulation of a periodic metamaterial unit cell is the same
+    # antenna-element/test-reference-result family as run_nec2_simulation/
+    # run_openems_simulation/run_hfss_simulation.
+    assert "run_palace_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_palace_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_palace_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_palace_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_palace_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_microwave_and_test_roles_get_qucs_simulation():
+    # issue #58: Qucs-S/qucsator_rf native multi-port S-parameter circuit
+    # simulation is component/network-level work, not antenna-element
+    # work -- like run_ltspice_simulation/run_ngspice_simulation/
+    # run_xyce_simulation, it belongs with microwave (not antenna), and
+    # (like the full-wave simulators) with test as a SIMULATED-provenance
+    # reference result to validate hardware against.
+    assert "run_qucs_simulation" in _tool_names(ROLES["microwave"])
+    assert "run_qucs_simulation" in _tool_names(ROLES["test"])
+    # not systems/antenna/verification's job
+    assert "run_qucs_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_qucs_simulation" not in _tool_names(ROLES["antenna"])
+    assert "run_qucs_simulation" not in _tool_names(ROLES["verification"])
+
+
 def test_microwave_and_test_roles_get_ltspice_simulation():
     # issue #59: LTspice circuit simulation is component/network-level
     # (SPICE) work, not antenna-element work -- unlike run_nec2_simulation/

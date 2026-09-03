@@ -95,6 +95,13 @@ Optional:
   from freecad.org/downloads.php (or your OS package manager -- e.g. `apt install
   freecad` on Ubuntu) and confirm `FreeCADCmd` is on `PATH`, or point the
   `FREECAD_BIN` env var at it
+- Digi-Key/Mouser/Nexar distributor component-lookup credentials (issue #67) --
+  free developer accounts, no purchase required: `DIGIKEY_CLIENT_ID`/
+  `DIGIKEY_CLIENT_SECRET`, `MOUSER_API_KEY`, `NEXAR_CLIENT_ID`/
+  `NEXAR_CLIENT_SECRET` in `.env` (see `.env.example`). These three
+  `lookup_*_component` tools additionally require `ALLOW_EXTERNAL_NETWORK_TOOLS=true`
+  (they place a real, credentialed call to a third party) -- see
+  `policies/tool_policy.yaml`'s `approval_self_gated` category.
 
 ## Quick start
 
@@ -144,6 +151,7 @@ Notable components:
 - Xyce: GPL-3.0
 - Palace: Apache-2.0
 - gprMax: GPLv3-or-later
+- h5py: BSD-3-Clause (reads gprMax's own .out HDF5 result format)
 - MEEP: GPLv2
 - PyAEDT: MIT; requires a legally licensed AEDT installation
 - KiCad (application/kicad-cli): GPL-3.0-or-later
@@ -151,6 +159,9 @@ Notable components:
 - gerber2ems: Apache-2.0
 - gerbv: GPL-2.0
 - FreeCAD: LGPL-2.1-or-later
+- Digi-Key Product Information API v4 / Mouser Search API / Nexar API (Octopart data):
+  free developer tiers, proprietary API terms (not OSI licenses) -- see
+  `docs/LICENSE_MATRIX.md`
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license
 
