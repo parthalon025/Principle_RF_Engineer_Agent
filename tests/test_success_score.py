@@ -1,4 +1,4 @@
-"""Tests for rf_tools/success_score.py (issue #93).
+"""Tests for designs/success_score.py (issue #93).
 
 Pure-function tests only, following tests/test_calculations.py's
 deterministic in/out style -- no database needed. `score_point_target`/
@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from designs.requirement_targets import confirm_target, mark_unscoreable, propose_target
-from rf_tools.success_score import (
+from designs.success_score import (
     JUDGMENT_STEPS,
     SCOREABLE_STEPS,
     SuccessScoreError,

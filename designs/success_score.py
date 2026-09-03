@@ -166,14 +166,30 @@ appear in NEITHER list; this module honors that omission rather than
 module's opinion about what a `MEASUREMENT` result could in principle
 support.
 
+WHY THIS LIVES IN `designs/` AND NOT `rf_tools/`. Issue #93 and the spec
+behind it (#87) both said `rf_tools/`, "with the other deterministic math",
+and this module was first written there. Moved deliberately: what it
+computes is not generic RF math the way `wavelength()` or
+`patch_resonant_frequency_hz()` are -- functions that would mean the same
+thing in any RF codebase. It answers "how well does this result satisfy
+THIS project's requirement target", which is design-domain semantics,
+expressed in a vocabulary (`TargetComparator`, `TargetStatus`, the
+scoreable-step set) that only exists here. Placement followed the
+dependency the code actually has: scoring cannot be done without the
+target vocabulary `designs/requirement_targets.py` defines, and importing
+that into `rf_tools/` would have made the deterministic-math layer -- whose
+every other module (`calculations.py`, `touchstone.py`, `correlation.py`)
+imports nothing but stdlib and third-party packages -- depend on the domain
+layer, with this file as the sole precedent for a new and wrong direction.
+
 This module defines its own `SCOREABLE_STEPS`/`JUDGMENT_STEPS` string
 frozensets (lower-case, matching `orchestration.design_loop.DesignStep`'s
 own string values) rather than importing `DesignStep` from
 `orchestration.design_loop`. This is deliberate, not an oversight:
-`orchestration/design_loop.py` already imports `rf_tools.calculations` and
-`rf_tools.correlation` -- `rf_tools` sits BELOW `orchestration` in this
-project's dependency direction. Importing `DesignStep` back out of
-`orchestration` into `rf_tools` would invert that direction and risk a
+`orchestration/tooling.py` already imports `designs.db`/`designs.service`
+-- `designs` sits BELOW `orchestration` in this project's dependency
+direction, exactly as `rf_tools` does. Importing `DesignStep` back out of
+`orchestration` into `designs` would invert that direction and risk a
 circular import the moment `orchestration/design_loop.py` (or anything it
 imports) ever needed something from this module. A five-string set
 duplicating five string literals that are already effectively frozen (a new
@@ -182,20 +198,20 @@ loop step is a rare, deliberate, whole-codebase change per
 section) is a small, honestly-documented cost next to that risk.
 
 `TargetComparator`/`TargetStatus`, by contrast, ARE imported directly from
-`designs.requirement_targets` rather than re-declared here. That import
-carries no such risk -- `designs/requirement_targets.py` imports only
-`designs.db` (never `rf_tools`), and it is this module's direct, documented
-input (#92's own docstring calls out #93 by name as the reader of its
-output). Re-declaring a second, parallel `TargetComparator`/`TargetStatus`
-here would risk exactly the vocabulary-fork CONTEXT.md's provenance section
-warns against for its own enum; reusing the one #92 already defined and
-tested is the safer, smaller choice.
+`designs.requirement_targets` rather than re-declared here -- now a plain
+intra-package import, which is part of why this module belongs in this
+package. `designs/requirement_targets.py` is this module's direct,
+documented input (#92's own docstring calls out #93 by name as the reader
+of its output). Re-declaring a second, parallel `TargetComparator`/
+`TargetStatus` here would risk exactly the vocabulary-fork CONTEXT.md's
+provenance section warns against for its own enum; reusing the one #92
+already defined and tested is the safer, smaller choice.
 
 ------------------------------------------------------------------------
 TOOL SURFACE: DELIBERATELY NOT WIRED AS AN AGENT/MCP TOOL.
 
-`success_score` is a pure function, exported from `rf_tools/` for #95's
-not-yet-built solver to import and call directly -- the ticket's own
+`success_score` is a pure function, exported for #95's not-yet-built
+solver to import and call directly -- the ticket's own
 placement guidance offers this as a defensible option ("A pure scoring
 function is also defensible as internal-only, consumed by #95's solver
 rather than called directly"), and this module takes it. Reasoning: nothing
@@ -438,7 +454,7 @@ def success_score(
 ) -> dict[str, Any]:
     """Score a scoreable design-loop step's numeric result against a
     (proposed or confirmed) requirement target. This is the function
-    `rf_tools/success_score.py` exists for -- see the module docstring for
+    `designs/success_score.py` exists for -- see the module docstring for
     the formulas, the unit-mismatch refusal, the closed step vocabulary, and
     (most importantly) why the returned result carries BOTH
     `target_provenance` and `target_status` rather than provenance alone.
