@@ -26,11 +26,20 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
   files for network analysis. Datasheets, schematics, and simulator inputs
   (NEC2++/openEMS/Palace/HFSS job files) are handled by the simulation
   adapters in `simulation/` but the adapters themselves are thin (NEC2++/
-  openEMS/Palace shell out to the real tool via `subprocess`; HFSS is an
-  intentionally unimplemented boundary pending a licensed AEDT host — see
-  `simulation/hfss.py`). Palace (`simulation/palace.py`) is the only
-  adapter with native Floquet/periodic-boundary ports, for characterizing
-  a periodic metamaterial unit cell's actual electromagnetic behavior.
+  openEMS/Palace shell out to the real tool via `subprocess`; HFSS
+  (`simulation/hfss.py`) is a real, working PyAEDT adapter, confined to a
+  controlled licensed workstation via `check_hfss_workstation_confinement`
+  — it is implemented, not a stub, but per ADR-0012 is no longer part of
+  this project's roadmap-narrated default path, since it requires a paid
+  AEDT license; the free/OSS simulator stack is the assumed path now. ADS
+  has no code adapter at all — it is mentioned only in licensing docs, never
+  implemented). Palace (`simulation/palace.py`) is the only adapter with
+  native Floquet/periodic-boundary ports, for characterizing a periodic
+  metamaterial unit cell's actual electromagnetic behavior. Physical
+  measurement instrument control (VNA/spectrum analyzer/signal generator/
+  power meter over SCPI/VISA) does not exist in this codebase — removed per
+  ADR-0012; see "Test iteration" below for how measured data enters the
+  system instead.
 - **Correctness bar**: the design principle is that the LLM is never
   trusted to do RF arithmetic itself — it calls a deterministic tool
   (`rf_tools/calculations.py`, `rf_tools/touchstone.py`) and every
@@ -53,13 +62,26 @@ yet built, regardless of what the docs describe as the eventual system.
 (Antenna geometry generators -- flat unit-cell/array tiling via
 `geometry/unit_cell.py`, issue #55, and flat-to-curved-host-surface mapping
 plus headless FreeCAD 3D-model generation via `geometry/freecad_curved.py`,
-issue #66 -- and HFSS/ADS adapters are now implemented; this list is not
+issue #66 -- and the HFSS adapter are now implemented (ADS never had a code
+adapter, only doc/licensing mentions -- see ADR-0012); this list is not
 otherwise re-audited against the rest of this repo's simulator adapters as
 part of this pass.)
 
 Originally tracked as a `needs-info` scope question in issue #3; that issue
 is resolved by this implementation landing — see the PR that introduced it
 for history.
+
+Physical measurement instrument control (the former `measurement/` SCPI/
+VISA package) has been removed, and paid EDA tooling (HFSS/ADS) dropped from
+the roadmap's default path — hardware is out of scope for now, and the
+free/OSS simulator stack is the complete assumed path to a working,
+verified design (ADR-0012). The design loop's `MEASUREMENT` step now
+accepts only externally-obtained results a human brings back (ADR-0013). A
+new, additive "propose then test" solver tool — scoring candidates against
+a requirement with a deterministic proximity metric, never bypassing the
+design loop's approval gates — is a settled decision (ADR-0014) not yet
+built; treat it as not-yet-implemented like everything else in this
+section.
 
 ## Vocabulary
 
@@ -147,10 +169,26 @@ for history.
   design/decision record is a separate, searchable knowledge-base document
   about a *past* design, consulted for precedent, not an approval workflow.
 - **Test iteration**: evaluating a physical prototype's measured data (a
-  Touchstone file from bench/range testing) against the customer
-  requirement it was built to meet, and recommending specific design
-  revisions. Distinct from simulation — the input is real measured
-  hardware data, not a simulated result.
+  Touchstone file from bench/range testing a human ran independently and
+  brought back — this system has no live instrument-control path of its
+  own, see ADR-0012/ADR-0013) against the customer requirement it was built
+  to meet, and recommending specific design revisions. Distinct from
+  simulation — the input is real measured hardware data, not a simulated
+  result. A lab report may accompany the Touchstone file as unparsed
+  supporting context (test conditions, calibration, notes); it is not
+  itself a source of extracted numeric data (ADR-0013).
+- **Success score**: a `CALCULATED`-provenance, deterministic proximity
+  metric — how close a design-loop step's actual numeric result (an
+  achieved frequency, a simulated gain, an optimized dimension) lands to
+  the customer requirement's own stated numeric target. Computed only for
+  steps whose result is numeric and comparable to a stated target
+  (`ANALYSIS`/`SIMULATION`/`OPTIMIZATION`/`VERIFICATION`/`CORRELATION`); a
+  human judgment step (`ARCHITECTURE`/`REDESIGN_DECISION`) has no success
+  score. Never an LLM-estimated confidence number standing in for the real
+  metric — an optional `INFERRED`-tagged narrative note may ride alongside
+  one for context a formula can't capture, but never replaces it (ADR-0014).
+  _Avoid_: confidence, probability — both suggest a subjective estimate,
+  which this explicitly is not.
 - **Design**: a `designs` row — a named, revisioned unit of engineering work
   (`design_key`, `name`, `revision`, `status`) that `requirements`,
   `architecture`, engineering results, decisions, and verification all hang
