@@ -2,9 +2,11 @@
 the last Phase 11 ticket).
 
 Correlates a SIMULATED result (NEC2++/openEMS, or any future source shaped
-the same way) against a MEASURED result (the VNA adapter, measurement/
-vna.py) so an engineer can judge how much to trust a given simulation for
-future design decisions on similar geometries -- this project's evidence
+the same way) against a MEASURED result (a Touchstone file an engineer
+measured on independent equipment and brought back -- measurement/
+external.py, ADR-0012/ADR-0013) so an engineer can judge how much to trust
+a given simulation for future design decisions on similar geometries --
+this project's evidence
 hierarchy (CONTEXT.md: "measured > validated simulation > ...") only means
 something once there is a quantified number for how far apart the two
 actually are, not a bare pass/fail.
@@ -38,10 +40,11 @@ WHAT THIS FUNCTION ACTUALLY NORMALIZES, HONESTLY, PER INPUT:
     plain language, rather than silently implying every call de-embeds a
     fixture it was never told about.
   - Temperature: a documented, honest NO-OP pass-through. Neither
-    `simulation.base.SimulationResult` nor `measurement.base.
-    InstrumentResult` carries a dedicated temperature field as of this
-    ticket, and neither `simulation/nec2pp.py`, `simulation/openems.py`, nor
-    `measurement/vna.py` populates one in their `outputs`/result dicts. If a
+    `simulation.base.SimulationResult` nor `measurement.external.
+    record_external_measurement`'s own result carries a dedicated
+    temperature field as of this ticket, and neither `simulation/nec2pp.py`
+    nor `simulation/openems.py` populates one in their `outputs`/result
+    dicts. If a
     caller-supplied `simulated`/`measured` dict happens to carry a
     `temperature_c` key anywhere a generic metadata dict could hold one
     (top-level, or under an `"outputs"`/`"calibration"` sub-dict), it IS read
@@ -55,10 +58,13 @@ WHAT THIS FUNCTION ACTUALLY NORMALIZES, HONESTLY, PER INPUT:
 WHAT'S ACTUALLY USABLE AS SIMULATED INPUT TODAY: this function accepts any
 of an `skrf.Network`, a dict carrying a `"network"` (`skrf.Network`) key, a
 dict carrying a `"touchstone_file"`/`"file"` path, or a dict carrying the
-same generic `"frequency_hz"`/`"s_parameters"`/`"z0"` shape `measurement.vna.
-run_vna_measurement` returns (see `_network_from_generic_result`). That
-generic shape unconditionally covers the MEASURED side (`run_vna_measurement`
-'s own output). It does NOT cover `simulation.nec2pp.run_nec2_simulation`'s
+same generic `"frequency_hz"`/`"s_parameters"`/`"z0"` shape `measurement.
+external.record_external_measurement` returns (see
+`_network_from_generic_result`). That generic shape unconditionally covers
+the MEASURED side (`record_external_measurement`'s own output, which also
+carries a top-level `"touchstone_file"` -- accepted either way, see that
+function's own module docstring). It does NOT cover
+`simulation.nec2pp.run_nec2_simulation`'s
 output (single-frequency feed-point impedance only -- no frequency-swept
 S-parameter data at all, still true today) or the *fallback* case of
 `simulation.openems.run_openems_simulation`'s output (`s_parameters`
@@ -111,9 +117,8 @@ class CorrelationError(ValueError):
 
 def _parse_complex(value: Any) -> complex:
     """Parse one S-parameter value in any of the shapes this project's
-    adapters actually emit: a native complex/real number, a `[re, im]`
-    pair, or a `str(complex(...))`-style string (measurement/vna.py's
-    `run_vna_measurement` serializes this way for JSON/MCP transit)."""
+    result sources actually emit: a native complex/real number, a
+    `[re, im]` pair, or a `str(complex(...))`-style string."""
     if isinstance(value, complex):
         return value
     if isinstance(value, (int, float)):
@@ -132,11 +137,11 @@ def _parse_complex(value: Any) -> complex:
 
 def _network_from_generic_result(result: dict[str, Any], label: str) -> rf.Network:
     """Build an `skrf.Network` from a generic parsed-result dict shaped
-    like `measurement/vna.py`'s `run_vna_measurement` output:
+    like `measurement/external.py`'s `record_external_measurement` output:
     `{"frequency_hz": [...], "s_parameters": {"S11": [...], ...}, "z0":
     float}`. See this module's docstring for exactly which of this
-    project's current simulator/instrument adapters do and do not produce
-    this shape today."""
+    project's current simulator/external-measurement sources do and do not
+    produce this shape today."""
     frequency_hz = result.get("frequency_hz")
     s_parameters = result.get("s_parameters")
     if not frequency_hz or not s_parameters:
@@ -157,7 +162,8 @@ def _network_from_generic_result(result: dict[str, Any], label: str) -> rf.Netwo
             "function accepts via the 'touchstone_file'/'file' path below, "
             "not this generic 'frequency_hz'/'s_parameters' shape. Supply "
             "a result carrying real 'frequency_hz'/'s_parameters'/'z0' "
-            "data (e.g. measurement/vna.py's run_vna_measurement output), "
+            "data (e.g. measurement/external.py's "
+            "record_external_measurement output), "
             "a 'touchstone_file' path, or an already-built skrf.Network "
             "via a 'network' key."
         )
@@ -267,10 +273,10 @@ def _build_temperature_note(
             "in this ticket: neither the simulated nor the measured result "
             "carried a 'temperature_c' field, and none of "
             "simulation/nec2pp.py, simulation/openems.py, or "
-            "measurement/vna.py currently populates one -- this is a "
-            "genuine upstream gap (SimulationResult/InstrumentResult don't "
-            "carry a dedicated temperature field yet), not something this "
-            "function silently handled.",
+            "measurement/external.py currently populates one -- this is a "
+            "genuine upstream gap (SimulationResult/the external-"
+            "measurement result don't carry a dedicated temperature field "
+            "yet), not something this function silently handled.",
             detail,
         )
 
@@ -324,9 +330,10 @@ def correlate_simulation_measurement(
     `simulated`/`measured` accept an `skrf.Network` directly, a dict
     carrying `{"network": skrf.Network}`, a dict carrying
     `{"touchstone_file" | "file": <path>}`, or a dict shaped like
-    `measurement.vna.run_vna_measurement`'s output (`"frequency_hz"` +
-    `"s_parameters"` + `"z0"`). See this module's docstring for exactly
-    what today's NEC2++/openEMS simulator adapters can and can't supply.
+    `measurement.external.record_external_measurement`'s output
+    (`"frequency_hz"` + `"s_parameters"` + `"z0"`). See this module's
+    docstring for exactly what today's NEC2++/openEMS simulator adapters
+    can and can't supply.
 
     `fixture_path` (optional): when given, the MEASURED network has fixture
     effects de-embedded via `rf_tools.touchstone.deembed_touchstone`

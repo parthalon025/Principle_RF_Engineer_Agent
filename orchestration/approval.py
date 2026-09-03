@@ -1,32 +1,24 @@
-"""Loop-step human-approval gate (issue #46, Phase 12) -- the
-orchestration/ package's counterpart to measurement/base.py's
-ApprovalReceipt / request_physical_measurement_approval /
-check_physical_actuation_gate (issue #43).
+"""Loop-step human-approval gate (issue #46, Phase 12).
 
-SAME DESIGN PRINCIPLE AS #43, DELIBERATELY NOT THE SAME CODE OR RECEIPT
-TYPE. Per this project's non-negotiable constraint (README.md, docs/
+Per this project's non-negotiable constraint (README.md, docs/
 BUILD_PLAN.md's Phase 12 "Never allow autonomous manufacturing release",
 this ticket's own framing): a consequential, non-calculation/non-simulation
 step in the design-iteration loop must never proceed on a flippable
 boolean -- it requires a real, HMAC-SHA256-signed receipt bound to the
-exact fingerprint of the one specific decision it approves. That is
-measurement/base.py's mechanism, structurally reproduced here.
+exact fingerprint of the one specific decision it approves.
 
-It is deliberately NOT the same receipt type or signing key as
-measurement/base.py's ApprovalReceipt, for the same reason
-measurement/base.py's own module docstring gives for keeping `job` and
-`fingerprint_fields` separate: "may this loop advance past its
-ARCHITECTURE/MEASUREMENT/REDESIGN_DECISION step" is a structurally
-different kind of decision than "may this instrument transmit RF power
-over SCPI/VISA" -- mixing the two receipt types would let one kind of
-approval silently satisfy the other's gate. `check_loop_step_approval_gate`
-below does a bare `isinstance(receipt, LoopStepApprovalReceipt)` check, so
-a genuine measurement.base.ApprovalReceipt (or anything else) is rejected
-outright here, exactly as measurement/base.py's own gate rejects a bare
-string/boolean in place of its own receipt type.
+`LoopStepApprovalReceipt` is its own dedicated receipt type with its own
+signing key, deliberately not interchangeable with any other approval
+concept this project might ever grow: "may this loop advance past its
+ARCHITECTURE/MEASUREMENT/REDESIGN_DECISION step" is a business-level
+decision, structurally distinct from any other kind of gate, and mixing
+receipt types would let one kind of approval silently satisfy an unrelated
+gate. `check_loop_step_approval_gate` below does a bare
+`isinstance(receipt, LoopStepApprovalReceipt)` check, so anything else is
+rejected outright -- a plain string/boolean, a forged dict, or a receipt
+type belonging to a different gate entirely.
 
-THE MECHANISM (identical shape to measurement/base.py's, see that module's
-docstring for the fuller rationale):
+THE MECHANISM:
 
   1. `request_loop_step_approval(fingerprint_fields, approved_by,
      approval_callback)` is the ONLY way to obtain a `LoopStepApprovalReceipt`.
@@ -34,11 +26,10 @@ docstring for the fuller rationale):
      advances -- it only decides whether to grant a receipt.
 
   2. THIS CODEBASE DOES NOT WIRE UP A REAL HUMAN-FACING APPROVAL UI/
-     WORKFLOW, exactly as measurement/base.py's module docstring documents
-     for its own gate. `approval_callback` defaults to None, and calling
-     with `approval_callback=None` (the only way a Python callable cannot
-     cross an agent/MCP JSON tool boundary, so the only way any agent/MCP
-     tool wiring in this project could ever call it) ALWAYS raises
+     WORKFLOW. `approval_callback` defaults to None, and calling with
+     `approval_callback=None` (the only way a Python callable cannot cross
+     an agent/MCP JSON tool boundary, so the only way any agent/MCP tool
+     wiring in this project could ever call it) ALWAYS raises
      OrchestrationError. This project's `orchestration/design_loop.py`
      deliberately does NOT wire this function up as its own agent/MCP tool
      (the ticket's tool-surface budget is three tools: start, advance,
@@ -76,24 +67,19 @@ from dataclasses import dataclass
 from typing import Any
 
 # Process-local signing key for loop-step approval receipts. Generated once,
-# at import time, independent of measurement/base.py's own
-# _APPROVAL_SIGNING_KEY -- see this module's docstring for why the two
-# receipt types (and their signing keys) are deliberately kept separate
-# rather than shared.
+# at import time -- see this module's docstring for why this gate's receipt
+# type (and its signing key) is deliberately its own, not shared with any
+# other approval concept.
 _LOOP_APPROVAL_SIGNING_KEY = secrets.token_bytes(32)
 
 
 class OrchestrationError(RuntimeError):
     """Raised when a design-iteration-loop step's human-approval gate is not
-    satisfied. The orchestration/ package's analog of measurement.base.
-    InstrumentError."""
+    satisfied."""
 
 
 def _canonical_fingerprint(fields: dict[str, Any]) -> str:
-    """A stable SHA-256 fingerprint of `fields` -- identical technique to
-    measurement/base.py's `_canonical_fingerprint`, duplicated rather than
-    imported (see this module's docstring: the two gates are deliberately
-    independent, not sharing a signing key or verification path)."""
+    """A stable SHA-256 fingerprint of `fields`."""
     canonical = json.dumps(fields, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -132,8 +118,7 @@ def request_loop_step_approval(
     consequential itself -- no design-loop step action runs, no loop state
     advances -- it is purely a decision-and-receipt step, deliberately kept
     separate from advance_loop_step so a distinct, auditable approval action
-    must happen first (same separation as measurement/base.py's
-    request_physical_measurement_approval vs. Instrument.measure()).
+    must happen first.
 
     `fingerprint_fields` is the exact decision-content fingerprint the
     resulting receipt is bound to -- see design_loop.py's
@@ -204,9 +189,8 @@ def _verify_loop_step_approval_receipt(
             "the approval must be a LoopStepApprovalReceipt returned by "
             "request_loop_step_approval() (or reconstructed field-for-field "
             f"from its to_dict() output), not a bare {type(receipt).__name__} "
-            "-- a plain string/boolean token, or a measurement.base."
-            "ApprovalReceipt granted for a physical instrument actuation, "
-            "cannot be accepted here"
+            "-- a plain string/boolean token, or a receipt type belonging to "
+            "a different approval gate, cannot be accepted here"
         )
         return problems
 
@@ -242,9 +226,7 @@ def check_loop_step_approval_gate(
     `fingerprint_fields` -- signature-verified and fingerprint-matched, not
     merely present. Called by advance_loop_step() for every gated step
     (ARCHITECTURE, MEASUREMENT, REDESIGN_DECISION -- see design_loop.py's
-    GATED_STEPS), BEFORE that step's action runs or the loop advances,
-    exactly where measurement/base.py's check_physical_actuation_gate is
-    called before any SCPI/VISA traffic."""
+    GATED_STEPS), BEFORE that step's action runs or the loop advances."""
     missing = _verify_loop_step_approval_receipt(approval, fingerprint_fields)
     if missing:
         raise OrchestrationError(

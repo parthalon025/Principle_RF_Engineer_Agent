@@ -20,9 +20,9 @@ dependencies = [
   "pyyaml>=6.0",
   # Reads gprMax's own native .out result format (simulation/gprmax.py,
   # issue #63) -- h5py is free/open-source, needs no special hardware or
-  # license (unlike the hfss/measurement extras below), and this module's
+  # license (unlike the hfss extra below), and this module's
   # own tests construct synthetic .out files with it to exercise result
-  # parsing without gprMax itself installed -- so, unlike pyaedt/pyvisa,
+  # parsing without gprMax itself installed -- so, unlike pyaedt,
   # it is a hard dependency, not an optional extra. (gprMax itself is NOT
   # pip-installable -- see simulation/gprmax.py's module docstring -- so
   # it has no extra of its own here; it is documented in README.md's
@@ -44,46 +44,12 @@ dependencies = [
 hfss = [
   "pyaedt",
 ]
-# SCPI/VISA instrument adapters (issue #43) -- see measurement/vna.py.
-# pyvisa requires a real VISA backend (NI-VISA, Keysight IO Libraries, or
-# the pure-Python pyvisa-py) and, for anything beyond *IDN? against a
-# simulated resource, real lab hardware, neither of which CI or most
-# installs have -- so it is an explicit optional extra, not a hard
-# dependency: install with `uv sync --extra measurement` or
-# `pip install '.[measurement]'` on a workstation with real instrument
-# access.
-#
-# pyvisa-py (issue #56) is pyvisa's own pure-Python VISA backend (the "py"
-# wrapper -- see pyvisa's highlevel.py get_wrapper_class/_get_default_wrapper),
-# a free alternative to a vendor VISA install (NI-VISA/Keysight IO Libraries)
-# for real serial/USB/TCPIP instrument access -- bundled alongside pyvisa-sim
-# below since both are pure-Python, no-hardware-required, and this ticket's
-# @sim-backed tests exercise the same bare `pyvisa.ResourceManager()` call
-# real hardware access would use.
-#
-# pyvisa-sim (issue #56) is pyvisa's own simulated-instrument backend
-# (selected via the `@sim` resource-manager specification, or the
-# PYVISA_LIBRARY env var -- see pyvisa's highlevel.py: an unspecified
-# ResourceManager() falls back to os.environ["PYVISA_LIBRARY"] verbatim, and
-# `@sim` resolves by pyvisa's own package-naming convention to the installed
-# `pyvisa_sim` package's WRAPPER_CLASS -- both verified directly against
-# pyvisa's GitHub `main` branch, not assumed). It requires no real VISA
-# backend and no physical hardware at all, unlike bare pyvisa above -- so a
-# developer with this extra installed can exercise measurement/vna.py,
-# measurement/spectrum_analyzer.py, measurement/signal_generator.py, and
-# measurement/power_meter.py end-to-end against the repo-specific fixture at
-# tests/fixtures/pyvisa_sim_instruments.yaml (see tests/test_pyvisa_sim.py).
-measurement = [
-  "pyvisa",
-  "pyvisa-py",
-  "pyvisa-sim",
-]
 # Metamaterial/FSS unit-cell geometry generation (issue #55) -- see
 # geometry/unit_cell.py. gdstk is a small, freely pip-installable library
 # with prebuilt wheels for every major platform and no license/hardware
 # requirement, so it would be reasonable to make it a hard dependency; it
 # is kept as an explicit optional extra instead, matching this project's
-# existing hfss/measurement pattern for anything most installs (including
+# existing hfss pattern for anything most installs (including
 # CI) won't touch by default: install with `uv sync --extra geometry` or
 # `pip install '.[geometry]'`.
 #
@@ -108,8 +74,8 @@ geometry = [
 # drives LTspice's own documented batch/command-line switches and parses its
 # .raw output; LTspice itself is free-of-charge proprietary freeware (Analog
 # Devices SLA, see docs/LICENSE_MATRIX.md) that most installs (including CI,
-# where no LTspice binary exists) will never touch, so -- like hfss/
-# measurement above -- this is an explicit optional extra, not a hard
+# where no LTspice binary exists) will never touch, so -- like hfss
+# above -- this is an explicit optional extra, not a hard
 # dependency: install with `uv sync --extra ltspice` or
 # `pip install '.[ltspice]'` on a workstation with LTspice installed.
 ltspice = [

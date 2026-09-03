@@ -11,10 +11,10 @@ for real. It was run for real (not just skipped) during this ticket's own
 implementation, confirming every test below genuinely passes against
 spicelib's real code -- see the PR description for that run's results.
 
-UNLIKE tests/test_hfss.py / tests/test_vna.py (whose pyaedt/pyvisa talk to
-a paid-license COM/DLL interface or physical lab hardware that can never
-exist in CI, so those files test adapter logic against a hand-written fake
-object standing in for the WHOLE library instead), this file exercises
+UNLIKE tests/test_hfss.py (whose pyaedt talks to a paid-license COM/DLL
+interface that can never exist in CI, so that file tests adapter logic
+against a hand-written fake object standing in for the WHOLE library
+instead), this file exercises
 spicelib's REAL `LTspice.run()`/`Simulator.create_from()` code for real --
 the actual argument-construction and subprocess-invocation logic this
 ticket cares about ("format/invocation tested against ... LTspice's own
