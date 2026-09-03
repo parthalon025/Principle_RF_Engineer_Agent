@@ -14,9 +14,10 @@ test — build the design loop, point it at a design whose answer is already
 published, and see whether it arrives at the same place. That only works if the
 published answer is unambiguous, and in several places it is not.
 
-Each question below is currently blocking work, or is a discrepancy between the
-patent's prose and its drawings that we cannot resolve from the document alone.
-Every one is a one-line answer for someone who was in the room.
+Each question below is either a discrepancy between the patent's prose and its
+drawings that we cannot resolve from the document alone, or a reading we have
+arrived at ourselves and would like checked. Every one is a one-line answer for
+someone who was in the room.
 
 **Nothing here depends on the terms of any agreement.** These are questions
 about the patent's own content.
@@ -28,32 +29,42 @@ read by rendering the figure sheets. Where prose and drawings disagree we have
 assumed the drawings are authoritative, and two of the questions below are
 asking whether that assumption is right.
 
-## Blocking — these stop work now
+## Where we reached an answer ourselves — please confirm or correct
 
-### 1. Example 3: is `h₁` = 0.15 mm a conductor or a second dielectric?
+These two were blocking. We settled them by rendering the figure sheets and
+measuring them numerically, so we are no longer stuck — but the readings are
+inferences from drawings, and a word from you would move them up two rungs.
 
-The evidence pulls three ways and we cannot settle it:
+### 1. Example 3: `h₁` = 0.15 mm — we read it as a conductor on both faces
 
-- `0.72 + 0.15 = 0.87` mm exactly, matching the stated total skin thickness,
-  which argues `h₁` is a **dielectric layer**.
-- FIG. 7D's marking argues it is **metal**.
-- But 0.15 mm of copper is roughly **six times a 1 oz foil**, which is not a
-  thickness anyone fabricates a resonator in.
+FIG. 7D's "Left view" is drawn as three strata, thin/thick/thin. Measured
+proportions are **16.3 / 70.1 / 13.7 %**, which matches a 0.15 / 0.72 / 0.15 mm
+metal-dielectric-metal stack to **half a percentage point**. The alternative —
+that the total really is 0.87 mm with a 0.72 mm core — predicts 82.8 % and is
+out by 12.7 points. The `h₁` leader arrow's ink also brackets the top stratum
+exactly.
 
-**Why it matters**: it decides whether the anchor design has a 0.72 mm or a
-0.87 mm dielectric. That moves the resonant frequency, so a reproduction that
-guesses wrong will diverge from the published curve for reasons that have
-nothing to do with the method being tested.
+**Which implies the stated 0.87 mm total is an arithmetic slip.** The drawing
+scales to **1.02 mm** = 0.72 + 2 × 0.15, and the tempting `0.72 + 0.15 = 0.87`
+is what makes the slip look deliberate. Is that right?
 
-### 2. FIG. 7G: what is the y-axis?
+We note this turned out to be the *cheap* branch: at 10 GHz a wave reaches only
+~0.66 µm into copper, so 0.15 mm and a 35 µm foil are the same mirror
+electromagnetically, and the only real consequence is a 0.115 mm standoff. A
+21 % thicker *dielectric* would have moved the resonance materially.
 
-Field magnitudes, or powers? The patent does not say. One reading closes the
-arithmetic coherently and the other does not, but we would rather know than
-infer.
+### 2. FIG. 7G: we read the y-axis as mixed
 
-**Why it matters**: this is the curve a reproduction is scored against. Reading
-it wrong does not produce a wrong answer — it produces a scoring function that
-is quietly measuring the wrong thing, which is worse.
+Reflectance and Transmission as field magnitudes (`|S₁₁|`, `|S₂₁|`); Absorbance
+as a power (`1 − |S₁₁|² − |S₂₁|²`). Reading the whole axis as power gives
+**negative absorbance** at 8.53, 8.75 and 10.47 GHz (−0.098, −0.059, −0.071),
+which cannot be. The magnitude reading closes to within 0.007 at all three,
+inside the printed linewidths.
+
+**Why it matters**: this is the curve a reproduction is scored against, and the
+axis is labelled with a bare `S`. Both conventions live in 0–1, so getting it
+wrong does not produce a wrong answer — it produces a scoring function that is
+quietly measuring the wrong thing.
 
 ## Discrepancies between the prose and the drawings
 
@@ -104,6 +115,13 @@ that printing can only serve the planar ones?
 For any of the seven. Measured curves would be worth a great deal more to us
 than simulated ones, for reasons in the next section.
 
+We have looked. Twenty-two of your publications were found and checked against
+Crossref, and the patent's own "Other References" list names seven of them —
+all on high-permeability inserts, impedance matching or dielectric gratings.
+**Examples 3 and 6 appear never to have been written up.** If there is an
+unpublished ARL technical report, we could not reach it: **DTIC Public Search
+is currently offline.** Is there one?
+
 ### 8. What was the minimum feature size you could hold, and what limited it?
 
 We read a **0.2 mm minimum feature across all seven examples** from the
@@ -143,10 +161,17 @@ everything we produce at `SIMULATED`.
 
 ### 9. Is there bench access for free-space reflection measurement at X-band?
 
-The measurement we need is modest and is documented practice: an 11 × 11 array
-of identical cells, measured with two horn antennas connected to a network
-analyser, detecting the field reflected at broadside in the far field. Coupons
-would be roughly 33 × 33 mm.
+The measurement we need is modest and is documented practice: an array of
+identical cells measured with two horn antennas connected to a network
+analyser, detecting the field reflected at broadside in the far field.
+
+A coupon has to be specified in **wavelengths**, not cell count — NPL good
+practice wants **6 λ across with focusing optics**, which at 10 GHz is
+**≈ 180 × 180 mm**, roughly 60 × 60 cells at 3 mm pitch. (Without focusing it
+is 20 λ, or 600 mm, which we cannot print.) An earlier version of this document
+said 11 × 11 cells and 33 × 33 mm; that count was carried across from a 28 GHz
+paper where it happened to measure 5.1 λ, and at X-band the same count is
+1.1 λ — too small for any free-space method to measure.
 
 This is the single highest-value unknown on our side. With it, printed elements
 can be measured rather than simulated, and the element library described above
