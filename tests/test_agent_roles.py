@@ -63,7 +63,8 @@ def test_principal_role_has_broad_access():
     # by issue #36, the search_design_records tool added by issue #37, the
     # run_nec2_simulation tool added by issue #38, the run_openems_simulation
     # tool added by issue #39, the run_hfss_simulation tool added by issue
-    # #40, the optimize_patch_length_for_target_frequency tool added by
+    # #40, the run_meep_simulation tool added by issue #60, the
+    # optimize_patch_length_for_target_frequency tool added by
     # issue #41, the request_vna_measurement_approval and
     # measure_vna_s_parameters tools added by issue #43, the 6 spectrum
     # analyzer/signal generator/power meter approval+measure/actuate tools
@@ -73,9 +74,19 @@ def test_principal_role_has_broad_access():
     # #46, the 4 design-lifecycle tools (create_design, read_design,
     # record_decision, verify_requirement) from a separately-merged PR
     # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
-    # tool set, plus 5 consult_<role>_role delegation tools (issue #35), one
-    # per non-principal specialist.
-    assert len(names) == 72
+    # tool set, the run_openparem_simulation tool added by issue #62, the
+    # run_elmer_simulation tool added by issue #64, the run_ltspice_
+    # simulation tool added by issue #59, the run_qucs_simulation tool added
+    # by issue #58, the run_kicad_gerber2ems_simulation tool added by issue
+    # #65, the run_ngspice_simulation and run_xyce_simulation tools added by
+    # issue #57, the run_palace_simulation tool added by issue #61, the
+    # run_gprmax_simulation tool added by issue #63, plus 4 more
+    # (lookup_digikey_component, lookup_mouser_component,
+    # lookup_nexar_component, reconcile_component_sources) added by ticket
+    # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
+    # non-principal specialist, plus the generate_freecad_curved_geometry
+    # tool added by issue #66.
+    assert len(names) == 87
 
 
 def test_principal_module_alias_matches_registry():
@@ -97,6 +108,23 @@ def test_systems_role_gets_calculations_and_knowledge_authoring():
     assert "analyze_touchstone_file" not in names
     # knowledge-auditing tool belongs to verification, not systems
     assert "extract_components" not in names
+
+
+def test_systems_role_gets_component_sourcing_tools():
+    # ticket #67: sourcing a datasheet straight from a distributor and
+    # reconciling it into one components row is the same knowledge-
+    # authoring concern as ingest_document/index_document.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_digikey_component" in names
+    assert "lookup_mouser_component" in names
+    assert "lookup_nexar_component" in names
+    assert "reconcile_component_sources" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "lookup_digikey_component" not in role_names
+        assert "lookup_mouser_component" not in role_names
+        assert "lookup_nexar_component" not in role_names
+        assert "reconcile_component_sources" not in role_names
 
 
 def test_microwave_role_gets_network_and_component_analysis():
@@ -260,6 +288,136 @@ def test_antenna_and_test_roles_get_hfss_simulation():
     assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
 
 
+def test_antenna_and_test_roles_get_elmer_simulation():
+    # issue #64: Elmer FEM's VectorHelmholtz module is a general,
+    # multiphysics-ready EM cross-check kept available for a future
+    # coupled-physics need -- same antenna-element/test-reference-result
+    # family as run_nec2_simulation/run_openems_simulation/run_hfss_
+    # simulation, despite having no native S-parameter/far-field/gain
+    # post-processing of its own (see simulation/elmer.py).
+    assert "run_elmer_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_elmer_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_elmer_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_elmer_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_elmer_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_openparem_simulation():
+    # issue #62: OpenParEM3D full-wave FEM simulation, computing antenna
+    # far-field gain/directivity/radiation-efficiency from the same solve
+    # as its S-parameters, is the same antenna-element/test-reference-
+    # result family as run_nec2_simulation/run_openems_simulation/run_hfss_
+    # simulation.
+    assert "run_openparem_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_openparem_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_openparem_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_openparem_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_openparem_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_kicad_gerber2ems_simulation():
+    # issue #65: deriving PCB signal-integrity simulation geometry from a
+    # real, as-laid-out KiCad PCB design (trace impedance, via/stackup
+    # S-parameters) is antenna-feed-network geometry-prep/reference-result
+    # work, same family as run_nec2_simulation/run_openems_simulation.
+    assert "run_kicad_gerber2ems_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_kicad_gerber2ems_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_palace_simulation():
+    # issue #61: Palace's native Floquet/periodic-boundary full-wave
+    # simulation of a periodic metamaterial unit cell is the same
+    # antenna-element/test-reference-result family as run_nec2_simulation/
+    # run_openems_simulation/run_hfss_simulation.
+    assert "run_palace_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_palace_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_palace_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_palace_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_palace_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_microwave_and_test_roles_get_qucs_simulation():
+    # issue #58: Qucs-S/qucsator_rf native multi-port S-parameter circuit
+    # simulation is component/network-level work, not antenna-element
+    # work -- like run_ltspice_simulation/run_ngspice_simulation/
+    # run_xyce_simulation, it belongs with microwave (not antenna), and
+    # (like the full-wave simulators) with test as a SIMULATED-provenance
+    # reference result to validate hardware against.
+    assert "run_qucs_simulation" in _tool_names(ROLES["microwave"])
+    assert "run_qucs_simulation" in _tool_names(ROLES["test"])
+    # not systems/antenna/verification's job
+    assert "run_qucs_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_qucs_simulation" not in _tool_names(ROLES["antenna"])
+    assert "run_qucs_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_microwave_and_test_roles_get_ltspice_simulation():
+    # issue #59: LTspice circuit simulation is component/network-level
+    # (SPICE) work, not antenna-element work -- unlike run_nec2_simulation/
+    # run_openems_simulation/run_hfss_simulation, it belongs with microwave
+    # (not antenna), and (like the other three simulators) with test as a
+    # SIMULATED-provenance reference result to validate hardware against.
+    assert "run_ltspice_simulation" in _tool_names(ROLES["microwave"])
+    assert "run_ltspice_simulation" in _tool_names(ROLES["test"])
+    # not systems/antenna/verification's job
+    assert "run_ltspice_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_ltspice_simulation" not in _tool_names(ROLES["antenna"])
+    assert "run_ltspice_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_microwave_and_test_roles_get_ngspice_and_xyce_simulation():
+    # issue #57: free/open circuit-level SPICE simulation of a matching
+    # network, filter, or amplifier sub-circuit is microwave/network-level
+    # component-analysis work, and (like run_nec2_simulation/
+    # run_openems_simulation/run_hfss_simulation) its SIMULATED-provenance
+    # result is something a measured result gets validated against in test
+    # engineering.
+    for tool_name in ("run_ngspice_simulation", "run_xyce_simulation"):
+        assert tool_name in _tool_names(ROLES["microwave"])
+        assert tool_name in _tool_names(ROLES["test"])
+        assert tool_name in _tool_names(ROLES["principal"])
+        # not systems/antenna/verification's job
+        assert tool_name not in _tool_names(ROLES["systems"])
+        assert tool_name not in _tool_names(ROLES["antenna"])
+        assert tool_name not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_gprmax_simulation():
+    # issue #63: gprMax FDTD simulation is the ground-coupled/lossy-half-
+    # space counterpart to NEC2++/openEMS, for a host surface (soil,
+    # concrete, a vehicle hull) neither of those can represent, and (like
+    # run_nec2_simulation/run_openems_simulation) its SIMULATED-provenance
+    # result is something a measured result gets validated against in test
+    # engineering.
+    assert "run_gprmax_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_gprmax_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_gprmax_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_and_test_roles_get_meep_simulation():
+    # issue #60: MEEP FDTD simulation is a second, independent full-wave
+    # solver for cross-checking a design decision against
+    # run_openems_simulation's own output -- same antenna-element/test-
+    # reference-result family as run_nec2_simulation/run_openems_simulation/
+    # run_hfss_simulation.
+    assert "run_meep_simulation" in _tool_names(ROLES["antenna"])
+    assert "run_meep_simulation" in _tool_names(ROLES["test"])
+    # not systems/microwave/verification's job
+    assert "run_meep_simulation" not in _tool_names(ROLES["systems"])
+    assert "run_meep_simulation" not in _tool_names(ROLES["microwave"])
+    assert "run_meep_simulation" not in _tool_names(ROLES["verification"])
+
+
 def test_antenna_role_gets_patch_length_optimization_tool():
     # issue #41: searching patch length against a target resonant frequency
     # via the generic optimization/ package composes with the Phase 1
@@ -271,6 +429,22 @@ def test_antenna_role_gets_patch_length_optimization_tool():
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["microwave"])
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["test"])
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["verification"])
+
+
+def test_antenna_role_gets_freecad_curved_geometry_tool():
+    # issue #66: mapping a flat unit-cell/array layout onto a curved host
+    # surface is a geometry-prep step that feeds run_openems_simulation's/
+    # run_palace_simulation's own geometry dict -- same antenna-geometry-
+    # generator family as optimize_patch_length_for_target_frequency, not a
+    # SIMULATED-provenance reference result test would validate hardware
+    # against.
+    assert "generate_freecad_curved_geometry" in _tool_names(ROLES["antenna"])
+    assert "generate_freecad_curved_geometry" in _tool_names(ROLES["principal"])
+    # not systems/microwave/test/verification's job
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["systems"])
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["microwave"])
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["test"])
+    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["verification"])
 
 
 def test_test_role_gets_new_touchstone_tools():

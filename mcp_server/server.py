@@ -9,9 +9,16 @@ from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
 from designs.service import verify_requirement as _verify_requirement
+from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
+from knowledge.component_resolution import (
+    reconcile_components_from_matches as _reconcile_components_from_matches,
+)
+from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datasheet
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
+from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
@@ -87,9 +94,21 @@ from rf_tools.touchstone import (
     deembed_touchstone,
     interpolate_touchstone,
 )
+from simulation.elmer import run_elmer_simulation as _run_elmer_simulation
+from simulation.gprmax import run_gprmax_simulation as _run_gprmax_simulation
 from simulation.hfss import run_hfss_simulation as _run_hfss_simulation
+from simulation.kicad_gerber2ems import (
+    run_kicad_gerber2ems_simulation as _run_kicad_gerber2ems_simulation,
+)
+from simulation.ltspice import run_ltspice_simulation as _run_ltspice_simulation
+from simulation.meep import run_meep_simulation as _run_meep_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
+from simulation.ngspice import run_ngspice_simulation as _run_ngspice_simulation
 from simulation.openems import run_openems_simulation as _run_openems_simulation
+from simulation.openparem import run_openparem_simulation as _run_openparem_simulation
+from simulation.palace import run_palace_simulation as _run_palace_simulation
+from simulation.qucs import run_qucs_simulation as _run_qucs_simulation
+from simulation.xyce import run_xyce_simulation as _run_xyce_simulation
 
 mcp = FastMCP("principal-rf-engineer")
 
@@ -675,6 +694,58 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
 
 
 @mcp.tool()
+def run_qucs_simulation(circuit: dict, analysis: dict, timeout_s: int = 600) -> dict:
+    """Simulate a lumped-element/transmission-line circuit (a matching network,
+    filter, or feed network -- schematic-level circuit simulation, the free/GPL
+    alternative to Keysight ADS this repo has no adapter for) with Qucs-S's
+    qucsator_rf engine: generate a netlist from structured circuit input (ports
+    with node/impedance, plus R/L/C/TLIN components with node connections -- see
+    simulation.qucs.generate_qucs_netlist for the full shape), run it via
+    qucsator_rf, and parse the FULL native N-port S-parameter matrix out of the
+    result in one run (unlike run_openems_simulation, which only yields the
+    excited port's own column per run). Returns "SIMULATED" provenance, plus a
+    "touchstone_file" (any port count) when the ports are contiguously numbered
+    1..N, ready for correlate_simulated_and_measured/compare_touchstone_files.
+    `analysis` sets the frequency sweep: {"sweep_type": "lin"|"log" (default
+    "lin"), "start_hz", "stop_hz" (both required), "points" (default 201)}.
+    Netlist/dataset format verified against qucsator_rf's own primary source
+    (see simulation/qucs.py's module docstring for the full citation list) but
+    NOT against a real qucsator_rf binary -- none is installed in this
+    environment. IMPORTANT: the real executable this adapter shells out to is
+    named "qucsator_rf", not the bare "qucsator" its upstream project is
+    colloquially called -- see that module docstring for why."""
+    return _run_qucs_simulation(circuit=circuit, analysis=analysis, timeout_s=timeout_s)
+
+
+@mcp.tool()
+def run_gprmax_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: int = 3600) -> dict:
+    """Simulate a ground-coupled or lossy-half-space antenna structure with gprMax (FDTD):
+    generate a .in file from structured geometry (an optional lossy dielectric ground
+    half-space, box/cylinder/edge/plate material and PEC conductor primitives in metres,
+    and a single #transmission_line excitation port -- see
+    simulation.gprmax.generate_gprmax_input for the full shape), run it via
+    "python -m gprMax" (gprMax has no standalone binary), and return S-parameters/input
+    impedance FFT-computed from the port's own incident/total voltage-current dumps, plus
+    any declared receivers' raw field data. Use this over run_nec2_simulation/
+    run_openems_simulation when the antenna's host surface is a real lossy dielectric half-
+    space (soil, concrete, a vehicle hull) rather than free space or an idealized ground
+    plane -- NEC2++'s ground models can't represent that, and openEMS's adapter has no
+    explicit ground-half-space workflow either. Returns "SIMULATED" provenance.
+    IMPORTANT: this adapter deliberately does NOT use gprMax's bundled antenna-model
+    library (GSSI/MALA) -- those are calibrated replicas of specific commercial GPR
+    antenna hardware, not stand-ins for this repo's own antenna designs (see
+    simulation/gprmax.py's module docstring "ADAPTATION WORK"). SCOPE LIMIT: far-field/
+    gain extraction is NOT computed -- gprMax has no near-field-to-far-field tool at all
+    (see simulation/gprmax.py's module docstring). Format verified against primary
+    gprMax documentation (see simulation/gprmax.py's module docstring for citations) but
+    NOT against a real gprMax run -- gprMax is not installed in this environment and
+    (unlike NEC2++/openEMS) cannot be installed via pip at all, only via a conda + C-
+    compiler source build (see that module's "CORRECTION" section); treat any result as
+    unverified end-to-end until it has been run against the real tool at least once."""
+    return _run_gprmax_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
+
+
+@mcp.tool()
 def run_hfss_simulation(
     geometry: dict,
     frequency_hz: float,
@@ -701,6 +772,312 @@ def run_hfss_simulation(
         sweep=sweep,
         project_name=project_name,
         design_name=design_name,
+    )
+
+
+@mcp.tool()
+def run_openparem_simulation(
+    mesh_file: str,
+    ports: dict,
+    project: dict | None = None,
+    project_name: str = "openparem_project",
+    mpi_processes: int | None = None,
+    timeout_s: int = 3600,
+) -> dict:
+    """Simulate a structure with OpenParEM3D (full-wave FEM): given an already-meshed
+    Gmsh msh22 `mesh_file` (mesh generation is out of scope -- see simulation/
+    openparem.py's module docstring SCOPE; produce one via FreeCAD+gmsh first) and
+    structured `ports` geometry (Path/Boundary/Port definitions -- see
+    simulation.openparem.generate_openparem_ports_file for the full shape), generate
+    the `.proj` project-control file (frequency plan, mesh/refinement settings,
+    reference impedance, Touchstone format -- see simulation.openparem.
+    generate_openparem_project_config for the full `project` shape) plus the ports
+    file, run OpenParEM3D, and parse S-parameters AND antenna far-field gain/
+    directivity/radiation-efficiency from the SAME FEM solve -- no separate tool or
+    manual post-processing step. Set `project["far_field"] = {"quantity": "G"}` (or
+    "D" for directivity) to request far-field metrics; this only actually computes
+    when `ports["boundaries"]` includes a `type="radiation"` boundary. Returns
+    "SIMULATED" provenance with `s_parameters`/`far_field` each honestly flagged
+    computed=True/False (never fabricated) plus a `touchstone_file` key when a
+    single-port renormalized Touchstone was written. `.proj`/ports-file format and
+    CLI invocation verified against OpenParEM's own primary GitHub source and its
+    official Installation Manual PDF (see simulation/openparem.py's module docstring
+    for the full citation list) but NOT against a real OpenParEM3D binary -- none is
+    installed in this environment. OpenParEM is also considerably younger and less
+    battle-tested than NEC2++/openEMS/HFSS (initial release Sept. 2024)."""
+    return _run_openparem_simulation(
+        mesh_file=mesh_file,
+        ports=ports,
+        project=project,
+        project_name=project_name,
+        mpi_processes=mpi_processes,
+        timeout_s=timeout_s,
+    )
+
+
+@mcp.tool()
+def run_elmer_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    timeout_s: int = 1800,
+    gmsh_executable: str | None = None,
+    elmergrid_executable: str | None = None,
+    elmersolver_executable: str | None = None,
+) -> dict:
+    """Simulate a structure with Elmer FEM's VectorHelmholtz module (a general,
+    multiphysics-ready EM cross-check for a FUTURE coupled-physics need, e.g. EM/
+    thermal on a mounted "adaptive EM skin" -- NOT a replacement for run_nec2_
+    simulation/run_openems_simulation/run_hfss_simulation on everyday antenna work):
+    generate a Gmsh OpenCASCADE .geo script from structured geometry (a single
+    rectangular domain with isotropic material, plus an optional rectangular
+    excitation sub-region -- see simulation.elmer.generate_gmsh_geo_script for the
+    full shape), mesh it with gmsh, convert the mesh to ElmerSolver's native format
+    with ElmerGrid, generate a matching VectorHelmholtz .sif (see simulation.elmer.
+    generate_elmer_sif), run it with ElmerSolver, and parse whatever raw output is
+    available. Returns "SIMULATED" provenance. CRITICAL SCOPE LIMIT: Elmer's
+    VectorHelmholtz module has NO native antenna-specific port/S-parameter/far-field/
+    gain post-processing (unlike OpenParEM/Palace) -- this tool's excitation
+    (impressed "Body Force"/"Current Density" current source) and boundary conditions
+    (PEC "E Re"/"E Im"=0, or the solver's own generic "Absorbing BC" flag) are
+    hand-assembled, real FEM techniques but NOT a calibrated port; "s_parameters" and
+    "far_field" are therefore ALWAYS returned computed=False with an explanatory note,
+    never fabricated -- see simulation/elmer.py's module docstring "SCOPE AND
+    LIMITATIONS" for the full detail. .geo/.sif/CLI format verified against Gmsh's own
+    official reference manual and ElmerGrid's/ElmerSolver's own primary GitHub source
+    (see simulation/elmer.py's module docstring for the full citation list, each fact
+    graded by confidence) but NOT against real gmsh/ElmerGrid/ElmerSolver binaries --
+    none is installed in this environment; treat any result as unverified end-to-end
+    until it has been run against the real tools at least once."""
+    return _run_elmer_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        timeout_s=timeout_s,
+        gmsh_executable=gmsh_executable,
+        elmergrid_executable=elmergrid_executable,
+        elmersolver_executable=elmersolver_executable,
+    )
+
+
+@mcp.tool()
+def generate_freecad_curved_geometry(
+    primitives: list[dict],
+    curvature: dict,
+    timeout_s: int = 600,
+    executable: str | None = None,
+) -> dict:
+    """Map a FLAT unit-cell/array layout (a list of this repo's own "box"/"polygon"
+    geometry-dict primitives -- e.g. straight out of geometry.unit_cell.
+    generate_unit_cell_array()/generate_metamaterial_array(), issue #55) onto a curved
+    host surface (a cylinder or a sphere, described by `curvature`) -- the case a
+    perfectly flat unit-cell layout gets physically wrong: an antenna wrapped around a
+    real fuselage/missile-body/radome has its elements stretched, tilted, and
+    repositioned by the host's own curvature, which a flat layout ignores. Returns
+    THIS REPO'S OWN existing geometry-dict "polygon" primitive shape (drops straight
+    into run_openems_simulation's/run_palace_simulation's own
+    geometry["conductors"]/geometry["materials"] list) -- computed via pure curvature
+    trigonometry, always available even without FreeCAD installed -- PLUS drives a
+    headless FreeCADCmd Python macro (no GUI dependency, see geometry/
+    freecad_curved.py's module docstring for the FreeCAD-source citations) that builds
+    the SAME array as a real, exact 3D solid model (each cell correctly tilted to the
+    surface's true local normal, a "box" primitive's thickness correctly extruded
+    along that true normal rather than the flat layout's own Z axis) and exports it to
+    a STEP file. CRITICAL SCOPE LIMIT: CSXCAD's own Polygon primitive can only lie in
+    a plane perpendicular to a global x/y/z axis, so the returned geometry-dict is a
+    "staircase"-style approximation -- each cell individually snapped to whichever
+    cardinal axis its own true local surface normal is closest to (the same kind of
+    approximation an FDTD solver's own rectilinear mesh already makes for any curved
+    boundary), NOT the exact tilted plane the FreeCAD-built STEP model represents; each
+    returned primitive carries a non-standard, informational `approx_sag_m` field
+    quantifying exactly how much that approximation cost for that cell. Returns
+    "SIMULATED" provenance. FreeCADCmd's headless invocation and every FreeCAD Python
+    API call used were verified directly against FreeCAD's own C++/`.pyi` source on
+    GitHub (see geometry/freecad_curved.py's module docstring for the full citation
+    list) but NOT against a real FreeCADCmd binary -- none is installed in this
+    environment; treat the FreeCAD-built STEP model as unverified end-to-end until it
+    has been run against the real tool at least once (the geometry-dict mapping itself
+    is pure Python, exercised directly in tests, and needs no FreeCAD install)."""
+    return _run_freecad_curved_geometry(
+        primitives=primitives,
+        curvature=curvature,
+        timeout_s=timeout_s,
+        executable=executable,
+    )
+
+
+@mcp.tool()
+def run_ltspice_simulation(
+    netlist: str | None = None,
+    netlist_file: str | None = None,
+    timeout_s: int = 600,
+) -> dict:
+    """Simulate a circuit with LTspice (ADS alternative, part 3 of 3 -- issue
+    #59): run an existing SPICE netlist (either `netlist`, raw netlist text,
+    or `netlist_file`, a path to an existing .net/.cir/.asc file already on
+    disk; exactly one is required) through LTspice's real batch-mode CLI
+    (driven via the spicelib package -- see simulation/ltspice.py's module
+    docstring for the primary-source citation), and parse the resulting
+    .raw output into structured trace data (plot type, axis, and every
+    named trace, complex for an AC analysis or real for a transient/DC
+    sweep) via spicelib's own RawRead. Returns "SIMULATED" provenance.
+    LOWEST PRIORITY / LOWEST INVESTMENT of this batch's "ADS alternative"
+    simulators: LTspice is the one non-open-source item here (free-of-
+    charge proprietary Analog Devices freeware, NOT OSI-approved -- see
+    docs/LICENSE_MATRIX.md) and is capability-redundant with any ngspice/
+    Xyce/Qucs-S adapter this repo may also have. Unlike run_nec2_
+    simulation/run_openems_simulation, this tool does NOT generate a
+    netlist from a structured component dict -- bring your own. spicelib
+    is an OPTIONAL install (`pip install '.[ltspice]'` / `uv sync --extra
+    ltspice`); this tool raises a clear SimulatorError, not a bare
+    ImportError, if it isn't installed. Format/invocation verified against
+    spicelib's own primary GitHub source but NOT against a real LTspice
+    binary -- none is installed in this environment."""
+    return _run_ltspice_simulation(
+        netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s
+    )
+
+
+@mcp.tool()
+def run_kicad_gerber2ems_simulation(board_file: str, config: dict, timeout_s: int = 3600) -> dict:
+    """Derive PCB signal-integrity simulation geometry from a REAL, as-laid-out KiCad
+    PCB design (a .kicad_pcb file) -- NOT a hand-modeled geometry dict -- and simulate
+    it with gerber2ems (which drives openEMS internally through its own Python
+    interface, with its own config schema; this is a separate pipeline from
+    run_openems_simulation, not built on top of it). Connects to a headless KiCad
+    instance via kicad-python's IPC API, exports the board's Gerber/drill/position
+    fileset plus a translated stackup.json, writes gerber2ems's own simulation.json
+    from `config` (REQUIRED: `{"frequency": {"start": hz, "stop": hz}}`; optional
+    "ports"/"traces"/"differential_pairs"/"grid"/"max_steps"/"pixel_size"/"via" in
+    gerber2ems's own schema -- see simulation.kicad_gerber2ems.generate_gerber2ems_
+    config for the full shape), runs `gerber2ems -a`, and parses its per-port results.
+
+    SCOPED EXPLICITLY TO PCB SIGNAL-INTEGRITY RESULTS -- trace impedance and
+    via/stackup S-parameters, per gerber2ems's own actual scope -- NOT antenna
+    far-field/gain patterns; gerber2ems has no far-field capability at all, so
+    (unlike run_openems_simulation) this tool's result carries no far-field key to
+    even stub. Returns "SIMULATED" provenance. REQUIRES the PCB design to already
+    place "Simulation_Port"-valued footprints (reference designators SP1, SP2, ...)
+    at the trace endpoints of interest -- this is gerber2ems's own PCB-design-time
+    port-discovery convention, not something this tool can synthesize. Format/API
+    verified against gerber2ems's and kicad-python's own primary sources (see
+    simulation/kicad_gerber2ems.py's module docstring for the full citation list)
+    but NOT against a real KiCad/kicad-cli/gerbv/gerber2ems/openEMS installation --
+    none is installed in this environment; treat any result as unverified end-to-end
+    until it has been run against the real tools at least once. One honestly-flagged
+    gap beyond that: kicad-python's drill export does not yet expose a plated/
+    non-plated-hole split, so a board with unplated holes may get a mis-labeled drill
+    file (see that module's own docstring and each result's own `warnings`)."""
+    return _run_kicad_gerber2ems_simulation(
+        board_file=board_file, config=config, timeout_s=timeout_s
+    )
+
+
+@mcp.tool()
+def run_ngspice_simulation(job: dict, timeout_s: int = 600) -> dict:
+    """Simulate a matching network, filter, or amplifier bias/termination sub-circuit
+    with ngspice (a free/open circuit-level SPICE simulator, no paid ADS license
+    needed): generate a netlist from a structured job dict (R/L/C/V/I components,
+    optional "raw_cards" escape hatch for nonlinear devices/subcircuits, an
+    op/ac/tran "analysis", and node-voltage/branch-current "outputs" -- see
+    simulation.ngspice.generate_ngspice_netlist for the full shape), run it via
+    ngspice, and parse the requested outputs' AC (real/imag pairs vs. frequency),
+    TRAN (values vs. time), or OP data back out. Returns "SIMULATED" provenance.
+    SCOPE LIMIT: S-parameters are NOT computed -- stable ngspice has no built-in
+    S-parameter analysis; use run_xyce_simulation's native `.LIN` S-parameter/
+    Touchstone path for that need instead. Netlist/output format verified against
+    the primary ngspice manual (see simulation/ngspice.py's module docstring for
+    the citation) but NOT against a real ngspice binary -- none is installed in
+    this environment."""
+    return _run_ngspice_simulation(job=job, timeout_s=timeout_s)
+
+
+@mcp.tool()
+def run_xyce_simulation(job: dict, timeout_s: int = 600) -> dict:
+    """Simulate a matching network, filter, or amplifier bias/termination sub-circuit
+    with Xyce (Sandia's free/open parallel-capable circuit simulator, no paid ADS
+    license needed -- prefer this over run_ngspice_simulation for a larger circuit or
+    when real S-parameters are needed): generate a netlist from a structured job dict
+    (R/L/C/V/I components, optional "raw_cards" escape hatch, an op/ac/tran
+    "analysis", optional node-voltage/branch-current "outputs", and optional "ports"
+    -- see simulation.xyce.generate_xyce_netlist for the full shape), run it via
+    Xyce, and return the requested `.PRINT` outputs (CSV columns vs. frequency/time)
+    and/or, when "ports" are given (requires analysis type "ac"), REAL S-parameters
+    extracted via Xyce's native `.LIN` linear-network analysis and exported to a
+    genuine Touchstone file (surfaced as "touchstone_file", integrating with
+    correlate_simulated_and_measured the same way simulation/hfss.py's and
+    simulation/openems.py's computed=True S-parameters do). Returns "SIMULATED"
+    provenance. HONEST CONFIDENCE CAVEAT: the `.LIN` S-parameter path is verified
+    against Xyce's own primary Reference Guide but carries one extra notch of
+    uncertainty beyond this tool's `.AC`/`.TRAN`/`.PRINT` coverage -- see
+    simulation/xyce.py's module docstring "HONEST CONFIDENCE CAVEAT ON `.LIN`
+    SPECIFICALLY" for why. Format verified against the primary Xyce Reference Guide
+    (see simulation/xyce.py's module docstring for the citation) but NOT against a
+    real Xyce binary -- none is installed in this environment."""
+    return _run_xyce_simulation(job=job, timeout_s=timeout_s)
+
+
+@mcp.tool()
+def run_palace_simulation(
+    geometry: dict,
+    frequency_hz: float,
+    sweep: dict | None = None,
+    num_processes: int = 1,
+    timeout_s: int = 3600,
+) -> dict:
+    """Simulate a periodic metamaterial unit cell with Palace, a full-wave finite-element
+    solver with NATIVE Floquet/periodic-boundary ports -- the only simulator in this
+    repo that can characterize a repeating-element design's actual electromagnetic
+    behavior (neither run_nec2_simulation's method-of-moments nor run_openems_
+    simulation's FDTD adapter expose periodic boundaries). Generates a structured
+    hexahedral mesh (MFEM .mesh format) and a Palace JSON config for a rectangular unit
+    cell -- periodic in x/y, a Floquet port on each of its two z-normal faces, zero or
+    more embedded axis-aligned dielectric material boxes -- from structured geometry
+    (unit_cell lx_m/ly_m/lz_m, optional materials list, optional floquet wave-vector/
+    polarization/max_order overrides -- see simulation.palace.generate_palace_mesh and
+    generate_palace_config for the full shape), runs it via the real `palace` binary,
+    and parses port-floquet-S.csv into structured per-diffraction-order S-parameter
+    data (plus a "specular" S11/S21-style convenience view for the fundamental order).
+    Returns "SIMULATED" provenance. Embedded PEC conductor patches (a metallic
+    metasurface, as opposed to an all-dielectric grating/photonic-crystal unit cell)
+    are NOT supported in this pass -- see simulation/palace.py's module docstring.
+    Config/mesh format verified against Palace's own primary documentation and MFEM's
+    own mesh-format documentation (see simulation/palace.py's module docstring for the
+    full citation list) but NOT against a real palace binary -- none is installed in
+    this environment."""
+    return _run_palace_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        sweep=sweep,
+        num_processes=num_processes,
+        timeout_s=timeout_s,
+    )
+
+
+@mcp.tool()
+def run_meep_simulation(
+    geometry: dict,
+    characteristic_length_m: float = 1e-3,
+    nfreq: int = 1,
+) -> dict:
+    """Simulate a structure with MEEP (FDTD, driven as a Python library, not a
+    subprocess binary) as a SECOND, INDEPENDENT full-wave EM solver you can cross-
+    check a design decision against instead of resting on run_openems_simulation's
+    output alone -- e.g. run the same geometry through both and compare |S11|. Takes
+    box/cylinder dielectric materials and PEC conductors in meters (see
+    simulation.meep.run_meep_simulation for the full geometry shape), a single port
+    modeled as a Gaussian-pulse source plus a reflection-flux monitor (MEEP has no
+    lumped-RLC-port concept the way openEMS/HFSS do -- see simulation/meep.py's PORT
+    MODEL caveat), and returns "SIMULATED" provenance. IMPORTANT SCOPE LIMITS: only
+    POWER REFLECTANCE and its magnitude |S11| are computed (via MEEP's own documented
+    flux-subtraction technique) -- NO complex phase, NO S21/multi-port, NO Touchstone
+    export, and NO far-field/gain (see simulation/meep.py's module docstring SCOPE
+    section). `characteristic_length_m` is MEEP's own dimensionless-unit lengthscale
+    "a" (default 1mm). Geometry/units translation verified against MEEP's own primary
+    documentation (see simulation/meep.py's module docstring for the citation) but
+    NOT against a real MEEP install -- MEEP has no PyPI wheel and no native Windows
+    support (conda-forge only, WSL required on Windows; see README.md's Optional
+    tools list)."""
+    return _run_meep_simulation(
+        geometry=geometry, characteristic_length_m=characteristic_length_m, nfreq=nfreq
     )
 
 
@@ -1142,6 +1519,56 @@ def extract_components(document_id: int, requested_backend: str | None = None) -
     SENSITIVE/RESTRICTED documents always use the self-hosted backend, no fallback to
     external."""
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
+
+
+@mcp.tool()
+def lookup_digikey_component(part_number: str, license: str, classification: str) -> dict:
+    """Search Digi-Key's Product Information API v4 for part_number, download its
+    datasheet PDF, and ingest it via ingest_document (source_type='datasheet'),
+    unchanged. Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND
+    DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET are configured. Returns {"status":
+    "no_match" | "no_datasheet" | "ok", ...}; on "ok", manufacturer/
+    manufacturer_part_number are Digi-Key's own report of the part's identity, for
+    reconcile_component_sources to cross-check against Mouser's/Nexar's hit for the
+    same part. NOT run against the real API in this environment -- see
+    knowledge/digikey.py's module docstring."""
+    return _lookup_digikey_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def lookup_mouser_component(part_number: str, license: str, classification: str) -> dict:
+    """Same contract as lookup_digikey_component, against Mouser's Search API
+    (MOUSER_API_KEY). NOT run against the real API in this environment -- see
+    knowledge/mouser.py's module docstring."""
+    return _lookup_mouser_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def lookup_nexar_component(part_number: str, license: str, classification: str) -> dict:
+    """Same contract as lookup_digikey_component, against Nexar's GraphQL API
+    (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). NOT run against the real API
+    in this environment -- see knowledge/nexar.py's module docstring."""
+    return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def reconcile_component_sources(
+    matches: list[dict],
+    category: str,
+    datasheet_document_ids: dict[str, int] | None = None,
+) -> dict:
+    """Reconcile two or three distributor lookups (lookup_digikey_component/
+    lookup_mouser_component/lookup_nexar_component results for the SAME queried part
+    number) into ONE components row instead of a duplicate per distributor. Each
+    entry in matches needs at least "distributor" and "manufacturer_part_number"
+    (pass a lookup_* result's fields straight through). datasheet_document_ids
+    optionally maps distributor name -> the document_id its ingest produced.
+    category must be one of this repo's ten RF component categories -- never guessed
+    from a distributor's own catalog taxonomy. Runs automatically, no confirmation
+    step, same posture as extract_components."""
+    return _reconcile_components_from_matches(
+        matches=matches, category=category, datasheet_document_ids=datasheet_document_ids
+    )
 
 
 @mcp.tool()

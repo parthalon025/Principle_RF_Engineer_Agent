@@ -56,9 +56,52 @@ See `CONTEXT.md` for the current domain model and open scope questions.
 Optional:
 - NEC2++
 - openEMS
+- CSXCAD (openEMS's own geometry/materials library -- no PyPI package; build
+  from source or install a platform-specific pre-built wheel, see
+  docs.openems.de/python/install.html. `pip install '.[geometry]'` installs
+  gdstk, this repo's other geometry-generation dependency, which IS a
+  regular PyPI package -- see `geometry/unit_cell.py` and
+  `pyproject.toml`'s `geometry` extra)
+- OpenParEM (OpenParEM2D/OpenParEM3D -- source or pre-compiled-binary install only, not
+  pip-installable; see simulation/openparem.py)
+- Elmer FEM (ElmerSolver, VectorHelmholtz module) + Gmsh + ElmerGrid
+- Qucs-S / qucsator_rf (manual build from source -- see
+  github.com/ra3xdh/qucsator_rf; the CLI binary this repo's
+  `simulation/qucs.py` shells out to is named `qucsator_rf`, not the bare
+  `qucsator` its upstream project is colloquially called)
+- ngspice
+- Xyce
+- Palace (github.com/awslabs/palace) -- full-wave FEM with native Floquet/periodic-port
+  boundaries, for periodic metamaterial unit cells; manual source/binary install, no
+  pyproject extra
+- gprMax (ground-coupled/lossy-half-space FDTD -- conda + a C compiler with
+  OpenMP, then `python setup.py build && python setup.py install`; not
+  pip-installable, see `simulation/gprmax.py`'s module docstring)
+- MEEP (FDTD, driven as a Python library -- `import meep`; a second, independent
+  full-wave solver for cross-checking a design decision against openEMS instead of
+  resting on one solver alone. No PyPI wheel: install via conda-forge
+  (`conda create -n mp -c conda-forge pymeep`); no native Windows support (WSL
+  required on Windows). See `simulation/meep.py`.)
 - Ansys AEDT/HFSS + PyAEDT
 - Keysight ADS
+- LTspice (batch/CLI mode, driven via the optional `ltspice` extra --
+  `uv sync --extra ltspice` -- see `simulation/ltspice.py`)
 - VISA/SCPI-capable instruments
+- KiCad (application + `kicad-cli`) -- for PCB geometry export via kicad-python's IPC API (issue #65)
+- gerbv -- Gerber rasterizer gerber2ems shells out to internally
+- gerber2ems -- PCB trace signal-integrity simulation front end for openEMS; not on PyPI, install from github.com/antmicro/gerber2ems
+- FreeCAD (headless `FreeCADCmd`) -- for `geometry/freecad_curved.py`'s curved/
+  conformal host-surface geometry mapping (issue #66); not pip-installable, install
+  from freecad.org/downloads.php (or your OS package manager -- e.g. `apt install
+  freecad` on Ubuntu) and confirm `FreeCADCmd` is on `PATH`, or point the
+  `FREECAD_BIN` env var at it
+- Digi-Key/Mouser/Nexar distributor component-lookup credentials (issue #67) --
+  free developer accounts, no purchase required: `DIGIKEY_CLIENT_ID`/
+  `DIGIKEY_CLIENT_SECRET`, `MOUSER_API_KEY`, `NEXAR_CLIENT_ID`/
+  `NEXAR_CLIENT_SECRET` in `.env` (see `.env.example`). These three
+  `lookup_*_component` tools additionally require `ALLOW_EXTERNAL_NETWORK_TOOLS=true`
+  (they place a real, credentialed call to a third party) -- see
+  `policies/tool_policy.yaml`'s `approval_self_gated` category.
 
 ## Quick start
 
@@ -97,9 +140,28 @@ Notable components:
 - MCP Python SDK: MIT
 - scikit-rf: BSD-3-Clause
 - openEMS: GPLv3
+- CSXCAD: LGPLv3 (separate from openEMS's own GPLv3 -- see docs/LICENSE_MATRIX.md)
+- gdstk: Boost Software License 1.0 (BSL-1.0)
 - NEC2++: GPL
-- Qucs-S: GPL-2.0
+- OpenParEM: GPL-3.0-or-later
+- Qucs-S / qucsator_rf: GPL-2.0-or-later (see docs/LICENSE_MATRIX.md for the primary-source verification)
+- Elmer (ElmerSolver core, incl. VectorHelmholtz): LGPL-2.1; ElmerGUI/ElmerGrid/ElmerParam: GPL-2.0
+- Gmsh: GPL-2.0-or-later
+- ngspice: New (3-clause) BSD core, plus per-subtree LGPL/LGPLv2.1/Public-Domain/custom-academic components -- see `docs/LICENSE_MATRIX.md`
+- Xyce: GPL-3.0
+- Palace: Apache-2.0
+- gprMax: GPLv3-or-later
+- h5py: BSD-3-Clause (reads gprMax's own .out HDF5 result format)
+- MEEP: GPLv2
 - PyAEDT: MIT; requires a legally licensed AEDT installation
+- KiCad (application/kicad-cli): GPL-3.0-or-later
+- kicad-python: MIT
+- gerber2ems: Apache-2.0
+- gerbv: GPL-2.0
+- FreeCAD: LGPL-2.1-or-later
+- Digi-Key Product Information API v4 / Mouser Search API / Nexar API (Octopart data):
+  free developer tiers, proprietary API terms (not OSI licenses) -- see
+  `docs/LICENSE_MATRIX.md`
 - PostgreSQL: PostgreSQL License
 - pgvector: permissive PostgreSQL-style license
 

@@ -86,26 +86,64 @@ simulation_auto:
   # Non-destructive, sandboxed simulator runs -- safe to run without
   # approval. run_hfss_simulation is deliberately NOT here: it enforces
   # its own licensed-workstation confinement check (simulation/hfss.py)
-  # and is listed under approval_self_gated below instead.
+  # and is listed under approval_self_gated below instead. run_ltspice_
+  # simulation (issue #59) belongs here, not approval_self_gated: it has
+  # no comparable per-run physical/licensed-seat gate -- LTspice is free-
+  # of-charge freeware with no workstation-confinement concern like HFSS's
+  # paid AEDT license. run_qucs_simulation (issue #58, Qucs-S/qucsator_rf)
+  # is free/GPL software with no license-confinement concern (unlike
+  # run_ads under approval_required below), matching run_nec2_simulation/
+  # run_openems_simulation exactly. Palace (issue #61) is open-source
+  # (Apache-2.0) and has no licensing/workstation gate of its own -- see
+  # simulation/palace.py. run_meep_simulation (issue #60) is free/open-
+  # source FDTD driven as a Python library (no licensing gate needed,
+  # unlike HFSS) -- same category as run_nec2_simulation/run_openems_
+  # simulation.
   - run_nec2_simulation
   - run_openems_simulation
+  - run_openparem_simulation
+  - run_elmer_simulation
+  - run_ltspice_simulation
+  - run_qucs_simulation
+  - run_kicad_gerber2ems_simulation
+  - run_ngspice_simulation
+  - run_xyce_simulation
+  - run_palace_simulation
+  - run_gprmax_simulation
+  - run_meep_simulation
+  # generate_freecad_curved_geometry (issue #66) is a geometry generator, not
+  # a simulator run, but shares the same non-destructive/sandboxed threat
+  # model as everything else in this category: it only writes to a local
+  # workdir (no network, no credentials) and shells out to a locally-
+  # installed, free/open-source tool (FreeCAD, LGPL-2.1-or-later) with no
+  # licensing/workstation-confinement gate of its own -- see geometry/
+  # freecad_curved.py.
+  - generate_freecad_curved_geometry
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without
   # their own independent gate -- measurement/base.py's ApprovalReceipt
-  # (the four measure_* tools) or simulation/hfss.py's workstation
-  # confinement check (run_hfss_simulation). Deliberately NOT listed under
-  # approval_required: this policy file adds no second gate on top of an
-  # already-working one -- see docs/adr's grilling notes and
-  # orchestration/policy.py's module docstring for why a blanket
-  # approval_required block would just double-gate (and, with no approval
-  # callback wired anywhere in this codebase, permanently break) a tool
-  # that already works correctly today.
+  # (the four measure_* tools), simulation/hfss.py's workstation
+  # confinement check (run_hfss_simulation), or (ticket #67)
+  # knowledge/sourcing_common.py's require_external_network_tools_enabled()
+  # -- ALLOW_EXTERNAL_NETWORK_TOOLS=true, checked before any credential is
+  # read or any outbound request is built -- for the three distributor
+  # lookup tools, which place a real, credentialed call to a third party
+  # the instant they run. Deliberately NOT listed under approval_required:
+  # this policy file adds no second gate on top of an already-working one
+  # -- see docs/adr's grilling notes and orchestration/policy.py's module
+  # docstring for why a blanket approval_required block would just
+  # double-gate (and, with no approval callback wired anywhere in this
+  # codebase, permanently break) a tool that already works correctly
+  # today.
   - run_hfss_simulation
   - measure_vna_s_parameters
   - measure_spectrum_analyzer_trace
   - set_signal_generator_output
   - measure_power_meter_reading
+  - lookup_digikey_component
+  - lookup_mouser_component
+  - lookup_nexar_component
 
 approval_workflow:
   # Request-an-approval-receipt tools. These never touch an instrument or
@@ -125,6 +163,7 @@ ingestion_auto:
   - ingest_document
   - index_document
   - extract_components
+  - reconcile_component_sources
 
 design_tracking:
   - create_design

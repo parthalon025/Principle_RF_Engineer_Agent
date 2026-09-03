@@ -52,6 +52,31 @@ def default_authority_rank(source_type: SourceType) -> int:
     return _TIER_AUTHORITY_RANK[provenance_tier_for(source_type)]
 
 
+# Ticket #68 (docs/FREE_AND_OPEN_SOURCE_TOOLING.md's arXiv row): an arXiv
+# preprint is externally authored, citable, and permanently archived like a
+# peer-reviewed `paper` document, but arXiv's own moderation is only a
+# "superficial" sanity check, not peer review (confirmed against arXiv's own
+# https://info.arxiv.org/help/ description of its moderation process). It
+# therefore sits below LITERATURE_SUPPORTED (40, `default_authority_rank`
+# for `source_type='paper'`) -- worse evidence than a peer-reviewed paper --
+# but above INTERNAL_HISTORY (60): still an externally published, permanent
+# work product, just not vetted by peer review, so it shouldn't rank as low
+# as this team's own unreviewed internal precedent either.
+ARXIV_PREPRINT_AUTHORITY_RANK = 50
+
+
+def arxiv_preprint_authority_rank() -> int:
+    """`documents.authority_rank` override for an arXiv-sourced `paper`
+    document -- explicitly below `default_authority_rank(SourceType.PAPER)`
+    since arXiv preprints are not peer-reviewed. The one caller is
+    `knowledge/sourcing/arxiv.py`, which passes this to
+    `ingest_document(..., authority_rank_override=...)`; CONTEXT.md
+    documents authority rank as "overridable per document" and this is that
+    override applied automatically for this one source, not left to a human
+    to remember to set."""
+    return ARXIV_PREPRINT_AUTHORITY_RANK
+
+
 def component_field_provenance(
     extraction_confidence: Literal["high", "low"], physically_valid: bool
 ) -> str:

@@ -24,30 +24,64 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
   cascading/comparison (`rf_tools/touchstone.py`); a knowledge-ingestion
   pipeline (`knowledge/`: parse → chunk → provenance-tag → embed → index →
   hybrid lexical/semantic search, plus automatic per-field-provenanced
-  component extraction from datasheets); a design/decision/verification
-  layer (`designs/`: `create_design`, `record_decision`,
-  `verify_requirement`, design/decision-record retrieval); full-wave
-  simulation dispatch for NEC2++ and openEMS (`simulation/nec2pp.py`,
-  `simulation/openems.py` — both open-source tools the adapters actually
-  shell out to and can run in this environment) and for HFSS/PyAEDT
-  (`simulation/hfss.py` — code is written and citation-sourced against the
-  real PyAEDT API, but gated behind a workstation-confinement check that
-  requires a real licensed AEDT install; it cannot execute, and has never
-  been exercised against real HFSS, in this or any unlicensed environment);
-  simulation/measurement correlation (`rf_tools/correlation.py`);
-  optimization (`optimization/`: parameter sweep, grid search, Bayesian,
-  genetic, gradient); SCPI/VISA instrument adapters for VNA, spectrum
-  analyzer, signal generator, and power meter (`measurement/`,
-  approval-gated per `orchestration/approval.py` — these require real lab
-  hardware and have never been exercised against a real instrument); and an
-  opt-in controlled autonomous design-iteration loop (`orchestration/
-  design_loop.py`, Phase 12; see ADR-0009/0010/0011). All of the above are
-  exposed as tools in both `agent/main.py` and `mcp_server/server.py`
-  (~65 tools total).
+  component extraction from datasheets, plus component-identity resolution
+  across the Digi-Key/Mouser/Nexar distributor clients (`knowledge/
+  digikey.py`/`mouser.py`/`nexar.py`/`component_resolution.py` — all three
+  need a registered free-tier API credential and outbound network access,
+  neither is live in this environment) and free/no-auth standards/
+  literature clients for arXiv, ETSI, FCC/eCFR, and 3GPP (`knowledge/
+  sourcing/`)); a design/decision/verification layer (`designs/`:
+  `create_design`, `record_decision`, `verify_requirement`, design/
+  decision-record retrieval); full-wave EM simulation dispatch across seven
+  engines — NEC2++ (MoM), openEMS (FDTD), Palace (FEM; the only one with
+  native Floquet/periodic-boundary ports, for actually characterizing a
+  periodic metamaterial unit cell), MEEP (FDTD via the `meep` Python
+  library, run as an independent-method cross-check against openEMS),
+  gprMax (FDTD, ground-coupled/lossy-half-space), Elmer/VectorHelmholtz
+  (general multiphysics FEM; EM is one module among many, included for
+  future multiphysics needs rather than as an RF-focused tool), and
+  OpenParEM3D (FEM; the only one that also computes far-field gain/
+  directivity/efficiency from the same solve) — all seven open source and
+  runnable in this environment (Palace/MEEP/gprMax/Elmer/OpenParEM need a
+  manual/binary install, documented in README.md, not a pyproject extra);
+  plus HFSS/PyAEDT (`simulation/hfss.py` — code is written and
+  citation-sourced against the real PyAEDT API, but gated behind a
+  workstation-confinement check that requires a real licensed AEDT
+  install; it cannot execute, and has never been exercised against real
+  HFSS, in this or any unlicensed environment); five circuit-level
+  simulators positioned as free Keysight-ADS alternatives — ngspice, Xyce,
+  Qucs-S/qucsator, and LTspice (proprietary freeware, the one non-open-
+  source item in this batch, kept only for vendor-model-library
+  familiarity) share SPICE-card-generation plumbing via
+  `simulation/spice_netlist.py`; a KiCad-Gerber-to-openEMS signal-integrity
+  pipeline (`simulation/kicad_gerber2ems.py`, needs a real KiCad +
+  gerber2ems + gerbv install); geometry generators — `geometry/
+  unit_cell.py` (gdstk-based flat unit-cell/array tiling, simulator-
+  agnostic) and `geometry/freecad_curved.py` (flat-to-curved-host-surface
+  mapping in pure Python, plus an optional headless FreeCAD/`FreeCADCmd`
+  path for an exact 3D STEP export); simulation/measurement correlation
+  (`rf_tools/correlation.py`); optimization (`optimization/`: parameter
+  sweep, grid search, Bayesian, genetic, gradient); SCPI/VISA instrument
+  adapters for VNA, spectrum analyzer, signal generator, and power meter
+  (`measurement/`, approval-gated per `orchestration/approval.py` for real
+  hardware — never exercised against a real instrument — plus a hardware-
+  free `pyvisa-sim` backend, selected via pyvisa's own resource-manager
+  string/`PYVISA_LIBRARY`, that exercises the same adapter parsing logic
+  against a simulated instrument for testing; `pyvisa-sim` output is not a
+  substitute for `MEASURED` provenance, which still requires real
+  hardware); and an opt-in controlled autonomous design-iteration loop
+  (`orchestration/design_loop.py`, Phase 12; see ADR-0009/0010/0011). All
+  of the above are exposed as tools in both `agent/main.py` and
+  `mcp_server/server.py`. See `docs/FREE_AND_OPEN_SOURCE_TOOLING.md` for a
+  sourced survey of free/open-source alternatives to paid solvers, lab
+  instruments, and data subscriptions (the source of most of this wave).
 - **Inputs**: plain numeric parameters for calculations; local Touchstone
   files for network analysis; uploaded documents (PDF datasheets,
-  standards, textbooks, papers) for knowledge ingestion; structured
-  geometry dicts for simulator jobs.
+  standards, textbooks, papers) for knowledge ingestion; a manufacturer
+  part number for distributor-client lookup; structured geometry dicts
+  (hand-built, or produced by `geometry/unit_cell.py`/`freecad_curved.py`,
+  or derived from real KiCad PCB files via `kicad_gerber2ems.py`) for
+  simulator jobs.
 - **Correctness bar**: the design principle is that the LLM is never
   trusted to do RF arithmetic itself — it calls a deterministic tool and
   every significant result carries a `provenance` tag (`MEASURED`,
@@ -68,30 +102,41 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
 ## What's still open
 
 This is a foundation, not a finished system. `docs/BUILD_PLAN.md` and
-`docs/ROADMAP.md` lay out the build order, and — as of this revision —
-Phases 0 through 12 (deterministic math, Touchstone, knowledge, the agent,
-MCP, NEC2++, openEMS, HFSS/PyAEDT, optimization, measurement, correlation,
-and the controlled autonomous loop) each have a code-level implementation;
-see "Surface and scope" above for what actually exists and, for HFSS and
-the instrument adapters specifically, what "implemented" does and doesn't
-mean absent a licensed AEDT host or real lab hardware. Genuinely not yet
-built: antenna/metamaterial-unit-cell geometry generators, a verification/
-eval corpus for the knowledge pipeline and simulator adapters (see above),
-and the design-status transitions between `DRAFT` and the later lifecycle
-states (see **Design** below). Do not infer "not yet built" from
-`docs/ROADMAP.md`'s version numbering (e.g. its "0.6"/"0.7" labels) — that
-document describes an intended sequence, not the actual implementation
-order or current state; check the actual code before assuming a phase is
-unbuilt.
+`docs/ROADMAP.md` lay out an intended build order, but the actual repo has
+grown well past what either document names — see "Surface and scope"
+above for what actually exists, including a whole second wave of simulators
+(Palace/MEEP/gprMax/Elmer/OpenParEM/ngspice/Xyce/LTspice/Qucs-S/
+kicad_gerber2ems), geometry generators, and knowledge-sourcing clients that
+neither planning doc mentions by name. Do not infer "not yet built" from
+`docs/ROADMAP.md`'s version numbering (e.g. its "0.6"/"0.7" labels), and do
+not infer "built" from a doc naming something either — both docs describe
+an intended sequence, not the actual implementation order or current
+state; check the actual code before trusting either direction.
+
+Genuinely not yet built, as of this revision: a verification/eval corpus
+(a golden-query fixture with expected results and a recall/quality gate
+for the knowledge pipeline; reference-case validation against independently
+-sourced expected values for the simulator adapters — see "Correctness
+bar" above) and the design-status transitions between `DRAFT` and the
+later lifecycle states (see **Design** below). For HFSS, the real-hardware
+SCPI/VISA instrument path, and the three distributor knowledge clients
+specifically: the code is implemented and tested against fakes, but each
+is gated on a resource this environment doesn't have (a licensed AEDT
+workstation; real lab hardware; a registered distributor API credential)
+and has never been exercised for real — see "Surface and scope" for which
+is which.
 
 Originally tracked as a `needs-info` scope question in issue #3; that issue
 is resolved by this implementation landing — see the PR that introduced it
-for history. A prior revision of this section (before this fix) claimed
-knowledge ingestion, components, decision records, verification, and
-instrument/correlation adapters were unbuilt; that was stale within about
-an hour of being written — see `docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`
-for the session that caught it. Cross-check "what's still open" against the
-actual code before trusting it, the same way that review did.
+for history. Two prior revisions of this section have gone stale within
+about an hour of being written (one claiming knowledge ingestion/
+components/decision records/verification/instrument adapters were unbuilt
+when they weren't; another, merged concurrently with this fix, that didn't
+catch its own list going stale one PR later) — see
+`docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md` for the session that caught
+the first one. Cross-check "what's still open" against the actual code
+before trusting it, every time — this section has now been wrong three
+times in a row from taking a doc or a commit message at face value instead.
 
 ## Vocabulary
 

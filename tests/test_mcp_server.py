@@ -10,6 +10,7 @@ test_calculations.py and test_touchstone.py.
 """
 
 import asyncio
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -119,8 +120,33 @@ def test_registered_tool_count_matches_old_plus_new():
     # #45, plus 3 more (start_design_loop, advance_design_loop_step,
     # inspect_design_loop_state) added by #46, plus 4 more (create_design,
     # read_design, record_decision, verify_requirement) from a separately-
-    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch.
-    assert len(registered_names) == 11 + len(NEW_TOOL_NAMES) + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4
+    # merged PR (#15, docs/adr/0005-0007) reconciled into this branch, plus
+    # 1 more (run_openparem_simulation) added by #62, plus 1 more
+    # (run_elmer_simulation) added by #64, plus 1 more
+    # (run_ltspice_simulation) added by #59, plus 1 more
+    # (run_qucs_simulation) added by #58, plus 1 more
+    # (run_kicad_gerber2ems_simulation) added by #65, plus 2 more
+    # (run_ngspice_simulation, run_xyce_simulation) added by #57, plus 1 more
+    # (run_palace_simulation) added by #61, plus 4 more
+    # (lookup_digikey_component, lookup_mouser_component,
+    # lookup_nexar_component, reconcile_component_sources) added by #67,
+    # plus 1 more (run_gprmax_simulation) added by #63, plus 1 more
+    # (run_meep_simulation) added by #60, plus 1 more
+    # (generate_freecad_curved_geometry) added by #66.
+    expected = (
+        11
+        + len(NEW_TOOL_NAMES)
+        + 1 + 1 + 1 + 1 + 1 + 2 + 6 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
+    )
+    assert len(registered_names) == expected
+
+
+def test_component_sourcing_tools_are_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "lookup_digikey_component" in registered_names
+    assert "lookup_mouser_component" in registered_names
+    assert "lookup_nexar_component" in registered_names
+    assert "reconcile_component_sources" in registered_names
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -138,9 +164,49 @@ def test_run_openems_simulation_is_registered():
     assert "run_openems_simulation" in registered_names
 
 
+def test_run_ngspice_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_ngspice_simulation" in registered_names
+
+
+def test_run_xyce_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_xyce_simulation" in registered_names
+
+
 def test_run_hfss_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_hfss_simulation" in registered_names
+
+
+def test_run_openparem_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_openparem_simulation" in registered_names
+
+
+def test_run_elmer_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_elmer_simulation" in registered_names
+
+
+def test_run_ltspice_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_ltspice_simulation" in registered_names
+
+
+def test_run_palace_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_palace_simulation" in registered_names
+
+
+def test_run_gprmax_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_gprmax_simulation" in registered_names
+
+
+def test_generate_freecad_curved_geometry_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "generate_freecad_curved_geometry" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
@@ -666,6 +732,185 @@ def test_run_openems_simulation_calls_through(tmp_path: Path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# ngspice / Xyce circuit simulation (issue #57)
+#
+# Neither real binary is installed in this environment, so these exercise
+# only the MCP wrappers' call-through to simulation.ngspice/simulation.xyce
+# via a fake script pointed to by NGSPICE_BIN/XYCE_BIN -- same not-verified-
+# against-a-real-binary caveat as tests/test_ngspice.py/tests/test_xyce.py.
+# ---------------------------------------------------------------------------
+
+_MATCHING_NETWORK_JOB = {
+    "components": [
+        {"type": "L", "name": "L1", "n1": "in", "n2": "out", "value": 10e-9},
+        {"type": "C", "name": "C1", "n1": "out", "n2": "0", "value": 5e-12},
+        {"type": "V", "name": "V1", "n1": "in", "n2": "0", "dc": 0.0, "ac_mag": 1.0},
+    ],
+    "analysis": {
+        "type": "ac",
+        "sweep_type": "dec",
+        "points": 10,
+        "start_freq_hz": 1e8,
+        "stop_freq_hz": 1e10,
+    },
+    "outputs": ["v(out)"],
+}
+
+
+def _write_fake_ngspice(tmp_path: Path) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_ngspice.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "args = sys.argv[1:]\n"
+        "with open(args[2], 'w') as f:\n"
+        "    f.write('')\n"
+        "with open('ngspice_output.dat', 'w') as f:\n"
+        "    f.write('1e+08 2.0 0.0\\n1e+09 1.5 -0.5\\n')\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+# ---------------------------------------------------------------------------
+# gprMax simulation (issue #63)
+#
+# gprMax genuinely cannot be installed in this environment at all (no pip
+# package exists -- see simulation/gprmax.py's module docstring
+# "CORRECTION" section), so this exercises the MCP wrapper's call-through
+# to simulation.gprmax via a fake "python -m gprMax" script (pointed to by
+# GPRMAX_PYTHON) that writes a synthetic .out HDF5 file next to the input
+# file it's given, matching gprMax's own documented output-file naming and
+# /tls/tlN/ structure (see simulation/gprmax.py's module docstring
+# citation) -- kept self-contained in this file rather than importing
+# tests/test_gprmax.py's own fake-data helpers, same "not re-imported here
+# to keep this file self-contained" discipline as this file's HFSS section
+# below (which does the same for tests/test_hfss.py's FakeHfss).
+# ---------------------------------------------------------------------------
+
+
+def _write_fake_gprmax_python(tmp_path: Path, vinc, vtotal, itotal, dt: float) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_gprmax_python.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "import h5py\n"
+        f"VINC = {list(float(v) for v in vinc)!r}\n"
+        f"VTOTAL = {list(float(v) for v in vtotal)!r}\n"
+        f"ITOTAL = {list(float(v) for v in itotal)!r}\n"
+        f"DT = {float(dt)!r}\n"
+        "args = sys.argv[1:]\n"
+        "assert args[:2] == ['-m', 'gprMax'], args\n"
+        "input_file = Path(args[2])\n"
+        "out_path = Path(str(input_file) + '.out')\n"
+        "with h5py.File(out_path, 'w') as f:\n"
+        "    f.attrs['dt'] = DT\n"
+        "    f.attrs['Iterations'] = len(VINC)\n"
+        "    tl = f.create_group('tls/tl1')\n"
+        "    tl.create_dataset('Vinc', data=VINC)\n"
+        "    tl.create_dataset('Vtotal', data=VTOTAL)\n"
+        "    tl.create_dataset('Itotal', data=ITOTAL)\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_ngspice_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_ngspice(tmp_path)
+    monkeypatch.setenv("NGSPICE_BIN", str(script))
+
+    result = server.run_ngspice_simulation(_MATCHING_NETWORK_JOB, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "ngspice"
+    assert result["scale_name"] == "frequency_hz"
+    assert result["values"]["v(out)"] == pytest.approx([[2.0, 0.0], [1.5, -0.5]])
+
+
+def _write_fake_xyce(tmp_path: Path) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_xyce.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "with open('xyce_output.csv', 'w') as f:\n"
+        "    f.write('FREQ,V(OUT)\\n100000000.0,2.0\\n1000000000.0,1.5\\n')\n"
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_xyce_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_xyce(tmp_path)
+    monkeypatch.setenv("XYCE_BIN", str(script))
+    job = {**_MATCHING_NETWORK_JOB, "outputs": ["V(out)"]}
+
+    result = server.run_xyce_simulation(job, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "Xyce"
+    assert result["scale_name"] == "FREQ"
+    assert result["values"]["V(OUT)"] == pytest.approx([2.0, 1.5])
+
+
+def test_run_gprmax_simulation_calls_through(tmp_path: Path, monkeypatch):
+    # A short Gaussian pulse for Vinc, with Vtotal = (1+GAMMA)*Vinc pointwise
+    # in time -- so Vref=Vtotal-Vinc=GAMMA*Vinc and S11(f)=GAMMA at every
+    # frequency, a closed-form known answer (see tests/test_gprmax.py for
+    # the fuller version of this same construction).
+    n = 256
+    dt = 2e-11
+    t = np.arange(n) * dt
+    vinc = np.exp(-(((t - 2.5e-9) / 5e-10) ** 2))
+    gamma = -0.3
+    vtotal = (1 + gamma) * vinc
+    itotal = vtotal / 50.0
+
+    script = _write_fake_gprmax_python(tmp_path, vinc, vtotal, itotal, dt)
+    monkeypatch.setenv("GPRMAX_PYTHON", str(script))
+
+    geometry = {
+        "domain_m": [0.1, 0.1, 0.1],
+        "resolution_m": 0.002,
+        "half_space": {"z_m": 0.04, "epsilon_r": 6.0, "conductivity_s_m": 0.01},
+        "conductors": [
+            {"shape": "box", "p1_m": [0.03, 0.03, 0.04], "p2_m": [0.07, 0.07, 0.04]}
+        ],
+        "port": {
+            "polarization": "z",
+            "position_m": [0.05, 0.05, 0.04],
+            "resistance_ohms": 50.0,
+            "center_frequency_hz": 1.0e9,
+        },
+    }
+    result = server.run_gprmax_simulation(
+        geometry, fdtd={"time_window_s": 6e-8}, timeout_s=10
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "gprMax"
+    assert result["s_parameters"]["computed"] is True
+    s11_values = result["s_parameters"]["values"]["S11"]
+    assert s11_values, "expected at least one in-band S11 frequency point"
+    for re, im in s11_values:
+        assert re == pytest.approx(gamma, abs=1e-6)
+        assert im == pytest.approx(0.0, abs=1e-6)
+    assert result["far_field"]["computed"] is False
+
+
+# ---------------------------------------------------------------------------
 # HFSS simulation (issue #40)
 #
 # HFSS/PyAEDT genuinely cannot run in this environment even in principle --
@@ -777,3 +1022,447 @@ def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert Path(result["touchstone_file"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# OpenParEM3D simulation (issue #62)
+#
+# The real OpenParEM3D binary is not installed in this environment, so this
+# exercises the MCP wrapper's call-through to simulation.openparem via a fake
+# "OpenParEM3D" script pointed to by OPENPAREM3D_BIN, mirroring
+# test_run_nec2_simulation_calls_through/test_run_openems_simulation_calls_
+# through above -- same not-verified-against-a-real-binary caveat as
+# tests/test_openparem.py. See that file's/simulation/openparem.py's module
+# docstrings for the *_results.csv/*_FarField_results.csv format citations
+# behind this fake script's written output.
+# ---------------------------------------------------------------------------
+
+_FAKE_OPENPAREM3D_RESULTS_CSV = (
+    "#OpenParEM3D 2.1.0\n"
+    "#Touchstone format,RI\n"
+    "#frequency unit,GHz\n"
+    "#number of frequencies,1\n"
+    "#number of ports,1\n"
+    "#S-port 1,net1,50\n"
+    "#Frequency(GHz),Re(S(1;1)),Im(S(1;1))\n"
+    "2.45,-0.1,0.05\n"
+)
+
+_FAKE_OPENPAREM3D_FARFIELD_CSV = (
+    "#S-port,frequency(GHz),gain,directivity,radiation efficiency\n"
+    "1,2.45,5.23,5.90,0.89\n"
+)
+
+
+def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
+    import stat
+    import sys
+
+    script = tmp_path / "fake_openparem3d.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f'with open("{project_name}_results.csv", "w") as f:\n'
+        f'    f.write("""{_FAKE_OPENPAREM3D_RESULTS_CSV}""")\n'
+        f'with open("{project_name}_FarField_results.csv", "w") as f:\n'
+        f'    f.write("""{_FAKE_OPENPAREM3D_FARFIELD_CSV}""")\n'
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+# ---------------------------------------------------------------------------
+# Palace simulation (issue #61)
+#
+# The real palace binary is not installed in this environment, so this
+# exercises the MCP wrapper's call-through to simulation.palace via a fake
+# "palace" script pointed to by PALACE_BIN -- same not-verified-against-a-
+# real-binary caveat as tests/test_palace.py. The fake script writes a
+# synthetic port-floquet-S.csv (RFC4180-quoted, per simulation/palace.py's
+# module docstring honest caveat) into the config's declared Output
+# directory, matching how a real Palace run would.
+# ---------------------------------------------------------------------------
+
+_FAKE_PALACE_CSV_HEADER = ["f (GHz)", "|S[P1(0,0)TE][1]| (dB)", "arg(S[P1(0,0)TE][1]) (deg.)"]
+_FAKE_PALACE_CSV_ROW = ["10.000000e+00", "-6.0206", "0.0"]
+
+
+def _write_fake_palace(tmp_path: Path) -> Path:
+    import csv
+    import io
+    import stat
+    import sys
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_FAKE_PALACE_CSV_HEADER)
+    writer.writerow(_FAKE_PALACE_CSV_ROW)
+    csv_text = buf.getvalue()
+
+    script = tmp_path / "fake_palace.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        f'CSV = """{csv_text}"""\n'
+        "config_path = Path(sys.argv[2])\n"
+        "config = json.loads(config_path.read_text())\n"
+        'output_dir = Path(config["Problem"]["Output"])\n'
+        "output_dir.mkdir(parents=True, exist_ok=True)\n"
+        '(output_dir / "port-floquet-S.csv").write_text(CSV)\n'
+        "sys.exit(0)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_openparem_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_openparem3d(tmp_path, "openparem_project")
+    monkeypatch.setenv("OPENPAREM3D_BIN", str(script))
+
+    ports = {
+        "paths": [
+            {
+                "name": "port",
+                "points": [[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 0.001, 0.0]],
+                "closed": True,
+            },
+            {
+                "name": "front",
+                "points": [
+                    [-0.1, -0.1, -0.1],
+                    [0.1, -0.1, -0.1],
+                    [0.1, -0.1, 0.1],
+                    [-0.1, -0.1, 0.1],
+                ],
+                "closed": True,
+            },
+        ],
+        "boundaries": [{"name": "front", "type": "radiation", "path": "+front"}],
+        "ports": [
+            {
+                "name": "in",
+                "path": "+port",
+                "modes": [{"sport": 1, "integration_path": {"type": "voltage", "path": "+port"}}],
+            }
+        ],
+    }
+    result = server.run_openparem_simulation(
+        mesh_file="model.msh",
+        ports=ports,
+        project={
+            "frequency_plan": {"point": [{"frequency_hz": 2.45e9}]},
+            "far_field": {"quantity": "G"},
+        },
+        timeout_s=10,
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "OpenParEM3D"
+    assert result["status"] == "COMPLETED"
+    assert result["s_parameters"]["computed"] is True
+    assert result["far_field"]["computed"] is True
+    assert result["far_field"]["entries"][0]["gain_dbi"] == pytest.approx(5.23)
+
+
+# ---------------------------------------------------------------------------
+# Elmer FEM VectorHelmholtz simulation (issue #64)
+#
+# None of gmsh, ElmerGrid, or ElmerSolver is installed in this environment,
+# so this exercises the MCP wrapper's call-through to simulation.elmer via
+# small fake "gmsh"/"ElmerGrid"/"ElmerSolver" scripts passed through the
+# tool's own gmsh_executable/elmergrid_executable/elmersolver_executable
+# override parameters -- same not-verified-against-real-binaries caveat as
+# tests/test_elmer.py, whose module docstring carries the full citation
+# list for the .geo/.sif/CLI formats these fakes stand in for.
+# ---------------------------------------------------------------------------
+
+_FAKE_GMSH_FOR_MCP_TEST = """
+import sys
+args = sys.argv[1:]
+out = args[args.index("-o") + 1]
+with open(out, "w") as f:
+    f.write("$MeshFormat\\n2.2 0 8\\n$EndMeshFormat\\n")
+sys.exit(0)
+"""
+
+_FAKE_ELMERGRID_FOR_MCP_TEST = """
+import sys, os
+args = sys.argv[1:]
+out_dir = args[args.index("-out") + 1]
+os.makedirs(out_dir, exist_ok=True)
+with open(os.path.join(out_dir, "mesh.header"), "w") as f:
+    f.write("fake mesh header\\n")
+sys.exit(0)
+"""
+
+_FAKE_ELMERSOLVER_FOR_MCP_TEST = """
+import sys
+with open("scalar_values.dat.names", "w") as f:
+    f.write("Variables in columns of matrix:\\n   1: Line Marker\\n   2: res: energy functional\\n")
+with open("scalar_values.dat", "w") as f:
+    f.write("1 4.2\\n")
+sys.stdout.write("*** Elmer Solver: ALL DONE ***\\n")
+sys.exit(0)
+"""
+
+
+def _write_fake_elmer_toolchain(tmp_path: Path):
+    import stat
+
+    scripts = {}
+    for name, body in (
+        ("fake_gmsh.py", _FAKE_GMSH_FOR_MCP_TEST),
+        ("fake_elmergrid.py", _FAKE_ELMERGRID_FOR_MCP_TEST),
+        ("fake_elmersolver.py", _FAKE_ELMERSOLVER_FOR_MCP_TEST),
+    ):
+        script = tmp_path / name
+        script.write_text(f"#!{sys.executable}\n" + body)
+        script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        scripts[name] = script
+    return scripts
+
+
+def test_run_elmer_simulation_calls_through(tmp_path: Path):
+    scripts = _write_fake_elmer_toolchain(tmp_path)
+
+    geometry = {"domain": {"p1_m": [0.0, 0.0, 0.0], "p2_m": [0.1, 0.08, 0.06]}}
+    result = server.run_elmer_simulation(
+        geometry,
+        frequency_hz=2.45e9,
+        timeout_s=10,
+        gmsh_executable=str(scripts["fake_gmsh.py"]),
+        elmergrid_executable=str(scripts["fake_elmergrid.py"]),
+        elmersolver_executable=str(scripts["fake_elmersolver.py"]),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "Elmer/VectorHelmholtz"
+    assert result["status"] == "COMPLETED"
+    assert result["completed_normally"] is True
+    assert result["raw_scalars"]["computed"] is True
+    assert result["s_parameters"]["computed"] is False
+    assert result["far_field"]["computed"] is False
+
+
+def test_run_palace_simulation_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_palace(tmp_path)
+    monkeypatch.setenv("PALACE_BIN", str(script))
+
+    geometry = {
+        "unit_cell": {"lx_m": 0.04, "ly_m": 0.01, "lz_m": 0.08},
+        "materials": [
+            {"p1_m": [0.01, 0.0, 0.0375], "p2_m": [0.03, 0.01, 0.0425], "epsilon_r": 7.0}
+        ],
+        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    }
+    result = server.run_palace_simulation(geometry, frequency_hz=10e9, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "Palace"
+    assert result["status"] == "COMPLETED"
+    assert result["s_parameters"]["computed"] is True
+    assert result["s_parameters"]["frequency_hz"] == pytest.approx([10e9])
+    assert "S11" in result["s_parameters"]["specular"]
+
+
+# ---------------------------------------------------------------------------
+# MEEP simulation (issue #60)
+#
+# MEEP genuinely is not installed in this environment (see tests/test_meep.py
+# for the direct, unmockable proof). This test exercises only the MCP
+# wrapper's parameter call-through to simulation.meep.run_meep_simulation,
+# by monkeypatching the module-level `_run_meep_simulation` reference
+# server.py calls through so it engages that function's own `meep_module`
+# test-injection seam (documented on MeepSimulator.__init__) against a
+# minimal fake -- same shape as tests/test_meep.py's FakeMeepModule, not
+# re-imported here to keep this file self-contained like its NEC2++/
+# openEMS/HFSS sections above.
+# ---------------------------------------------------------------------------
+
+
+def test_run_meep_simulation_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_meep_simulation" in registered_names
+
+
+def test_run_meep_simulation_calls_through(monkeypatch):
+    from simulation.meep import run_meep_simulation as real_run_meep_simulation
+
+    class _FakeFlux:
+        def __init__(self, freqs, values):
+            self.freqs = freqs
+            self.values = values
+
+    class _FakeMedium:
+        def __init__(self, epsilon=1.0, mu=1.0):
+            self.epsilon = epsilon
+            self.mu = mu
+
+    class _FakeSimulation:
+        def __init__(self, module, **kwargs):
+            self._module = module
+
+        def add_flux(self, fcen, df, nfreq, region):
+            return self._module._next_flux()
+
+        def run(self, *step_funcs, **kwargs):
+            pass
+
+        def get_flux_data(self, flux):
+            return {"saved_from": flux}
+
+        def load_minus_flux_data(self, flux, data):
+            pass
+
+        def reset_meep(self):
+            pass
+
+    class _FakeMeepModuleForMcpTest:
+        def __init__(self):
+            freqs = [0.1]
+            self._script = [(freqs, [0.0]), (freqs, [2.0]), (freqs, [-0.5])]
+            self._index = 0
+            self.inf = float("inf")
+            self.metal = _FakeMedium(epsilon=-1e20)
+            for name in ("Ex", "Ey", "Ez", "Hx", "Hy", "Hz"):
+                setattr(self, name, name)
+
+        def _next_flux(self):
+            freqs, values = self._script[self._index]
+            self._index += 1
+            return _FakeFlux(freqs, values)
+
+        def Vector3(self, x=0.0, y=0.0, z=0.0):
+            return (x, y, z)
+
+        def Medium(self, epsilon=1.0, mu=1.0, **kwargs):
+            return _FakeMedium(epsilon=epsilon, mu=mu)
+
+        def Block(self, material=None, center=None, size=None, **kwargs):
+            return {"material": material, "center": center, "size": size}
+
+        def Cylinder(self, **kwargs):
+            return kwargs
+
+        def PML(self, thickness, **kwargs):
+            return {"thickness": thickness}
+
+        def GaussianSource(self, frequency, fwidth=0.0, **kwargs):
+            return {"frequency": frequency, "fwidth": fwidth}
+
+        def Source(self, src, component=None, center=None, size=None, **kwargs):
+            return {"src": src, "component": component}
+
+        def FluxRegion(self, center=None, size=None, **kwargs):
+            return {"center": center, "size": size}
+
+        def Simulation(self, **kwargs):
+            return _FakeSimulation(self, **kwargs)
+
+        def get_fluxes(self, flux):
+            return list(flux.values)
+
+        def get_flux_freqs(self, flux):
+            return list(flux.freqs)
+
+        def stop_when_fields_decayed(self, dt, component, pt, decay_by):
+            return None
+
+    def fake_run(geometry, characteristic_length_m=1e-3, nfreq=1):
+        return real_run_meep_simulation(
+            geometry=geometry,
+            characteristic_length_m=characteristic_length_m,
+            nfreq=nfreq,
+            meep_module=_FakeMeepModuleForMcpTest(),
+        )
+
+    monkeypatch.setattr(server, "_run_meep_simulation", fake_run)
+
+    geometry = {
+        "cell_size_m": [30e-3, 20e-3, 10e-3],
+        "pml_thickness_m": 1e-3,
+        "mesh_cell_size_m": 0.5e-3,
+        "conductors": [
+            {"name": "ground", "shape": "box", "p1_m": [0, 0, 0], "p2_m": [30e-3, 20e-3, 0]},
+        ],
+        "port": {
+            "center_m": [-10e-3, 10e-3, 0.8e-3],
+            "size_m": [0, 20e-3, 1.6e-3],
+            "direction": "x",
+            "frequency_hz": 2.45e9,
+        },
+        "reflection_monitor_center_m": [-8e-3, 10e-3, 0.8e-3],
+        "reference_monitor_center_m": [12e-3, 10e-3, 0.8e-3],
+    }
+    result = server.run_meep_simulation(geometry)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "MEEP"
+    assert result["status"] == "COMPLETED"
+    assert result["s_parameters"]["computed"] is True
+    assert result["s_parameters"]["s11_magnitude"] == pytest.approx([0.5])
+
+
+# ---------------------------------------------------------------------------
+# FreeCAD curved/conformal host-surface geometry generation (issue #66)
+#
+# FreeCADCmd is not installed in this environment (matching this repo's
+# other manually-installed simulator/geometry tools). This exercises the MCP
+# wrapper's call-through to geometry.freecad_curved.run_freecad_curved_
+# geometry against a small fake "FreeCADCmd" Python-shebang script, standing
+# in for the real binary -- same fake-executable pattern as the Elmer
+# section above (tests/test_elmer.py's own module docstring documents the
+# discipline this mirrors).
+# ---------------------------------------------------------------------------
+
+_FAKE_FREECADCMD_FOR_MCP_TEST = """
+import sys, json
+status = {
+    "objects_built": ["patch_0"],
+    "errors": [],
+    "step_file": "curved_unit_cell_array.step",
+    "total_input": 1,
+}
+with open("curved_unit_cell_array_status.json", "w") as f:
+    json.dump(status, f)
+with open("curved_unit_cell_array.step", "w") as f:
+    f.write("ISO-10303-21;\\nfake step file\\nEND-ISO-10303-21;\\n")
+sys.exit(0)
+"""
+
+
+def _write_fake_freecadcmd(tmp_path: Path) -> Path:
+    import stat
+
+    script = tmp_path / "fake_freecadcmd.py"
+    script.write_text(f"#!{sys.executable}\n" + _FAKE_FREECADCMD_FOR_MCP_TEST)
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def test_run_freecad_curved_geometry_calls_through(tmp_path: Path, monkeypatch):
+    script = _write_fake_freecadcmd(tmp_path)
+    monkeypatch.setenv("FREECAD_BIN", str(script))
+
+    primitives = [
+        {
+            "name": "patch",
+            "shape": "box",
+            "p1_m": [-0.001, -0.001, 0.0],
+            "p2_m": [0.001, 0.001, 0.0016],
+        }
+    ]
+    curvature = {"kind": "cylinder", "radius_m": 0.05, "axis": "z"}
+    result = server.generate_freecad_curved_geometry(primitives, curvature, timeout_s=10)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "FreeCADCmd"
+    assert result["status"] == "COMPLETED"
+    assert len(result["primitives"]) == 1
+    assert result["primitives"][0]["shape"] == "polygon"
+    assert result["freecad"]["objects_built"] == ["patch_0"]
+    assert result["freecad"]["errors"] == []
+    assert result["freecad"]["step_file"] is not None

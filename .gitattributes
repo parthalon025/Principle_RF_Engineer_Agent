@@ -1,0 +1,5 @@
+# Force LF endings for files executed via a shebang inside Linux containers
+# (e.g. db/docker-init.sh runs in the postgres container's
+# docker-entrypoint-initdb.d; on Windows with core.autocrlf=true, a checked-out
+# CRLF shebang line becomes "#!/bin/sh\r", which the container can't execute).
+*.sh text eol=lf
