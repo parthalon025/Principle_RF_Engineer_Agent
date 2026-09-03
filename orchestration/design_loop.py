@@ -160,9 +160,21 @@ class LoopDecision:
     MEASURED/SIMULATED/CALCULATED/... tag when the underlying Phase 1-11
     function supplied one (None for the two step kinds -- architecture and
     redesign decisions -- that are human/agent-authored records, not
-    computed results)."""
+    computed results).
+
+    `iteration` is the DesignLoopState.iteration this decision was recorded
+    under, so "what evidence did this iteration gather" is answerable from
+    the loop's own state -- no need to slice `decisions` by
+    orchestration/tooling.py's `persisted_decision_count`, which is that
+    module's own flush-boundary bookkeeping, not a property of the state
+    machine. A REDESIGN_DECISION carries the iteration it CLOSED, not the
+    one its `next_action="iterate"` opens (the same boundary tooling.py's
+    flush already uses). It is `None` only for a decision deserialized from
+    a state recorded before decisions were tagged -- read that as "unknown",
+    never as iteration 1; nothing else ever produces None."""
 
     step: str
+    iteration: int | None
     kind: str
     input: dict[str, Any]
     result: dict[str, Any]
@@ -173,6 +185,7 @@ class LoopDecision:
     def to_dict(self) -> dict[str, Any]:
         return {
             "step": self.step,
+            "iteration": self.iteration,
             "kind": self.kind,
             "input": self.input,
             "result": self.result,
@@ -185,6 +198,10 @@ class LoopDecision:
     def from_dict(data: dict[str, Any]) -> LoopDecision:
         return LoopDecision(
             step=data["step"],
+            # Absent for a state serialized before decisions carried an
+            # iteration -- tolerated as None, exactly as `provenance` and
+            # `approved_by` already are.
+            iteration=data.get("iteration"),
             kind=data["kind"],
             input=data.get("input", {}),
             result=data.get("result", {}),
@@ -219,8 +236,9 @@ def _pending_approval_for(step: DesignStep, completed: bool) -> dict[str, Any] |
 @dataclass(frozen=True)
 class DesignLoopState:
     """The whole design-iteration loop's state: current step, every
-    decision recorded so far (with its own provenance), and what approval
-    (if any) is currently pending -- JSON-serializable end to end (see
+    decision recorded so far (each with its own provenance and the
+    `iteration` that produced it), and what approval (if any) is currently
+    pending -- JSON-serializable end to end (see
     to_dict/from_dict) so the CALLER holds and passes it back in on each
     call, per this module's docstring's "STATE DESIGN" section."""
 
@@ -277,8 +295,10 @@ def start_design_loop(requirements: dict[str, Any]) -> DesignLoopState:
             "'Customer requirement')."
         )
     now = time.time()
+    iteration = 1
     requirements_decision = LoopDecision(
         step=DesignStep.REQUIREMENTS.value,
+        iteration=iteration,
         kind="requirements",
         input=dict(requirements),
         result=dict(requirements),
@@ -288,7 +308,7 @@ def start_design_loop(requirements: dict[str, Any]) -> DesignLoopState:
     )
     return DesignLoopState(
         loop_id=uuid.uuid4().hex,
-        iteration=1,
+        iteration=iteration,
         current_step=DesignStep.ARCHITECTURE.value,
         completed=False,
         requirements=dict(requirements),
@@ -596,6 +616,10 @@ def advance_loop_step(
     now = time.time()
     decision = LoopDecision(
         step=current_step.value,
+        # This iteration, not the one a REDESIGN_DECISION -> "iterate"
+        # transition opens below -- the decision belongs to the iteration
+        # that produced it.
+        iteration=state.iteration,
         kind=kind,
         input=step_input,
         result=result,

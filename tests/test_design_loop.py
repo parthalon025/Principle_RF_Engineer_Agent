@@ -268,6 +268,76 @@ def test_state_round_trips_through_to_dict_and_from_dict():
     assert restored.to_dict() == as_dict
 
 
+def test_every_recorded_decision_carries_the_iteration_that_produced_it():
+    state = start_design_loop(REQUIREMENTS)
+    assert state.decisions[0].iteration == 1
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    assert state.decisions[-1].iteration == 1
+
+
+def test_decisions_either_side_of_an_iterate_transition_are_distinguishable_by_iteration():
+    """The point of the field (issue #88): "what evidence did this
+    iteration gather" is answerable from the loop's own state, without
+    consulting orchestration/tooling.py's `persisted_decision_count`."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _run_full_cycle_up_to_redesign(state)
+    state = _grant_and_advance(
+        state,
+        DesignStep.REDESIGN_DECISION,
+        step_input_override={
+            "decision": "revise substrate thickness",
+            "rationale": "measured bandwidth narrower than required",
+            "next_action": "iterate",
+        },
+    )
+    assert state.iteration == 2
+    # The REDESIGN_DECISION that CLOSED iteration 1 belongs to iteration 1,
+    # not to the iteration it opened -- the same boundary
+    # orchestration/tooling.py's flush already uses (`iteration_before`).
+    assert state.decisions[-1].step == DesignStep.REDESIGN_DECISION.value
+    assert state.decisions[-1].iteration == 1
+
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    assert state.decisions[-1].iteration == 2
+
+    by_iteration = {n: [d.step for d in state.decisions if d.iteration == n] for n in (1, 2)}
+    assert by_iteration[1] == [DesignStep.REQUIREMENTS.value, DesignStep.REDESIGN_DECISION.value]
+    assert by_iteration[2] == [DesignStep.ARCHITECTURE.value]
+
+
+def test_decision_iteration_round_trips_through_to_dict_and_from_dict():
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    as_dict = state.to_dict()
+    assert [d["iteration"] for d in as_dict["decisions"]] == [1, 1]
+
+    restored = DesignLoopState.from_dict(as_dict)
+    assert [d.iteration for d in restored.decisions] == [1, 1]
+    assert restored.to_dict() == as_dict
+
+
+def test_a_decision_serialized_before_iteration_tagging_still_loads():
+    """Backward compatibility: a loop state serialized before decisions
+    carried an iteration loads with the field absent, tolerated as None --
+    the same way `provenance`/`approved_by` already load."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    legacy = state.to_dict()
+    for decision in legacy["decisions"]:
+        del decision["iteration"]
+
+    restored = DesignLoopState.from_dict(legacy)
+    assert [d.iteration for d in restored.decisions] == [None, None]
+    # Everything else about the legacy state still loads unchanged.
+    assert restored.loop_id == state.loop_id
+    assert restored.iteration == state.iteration
+    assert [d.step for d in restored.decisions] == [d.step for d in state.decisions]
+    assert restored.decisions[-1].provenance == state.decisions[-1].provenance
+    # ...and the restored loop still advances, tagging new decisions.
+    restored = advance_loop_step(restored, _valid_step_input(restored, DesignStep.ANALYSIS))
+    assert restored.decisions[-1].iteration == 1
+
+
 def test_advance_loop_step_never_mutates_the_passed_in_state():
     state = start_design_loop(REQUIREMENTS)
     before = state.to_dict()
