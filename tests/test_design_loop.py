@@ -256,6 +256,98 @@ def test_ungated_steps_advance_without_any_approval():
     assert state.decisions[-1].provenance == "CALCULATED"
 
 
+def test_requirements_decision_is_tagged_with_iteration_1():
+    state = start_design_loop(REQUIREMENTS)
+    assert state.decisions[0].iteration == 1
+
+
+def test_decisions_recorded_within_an_iteration_all_carry_that_iteration():
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    state = advance_loop_step(state, _valid_step_input(state, DesignStep.ANALYSIS))
+    for decision in state.decisions:
+        assert decision.iteration == 1
+
+
+def test_redesign_decision_that_closes_an_iteration_is_tagged_with_the_iteration_it_closes():
+    """The REDESIGN_DECISION decision with next_action='iterate' is tagged
+    with the iteration it CLOSES (1), not the new iteration (2) the loop
+    moves to as a result of that same decision -- issue #88's core
+    acceptance criterion."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _run_full_cycle_up_to_redesign(state)
+    step_input = {
+        "decision": "revise substrate thickness",
+        "rationale": "measured bandwidth narrower than required",
+        "next_action": "iterate",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, step_input_override=step_input)
+
+    assert state.iteration == 2
+    redesign_decision = state.decisions[-1]
+    assert redesign_decision.step == DesignStep.REDESIGN_DECISION.value
+    assert redesign_decision.iteration == 1
+
+
+def test_decisions_recorded_after_an_iterate_transition_carry_the_new_iteration():
+    state = start_design_loop(REQUIREMENTS)
+    state = _run_full_cycle_up_to_redesign(state)
+    step_input = {
+        "decision": "revise substrate thickness",
+        "rationale": "measured bandwidth narrower than required",
+        "next_action": "iterate",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, step_input_override=step_input)
+    assert state.current_step == DesignStep.ARCHITECTURE.value
+
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    assert state.decisions[-1].iteration == 2
+
+    # And decisions either side of the boundary are distinguishable by
+    # iteration alone, without consulting persisted_decision_count. (Note:
+    # _run_full_cycle_up_to_redesign teleports current_step directly to
+    # REDESIGN_DECISION via _advance_to, per that helper's own docstring,
+    # so only REQUIREMENTS and the closing REDESIGN_DECISION were actually
+    # recorded for iteration 1 here -- see the end-to-end test for a real,
+    # step-by-step walk through every step of an iteration.)
+    iteration_1_decisions = [d for d in state.decisions if d.iteration == 1]
+    iteration_2_decisions = [d for d in state.decisions if d.iteration == 2]
+    assert len(iteration_1_decisions) == 2  # REQUIREMENTS + the closing REDESIGN_DECISION
+    assert len(iteration_2_decisions) == 1  # this iteration's ARCHITECTURE decision
+
+
+def test_loop_decision_iteration_round_trips_through_to_dict_and_from_dict():
+    state = start_design_loop(REQUIREMENTS)
+    state = _run_full_cycle_up_to_redesign(state)
+    step_input = {
+        "decision": "revise substrate thickness",
+        "rationale": "measured bandwidth narrower than required",
+        "next_action": "iterate",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, step_input_override=step_input)
+
+    as_dict = state.to_dict()
+    assert as_dict["decisions"][-1]["iteration"] == 1
+    restored = DesignLoopState.from_dict(as_dict)
+    assert restored.decisions[-1].iteration == 1
+    assert restored.to_dict() == as_dict
+
+
+def test_loop_decision_from_dict_tolerates_a_pre_88_dump_with_no_iteration_field():
+    """A DesignLoopState serialized before issue #88 has no `iteration` key
+    on any decision -- from_dict must still load it, defaulting each
+    decision's iteration to 1 (see LoopDecision's own docstring for why 1
+    is the only value such a dump's decisions could have meant)."""
+    state = start_design_loop(REQUIREMENTS)
+    legacy_dict = state.to_dict()
+    for decision_dict in legacy_dict["decisions"]:
+        del decision_dict["iteration"]
+
+    restored = DesignLoopState.from_dict(legacy_dict)
+    assert restored.decisions[0].iteration == 1
+    assert isinstance(restored.decisions[0], LoopDecision)
+
+
 def test_state_round_trips_through_to_dict_and_from_dict():
     state = start_design_loop(REQUIREMENTS)
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE)

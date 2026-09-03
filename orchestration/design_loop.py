@@ -160,7 +160,51 @@ class LoopDecision:
     MEASURED/SIMULATED/CALCULATED/... tag when the underlying Phase 1-11
     function supplied one (None for the two step kinds -- architecture and
     redesign decisions -- that are human/agent-authored records, not
-    computed results)."""
+    computed results).
+
+    `iteration` (issue #88 prefactor) is the `DesignLoopState.iteration`
+    this decision was recorded UNDER -- i.e. the iteration whose evidence
+    this decision IS, not necessarily the iteration the loop is in by the
+    time some later reader looks. This matters exactly once per cycle: the
+    REDESIGN_DECISION decision with `next_action="iterate"` is what closes
+    out an iteration and increments `DesignLoopState.iteration` (see
+    advance_loop_step's REDESIGN_DECISION branch), so that decision's own
+    `iteration` is tagged with the iteration it closes, not the new one the
+    loop moves to immediately afterward -- `advance_loop_step` stamps
+    `iteration` from `state.iteration` (the pre-transition value) onto the
+    decision it is about to append, before ever computing the post-
+    transition state.
+
+    This exists so a later reader (planned: a batched lab-test-plan ticket
+    and a candidate-solver ticket, both of which need "every decision this
+    iteration recorded so far") can filter `DesignLoopState.decisions` by
+    `iteration` directly against this pure state machine's own state --
+    without reaching into `orchestration/tooling.py`'s
+    `persisted_decision_count`, which answers a DIFFERENT question (how
+    much of `decisions` has been flushed to the database as of the last
+    REDESIGN_DECISION boundary, docs/adr/0011) and is this module's
+    caller's bookkeeping, not this module's own. `persisted_decision_count`
+    is NOT replaced or superseded by this field -- the two answer unrelated
+    questions and both remain necessary.
+
+    `.get("iteration", 1)` on from_dict, matching this dataclass's existing
+    optional-field convention (`provenance`/`approved_by` are also read via
+    `.get`). Be honest about what that default is worth: for a
+    `DesignLoopState` serialized BEFORE this field existed, 1 is correct
+    only if that state never completed a REDESIGN_DECISION
+    `next_action="iterate"` transition. A pre-field dump that cycled twice
+    carries decisions from iterations 1, 2 and 3 with no per-decision
+    `iteration` recorded anywhere, and this default silently reports all of
+    them as iteration 1. That is accepted rather than solved because there
+    are no such dumps: docs/adr/0011 records that this loop "predates any
+    real caller, so no compatibility shim was added", and the same holds
+    here. If a real pre-field multi-iteration state ever does turn up, its
+    boundaries are recoverable without this field -- decisions accumulate
+    in STEP_ORDER order and each iteration contributes exactly one
+    ARCHITECTURE-through-REDESIGN_DECISION cycle, so counting
+    REDESIGN_DECISION entries reconstructs them -- but nothing in this
+    module does that today, and nothing should until there is a dump that
+    needs it."""
 
     step: str
     kind: str
@@ -169,6 +213,7 @@ class LoopDecision:
     provenance: str | None
     approved_by: str | None
     recorded_at: float
+    iteration: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -179,6 +224,7 @@ class LoopDecision:
             "provenance": self.provenance,
             "approved_by": self.approved_by,
             "recorded_at": self.recorded_at,
+            "iteration": self.iteration,
         }
 
     @staticmethod
@@ -191,6 +237,7 @@ class LoopDecision:
             provenance=data.get("provenance"),
             approved_by=data.get("approved_by"),
             recorded_at=data["recorded_at"],
+            iteration=data.get("iteration", 1),
         )
 
 
@@ -285,6 +332,7 @@ def start_design_loop(requirements: dict[str, Any]) -> DesignLoopState:
         provenance="ASSUMED",
         approved_by=None,
         recorded_at=now,
+        iteration=1,
     )
     return DesignLoopState(
         loop_id=uuid.uuid4().hex,
@@ -602,6 +650,13 @@ def advance_loop_step(
         provenance=provenance,
         approved_by=approved_by,
         recorded_at=now,
+        # The PRE-transition iteration -- i.e. the iteration this decision
+        # is evidence FOR, not whatever iteration the loop moves to right
+        # after (only REDESIGN_DECISION's next_action="iterate" branch,
+        # below, ever changes state.iteration, and it does so only in the
+        # replace() it returns, after this decision is already built). See
+        # LoopDecision's own docstring's "iteration" paragraph.
+        iteration=state.iteration,
     )
     new_decisions = [*state.decisions, decision]
 
