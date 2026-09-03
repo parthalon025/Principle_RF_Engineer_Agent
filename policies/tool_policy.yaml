@@ -179,6 +179,12 @@ design_loop:
   - start_design_loop
   - advance_design_loop_step
   - inspect_design_loop_state
+  # issue #94: compiles a batched lab-test plan from a loop's own already-
+  # recorded requirements/decisions. Read-only like inspect_design_loop_
+  # state above -- no mutation, no database write beyond an optional fresh
+  # read, no LoopStepApprovalReceipt of any kind (there is nothing gated
+  # for it to check).
+  - compile_lab_test_plan
 
 approval_required:
   # Real gate, no exceptions -- but every entry here is a capability that

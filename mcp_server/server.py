@@ -32,6 +32,7 @@ from knowledge.search import search_knowledge as _search_knowledge
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
 from orchestration.policy import assert_all_tools_categorized
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
@@ -1178,6 +1179,26 @@ def inspect_design_loop_state(state: dict) -> dict:
     point mid-loop, not just at completion; does not mutate or advance the
     loop, and does not touch the database."""
     return _inspect_design_loop_state(state)
+
+
+@mcp.tool()
+def compile_lab_test_plan(state: dict) -> dict:
+    """Compile a batched lab-test plan (issue #94) for every requirement on
+    this design: what to measure, by what method, and what value this
+    iteration's own recorded CALCULATED/SIMULATED engineering results
+    already predict -- so one lab trip is enough. A requirement with no
+    proposed target, an explicitly UNSCOREABLE one, one whose quantity a
+    Touchstone S-parameter sweep cannot report (e.g. antenna gain or
+    radiation pattern -- needs a range/chamber, not a bench VNA), or one
+    with nothing computed this iteration to predict from is flagged with a
+    distinguishing reason, not silently dropped -- see
+    orchestration/lab_test_plan.py's own docstring for the full design.
+
+    `state` is a state dict from start_design_loop/advance_design_loop_step/
+    inspect_design_loop_state -- safe to call at any point in the loop, on
+    any current_step. Read-only: advances nothing, writes nothing to the
+    database, and needs no approval receipt."""
+    return _compile_lab_test_plan(state)
 
 
 @mcp.tool()

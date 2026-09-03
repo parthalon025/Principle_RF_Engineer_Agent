@@ -99,7 +99,11 @@ def test_principal_role_has_broad_access():
     # So the running total is 87 (pre-#92) + 3 (#92) - 8 (#90) = 82. #90's
     # own branch computed 87 - 8 = 79 against a base that predated #92;
     # both tickets landed, so both adjustments apply.
-    assert len(names) == 82
+    #
+    # issue #94 adds 1 more (compile_lab_test_plan -- a read-only batched
+    # lab-test-plan compiler, also shared with the test role below). Running
+    # total: 82 + 1 = 83.
+    assert len(names) == 83
 
 
 def test_principal_module_alias_matches_registry():
@@ -469,6 +473,21 @@ def test_test_role_gets_new_touchstone_tools():
     # antenna synthesis and link budget are not test's job
     assert "calculate_aperture_gain" not in names
     assert "calculate_link_budget_margin" not in names
+
+
+def test_test_and_principal_roles_get_lab_test_plan_tool():
+    # issue #94: read-only (no mutation, no approval) -- shared with test
+    # (which owns lab-test-plan work day to day), unlike the mutating
+    # design-loop tools (start_design_loop/advance_design_loop_step/
+    # inspect_design_loop_state), which stay principal-only.
+    assert "compile_lab_test_plan" in _tool_names(ROLES["principal"])
+    assert "compile_lab_test_plan" in _tool_names(ROLES["test"])
+    for key in ("systems", "microwave", "antenna", "verification"):
+        assert "compile_lab_test_plan" not in _tool_names(ROLES[key])
+    for key in ("systems", "microwave", "antenna", "test", "verification"):
+        assert "start_design_loop" not in _tool_names(ROLES[key])
+        assert "advance_design_loop_step" not in _tool_names(ROLES[key])
+        assert "inspect_design_loop_state" not in _tool_names(ROLES[key])
 
 
 def test_verification_role_gets_no_new_calculation_tools():

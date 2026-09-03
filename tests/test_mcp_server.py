@@ -144,11 +144,14 @@ def test_registered_tool_count_matches_old_plus_new():
     # Running total: 82 (pre-#92) + 3 (#92) - 8 (#90) = 77. #90's own branch
     # computed 82 - 8 = 74 against a base that predated #92; both tickets
     # landed, so both adjustments apply.
+    #
+    # issue #94 adds 1 more (compile_lab_test_plan). Running total: 77 + 1 = 78.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
         + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
         + 3
+        + 1
     )
     assert len(registered_names) == expected
 

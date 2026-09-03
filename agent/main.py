@@ -45,6 +45,7 @@ from knowledge.search import search_knowledge as _search_knowledge
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
 from orchestration.policy import assert_all_tools_categorized
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
@@ -1686,6 +1687,31 @@ def inspect_design_loop_state(state: dict) -> dict:
     return _inspect_design_loop_state(state)
 
 
+@function_tool(strict_mode=False)  # `state` is a free-form dict (the loop's
+# own session-token shape) -- same rationale as run_nec2_simulation's
+# geometry parameter above.
+def compile_lab_test_plan(state: dict) -> dict:
+    """Compile a batched lab-test plan (issue #94) for every requirement on
+    this design: what to measure, by what method, and what value this
+    iteration's own recorded CALCULATED/SIMULATED engineering results
+    already predict -- so one lab trip is enough, instead of the engineer
+    discovering mid-trip that a requirement can't be confirmed with what
+    they brought. A requirement with no proposed target, an explicitly
+    UNSCOREABLE one, one whose quantity a Touchstone S-parameter sweep
+    cannot report (e.g. antenna gain or radiation pattern -- needs a range/
+    chamber, not a bench VNA), or one with nothing computed this iteration
+    to predict from is flagged with a distinguishing reason, not silently
+    dropped -- see orchestration/lab_test_plan.py's own docstring for the
+    full design.
+
+    `state` is a state dict from start_design_loop/advance_design_loop_step/
+    inspect_design_loop_state -- safe to call at any point in the loop, on
+    any current_step. Read-only: advances nothing, writes nothing to the
+    database, and needs no approval receipt (there is nothing here for
+    orchestration.approval.check_loop_step_approval_gate to check)."""
+    return _compile_lab_test_plan(state)
+
+
 # ---------------------------------------------------------------------------
 # Specialist roles (issue #34) + principal delegation/synthesis (issue #35).
 #
@@ -1777,7 +1803,21 @@ def inspect_design_loop_state(state: dict) -> dict:
 #                   run_gprmax_simulation --
 #                   generating a SIMULATED-provenance reference result is
 #                   itself something a measured result gets validated
-#                   against. Does NOT get any knowledge-
+#                   against, plus (issue #94) compile_lab_test_plan --
+#                   deciding what to measure, by what method, and what to
+#                   expect before a prototype leaves for the bench is
+#                   squarely this role's own "prepare for/validate against
+#                   measurement" domain, and it is read-only (no database
+#                   write, no loop-state mutation, no approval receipt), so
+#                   granting it needs no new gate this role doesn't already
+#                   operate under -- a deliberate widening of the "design-
+#                   loop tools are principal-only" precedent
+#                   propose_requirement_target/mark_requirement_unscoreable/
+#                   confirm_requirement_target (issue #92) set, justified
+#                   because those three WRITE a design's stored target (a
+#                   design-tracking mutation, principal's job) while this
+#                   one only reads already-recorded loop state back out.
+#                   Does NOT get any knowledge-
 #                   authoring or knowledge-auditing tool -- test validates
 #                   hardware against a spec, it doesn't ingest or extract
 #                   documents.
@@ -1883,6 +1923,7 @@ _ALL_TOOLS = [
     start_design_loop,
     advance_design_loop_step,
     inspect_design_loop_state,
+    compile_lab_test_plan,
 ]
 
 assert_all_tools_categorized([tool.name for tool in _ALL_TOOLS])
@@ -1917,7 +1958,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "decision, physical measurement, or a redesign/iteration decision "
             "always requires a distinct human-approval receipt first -- this "
             "loop never reaches, and has no path to, an autonomous "
-            "manufacturing-release action."
+            "manufacturing-release action. compile_lab_test_plan (issue #94), "
+            "by contrast, is read-only (no mutation, no approval needed) and "
+            "is shared with the test role, which owns lab-test-plan work day "
+            "to day."
         ),
         tools=list(_ALL_TOOLS),
     ),
@@ -2175,7 +2219,16 @@ ROLE_SPECS: list[RoleSpec] = [
             "external test bench, ingested through the design loop's "
             "measurement step -- see measurement/external.py and ADR-0013); "
             "this project does not actuate physical lab instruments itself "
-            "(README.md, docs/SECURITY.md). You do not ingest or extract "
+            "(README.md, docs/SECURITY.md). Before a prototype leaves for "
+            "the bench, use compile_lab_test_plan (issue #94) to compile a "
+            "single batched plan covering every requirement on the design: "
+            "what to measure, by what method, and what value this "
+            "iteration's own recorded CALCULATED/SIMULATED results already "
+            "predict, plus which requirements can't be verified with what's "
+            "on hand (no target, an unscoreable one, a quantity a "
+            "Touchstone sweep can't report, or nothing computed yet) and "
+            "why -- so one trip is enough. Read-only: it advances nothing "
+            "and needs no approval. You do not ingest or extract "
             "documents -- that is the systems/verification roles' job."
         ),
         tools=[
@@ -2185,6 +2238,7 @@ ROLE_SPECS: list[RoleSpec] = [
             cascade_touchstone_files,
             compare_touchstone_files,
             correlate_simulated_and_measured,
+            compile_lab_test_plan,
             calculate_vswr,
             calculate_return_loss,
             calculate_cascade_gain,
