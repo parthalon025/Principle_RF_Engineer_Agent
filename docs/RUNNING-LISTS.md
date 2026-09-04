@@ -222,6 +222,20 @@ document; the rest were made during analysis, several of them mine.**
     write down, and a constant that cannot be traced that way is a smuggled
     assumption.
 
+21. **The same error is queued up in #110, and has not fired yet.**
+    `docs/absorber-scoring-conventions.md` §1 lists **"the threshold is 90 %
+    absorption, equivalently −10 dB reflectivity"** among four things that can be
+    **"adopted without argument"**. That is a *journal reporting convention* —
+    the document says so itself, noting IEEE Std 1128 stops at 5 GHz and
+    standardises measurement rather than scoring — and adopting it as a
+    pass/fail line is the same move that put ±22.5° into the super-cell rule.
+    It also contradicts **#117's already-settled "silence is permissive"**:
+    a convention adopted as a threshold converts a silence into a hard prune, on
+    the authority of a literature the customer never cited.
+    **Not yet an error — #110 is open.** Recorded here so it is decided rather
+    than absorbed. See `docs/requirement-derived-thresholds.md` for the full
+    audit and the A/B/C classification it proposes.
+
 ### Errors found in published sources
 
 Not our corrections, but ours to route around. Recorded because anyone
