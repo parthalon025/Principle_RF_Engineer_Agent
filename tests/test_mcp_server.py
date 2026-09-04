@@ -149,6 +149,8 @@ def test_registered_tool_count_matches_old_plus_new():
     # more (run_candidate_search, the candidate solver). Both were built in
     # parallel against the same 77 baseline and each computed 77 + 1 = 78 on
     # its own branch; both landed, so both apply: 77 + 1 + 1 = 79.
+    #
+    # issue #143 adds 1 more (synthesize_filter_prototype): 79 + 1 = 80.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -174,6 +176,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 3
         + 1
         + 1
+        + 1  # issue #143: synthesize_filter_prototype
     )
     assert len(registered_names) == expected
 

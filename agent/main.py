@@ -93,6 +93,7 @@ from rf_tools.calculations import (
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
+from rf_tools.filter_synthesis import synthesize_filter
 from rf_tools.touchstone import (
     analyze_touchstone,
     cascade_touchstone,
@@ -505,6 +506,65 @@ def calculate_l_network_match(z_source: float, z_load: complex) -> dict:
     return {
         "solutions": [
             {"series_reactance_ohms": x, "shunt_susceptance_siemens": b} for x, b in solutions
+        ],
+        "provenance": "CALCULATED",
+    }
+
+
+@function_tool
+def synthesize_filter_prototype(
+    response: str,
+    band: str,
+    order: int,
+    impedance_ohm: float = 50.0,
+    ripple_db: float | None = None,
+    cutoff_hz: float | None = None,
+    center_hz: float | None = None,
+    bandwidth_hz: float | None = None,
+    first_element: str = "shunt",
+) -> dict:
+    """Synthesize a lumped-element ladder filter from a specification (issue #143).
+
+    response: "butterworth" (maximally flat, no pass-band ripple) or "chebyshev"
+    (equal-ripple -- accepts a stated pass-band wobble in exchange for a sharper
+    cut-off at the same order). band: "lowpass"/"highpass" (need cutoff_hz) or
+    "bandpass"/"bandstop" (need center_hz and bandwidth_hz). ripple_db is required
+    for chebyshev and rejected for butterworth. first_element picks between the two
+    equivalent ladders ("shunt" = capacitor-input, "series" = inductor-input).
+
+    Returns the prototype g-values and the ladder as ideal inductor/capacitor values
+    in henries and farads. Note load_impedance_ohm: an even-order Chebyshev is
+    deliberately NOT terminated in the source impedance. For bandpass/bandstop,
+    center_hz is the geometric centre, so the band edges are not center_hz +/-
+    bandwidth_hz/2. Ideal lumped elements only -- physical realization (microstrip
+    stubs, coupled lines, real vendor parts) is a separate step."""
+    network = synthesize_filter(
+        response=response,
+        band=band,
+        order=order,
+        impedance_ohm=impedance_ohm,
+        ripple_db=ripple_db,
+        cutoff_hz=cutoff_hz,
+        center_hz=center_hz,
+        bandwidth_hz=bandwidth_hz,
+        first_element=first_element,
+    )
+    return {
+        "response": network.response,
+        "band": network.band,
+        "order": network.order,
+        "source_impedance_ohm": network.source_impedance_ohm,
+        "load_impedance_ohm": network.load_impedance_ohm,
+        "ripple_db": network.ripple_db,
+        "g_values": list(network.g_values),
+        "elements": [
+            {
+                "position": e.position,
+                "topology": e.topology,
+                "inductance_h": e.inductance_h,
+                "capacitance_f": e.capacitance_f,
+            }
+            for e in network.elements
         ],
         "provenance": "CALCULATED",
     }
@@ -1943,6 +2003,7 @@ _ALL_TOOLS = [
     calculate_input_stability_circle,
     calculate_quarter_wave_transformer_impedance,
     calculate_l_network_match,
+    synthesize_filter_prototype,
     calculate_patch_effective_permittivity,
     calculate_patch_length_extension,
     calculate_patch_resonant_frequency,
@@ -2135,6 +2196,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_input_stability_circle,
             calculate_quarter_wave_transformer_impedance,
             calculate_l_network_match,
+            synthesize_filter_prototype,
             run_qucs_simulation,
             run_ltspice_simulation,
             run_ngspice_simulation,
