@@ -31,3 +31,21 @@ Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `read
 ### Domain docs
 
 Single-context layout (`CONTEXT.md` + `docs/adr/` at repo root). See `docs/agents/domain.md`.
+
+## Planning docs are not a status source
+
+`docs/BUILD_PLAN.md` and `docs/ROADMAP.md` describe an *intended* build order.
+The repo has grown well past both. Read them as a plan someone wrote once, not
+as a record of what is in the tree today.
+
+So: don't conclude something is unbuilt because `docs/ROADMAP.md` files it under
+a future milestone (its `0.6`/`0.7` labels are targets, not status), and don't
+conclude it is built because a planning doc names it. Both inferences have been
+wrong here. **Check the code.**
+
+This matters because it has bitten repeatedly: three consecutive revisions of a
+now-removed "what's still open" section in `CONTEXT.md` shipped stale, each one
+written by trusting a doc or a commit message instead of opening the file it
+described. That section is gone for exactly this reason — implementation status
+belongs in `README.md` and in GitHub Issues, where it can be closed, not in a
+prose list that silently rots.
