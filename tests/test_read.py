@@ -66,7 +66,12 @@ def cleanup_documents():
     conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM documents WHERE id = ANY(%s)", (ids,))
+            # One row at a time, reversed (LIFO) -- see tests/test_ingest.py's
+            # identical fixture docstring for why a single bulk `ANY(%s)`
+            # DELETE risks a self-referential (supersedes_document_id) FK
+            # violation.
+            for doc_id in reversed(ids):
+                cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
     finally:
         conn.close()
 

@@ -129,7 +129,7 @@ class NgspiceSimulator(Simulator):
     name = "ngspice"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("NGSPICE_BIN", "ngspice")
+        self.executable = executable or os.getenv("NGSPICE_BIN") or "ngspice"
 
     def run(self, job: dict) -> SimulationResult:
         netlist_file = Path(job["netlist_file"]).resolve()

@@ -60,7 +60,16 @@ def _write_pdf(path: Path, lines: list[str]) -> None:
 def cleanup_documents():
     """Tracks document ids created by ingest_document (which commits its
     own connection) and deletes them afterward -- unlike knowledge/db.py's
-    tests, this can't rely on a rolled-back transaction for isolation."""
+    tests, this can't rely on a rolled-back transaction for isolation.
+
+    Deletes one row at a time in REVERSED (LIFO) append order, not a single
+    bulk `WHERE id = ANY(%s)` statement -- a later-appended document can
+    reference an earlier one via supersedes_document_id (self-referential
+    FK), and a single bulk DELETE gives Postgres no row-order guarantee, so
+    it can (and did, in practice: ForeignKeyViolation on
+    documents_supersedes_document_id_fkey) try to delete the referenced row
+    before the referencing one. Deleting newest-first always clears any such
+    reference before reaching the row it points to."""
     ids: list[int] = []
     yield ids
     if not ids:
@@ -68,7 +77,8 @@ def cleanup_documents():
     conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM documents WHERE id = ANY(%s)", (ids,))
+            for doc_id in reversed(ids):
+                cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
     finally:
         conn.close()
 

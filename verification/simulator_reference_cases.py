@@ -222,9 +222,9 @@ def _actual_value(name: str, result: dict[str, Any]) -> float | None:
     """Pull one expected quantity out of an adapter's result dict."""
     impedance = result.get("impedance") or {}
     if name == "input_resistance":
-        return _as_float(impedance.get("resistance_ohm"))
+        return _as_float(impedance.get("resistance_ohms"))
     if name == "input_reactance":
-        return _as_float(impedance.get("reactance_ohm"))
+        return _as_float(impedance.get("reactance_ohms"))
     if name == "gain_dbi":
         return _as_float(result.get("gain_dbi"))
     raise ValueError(f"no accessor for expected value {name!r}")

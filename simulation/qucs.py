@@ -14,7 +14,7 @@ class QucsSimulator(Simulator):
     name = "Qucs-S/qucsator"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("QUCSATOR_BIN", "qucsator_rf")
+        self.executable = executable or os.getenv("QUCSATOR_BIN") or "qucsator_rf"
 
     def run(self, job: dict) -> SimulationResult:
         input_file = Path(job["input_file"]).resolve()

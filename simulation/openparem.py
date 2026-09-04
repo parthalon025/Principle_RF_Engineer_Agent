@@ -265,7 +265,7 @@ class OpenParemSimulator(Simulator):
     name = "OpenParEM3D"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("OPENPAREM3D_BIN", "OpenParEM3D")
+        self.executable = executable or os.getenv("OPENPAREM3D_BIN") or "OpenParEM3D"
 
     def run(self, job: dict) -> SimulationResult:
         project_file = Path(job["project_file"]).resolve()

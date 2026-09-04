@@ -216,7 +216,20 @@ def _resolve_agent_model_settings() -> ModelSettings:
         top_p=0.95,
         presence_penalty=0.0,
         reasoning=Reasoning(effort="xhigh"),
-        extra_body={"options": {"top_k": 20}},
+        # num_ctx: Ollama serves a model at its OWN small default context
+        # window (no num_ctx in `ollama show qwen3.8:27b --parameters`,
+        # confirmed by reading it directly) regardless of what the model
+        # itself supports (Qwen3.8 natively handles up to 262K, extendable
+        # to 1M) -- a well-known Ollama gotcha, not a qwen3.8 limitation.
+        # Confirmed empirically in this repo specifically: the principal
+        # role's 86-tool schema payload (verbose per-tool docstrings) plus
+        # xhigh's own reasoning trace overflowed Ollama's default, and the
+        # model genuinely could not see calculate_wavelength -- despite it
+        # being the FIRST tool in the list -- until num_ctx was raised.
+        # 65536 is a deliberately generous number for THIS repo's actual
+        # tool count, not a universal default; re-check if the tool list
+        # grows substantially larger.
+        extra_body={"options": {"top_k": 20, "num_ctx": 65536}},
     )
 
 

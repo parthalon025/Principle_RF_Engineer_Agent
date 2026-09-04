@@ -229,7 +229,7 @@ class PalaceSimulator(Simulator):
     name = "Palace"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("PALACE_BIN", "palace")
+        self.executable = executable or os.getenv("PALACE_BIN") or "palace"
 
     def run(self, job: dict) -> SimulationResult:
         config_file = Path(job["config_file"]).resolve()

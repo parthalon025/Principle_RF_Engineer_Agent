@@ -138,7 +138,7 @@ class XyceSimulator(Simulator):
     name = "Xyce"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("XYCE_BIN", "Xyce")
+        self.executable = executable or os.getenv("XYCE_BIN") or "Xyce"
 
     def run(self, job: dict) -> SimulationResult:
         netlist_file = Path(job["netlist_file"]).resolve()
