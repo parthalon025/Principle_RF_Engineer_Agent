@@ -24,23 +24,54 @@ The failure was not arithmetic. Every step after the constant was correct. **The
 >
 > A convention may fill a silence, and must be recorded as having filled it. It
 > may never override a stated requirement, and it may never become a pass/fail
-> line on its own authority. A number that cannot be traced to the customer, to
-> physics, or to the machine is a **smuggled assumption** and must be labelled
+> line on its own authority. **The only constants are physics, the machine and
+> the material** — everything else comes from the requirement, and a number that
+> can name none of those four is a **smuggled assumption** that must be labelled
 > as one wherever it appears.
 
 **This is not a new preference — it follows from one already settled.** [#117](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/117) decided that **silence is permissive**: an unstated requirement does not prune the candidate space. A convention adopted as a threshold does exactly the opposite — it converts a silence into a hard prune, on the authority of a literature the customer never cited. Adopting *"−10 dB is the threshold"* because the field defaults to it is not neutral; it is inventing a requirement and then enforcing it.
 
 ---
 
-## The three kinds of number
+## The four kinds of number
+
+**The list is closed.** That is the point of it. A number that cannot name which row it belongs to is a convention, whatever it looks like.
 
 | Kind | Where it comes from | May it prune? | Example |
 |---|---|---|---|
 | **A — Requirement** | The customer states it | **Yes**, per #117's threshold/objective | "≥ 15 dB reduction, 9–11 GHz, within ±30° of broadside" |
-| **B — Physics or machine** | Nature, or the hardware in the room | **Yes** — it is a fact about what can exist | Skin depth; the NOVA's 0.12 mm line floor |
+| **B1 — Physics** | Nature | **Yes**, absolutely | Skin depth; `20·log₁₀(sin(δ/2))`; the Rozanov bound |
+| **B2 — Manufacturing** | The machine in the room | **Yes**, within its validity box | The NOVA's 0.12 mm line floor; ~10 µm minimum film |
+| **B3 — Material** | The material under consideration | **Yes**, within its validity box | TPU εr 2.71 at 10 GHz; copper's conductivity |
 | **C — Convention** | A field's reporting habit | **No** | "−10 dB is the threshold"; "±22.5° phase error" |
 
 **Every failure of this kind is a C wearing A's clothes.** The tell is that a C-number is stated in the *design's* units rather than the *requirement's*, so there is nothing to compare it against and nothing to notice.
+
+### Two things the B rows must not be read to mean
+
+**1. Material is a *variable*. Material *properties* are the constants.**
+
+#105 settled that MXene is **a candidate the loop can reject, not a constraint the loop obeys**, and this map's destination has material and substrate as **searched variables**. So "material is a constant" is exactly the sentence that would put a thumb back on the scale — it would let a preferred material become a fixed premise and quietly stop being scored.
+
+The constant is narrower and survives that: *whichever material is under consideration has the permittivity it has.* Selection is an output. Properties, once selected, are not negotiable.
+
+**2. Only B1 is a constant in the strict sense. B2 and B3 are measurements.**
+
+They differ in how they fail, and that difference decides how much weight each can carry:
+
+| | Fails how? |
+|---|---|
+| **B1 Physics** | It does not. Skin depth is skin depth |
+| **B2 Manufacturing** | It is a fact about **one machine on one day**. The NOVA's floor is currently literature-extrapolated onto hardware nobody has run — which is the whole reason #106 exists |
+| **B3 Material** | It is a fact about **one lot under stated conditions**. TPU is εr 2.7 **± 0.3**, and that ± is print-to-print repeatability rather than instrument noise; Kapton measures 6× its datasheet loss; BASF Elastollan spans **3.5×** on loss inside one product line |
+
+So B2 and B3 behave like constants **inside a validity box** — pitch, ink, pass count, cure schedule, grade, moisture, incidence angle — and outside it they are a different number. That is the same validity box #130 puts on every letter of the alphabet, and it is what the provenance ladder exists to express. A B2 or B3 number quoted without its box is not a constant; it is an assumption wearing one's clothes.
+
+### The test case for a closed list: standards
+
+MIL-STD-961E, IPC-2223, ITAR and the JCIDS vocabulary feel like external constants — imposed, not chosen. **They are not a fifth kind.** The requirement names which standards apply; a standard nobody invoked binds nothing.
+
+This is the correct reason **#115 is still open**. `R = 3T` versus IPC-2223's 6× rule is not a physics question and not a materials question — the patent asserts one, the flex-circuit industry asserts the other, and the patent's is **twice as permissive**, so inheriting it silently approves parts bent twice as tight as IPC allows. Someone has to *state* which governs. That statement is an **A**.
 
 **C-numbers are still valuable** — they are how published work is compared to published work, and abandoning them would make the literature unusable. The rule is only that they do not gate.
 
