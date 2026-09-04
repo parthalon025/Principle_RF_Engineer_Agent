@@ -98,6 +98,43 @@ and a glossary that churns with it stops being trustworthy (see
   design guidance. Distinct from a Component's specification, which
   describes an existing manufactured part rather than a target for a new
   one.
+- **Requirement-derived constraint**: a design parameter (a threshold, a
+  bend radius, a band) whose value comes from one specific Customer
+  requirement. Re-derived fresh every design pass from the requirement's
+  own text — never inherited from a prior pass's conclusion, even across
+  revisions of the same design, because a guess is not allowed to become
+  settled fact merely by having been made before. Contrast **Material-
+  property library** entry, the one kind of data this project deliberately
+  does carry forward between passes, because it is a fact about a
+  material rather than about any one requirement.
+- **Material-property library**: a persistent store of physical material
+  properties (permittivity, loss tangent, conductivity, etc.), keyed by
+  `(material, frequency, property)` rather than by design or requirement —
+  a deliberate, named exception to the Requirement-derived constraint
+  rule above. An entry accumulates once and is reused by every future
+  design that references that material, rather than being re-derived per
+  pass. A human adds an entry either by citing a source document (a
+  manufacturer datasheet → `MANUFACTURER-SPECIFIED`; a cited paper →
+  whatever provenance rung its own original measurement carries) or by
+  entering a bare value with a one-line note of where it came from, even
+  "no source" — which lands at `ASSUMED`. The library itself never parses
+  a document; an uploaded document is the citation/audit trail, not an
+  extraction target.
+  _Avoid_: material database — this is a growing, per-entry-provenanced
+  knowledge record, not a fixed reference table.
+- **Family fallback bracket**: what a Material-property library lookup
+  returns when no entry exists yet for the specific material asked for —
+  a `min, max` range for the material's broad family (e.g. "generic
+  polymer," "generic conductor"), never a single point value, each
+  independently cited for why it honestly bounds that family. A specific
+  material's own library entry always overrides its family's bracket the
+  moment one exists, and brackets narrow over time as more per-material
+  entries accumulate — the same way the library itself grows. A design
+  that scores a candidate from a bracket (or from any `ASSUMED` entry)
+  computes the score at both ends of the range rather than collapsing it
+  to one number: a decisive property's bracket produces a visibly wide
+  spread in the resulting rank — the spread itself is the signal that
+  this guess matters — while a minor property's bracket barely moves it.
 - **Design guidance**: the agent's output for a customer requirement — a
   parameter recommendation (e.g. unit-cell spacing, layer stack, expected
   gain) with rationale tracing back to CALCULATED results and/or
