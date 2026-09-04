@@ -11,7 +11,21 @@ built and tested -- not reimplementing any of them:
                 (Phase 1). ONE named calculation, not an arbitrary callable
                 crossing the tool boundary -- same reasoning
                 optimization/rf_objectives.py's module docstring gives for
-                wiring one named objective rather than a generic one.
+                wiring one named objective rather than a generic one. Its
+                substrate permittivity input (eps_r) may come from a bare
+                number OR from a resolved designs.material_properties.
+                resolve_material_property lookup (issue #154, ADR-0015,
+                CONTEXT.md: Material-property library) -- see
+                _resolve_eps_r_bounds and _handle_analysis below for how a
+                Family fallback bracket or a set of disagreeing citations is
+                computed at both ends of the range rather than collapsed to
+                one number. SIMULATION and OPTIMIZATION are not wired to the
+                library by this ticket: SIMULATION's step_input (geometry,
+                frequency_hz) never carries a material property at all, and
+                OPTIMIZATION's "which of two independently-searched lengths
+                is THE recommended one for a two-ended eps_r" is a genuine
+                new design question ADR-0015 does not settle -- left for a
+                separate ticket rather than decided inline here.
   - SIMULATION  calls simulation.nec2pp.run_nec2_simulation (Phase 6).
   - OPTIMIZATION calls
                 optimization.rf_objectives.optimize_patch_length_for_target_
@@ -412,18 +426,95 @@ def _handle_architecture(
     return "architecture_decision", dict(step_input), None
 
 
+def _resolve_eps_r_bounds(
+    step_input: dict[str, Any], step_name: str
+) -> tuple[float, float, dict[str, Any] | None]:
+    """Return `(eps_r_low, eps_r_high, material_property)` for one ANALYSIS
+    step_input (issue #154; ADR-0015; CONTEXT.md: Material-property
+    library). `eps_r` (a bare number, the pre-existing path) and
+    `material_property` (a `designs.material_properties.
+    resolve_material_property` result the caller already looked up) are
+    mutually exclusive ways to supply the same input -- exactly one must be
+    given, or this raises `DesignLoopValidationError`. This module never
+    calls into `designs.material_properties` itself (the design loop stays
+    the DB-free, pure state machine its own module docstring's "STATE
+    DESIGN" section describes); the caller resolves the library lookup
+    first, the same way an agent proposes a Requirement target before
+    `designs.requirement_targets.attach_target` ever sees it.
+
+    `eps_r_low == eps_r_high` for the `eps_r` path (nothing to spread) and
+    for a `material_property` whose own `low == high` (one confident entry,
+    or several that happen to agree) -- both take the SAME single-value
+    codepath through `_handle_analysis` below, so a caller migrating from
+    `eps_r` to `material_property` sees identical results once the library
+    holds exactly one value. A `material_property` whose `low != high` (a
+    Family fallback bracket, or several disagreeing citations -- CONTEXT.md's
+    "the spread itself is the signal that this guess matters") makes
+    `_handle_analysis` compute the resonant frequency at both ends rather
+    than collapsing to one (ADR-0015's Consequences section), instead of
+    picking a value.
+
+    A `material_property` with `status="no_data"` (the library has nothing
+    to offer -- no per-material entry, no Family fallback bracket) raises
+    rather than proceeding with a made-up number, mirroring #127's own
+    rejected "silently excluding a candidate with no data" alternative.
+    """
+    has_eps_r = "eps_r" in step_input
+    has_material_property = "material_property" in step_input
+    if has_eps_r == has_material_property:
+        raise DesignLoopValidationError(
+            f"{step_name} step_input must supply exactly one of 'eps_r' (a bare "
+            "number) or 'material_property' (a designs.material_properties."
+            "resolve_material_property result) -- got eps_r="
+            f"{'present' if has_eps_r else 'absent'}, material_property="
+            f"{'present' if has_material_property else 'absent'}"
+        )
+    if has_eps_r:
+        eps_r = step_input["eps_r"]
+        return eps_r, eps_r, None
+
+    material_property = step_input["material_property"]
+    status = material_property.get("status") if isinstance(material_property, dict) else None
+    if not isinstance(material_property, dict) or status == "no_data":
+        raise DesignLoopValidationError(
+            f"{step_name} step_input['material_property'] has no usable eps_r data "
+            f"(status={status!r}) -- CONTEXT.md's Material-property library: a "
+            "missing entry with no Family fallback bracket is reported, never "
+            "silently guessed past (#127)."
+        )
+    return material_property["low"], material_property["high"], material_property
+
+
 def _handle_analysis(
     _state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    _require_fields(step_input, {"eps_r", "w_m", "h_m", "l_m"}, "analysis")
-    resonant_frequency_hz = _patch_resonant_frequency_hz(
-        step_input["eps_r"], step_input["w_m"], step_input["h_m"], step_input["l_m"]
+    _require_fields(step_input, {"w_m", "h_m", "l_m"}, "analysis")
+    eps_r_low, eps_r_high, material_property = _resolve_eps_r_bounds(step_input, "analysis")
+
+    frequency_at_low = _patch_resonant_frequency_hz(
+        eps_r_low, step_input["w_m"], step_input["h_m"], step_input["l_m"]
     )
-    result = {
-        "function": "patch_resonant_frequency_hz",
-        "resonant_frequency_hz": resonant_frequency_hz,
-        "provenance": "CALCULATED",
-    }
+    if eps_r_high == eps_r_low:
+        result = {
+            "function": "patch_resonant_frequency_hz",
+            "resonant_frequency_hz": frequency_at_low,
+            "provenance": "CALCULATED",
+        }
+    else:
+        frequency_at_high = _patch_resonant_frequency_hz(
+            eps_r_high, step_input["w_m"], step_input["h_m"], step_input["l_m"]
+        )
+        # Higher eps_r lowers the resonant frequency (f ~ 1/sqrt(eps_r)), so
+        # eps_r_low's frequency is the HIGHER of the two -- min/max over the
+        # actual results, never assumed from the eps_r ordering.
+        result = {
+            "function": "patch_resonant_frequency_hz",
+            "resonant_frequency_hz_low": min(frequency_at_low, frequency_at_high),
+            "resonant_frequency_hz_high": max(frequency_at_low, frequency_at_high),
+            "provenance": "CALCULATED",
+        }
+    if material_property is not None:
+        result["material_property"] = material_property
     return "calculation", result, "CALCULATED"
 
 

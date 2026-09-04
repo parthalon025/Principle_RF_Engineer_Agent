@@ -111,6 +111,53 @@ CREATE TABLE IF NOT EXISTS decision_records (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Issue #154 (ADR-0015, CONTEXT.md: Material-property library). Every
+-- citation is its own row, keyed by (material, property, frequency band) --
+-- deliberately no UNIQUE constraint on that triple, since two independent,
+-- disagreeing citations for the same material/property/frequency are the
+-- exact case this table exists to keep (designs/material_properties.py's
+-- own module docstring gives the worked example: three FR4 papers
+-- disagreeing on epsilon_r/tan_delta). frequency_low_hz/frequency_high_hz
+-- model the validity band a real citation reports (equal for a single test
+-- point); citation/note are TEXT rather than a foreign key into `documents`
+-- because ADR-0015 only requires a human-readable citation trail, not a
+-- second document-ingestion path for this feature.
+CREATE TABLE IF NOT EXISTS material_properties (
+    id BIGSERIAL PRIMARY KEY,
+    material TEXT NOT NULL,
+    property TEXT NOT NULL,
+    frequency_low_hz DOUBLE PRECISION NOT NULL,
+    frequency_high_hz DOUBLE PRECISION NOT NULL,
+    value DOUBLE PRECISION NOT NULL,
+    unit TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    citation TEXT,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS material_properties_material_property_idx
+ON material_properties (material, property);
+
+-- Issue #154 (ADR-0015): a Family fallback bracket is one current best
+-- cited [min, max] range per (family, property) -- UNIQUE here, unlike
+-- material_properties above, because a bracket narrows over time as more
+-- per-material entries accumulate rather than accumulating disagreeing
+-- brackets of its own (designs/material_properties.py's
+-- insert_family_bracket upserts on this constraint).
+CREATE TABLE IF NOT EXISTS material_family_brackets (
+    id BIGSERIAL PRIMARY KEY,
+    family TEXT NOT NULL,
+    property TEXT NOT NULL,
+    min_value DOUBLE PRECISION NOT NULL,
+    min_citation TEXT NOT NULL,
+    max_value DOUBLE PRECISION NOT NULL,
+    max_citation TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(family, property)
+);
+
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw
 ON document_chunks USING hnsw (embedding vector_cosine_ops);
 
