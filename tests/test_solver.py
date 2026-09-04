@@ -53,6 +53,7 @@ REQUIREMENTS = {"R1": {"requirement": "resonant frequency near 2.45 GHz"}}
 _ARCHITECTURE_INPUT = {
     "decision": "rectangular microstrip patch on FR4",
     "rationale": "meets band/gain target with a simple, low-cost fabrication",
+    "design_family": "patch_antenna",
 }
 
 # Base patch parameters (matches tests/test_design_loop.py's own fixture) --

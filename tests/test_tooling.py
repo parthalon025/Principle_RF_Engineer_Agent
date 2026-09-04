@@ -255,6 +255,7 @@ def _drive_to_redesign_decision(
         {
             "decision": "rectangular microstrip patch on FR4",
             "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": "patch_antenna",
         },
     )
     state = advance_design_loop_step(
@@ -523,6 +524,7 @@ def test_solver_produced_decisions_persist_at_the_redesign_decision_flush(
     architecture_input = {
         "decision": "rectangular microstrip patch on FR4",
         "rationale": "meets band/gain target with a simple, low-cost fabrication",
+        "design_family": "patch_antenna",
     }
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE, architecture_input)
     assert state["current_step"] == DesignStep.ANALYSIS.value
