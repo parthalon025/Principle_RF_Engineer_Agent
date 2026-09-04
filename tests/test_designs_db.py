@@ -4,12 +4,20 @@ from psycopg.types.json import Json
 from designs.db import (
     DanglingComponentReferenceError,
     RecordKeyCollisionError,
+    UnknownDesignError,
     UnknownVerificationItemError,
     create_design,
     read_design,
     record_decision,
     record_engineering_result,
+    update_design_status,
     verify_requirement,
+)
+from designs.lifecycle import IllegalStatusTransitionError
+from designs.release_approval import (
+    DesignReleaseApprovalError,
+    release_fingerprint_fields,
+    request_design_release_approval,
 )
 from designs.validation import InvalidRequirementsError, InvalidVerificationStatusError
 from knowledge.db import upsert_component
@@ -558,3 +566,151 @@ def test_verify_requirement_rejects_invalid_status_without_writing(db_conn):
         )
         (status,) = cur.fetchone()
     assert status == "NOT VERIFIED"
+
+
+# --- design-status transitions (issue #145) -------------------------------
+#
+# The ordering rules and the release gate are unit-tested without a database
+# in tests/test_design_lifecycle.py and tests/test_design_release_approval.py.
+# These check that the write path actually enforces them, and that a refused
+# transition leaves the stored row untouched.
+
+
+def _walk(db_conn, design_id, *statuses):
+    for status in statuses:
+        update_design_status(db_conn, design_id=design_id, status=status)
+
+
+def test_update_design_status_walks_the_lifecycle(db_conn):
+    design_id = _make_design(db_conn, design_key="DES-LIFECYCLE")
+    _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION")
+    row = update_design_status(db_conn, design_id=design_id, status="PASS")
+    assert row["status"] == "PASS"
+
+
+def test_update_design_status_refuses_a_skipped_stage_and_stores_nothing(db_conn):
+    design_id = _make_design(db_conn, design_key="DES-SKIP")
+    with pytest.raises(IllegalStatusTransitionError):
+        update_design_status(db_conn, design_id=design_id, status="VERIFICATION")
+    assert read_design(db_conn, design_id)["status"] == "DRAFT"
+
+
+def test_update_design_status_refuses_draft_straight_to_released(db_conn):
+    design_id = _make_design(db_conn, design_key="DES-JUMP")
+    with pytest.raises(IllegalStatusTransitionError):
+        update_design_status(db_conn, design_id=design_id, status="RELEASED")
+    assert read_design(db_conn, design_id)["status"] == "DRAFT"
+
+
+def test_reaching_pass_still_cannot_be_released_without_an_approval(db_conn):
+    """The gate ADR-0007 requires: a design that legitimately passed
+    verification still cannot be released by this write path alone."""
+    design_id = _make_design(db_conn, design_key="DES-NOAPPROVAL")
+    _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
+    with pytest.raises(DesignReleaseApprovalError):
+        update_design_status(db_conn, design_id=design_id, status="RELEASED")
+    assert read_design(db_conn, design_id)["status"] == "PASS"
+
+
+def test_a_valid_release_receipt_releases_the_design(db_conn):
+    design_id = _make_design(db_conn, design_key="DES-RELEASE")
+    _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
+    approval = request_design_release_approval(
+        release_fingerprint_fields(design_id=design_id, design_key="DES-RELEASE", revision="A"),
+        approved_by="a.engineer",
+        approval_callback=lambda _: True,
+    )
+    row = update_design_status(db_conn, design_id=design_id, status="RELEASED", approval=approval)
+    assert row["status"] == "RELEASED"
+
+
+def test_a_release_receipt_for_another_design_is_refused(db_conn):
+    """The receipt is bound to the design it approved, so it cannot be
+    replayed against a different one that happens to be sitting at PASS."""
+    approved_id = _make_design(db_conn, design_key="DES-APPROVED")
+    other_id = _make_design(db_conn, design_key="DES-OTHER")
+    for design_id in (approved_id, other_id):
+        _walk(
+            db_conn,
+            design_id,
+            "ANALYSIS",
+            "SIMULATION",
+            "OPTIMIZATION",
+            "VERIFICATION",
+            "PASS",
+        )
+    approval = request_design_release_approval(
+        release_fingerprint_fields(design_id=approved_id, design_key="DES-APPROVED", revision="A"),
+        approved_by="a.engineer",
+        approval_callback=lambda _: True,
+    )
+    with pytest.raises(DesignReleaseApprovalError):
+        update_design_status(db_conn, design_id=other_id, status="RELEASED", approval=approval)
+    assert read_design(db_conn, other_id)["status"] == "PASS"
+
+
+def test_released_is_terminal_in_the_write_path(db_conn):
+    design_id = _make_design(db_conn, design_key="DES-TERMINAL")
+    _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
+    approval = request_design_release_approval(
+        release_fingerprint_fields(design_id=design_id, design_key="DES-TERMINAL", revision="A"),
+        approved_by="a.engineer",
+        approval_callback=lambda _: True,
+    )
+    update_design_status(db_conn, design_id=design_id, status="RELEASED", approval=approval)
+    with pytest.raises(IllegalStatusTransitionError):
+        update_design_status(db_conn, design_id=design_id, status="ANALYSIS")
+    assert read_design(db_conn, design_id)["status"] == "RELEASED"
+
+
+def test_allow_nonsequential_permits_the_design_loops_boundary_flush(db_conn):
+    """ADR-0011: the loop walks the stages in memory and persists once per
+    iteration, so its DRAFT -> PASS write skips stages legitimately."""
+    design_id = _make_design(db_conn, design_key="DES-LOOPFLUSH")
+    row = update_design_status(
+        db_conn, design_id=design_id, status="PASS", allow_nonsequential=True
+    )
+    assert row["status"] == "PASS"
+
+
+def test_allow_nonsequential_never_opens_the_release_gate(db_conn):
+    """The ordering relaxation is bookkeeping; releasing is safety. No caller
+    may relax the latter, so RELEASED stays both ordered and gated."""
+    design_id = _make_design(db_conn, design_key="DES-NOBYPASS")
+    with pytest.raises(IllegalStatusTransitionError):
+        update_design_status(
+            db_conn, design_id=design_id, status="RELEASED", allow_nonsequential=True
+        )
+    assert read_design(db_conn, design_id)["status"] == "DRAFT"
+
+
+def test_allow_nonsequential_cannot_reopen_a_released_design(db_conn):
+    """A terminal status is terminal for every caller. The ordering escape
+    hatch relaxes the order work moves in, not whether finished work can be
+    reopened -- otherwise a loop flush could walk a RELEASED design back to
+    ANALYSIS and contradict the terminality the lifecycle promises."""
+    design_id = _make_design(db_conn, design_key="DES-REOPEN")
+    _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
+    approval = request_design_release_approval(
+        release_fingerprint_fields(design_id=design_id, design_key="DES-REOPEN", revision="A"),
+        approved_by="a.engineer",
+        approval_callback=lambda _: True,
+    )
+    update_design_status(db_conn, design_id=design_id, status="RELEASED", approval=approval)
+    with pytest.raises(IllegalStatusTransitionError):
+        update_design_status(
+            db_conn, design_id=design_id, status="ANALYSIS", allow_nonsequential=True
+        )
+    assert read_design(db_conn, design_id)["status"] == "RELEASED"
+
+
+def test_an_unknown_status_is_still_rejected_before_the_row_is_read(db_conn):
+    design_id = _make_design(db_conn, design_key="DES-BADSTATUS")
+    with pytest.raises(ValueError, match="status must be one of"):
+        update_design_status(db_conn, design_id=design_id, status="ACTIVE")
+    assert read_design(db_conn, design_id)["status"] == "DRAFT"
+
+
+def test_an_unknown_design_id_raises_rather_than_updating_nothing(db_conn):
+    with pytest.raises(UnknownDesignError):
+        update_design_status(db_conn, design_id=999_999, status="ANALYSIS")

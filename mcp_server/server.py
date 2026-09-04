@@ -15,6 +15,7 @@ from designs.service import create_design as _create_design
 from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
+from designs.service import update_design_status as _update_design_status
 from designs.service import verify_requirement as _verify_requirement
 from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
 from knowledge.component_resolution import (
@@ -80,6 +81,7 @@ from rf_tools.calculations import (
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
+from rf_tools.filter_synthesis import synthesize_filter
 from rf_tools.touchstone import (
     analyze_touchstone,
     cascade_touchstone,
@@ -417,6 +419,47 @@ def calculate_l_network_match(z_source: float, z_load: complex) -> dict:
         ],
         "provenance": "CALCULATED",
     }
+
+
+@mcp.tool()
+def synthesize_filter_prototype(
+    response: str,
+    band: str,
+    order: int,
+    impedance_ohm: float = 50.0,
+    ripple_db: float | None = None,
+    cutoff_hz: float | None = None,
+    center_hz: float | None = None,
+    bandwidth_hz: float | None = None,
+    first_element: str = "shunt",
+) -> dict:
+    """Synthesize a lumped-element ladder filter from a specification (issue #143).
+
+    response: "butterworth" (maximally flat, no pass-band ripple) or "chebyshev"
+    (equal-ripple -- accepts a stated pass-band wobble in exchange for a sharper
+    cut-off at the same order). band: "lowpass"/"highpass" (need cutoff_hz) or
+    "bandpass"/"bandstop" (need center_hz and bandwidth_hz). ripple_db is required
+    for chebyshev and rejected for butterworth. first_element picks between the two
+    equivalent ladders ("shunt" = capacitor-input, "series" = inductor-input).
+
+    Returns the prototype g-values and the ladder as ideal inductor/capacitor values
+    in henries and farads. Note load_impedance_ohm: an even-order Chebyshev is
+    deliberately NOT terminated in the source impedance. For bandpass/bandstop,
+    center_hz is the geometric centre, so the band edges are not center_hz +/-
+    bandwidth_hz/2. Ideal lumped elements only -- physical realization (microstrip
+    stubs, coupled lines, real vendor parts) is a separate step."""
+    network = synthesize_filter(
+        response=response,
+        band=band,
+        order=order,
+        impedance_ohm=impedance_ohm,
+        ripple_db=ripple_db,
+        cutoff_hz=cutoff_hz,
+        center_hz=center_hz,
+        bandwidth_hz=bandwidth_hz,
+        first_element=first_element,
+    )
+    return {**network.to_dict(), "provenance": "CALCULATED"}
 
 
 @mcp.tool()
@@ -1432,6 +1475,31 @@ def record_decision(
         evidence=evidence,
         approval_required=approval_required,
     )
+
+
+@mcp.tool()
+def advance_design_status(design_id: int, status: str) -> dict:
+    """Advance a design through docs/OPERATIONS.md's lifecycle (issue #145):
+    DRAFT -> ANALYSIS -> SIMULATION -> OPTIMIZATION -> VERIFICATION ->
+    CONDITIONAL-PASS/PASS/FAIL/BLOCKED -> RELEASED.
+
+    Only legal next steps are accepted. A design cannot skip a stage, cannot
+    jump straight to RELEASED, and cannot move at all once RELEASED (a released
+    design gets a new revision instead). Work in progress can go BLOCKED from
+    any stage, and FAIL/BLOCKED/CONDITIONAL-PASS return to ANALYSIS for rework.
+    A refusal comes back tagged illegal_transition with a legal_next list
+    naming what IS reachable from here.
+
+    RELEASED additionally requires a signed human-approval receipt, which this
+    tool cannot supply: no human-facing approval workflow is wired up in this
+    codebase, so a release attempt returns release_not_approved. That is the
+    intended behaviour -- a design must never reach RELEASED autonomously
+    (docs/adr/0007; docs/BUILD_PLAN.md's Phase 12).
+
+    This is the explicit path, for design work tracked outside the opt-in
+    design loop (ADR-0010). The loop persists its own status at each iteration
+    boundary (ADR-0011) and does not go through here."""
+    return _update_design_status(design_id=design_id, status=status)
 
 
 @mcp.tool()

@@ -182,9 +182,13 @@ and a glossary that churns with it stops being trustworthy (see
   off of via `design_id`. `status` is `docs/OPERATIONS.md`'s existing
   workflow lifecycle, not a value set invented for this feature area:
   `DRAFT → ANALYSIS → SIMULATION → OPTIMIZATION → VERIFICATION →
-  CONDITIONAL-PASS/PASS/FAIL/BLOCKED → RELEASED`, where `RELEASED` already
-  requires human approval (see `docs/adr/0007`). A design is created in
-  `DRAFT`; nothing yet builds the transitions between the other states.
+  CONDITIONAL-PASS/PASS/FAIL/BLOCKED → RELEASED`. A design is created in
+  `DRAFT` and moves one legal step at a time: it cannot skip a stage, cannot
+  reach `RELEASED` without a signed human-approval receipt, and cannot move
+  at all once `RELEASED` — a released design gets a new `revision` rather
+  than being edited back into engineering. Work in progress can become
+  `BLOCKED` from any stage, and `FAIL`/`BLOCKED`/`CONDITIONAL-PASS` return to
+  `ANALYSIS` for rework (see `docs/adr/0007`).
   `requirements` is `{requirement_id: {requirement: <text>, ...}}`, keyed
   the same way `verification_items.requirement_id` references it.
   `architecture` is a functional-block map,
@@ -221,6 +225,25 @@ and a glossary that churns with it stops being trustworthy (see
   explicit `verify_requirement` call — never inferred by matching an
   `engineering_results` name against a `requirement_id`, since a wrong
   automatic match would be a silently wrong verification.
+
+- **Golden query**: a question paired with the knowledge-base documents that
+  ought to answer it, held in `verification/golden_queries.json`. The fixed
+  set of them is what lets a change to embedding, chunking or ranking be
+  scored: without known-right answers, a retrieval regression and a retrieval
+  improvement look identical. Expected documents are named at document
+  granularity, never chunk — which chunk of a paper answered a question is not
+  a stable thing to assert.
+  _Avoid_: test query — these are graded against known answers, not merely
+  executed.
+- **Reference case**: a simulation problem whose correct answer is published
+  independently of this codebase (e.g. a half-wave dipole's 73 + j42.5 ohm
+  feed impedance), run end to end through a solver adapter so the deck we
+  generate, the solver, and the parser are checked together. Distinct from the
+  adapter's own tests, which use hand-built fakes and can only show that we
+  talk to the solver correctly, not that the solver told us the truth. Passing
+  one is what would let `SIMULATED` mean *validated* simulation in the
+  **Evidence hierarchy** above.
+  _Avoid_: benchmark — that measures speed, not correctness.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).

@@ -23,8 +23,18 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from designs.lifecycle import (
+    TERMINAL_STATUSES,
+    check_transition,
+    coerce_status,
+    transition_requires_release_approval,
+)
 from designs.models import DesignStatus, VerificationStatus
 from designs.provenance import provenance_for_tool
+from designs.release_approval import (
+    check_design_release_approval_gate,
+    release_fingerprint_fields,
+)
 from designs.validation import (
     _iter_component_refs,
     extract_component_refs,
@@ -394,6 +404,9 @@ def update_design_status(
     conn: psycopg.Connection,
     design_id: int,
     status: str,
+    *,
+    approval: Any = None,
+    allow_nonsequential: bool = False,
 ) -> dict[str, Any]:
     """Set `designs.status` (docs/adr/0011 -- the design loop's first real
     caller of a status transition; docs/adr/0007 fixed the nine legal
@@ -406,6 +419,30 @@ def update_design_status(
     `now()` in the same statement -- this is the only function that
     changes `designs.status` after creation, so there is no separate
     "touch updated_at" call to keep in sync with it.
+
+    Issue #145 adds the two rules ADR-0007 deferred:
+
+    - **Ordering.** The transition must be legal per `designs.lifecycle`.
+      A design can no longer jump DRAFT -> RELEASED, or move at all once
+      RELEASED. Raises `IllegalStatusTransitionError` (a `ValueError`, so
+      callers already catching `ValueError` around this function keep
+      treating a refusal as a refusal).
+    - **The release gate.** Entering `RELEASED` additionally requires a
+      valid `DesignReleaseApprovalReceipt` in `approval`, bound to this
+      design's key and revision (`designs.release_approval`). No workflow
+      issues those yet, so nothing can currently be released -- which is
+      the intended behaviour, not a gap.
+
+    `allow_nonsequential=True` skips the *ordering* check only, for a caller
+    that has legitimately walked the stages in memory and is persisting the
+    outcome at an iteration boundary rather than at each step -- the design
+    loop's flush, per ADR-0011. Three things it never does: skip the release
+    gate, permit entering `RELEASED` out of order, or let a design leave a
+    terminal status. It relaxes the order work moves in, never whether
+    finished work can be reopened.
+
+    The current row is read `FOR UPDATE` so the check and the write cannot
+    straddle a concurrent transition.
     """
     if status not in {member.value for member in DesignStatus}:
         raise ValueError(
@@ -413,6 +450,33 @@ def update_design_status(
         )
 
     with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT design_key, revision, status FROM designs WHERE id = %s FOR UPDATE",
+            (design_id,),
+        )
+        current = cur.fetchone()
+        if current is None:
+            raise UnknownDesignError(design_id)
+
+        releasing = transition_requires_release_approval(current["status"], status)
+        # A terminal status is terminal for every caller: `allow_nonsequential`
+        # relaxes the ORDER work moves in, not whether finished work can be
+        # reopened. Without this a loop flush could walk a RELEASED design back
+        # to ANALYSIS, contradicting the terminality the lifecycle promises.
+        leaving_terminal = coerce_status(current["status"]) in TERMINAL_STATUSES
+        if releasing or leaving_terminal or not allow_nonsequential:
+            check_transition(current["status"], status)
+        if releasing:
+            check_design_release_approval_gate(
+                approval,
+                release_fingerprint_fields(
+                    design_id=design_id,
+                    design_key=current["design_key"],
+                    revision=current["revision"],
+                    target=status,
+                ),
+            )
+
         cur.execute(
             """
             UPDATE designs
@@ -423,9 +487,6 @@ def update_design_status(
             (status, design_id),
         )
         row = cur.fetchone()
-
-    if row is None:
-        raise UnknownDesignError(design_id)
 
     return row
 

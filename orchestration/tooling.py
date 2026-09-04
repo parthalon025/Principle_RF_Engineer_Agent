@@ -268,7 +268,21 @@ def _flush_decisions(
         try:
             for target in targets:
                 target.call(conn, **target.kwargs)
-            designs_db.update_design_status(conn, design_id=design_id, status=final_status.value)
+            # allow_nonsequential: the loop has walked ANALYSIS -> SIMULATION
+            # -> OPTIMIZATION -> VERIFICATION in memory during this iteration
+            # but persists only at the iteration boundary (ADR-0011), so the
+            # column moves in one step where the lifecycle expects several.
+            # The ordering check is relaxed for that; the RELEASED gate is not,
+            # and this flush never writes RELEASED (final_status below is
+            # ANALYSIS to iterate, PASS when done), nor may it move a design
+            # out of a terminal status -- update_design_status enforces both
+            # regardless of this flag.
+            designs_db.update_design_status(
+                conn,
+                design_id=design_id,
+                status=final_status.value,
+                allow_nonsequential=True,
+            )
         except (
             designs_db.RecordKeyCollisionError,
             designs_db.UnknownVerificationItemError,

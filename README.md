@@ -173,7 +173,7 @@ discipline needs:
 ├── geometry/         # unit-cell arrays, curved/conformal host surfaces
 ├── optimization/     # sweeps, grid/Bayesian search, GA, gradient
 ├── measurement/      # externally-obtained results only (no instrument control)
-├── verification/     # verification-matrix field shape
+├── verification/     # verification matrix, retrieval-quality gate, simulator reference cases
 ├── knowledge/        # ingestion, embedding, extraction, component lookup
 ├── db/               # Postgres schema + init
 ├── policies/         # tool_policy.yaml (the permission model)
@@ -450,6 +450,7 @@ prior art, the superposition coupling error bar, and the rest.
 | [`docs/LICENSE_MATRIX.md`](docs/LICENSE_MATRIX.md) | Full upstream-license inventory |
 | [`docs/FREE_AND_OPEN_SOURCE_TOOLING.md`](docs/FREE_AND_OPEN_SOURCE_TOOLING.md) | The free/OSS survey behind the solver choices |
 | [`docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`](docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md) | Gap analysis of the knowledge pipeline (embedding-version tracking, chunk dedup, retrieval feedback) |
+| [`verification/README.md`](verification/README.md) | The verification matrix, plus the retrieval-quality gate and simulator reference cases |
 | [`AGENTS.md`](AGENTS.md) / [`docs/agents/`](docs/agents/) | Repo conventions for AI coding agents |
 
 ---

@@ -107,7 +107,17 @@ def test_principal_role_has_broad_access():
     # 3 design-iteration-loop tools above). Both were implemented in
     # parallel against the same 82 baseline and each computed 82 + 1 = 83
     # on its own branch; both landed, so both apply: 82 + 1 + 1 = 84.
-    assert len(names) == 84
+    #
+    # issue #143 adds 1 more (synthesize_filter_prototype, the closed-form
+    # filter-prototype synthesizer -- also on the microwave role, matching
+    # the calculate_l_network_match precedent for a synthesis tool):
+    # 84 + 1 = 85.
+    #
+    # issue #145 adds 1 more (advance_design_status, the explicit
+    # design-lifecycle transition -- principal-only, matching the
+    # create_design/verify_requirement design-tracking precedent):
+    # 85 + 1 = 86.
+    assert len(names) == 86
 
 
 def test_principal_module_alias_matches_registry():
