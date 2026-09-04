@@ -190,7 +190,15 @@ state.iteration`) -- never the requirement's own target value restated as
 if it were a prediction, and never a number this module computes fresh.
 `_FIELD_SOURCES` is a small, closed table: quantity kind -> the ordered
 list of (step, result-field, canonical unit) this loop's OWN, currently
-wired tool set can produce that kind of number from --
+wired tool set can produce that kind of number from -- built, at import
+time, by grouping `orchestration/score_fields.py`'s `SCORE_FIELD_SOURCES`
+(issue #102's single source of truth for these triples) by quantity kind
+via this module's own `_classify_unit`, rather than writing the triples
+down a second time here. `orchestration/solver.py` derives a differently-
+shaped lookup (flat, by step) from that identical table; see `orchestration/
+score_fields.py`'s own docstring for why one module's indexing is never
+imposed on the other's, and tests/test_score_fields.py for the direct
+proof both stay derived, not independently maintained:
 
   - FREQUENCY: `ANALYSIS`'s `resonant_frequency_hz`
     (`rf_tools.calculations.patch_resonant_frequency_hz`), then
@@ -337,7 +345,8 @@ from typing import Any
 
 from designs.requirement_targets import TargetStatus
 
-from .design_loop import VERIFICATION_STATUSES, DesignLoopState, DesignStep, LoopDecision
+from .design_loop import VERIFICATION_STATUSES, DesignLoopState, LoopDecision
+from .score_fields import SCORE_FIELD_SOURCES, ScoreFieldSource
 
 _TOUCHSTONE = "measurement"
 _ANALYSIS_METHOD = "analysis"
@@ -410,20 +419,6 @@ _NON_TOUCHSTONE_UNIT_KINDS: dict[str, str] = {
     "percent": _EFFICIENCY,
 }
 
-# quantity kind -> ordered (step, result-field, canonical unit) candidates
-# this loop's own currently-wired tools can supply a same-quantity number
-# for. See this module's docstring, "DESIGN QUESTION 2", including the
-# named VSWR/S-parameter gap this table deliberately leaves open.
-_FIELD_SOURCES: dict[str, list[tuple[DesignStep, str, str]]] = {
-    _FREQUENCY: [
-        (DesignStep.ANALYSIS, "resonant_frequency_hz", "Hz"),
-        (DesignStep.OPTIMIZATION, "achieved_frequency_hz", "Hz"),
-    ],
-    _GAIN: [
-        (DesignStep.SIMULATION, "gain_dbi", "dBi"),
-    ],
-}
-
 _METHOD_FOR_PROVENANCE: dict[str, str] = {
     "CALCULATED": _ANALYSIS_METHOD,
     "SIMULATED": _SIMULATION_METHOD,
@@ -472,6 +467,37 @@ def _classify_unit(unit: Any) -> tuple[str | None, bool]:
     if normalized in _NON_TOUCHSTONE_UNIT_KINDS:
         return _NON_TOUCHSTONE_UNIT_KINDS[normalized], False
     return None, False
+
+
+def _build_field_sources() -> dict[str, list[ScoreFieldSource]]:
+    """Group `orchestration/score_fields.py`'s `SCORE_FIELD_SOURCES` (issue
+    #102's single source of truth for the `(step, result_field, unit)`
+    triples) by quantity kind, via this module's own `_classify_unit` --
+    the SAME classification a target's stated unit is run through
+    elsewhere in this module, so a shared triple always lands in the exact
+    kind a matching target would. A triple whose unit `_classify_unit`
+    doesn't recognize would be dropped rather than crash; none of the three
+    current triples hits that case (`_TOUCHSTONE_UNIT_KINDS`/
+    `_NON_TOUCHSTONE_UNIT_KINDS` above both recognize "hz" and "dbi"), and
+    tests/test_score_fields.py directly checks that every shared triple
+    ends up grouped, not silently dropped."""
+    grouped: dict[str, list[ScoreFieldSource]] = {}
+    for source in SCORE_FIELD_SOURCES:
+        kind, _touchstone_measurable = _classify_unit(source.unit)
+        if kind is None:
+            continue
+        grouped.setdefault(kind, []).append(source)
+    return grouped
+
+
+# quantity kind -> ordered (step, result-field, canonical unit) candidates
+# this loop's own currently-wired tools can supply a same-quantity number
+# for. See this module's docstring, "DESIGN QUESTION 2", including the
+# named VSWR/S-parameter gap this table deliberately leaves open (nothing
+# in SCORE_FIELD_SOURCES classifies to S_PARAMETER, so that kind simply
+# never appears as a key below -- the same "no entry at all" gap as before,
+# now falling out of the shared table rather than a hand-omitted key).
+_FIELD_SOURCES: dict[str, list[ScoreFieldSource]] = _build_field_sources()
 
 
 def _find_expected(

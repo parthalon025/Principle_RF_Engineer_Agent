@@ -271,21 +271,28 @@ step handlers each return a small, DIFFERENT dict shape (ANALYSIS:
 "impedance": {...}, "pattern": [...], ...}`; OPTIMIZATION: `{"achieved_
 frequency_hz": ...}`, among other fields) -- something has to say which
 key of which step's result is the number being scored, and in what unit.
-`_DEFAULT_SCORE_FIELDS` below is a fixed, duplicated-not-imported lookup
-of that (`resonant_frequency_hz`/Hz for ANALYSIS, `gain_dbi`/dBi for
-SIMULATION, `achieved_frequency_hz`/Hz for OPTIMIZATION) -- mechanical
-wiring knowledge already fixed by those functions' own documented output
-shapes (rf_tools/calculations.py, simulation/nec2pp.py, optimization/
-rf_objectives.py), not an RF judgment call, the same kind of small,
-stable per-step lookup `orchestration/tooling.py`'s own `_STEP_TO_TOOL_
-NAME` already keeps. A caller wanting a DIFFERENT field scored (e.g.
-SIMULATION's `average_power_gain_linear` instead of `gain_dbi`) overrides
-`result_field` in that step's `score_specs` entry, but then MUST also
-supply an explicit `unit` -- this module has no basis for guessing the
-unit of an arbitrary overridden field, matching designs/success_score.py's
-own "refuse rather than guess a unit conversion" rule exactly (see that
-module's "UNIT HANDLING" section); `_resolve_score_field` below enforces
-this and raises `SolverError` naming the problem if violated.
+`_DEFAULT_SCORE_FIELDS` below is that lookup (`resonant_frequency_hz`/Hz
+for ANALYSIS, `gain_dbi`/dBi for SIMULATION, `achieved_frequency_hz`/Hz
+for OPTIMIZATION), built at import time from `orchestration/
+score_fields.py`'s `SCORE_FIELD_SOURCES` -- the single source of truth
+this module and `orchestration/lab_test_plan.py` both derive their own
+lookup shape from (issue #102; that module needs the same facts grouped
+by physical quantity kind instead of by step, so it builds a differently-
+shaped index from the identical triples rather than this module's flat
+one). See `orchestration/score_fields.py`'s own docstring for why this is
+mechanical wiring knowledge fixed by those functions' own documented
+output shapes (rf_tools/calculations.py, simulation/nec2pp.py,
+optimization/rf_objectives.py), not an RF judgment call, and for why it is
+kept separate from `orchestration/tooling.py`'s own `_STEP_TO_TOOL_NAME`
+despite the overlapping step keys. A caller wanting a DIFFERENT field
+scored (e.g. SIMULATION's `average_power_gain_linear` instead of
+`gain_dbi`) overrides `result_field` in that step's `score_specs` entry,
+but then MUST also supply an explicit `unit` -- this module has no basis
+for guessing the unit of an arbitrary overridden field, matching designs/
+success_score.py's own "refuse rather than guess a unit conversion" rule
+exactly (see that module's "UNIT HANDLING" section); `_resolve_score_field`
+below enforces this and raises `SolverError` naming the problem if
+violated.
 
 A step with no `score_specs` entry is still DRIVEN (its `LoopDecision` is
 recorded, exactly as if scored) but never scored -- its trail entry
@@ -363,6 +370,7 @@ from designs.requirement_targets import TargetStatus
 from designs.success_score import success_score
 
 from .design_loop import GATED_STEPS, DesignStep
+from .score_fields import SCORE_FIELD_SOURCES
 from .tooling import advance_design_loop_step
 
 _logger = logging.getLogger(__name__)
@@ -404,13 +412,11 @@ _OPTIONAL_FIELDS: dict[DesignStep, tuple[str, ...]] = {
 }
 
 # Which raw result field a scoreable step's numeric value lives at, and its
-# unit -- see this module's docstring, "SCORING". Fixed wiring knowledge
-# about the Phase 1/6/9 functions' own documented output shapes, not an RF
-# judgment call.
+# unit -- see this module's docstring, "SCORING". Derived from
+# orchestration/score_fields.py's SCORE_FIELD_SOURCES (issue #102's single
+# source of truth), not restated here -- see that module's own docstring.
 _DEFAULT_SCORE_FIELDS: dict[DesignStep, tuple[str, str]] = {
-    DesignStep.ANALYSIS: ("resonant_frequency_hz", "Hz"),
-    DesignStep.SIMULATION: ("gain_dbi", "dBi"),
-    DesignStep.OPTIMIZATION: ("achieved_frequency_hz", "Hz"),
+    source.step: (source.result_field, source.unit) for source in SCORE_FIELD_SOURCES
 }
 
 _REQUIRED_STATE_KEYS = (
