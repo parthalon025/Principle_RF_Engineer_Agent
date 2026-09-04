@@ -99,6 +99,24 @@ and a glossary that churns with it stops being trustworthy (see
   anchors a request for design guidance. Distinct from a Component's
   specification, which describes an existing manufactured part rather
   than a target for a new one.
+- **Threshold/Objective**: the two values a Customer requirement's numeric
+  target may carry, adopted from defence-acquisition practice (JCIDS
+  Enclosure B, via #122) to settle #117. **Threshold** is the minimum
+  acceptable value — a candidate that fails it is rejected outright, so it
+  prunes the candidate space. **Objective** is the desired value — among
+  candidates that clear the threshold, closer to it scores better, so it
+  never prunes. Objective is optional; a requirement giving only a
+  threshold is a hard bound with no soft zone to rank on. Hardness is
+  asserted, never inferred: a requirement whose threshold and objective
+  coincide says so explicitly (`Threshold = Objective`) rather than leaving
+  a reader to guess which one a lone number is. The gap between the two is
+  the **trade space** a design is actually optimised within. A stated
+  preference with no hard floor (e.g. "prefer MXene where it's competitive")
+  is an objective with no threshold — so it stays a visible, arguable part
+  of the requirement rather than an unstated bias baked into the scorer
+  (#105). A "constraint" is not a separate kind of object in this model —
+  it is an ordinary requirement whose threshold happens to do the work of
+  pruning.
 - **Requirement-derived constraint**: a design parameter (a threshold, a
   bend radius, a band) whose value comes from one specific Customer
   requirement. Re-derived fresh every design pass from the requirement's
