@@ -63,11 +63,39 @@ gain target, etc.) that don't fit this shape can carry them inside each
 requirement's own free-form extra keys, or as prose in `requirement`
 itself -- `validate_requirements` only checks for the `requirement` text
 field, never rejects extra ones.
+
+REQUIREMENTS FRESHNESS (issue #100). `DesignLoopState.requirements` is
+captured once, by `start_design_loop`, and `orchestration/design_loop.py`
+never touches it again -- deliberately, since that module stays DB-free
+(docs/adr/0011). Meanwhile `designs.requirement_targets.
+propose_requirement_target`/`confirm_requirement_target`/
+`mark_requirement_unscoreable` (#92) write their `target` key straight onto
+the *persisted* `designs.requirements` JSONB column, via `design_id` -- a
+completely different write path. Left alone, a loop's own held state goes
+stale the instant one of those runs: `state["requirements"]` keeps showing
+whatever targets existed at `start_design_loop` time, not a target proposed
+or confirmed since. This module is where that gap closes (option 2 of the
+three the issue lays out -- "closest to the existing architecture"):
+`advance_design_loop_step` and `inspect_design_loop_state`, the two
+functions that ever hand a state dict back to a caller after loop start,
+both call `_fresh_requirements` first and substitute its result for
+whatever `state`/`new_loop_state` carried in, whenever a `design_id` is
+present. `orchestration/design_loop.py` gains no database awareness for
+this, same as PERSISTENCE below -- the read lives in this module, the
+layer that already talks to Postgres. Only the top-level `requirements`
+field is replaced; `state["decisions"][0]` (the REQUIREMENTS decision
+`start_design_loop` recorded) is never touched, so it keeps showing exactly
+what was originally stated at loop start, not a later interpretation of it
+(issue #100 acceptance criteria).
+`orchestration/lab_test_plan.py`'s own `_fetch_fresh_requirements` predates
+this fix and re-reads the same column for the same reason; it stays,
+documented there as deliberate belt-and-braces rather than removed -- see
+that module's docstring, "REQUIREMENTS FRESHNESS".
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import designs.db as designs_db
@@ -304,6 +332,30 @@ def _flush_decisions(
         conn.close()
 
 
+def _fresh_requirements(design_id: int) -> dict[str, Any]:
+    """Re-read `designs.requirements` fresh from the database for
+    `design_id` -- see this module's docstring, "REQUIREMENTS FRESHNESS"
+    (issue #100). Reuses `designs_db.read_design` (the same function
+    `orchestration/lab_test_plan.py`'s own belt-and-braces re-read already
+    calls) rather than a new, leaner single-column query -- one already-
+    open connection per step-advancing/inspecting call is not a real cost
+    for a locally run, interactive design loop, and a second, parallel
+    "just the requirements column" read path would be a second place to
+    keep in sync with `read_design`'s own. Raises `designs_db.
+    UnknownDesignError` if `design_id` names no real `designs` row (should
+    not happen for a state dict this module's own functions produced; a
+    bug-shaped state deserves a loud failure, not a silently stale
+    result)."""
+    conn = designs_db.get_connection()
+    try:
+        design = designs_db.read_design(conn, design_id)
+    finally:
+        conn.close()
+    if design is None:
+        raise designs_db.UnknownDesignError(design_id)
+    return design["requirements"]
+
+
 def start_new_design_loop(
     design_key: str,
     name: str,
@@ -365,10 +417,12 @@ def advance_design_loop_step(
     A `REDESIGN_DECISION` transition (docs/adr/0011) additionally flushes
     every decision recorded since the last flush to the database and
     moves `designs.status` -- see this module's docstring's "PERSISTENCE"
-    section. If that flush fails, this call raises
-    `DesignLoopPersistenceError` and returns nothing: `state` (which the
-    caller still holds) remains the only valid state, exactly as if the
-    step had never advanced.
+    section. This flush runs LAST, after the fresh-`requirements` read
+    below succeeds, specifically so that a raise from EITHER step -- the
+    read or the flush -- leaves `state` (which the caller still holds) as
+    the only valid state, exactly as if the step had never advanced: no
+    call to this function ever raises after writing something the caller
+    has no way to know landed.
 
     Returns the loop's new state dict. Query its "pending_approval" key
     (also present on the state returned by inspect_design_loop_state) to
@@ -389,6 +443,29 @@ def advance_design_loop_step(
     iteration_before = loop_state.iteration
 
     new_loop_state = advance_loop_step(loop_state, step_input=step_input, approval=approval)
+
+    # issue #100: substitute the persisted designs.requirements column
+    # fresh, rather than handing back new_loop_state's own carried copy --
+    # see this module's docstring, "REQUIREMENTS FRESHNESS". design_id is
+    # guaranteed non-None here (checked above), and only the top-level
+    # `requirements` field changes -- `decisions[0]` (the REQUIREMENTS
+    # decision) is untouched.
+    #
+    # Deliberately done BEFORE the REDESIGN_DECISION flush below (code
+    # review on issue #100): _fresh_requirements has no data dependency on
+    # the flush -- it neither reads nor writes designs.requirements -- so
+    # reading it first means a failure here (e.g. the read's own DB
+    # connection dying) happens before _flush_decisions ever runs, keeping
+    # this function's "the caller's pre-call state remains the only valid
+    # state" guarantee true for this failure mode too, not just a flush
+    # failure. Reading it after, as a prior version of this function did,
+    # meant a failure here could follow an already-committed flush: the
+    # caller sees this call raise, retries with their still-held pre-call
+    # state, and replays _flush_decisions with the same persisted_count --
+    # which then fails on a record_key collision against the writes their
+    # first, "failed" call actually made, with nothing in that error
+    # pointing back at what really happened.
+    new_loop_state = replace(new_loop_state, requirements=_fresh_requirements(design_id))
 
     next_action = step_input.get("next_action") if step_input else None
     if current_step_before == DesignStep.REDESIGN_DECISION.value and next_action in (
@@ -419,11 +496,25 @@ def inspect_design_loop_state(state: dict[str, Any]) -> dict[str, Any]:
     approval is currently pending (and for which step) -- from a state dict
     returned by start_new_design_loop or advance_design_loop_step. Safe to
     call at any point mid-loop, not just at completion; does not mutate or
-    advance the loop, and does not touch the database (`design_id`/
-    `design_key`/`persisted_decision_count` are passed through unchanged,
-    read-only)."""
-    result = DesignLoopState.from_dict(state).to_dict()
-    result["design_id"] = state.get("design_id")
+    advance the loop.
+
+    When `state` carries a `design_id`, `requirements` is substituted with
+    a fresh read of the persisted `designs.requirements` column (issue
+    #100: see this module's docstring, "REQUIREMENTS FRESHNESS") -- so a
+    target proposed or confirmed via `designs.requirement_targets` after
+    `state` was captured is reflected here without the caller re-reading
+    the design themselves. Everything else -- `decisions`, `current_step`,
+    `design_id`/`design_key`/`persisted_decision_count` -- is passed
+    through unchanged, read-only. Without a `design_id` (a bare
+    `orchestration.design_loop.DesignLoopState.to_dict()`), this never
+    touches the database and `requirements` is returned exactly as given,
+    honestly stale-if-stale, since there is nowhere fresher to read from."""
+    loop_state = DesignLoopState.from_dict(state)
+    design_id = state.get("design_id")
+    if design_id is not None:
+        loop_state = replace(loop_state, requirements=_fresh_requirements(design_id))
+    result = loop_state.to_dict()
+    result["design_id"] = design_id
     result["design_key"] = state.get("design_key")
     result["persisted_decision_count"] = state.get("persisted_decision_count", 0)
     return result
