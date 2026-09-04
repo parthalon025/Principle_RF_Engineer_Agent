@@ -65,9 +65,7 @@ def test_refuses_without_allow_external_network_tools(monkeypatch):
         )
 
 
-def test_ok_match_downloads_and_calls_ingest_document_with_correct_arguments(
-    tmp_path, monkeypatch
-):
+def test_ok_match_downloads_and_calls_ingest_document_with_correct_arguments(tmp_path, monkeypatch):
     monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
     ingest_spy = _IngestSpy(result={"status": "ingested", "document_id": 100})
     pdf_path = tmp_path / "LM358DR.pdf"

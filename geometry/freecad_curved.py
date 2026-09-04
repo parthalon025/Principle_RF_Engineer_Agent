@@ -416,9 +416,7 @@ def surface_frame_at(u_m: float, v_m: float, curvature: dict[str, Any]) -> dict[
                 "degrees of a pole -- the tangent-plane basis is degenerate there"
             )
         radial = (
-            cos_phi * math.cos(theta) * e_c1
-            + cos_phi * math.sin(theta) * e_c2
-            + sin_phi * e_axis
+            cos_phi * math.cos(theta) * e_c1 + cos_phi * math.sin(theta) * e_c2 + sin_phi * e_axis
         )
         position = center + radius * radial
         normal = radial

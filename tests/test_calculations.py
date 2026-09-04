@@ -686,11 +686,7 @@ def test_patch_length_extension_matches_fringing_formula():
     eps_eff = patch_effective_permittivity(eps_r, w_m, h_m)
     w_over_h = w_m / h_m
     expected = (
-        0.412
-        * h_m
-        * (eps_eff + 0.3)
-        * (w_over_h + 0.264)
-        / ((eps_eff - 0.258) * (w_over_h + 0.8))
+        0.412 * h_m * (eps_eff + 0.3) * (w_over_h + 0.264) / ((eps_eff - 0.258) * (w_over_h + 0.8))
     )
     assert patch_length_extension_m(eps_eff, w_m, h_m) == pytest.approx(expected)
     assert patch_length_extension_m(eps_eff, w_m, h_m) > 0
@@ -711,13 +707,7 @@ def test_patch_resonant_frequency_matches_hand_calculation():
 
     eps_eff = (eps_r + 1) / 2 + (eps_r - 1) / 2 * (1 + 12 * h_m / w_m) ** -0.5
     w_over_h = w_m / h_m
-    dl = (
-        0.412
-        * h_m
-        * (eps_eff + 0.3)
-        * (w_over_h + 0.264)
-        / ((eps_eff - 0.258) * (w_over_h + 0.8))
-    )
+    dl = 0.412 * h_m * (eps_eff + 0.3) * (w_over_h + 0.264) / ((eps_eff - 0.258) * (w_over_h + 0.8))
     l_eff = l_m + 2 * dl
     expected_f_r = c / (2 * l_eff * eps_eff**0.5)
 
@@ -878,9 +868,7 @@ def test_curvature_shifted_resonant_frequency_end_to_end_with_patch_formula():
     f_flat = patch_resonant_frequency_hz(eps_r, w_m, h_m, l_m)
     r_m = 0.15  # L/R ~ 0.19, within validity range
     f_curved = curvature_shifted_resonant_frequency_hz(f_flat, l_m, r_m)
-    assert f_curved == pytest.approx(
-        f_flat * curvature_length_correction_factor(l_m, r_m)
-    )
+    assert f_curved == pytest.approx(f_flat * curvature_length_correction_factor(l_m, r_m))
     assert f_curved > f_flat
 
 
@@ -902,12 +890,8 @@ def test_curvature_shifted_resonant_frequency_end_to_end_with_patch_formula():
 
 
 def test_maxwell_garnett_effective_permeability_zero_fill_fraction_is_host_exactly():
-    assert maxwell_garnett_effective_permeability(0.0, mu_r=25.0, mu_host=1.0) == pytest.approx(
-        1.0
-    )
-    assert maxwell_garnett_effective_permeability(0.0, mu_r=3.0, mu_host=2.5) == pytest.approx(
-        2.5
-    )
+    assert maxwell_garnett_effective_permeability(0.0, mu_r=25.0, mu_host=1.0) == pytest.approx(1.0)
+    assert maxwell_garnett_effective_permeability(0.0, mu_r=3.0, mu_host=2.5) == pytest.approx(2.5)
 
 
 def test_maxwell_garnett_effective_permeability_default_host_is_free_space():

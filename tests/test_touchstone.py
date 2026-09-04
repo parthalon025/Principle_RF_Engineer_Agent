@@ -324,9 +324,7 @@ def test_compare_touchstone_known_1db_difference_same_grid(tmp_path: Path):
     expected_abs_diff = abs(expected_s21_b - expected_s21_a)
     assert s21["rms_diff"] == pytest.approx(expected_abs_diff, abs=1e-9)
     assert s21["max_abs_diff"] == pytest.approx(expected_abs_diff, abs=1e-9)
-    np.testing.assert_allclose(
-        np.asarray(s21["diff"]), expected_s21_b - expected_s21_a, atol=1e-9
-    )
+    np.testing.assert_allclose(np.asarray(s21["diff"]), expected_s21_b - expected_s21_a, atol=1e-9)
 
     # Both attenuators are perfectly matched, so S11/S22 are identical (zero diff).
     for key in ("s11", "s22"):
@@ -349,9 +347,7 @@ def test_compare_touchstone_interpolates_onto_common_grid(tmp_path: Path):
     # Common grid picks the sparser network's (a's) own points, restricted to the
     # overlap of both ranges: [2 GHz, 4.5 GHz] out of a's 0.5 GHz-spaced grid.
     expected_common_freqs = np.array([2e9, 2.5e9, 3e9, 3.5e9, 4e9, 4.5e9])
-    np.testing.assert_allclose(
-        result["common_frequencies_hz"], expected_common_freqs, rtol=1e-9
-    )
+    np.testing.assert_allclose(result["common_frequencies_hz"], expected_common_freqs, rtol=1e-9)
 
     expected_s21_a = _lossless_line_s21(expected_common_freqs, length_a_m)
     expected_s21_b = _lossless_line_s21(expected_common_freqs, length_b_m)

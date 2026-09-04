@@ -338,11 +338,7 @@ def _primitive_command(
     if shape == "cylinder":
         if radius_m is None:
             raise ValueError("cylinder primitive requires 'radius_m'")
-        return (
-            "#cylinder: "
-            + " ".join(_fmt_num(v) for v in [*coords, radius_m])
-            + f" {material}"
-        )
+        return "#cylinder: " + " ".join(_fmt_num(v) for v in [*coords, radius_m]) + f" {material}"
     if shape == "plate":
         return "#plate: " + " ".join(_fmt_num(v) for v in coords) + f" {material}"
     if shape == "edge":

@@ -200,7 +200,6 @@ def analyze_touchstone_file(path: str, design_id: int | None = None) -> dict:
     return result
 
 
-
 # ---------------------------------------------------------------------------
 # Phase 1-2 calculations and Touchstone capabilities as tools (issue #36).
 #
@@ -472,9 +471,7 @@ def calculate_quality_factor_from_fractional_bandwidth(fbw: float, vswr: float =
 
 
 @mcp.tool()
-def calculate_curvature_length_correction_factor(
-    l_m: float, radius_of_curvature_m: float
-) -> dict:
+def calculate_curvature_length_correction_factor(l_m: float, radius_of_curvature_m: float) -> dict:
     """Calculate the first-order geometric length-correction factor (L/chord) for a
     patch bent to a radius of curvature. Restricted to L/R < 0.5; approximation only."""
     return {
@@ -659,9 +656,7 @@ def run_nec2_simulation(geometry: dict, frequency_hz: float, timeout_s: int = 60
     citation) but NOT against a real nec2++ binary -- none is installed in this
     environment; treat any result as unverified end-to-end until it has been run
     against the real tool at least once."""
-    return _run_nec2_simulation(
-        geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s
-    )
+    return _run_nec2_simulation(geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s)
 
 
 @mcp.tool()
@@ -925,9 +920,7 @@ def run_ltspice_simulation(
     ImportError, if it isn't installed. Format/invocation verified against
     spicelib's own primary GitHub source but NOT against a real LTspice
     binary -- none is installed in this environment."""
-    return _run_ltspice_simulation(
-        netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s
-    )
+    return _run_ltspice_simulation(netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s)
 
 
 @mcp.tool()

@@ -198,8 +198,7 @@ def combine_shapes(
         operation = shape.get("operation", "add")
         if operation not in _BOOLEAN_OP:
             raise ValueError(
-                f"shape {idx} 'operation' must be one of {sorted(_BOOLEAN_OP)}, "
-                f"got {operation!r}"
+                f"shape {idx} 'operation' must be one of {sorted(_BOOLEAN_OP)}, got {operation!r}"
             )
         next_poly = _shape_to_gdstk_polygon(shape, idx)
         current = gdstk.boolean(current, next_poly, _BOOLEAN_OP[operation], precision=precision_m)
@@ -273,9 +272,7 @@ def generate_unit_cell_array(
     """
     cell_primitives = [unit_cell] if isinstance(unit_cell, dict) else list(unit_cell)
     if not cell_primitives:
-        raise ValueError(
-            "unit_cell must be a non-empty primitive dict or list of primitive dicts"
-        )
+        raise ValueError("unit_cell must be a non-empty primitive dict or list of primitive dicts")
 
     nx, ny = count
     nx, ny = int(nx), int(ny)

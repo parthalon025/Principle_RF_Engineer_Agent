@@ -46,8 +46,7 @@ def validate_requirements(requirements: Any) -> None:
         requirement_text = value.get("requirement")
         if not isinstance(requirement_text, str) or not requirement_text:
             raise InvalidRequirementsError(
-                f"requirements[{requirement_id!r}] is missing a non-empty 'requirement' "
-                "text field"
+                f"requirements[{requirement_id!r}] is missing a non-empty 'requirement' text field"
             )
 
 

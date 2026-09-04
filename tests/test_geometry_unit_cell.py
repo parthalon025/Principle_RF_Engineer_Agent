@@ -207,9 +207,7 @@ def test_combine_shapes_empty_list_raises():
 
 def test_combine_shapes_first_shape_operation_must_be_add():
     with pytest.raises(ValueError, match="operation"):
-        combine_shapes(
-            [{"kind": "box", "p1_m": [0, 0], "p2_m": [1, 1], "operation": "subtract"}]
-        )
+        combine_shapes([{"kind": "box", "p1_m": [0, 0], "p2_m": [1, 1], "operation": "subtract"}])
 
 
 def test_combine_shapes_invalid_kind_raises():
@@ -229,9 +227,7 @@ def test_combine_shapes_invalid_operation_raises():
 
 def test_combine_shapes_invalid_normal_axis_raises():
     with pytest.raises(ValueError, match="normal_axis"):
-        combine_shapes(
-            [{"kind": "box", "p1_m": [0, 0], "p2_m": [1, 1]}], normal_axis="w"
-        )
+        combine_shapes([{"kind": "box", "p1_m": [0, 0], "p2_m": [1, 1]}], normal_axis="w")
 
 
 def test_combine_shapes_box_missing_field_raises():
@@ -265,13 +261,16 @@ def test_generate_unit_cell_array_box_count_and_names():
         "p1_m": [0.0, 0.0, 0.0016],
         "p2_m": [0.002, 0.002, 0.0016],
     }
-    result = generate_unit_cell_array(
-        unit_cell, spacing_m=(0.003, 0.0035), count=(3, 2)
-    )
+    result = generate_unit_cell_array(unit_cell, spacing_m=(0.003, 0.0035), count=(3, 2))
     assert len(result) == 6
     names = {p["name"] for p in result}
     assert names == {
-        "cell_0_0", "cell_0_1", "cell_1_0", "cell_1_1", "cell_2_0", "cell_2_1",
+        "cell_0_0",
+        "cell_0_1",
+        "cell_1_0",
+        "cell_1_1",
+        "cell_2_0",
+        "cell_2_1",
     }
     for p in result:
         assert p["shape"] == "box"

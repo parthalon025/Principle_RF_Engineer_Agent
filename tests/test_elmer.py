@@ -83,7 +83,7 @@ def test_generate_gmsh_geo_script_domain_only():
         ("z_min", 105),
         ("z_max", 106),
     ]:
-        assert f's_{face}() = Surface In BoundingBox' in geo
+        assert f"s_{face}() = Surface In BoundingBox" in geo
         assert f'Physical Surface("{face}", {tag}) = s_{face}();' in geo
     assert "Mesh.MeshSizeMax" in geo
     assert "Mesh 3;" in geo
@@ -202,7 +202,7 @@ def test_generate_elmer_sif_excitation_missing_current_density_raises():
 def test_run_gmsh_meshing_invokes_dash_3_format_msh2(tmp_path: Path):
     script = _make_fake_sh(tmp_path, "fake_gmsh.sh", 'echo "$@" > argv.txt\n')
     geo_file = tmp_path / "model.geo"
-    geo_file.write_text("SetFactory(\"OpenCASCADE\");\n")
+    geo_file.write_text('SetFactory("OpenCASCADE");\n')
     msh_file = tmp_path / "model.msh"
 
     run_gmsh_meshing(geo_file, msh_file, tmp_path, executable=str(script), timeout_s=10)
@@ -306,9 +306,7 @@ def test_elmer_simulator_invokes_sif_path_directly(tmp_path: Path):
 
 
 def test_elmer_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_sh(
-        tmp_path, "fake_elmersolver.sh", 'echo "ERROR: bad sif" >&2\nexit 1\n'
-    )
+    script = _make_fake_sh(tmp_path, "fake_elmersolver.sh", 'echo "ERROR: bad sif" >&2\nexit 1\n')
     sif_file = tmp_path / "case.sif"
     sif_file.write_text("Header\nEnd\n")
     simulator = ElmerSimulator(executable=str(script))

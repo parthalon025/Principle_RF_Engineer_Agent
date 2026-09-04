@@ -301,9 +301,7 @@ def test_bayesian_optimize_is_deterministic_given_a_seed():
 
 def test_bayesian_optimize_rejects_too_few_initial_points():
     with pytest.raises(ValueError, match="n_initial_points"):
-        bayesian_optimize(
-            quadratic_bowl_1d, [Parameter("x", 0.0, 1.0)], n_initial_points=1
-        )
+        bayesian_optimize(quadratic_bowl_1d, [Parameter("x", 0.0, 1.0)], n_initial_points=1)
 
 
 def test_bayesian_optimize_tags_objective_name_and_constraints():

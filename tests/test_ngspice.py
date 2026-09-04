@@ -173,10 +173,7 @@ def test_generate_ngspice_netlist_unknown_component_type_raises():
 def test_parse_ngspice_wrdata_ac_real_imag_pairs():
     # One shared scale column (set wr_singlescale), then (real, imag) per
     # output, for 2 outputs at 2 frequency points.
-    text = (
-        "1e+08 1.0 0.0 0.5 -0.1\n"
-        "1e+09 0.8 -0.2 0.3 -0.4\n"
-    )
+    text = "1e+08 1.0 0.0 0.5 -0.1\n1e+09 0.8 -0.2 0.3 -0.4\n"
     result = parse_ngspice_wrdata(text, ["v(out)", "v(src)"], "ac")
     assert result["scale_name"] == "frequency_hz"
     assert result["scale"] == pytest.approx([1e8, 1e9])
@@ -236,9 +233,7 @@ def test_ngspice_simulator_invokes_dash_b_dash_o_and_netlist(tmp_path: Path):
 
 
 def test_ngspice_simulator_nonzero_exit_raises_simulator_error_with_log_content(tmp_path: Path):
-    script = _make_fake_ngspice(
-        tmp_path, 'echo "Error: bad netlist card" > "$3"\nexit 1\n'
-    )
+    script = _make_fake_ngspice(tmp_path, 'echo "Error: bad netlist card" > "$3"\nexit 1\n')
     netlist_file = tmp_path / "model.cir"
     netlist_file.write_text("* test\n.end\n")
 
@@ -276,7 +271,7 @@ def test_ngspice_simulator_picks_up_executable_from_env_var(tmp_path: Path, monk
 # docstring for the not-verified-against-a-real-binary caveat).
 # ---------------------------------------------------------------------------
 
-_FAKE_NGSPICE_PY = '''#!{python}
+_FAKE_NGSPICE_PY = """#!{python}
 import sys
 
 args = sys.argv[1:]
@@ -293,7 +288,7 @@ with open({output_name!r}, "w") as f:
     f.write({output_content!r})
 
 sys.exit(0)
-'''
+"""
 
 
 def _make_fake_ngspice_py(tmp_path: Path, output_name: str, output_content: str) -> Path:

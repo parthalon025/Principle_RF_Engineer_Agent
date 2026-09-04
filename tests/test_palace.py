@@ -307,6 +307,7 @@ def test_generate_palace_config_is_json_serializable():
 # module docstring for the honest not-verified-against-a-real-run caveat).
 # ---------------------------------------------------------------------------
 
+
 def _build_sample_floquet_csv() -> str:
     """Build a synthetic port-floquet-S.csv via Python's own csv.writer
     (which RFC4180-quotes any field containing a comma) rather than a

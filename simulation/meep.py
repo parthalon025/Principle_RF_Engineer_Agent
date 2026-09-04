@@ -251,9 +251,7 @@ def _meep_freq_to_hz(frequency_meep: float, a_m: float) -> float:
 
 def _vector3(mp_module: Any, xyz_m: list[float], a_m: float) -> Any:
     x_m, y_m, z_m = xyz_m
-    return mp_module.Vector3(
-        _m_to_meep(x_m, a_m), _m_to_meep(y_m, a_m), _m_to_meep(z_m, a_m)
-    )
+    return mp_module.Vector3(_m_to_meep(x_m, a_m), _m_to_meep(y_m, a_m), _m_to_meep(z_m, a_m))
 
 
 # ---------------------------------------------------------------------------
@@ -556,12 +554,24 @@ def _run_reflectance_cross_check(
         boundary_layers=[mp_module.PML(pml_thickness)],
     )
     refl_flux_ref = _add_flux_monitor(
-        mp_module, ref_sim, fcen, fwidth, nfreq,
-        geometry["reflection_monitor_center_m"], monitor_size_m, a_m,
+        mp_module,
+        ref_sim,
+        fcen,
+        fwidth,
+        nfreq,
+        geometry["reflection_monitor_center_m"],
+        monitor_size_m,
+        a_m,
     )
     baseline_flux_monitor = _add_flux_monitor(
-        mp_module, ref_sim, fcen, fwidth, nfreq,
-        geometry["reference_monitor_center_m"], monitor_size_m, a_m,
+        mp_module,
+        ref_sim,
+        fcen,
+        fwidth,
+        nfreq,
+        geometry["reference_monitor_center_m"],
+        monitor_size_m,
+        a_m,
     )
     _run_until_decayed(
         mp_module, ref_sim, component_name, stop_point_m, a_m, decay_by, check_interval
@@ -580,8 +590,14 @@ def _run_reflectance_cross_check(
         boundary_layers=[mp_module.PML(pml_thickness)],
     )
     refl_flux_full = _add_flux_monitor(
-        mp_module, full_sim, fcen, fwidth, nfreq,
-        geometry["reflection_monitor_center_m"], monitor_size_m, a_m,
+        mp_module,
+        full_sim,
+        fcen,
+        fwidth,
+        nfreq,
+        geometry["reflection_monitor_center_m"],
+        monitor_size_m,
+        a_m,
     )
     full_sim.load_minus_flux_data(refl_flux_full, saved_refl_data)
     _run_until_decayed(

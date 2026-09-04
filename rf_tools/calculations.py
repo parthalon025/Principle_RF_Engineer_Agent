@@ -373,9 +373,7 @@ def output_stability_circle(s_params: list[list[complex]] | np.ndarray) -> tuple
     delta = s11 * s22 - s12 * s21
     denom = abs(s22) ** 2 - abs(delta) ** 2
     if denom == 0:
-        raise ValueError(
-            "Output stability circle is undefined when |S22|^2 = |Delta|^2."
-        )
+        raise ValueError("Output stability circle is undefined when |S22|^2 = |Delta|^2.")
     center = np.conj(s22 - delta * np.conj(s11)) / denom
     radius = abs(s12 * s21) / abs(denom)
     return complex(center), float(radius)
@@ -398,9 +396,7 @@ def input_stability_circle(s_params: list[list[complex]] | np.ndarray) -> tuple[
     delta = s11 * s22 - s12 * s21
     denom = abs(s11) ** 2 - abs(delta) ** 2
     if denom == 0:
-        raise ValueError(
-            "Input stability circle is undefined when |S11|^2 = |Delta|^2."
-        )
+        raise ValueError("Input stability circle is undefined when |S11|^2 = |Delta|^2.")
     center = np.conj(s11 - delta * np.conj(s22)) / denom
     radius = abs(s12 * s21) / abs(denom)
     return complex(center), float(radius)
@@ -544,11 +540,7 @@ def patch_length_extension_m(eps_eff: float, w_m: float, h_m: float) -> float:
         raise ValueError("Substrate thickness h_m must be positive.")
     w_over_h = w_m / h_m
     return (
-        0.412
-        * h_m
-        * (eps_eff + 0.3)
-        * (w_over_h + 0.264)
-        / ((eps_eff - 0.258) * (w_over_h + 0.8))
+        0.412 * h_m * (eps_eff + 0.3) * (w_over_h + 0.264) / ((eps_eff - 0.258) * (w_over_h + 0.8))
     )
 
 

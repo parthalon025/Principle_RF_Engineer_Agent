@@ -212,10 +212,7 @@ def check_hfss_workstation_confinement(
 
     enabled = str(env.get("HFSS_ENABLED", "")).strip().lower()
     if enabled != "true":
-        missing.append(
-            "HFSS_ENABLED must be 'true' "
-            f"(got {env.get('HFSS_ENABLED', '<unset>')!r})"
-        )
+        missing.append(f"HFSS_ENABLED must be 'true' (got {env.get('HFSS_ENABLED', '<unset>')!r})")
 
     workstation_id = str(env.get("HFSS_WORKSTATION_ID", "")).strip()
     allowed_id = str(env.get("HFSS_ALLOWED_WORKSTATION_ID", "")).strip()

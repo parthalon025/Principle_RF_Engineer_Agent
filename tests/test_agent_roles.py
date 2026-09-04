@@ -589,8 +589,7 @@ def test_multi_domain_query_synthesis_cites_both_contributing_roles():
 
     antenna_result = SimpleNamespace(
         final_output=(
-            "For 2.45 GHz, a half-wave dipole is ~61.2 mm "
-            "(wavelength=122.4 mm, CALCULATED)."
+            "For 2.45 GHz, a half-wave dipole is ~61.2 mm (wavelength=122.4 mm, CALCULATED)."
         )
     )
     stability_result = SimpleNamespace(

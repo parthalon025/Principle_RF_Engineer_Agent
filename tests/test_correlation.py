@@ -106,7 +106,8 @@ def test_correlate_known_length_perturbation_matches_hand_computed_diff():
     measured_network = _matched_line_network(freqs_hz, length_meas_m)
 
     result = correlate_simulation_measurement(
-        simulated_network, measured_network  # bare skrf.Network inputs
+        simulated_network,
+        measured_network,  # bare skrf.Network inputs
     )
 
     expected_s21_sim = _lossless_line_s21(freqs_hz, length_sim_m)
@@ -135,9 +136,7 @@ def test_correlate_with_fixture_deembeds_before_comparison(tmp_path: Path):
     fixture = _lossy_two_port(
         freqs_hz, reflection=0.05 + 0.02j, insertion_loss_mag=0.9, length_m=0.01
     )
-    dut = _lossy_two_port(
-        freqs_hz, reflection=0.1 - 0.03j, insertion_loss_mag=0.3, length_m=0.03
-    )
+    dut = _lossy_two_port(freqs_hz, reflection=0.1 - 0.03j, insertion_loss_mag=0.3, length_m=0.03)
     # what a VNA actually measures: the fixture is physically in the path.
     measured_raw = fixture**dut
 
@@ -289,9 +288,7 @@ def test_correlate_accepts_touchstone_file_path(tmp_path: Path):
     path = tmp_path / "measured.s2p"
     net.write_touchstone(str(path))
 
-    result = correlate_simulation_measurement(
-        {"network": net}, {"touchstone_file": str(path)}
-    )
+    result = correlate_simulation_measurement({"network": net}, {"touchstone_file": str(path)})
 
     assert result["comparison"]["s21"]["max_abs_diff"] == pytest.approx(0.0, abs=1e-9)
 

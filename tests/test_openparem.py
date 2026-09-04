@@ -462,9 +462,7 @@ def test_openparem_simulator_mpi_processes_of_1_uses_serial_form(tmp_path: Path)
     project_file.write_text("#OpenParEM3Dproject 1.0\n")
 
     simulator = OpenParemSimulator(executable=str(script))
-    result = simulator.run(
-        {"project_file": str(project_file), "timeout_s": 10, "mpi_processes": 1}
-    )
+    result = simulator.run({"project_file": str(project_file), "timeout_s": 10, "mpi_processes": 1})
     assert result.outputs["stdout"].split() == [str(project_file)]
 
 
@@ -546,8 +544,10 @@ def test_run_openparem_simulation_end_to_end_with_fake_executable(tmp_path: Path
     result = run_openparem_simulation(
         mesh_file="monopole_antenna.msh",
         ports=MONOPOLE_PORTS,
-        project={"frequency_plan": {"linear": [{"start_hz": 1e9, "stop_hz": 3e9, "step_hz": 1e9}]},
-                 "far_field": {"quantity": "G"}},
+        project={
+            "frequency_plan": {"linear": [{"start_hz": 1e9, "stop_hz": 3e9, "step_hz": 1e9}]},
+            "far_field": {"quantity": "G"},
+        },
         project_name="monopole",
         timeout_s=10,
         executable=str(script),
@@ -591,7 +591,7 @@ def test_run_openparem_simulation_no_far_field_when_not_requested(tmp_path: Path
     *_FarField_results.csv, and this stays honestly uncomputed=False."""
     script = _make_fake_openparem(
         tmp_path,
-        f'cat > monopole_results.csv <<\'EOF\'\n{RESULTS_CSV_RI}EOF\n',
+        f"cat > monopole_results.csv <<'EOF'\n{RESULTS_CSV_RI}EOF\n",
     )
     result = run_openparem_simulation(
         mesh_file="m.msh",

@@ -218,9 +218,7 @@ def _verify_loop_step_approval_receipt(
     return problems
 
 
-def check_loop_step_approval_gate(
-    approval: Any, fingerprint_fields: dict[str, Any]
-) -> None:
+def check_loop_step_approval_gate(approval: Any, fingerprint_fields: dict[str, Any]) -> None:
     """Raise OrchestrationError naming exactly what's missing unless
     `approval` is a valid LoopStepApprovalReceipt for THIS exact
     `fingerprint_fields` -- signature-verified and fingerprint-matched, not

@@ -161,7 +161,9 @@ class FakeBoard:
     def get_enabled_layers(self):
         return ["BL_F_Cu", "BL_B_Cu", "BL_Edge_Cuts"]
 
-    def export_gerbers(self, output_path, plot_settings=None, use_protel_file_extensions=True, **kwargs):
+    def export_gerbers(
+        self, output_path, plot_settings=None, use_protel_file_extensions=True, **kwargs
+    ):
         self.export_gerbers_calls.append(
             {
                 "output_path": output_path,
@@ -194,7 +196,7 @@ class FakeBoard:
         self.export_position_calls.append({"output_path": output_path, "settings": settings})
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         Path(output_path).write_text(
-            'Ref,Val,Package,PosX,PosY,Rot,Side\n'
+            "Ref,Val,Package,PosX,PosY,Rot,Side\n"
             '"SP1","Simulation_Port","Simulation_Port",1.000000,2.000000,90.000000,top\n'
         )
         return FakeJobResult([output_path])
@@ -223,7 +225,9 @@ DEFAULT_STACKUP_LAYERS = [
 
 
 def test_extract_kicad_stackup_translates_copper_and_dielectric_layers():
-    stackup = extract_kicad_stackup(FakeBoard(stackup_layers=DEFAULT_STACKUP_LAYERS), api=_make_fake_api())
+    stackup = extract_kicad_stackup(
+        FakeBoard(stackup_layers=DEFAULT_STACKUP_LAYERS), api=_make_fake_api()
+    )
 
     assert stackup["format_version"] == "1.0"
     layers = stackup["layers"]

@@ -301,9 +301,7 @@ def test_nec2pp_simulator_invokes_dash_i_and_dash_o_dash(tmp_path: Path):
 
 
 def test_nec2pp_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_nec2pp(
-        tmp_path, 'echo "boom: bad geometry card" >&2\nexit 1\n'
-    )
+    script = _make_fake_nec2pp(tmp_path, 'echo "boom: bad geometry card" >&2\nexit 1\n')
     input_file = tmp_path / "model.nec"
     input_file.write_text("CM test\nCE\nEN\n")
 

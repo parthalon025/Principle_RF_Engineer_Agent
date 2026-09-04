@@ -48,9 +48,7 @@ class QucsSimulator(Simulator):
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise SimulatorError(
-                f"Qucs-S/qucsator timed out after {timeout_s}s: {exc}"
-            ) from exc
+            raise SimulatorError(f"Qucs-S/qucsator timed out after {timeout_s}s: {exc}") from exc
         if completed.returncode != 0:
             raise SimulatorError(
                 f"Qucs-S/qucsator failed ({completed.returncode}): {completed.stderr[-4000:]}"
@@ -492,8 +490,7 @@ def _try_write_touchstone(
     n_ports = len(ports)
     try:
         z0_by_num = {
-            int(p.get("num", idx + 1)): float(p.get("z_ohms", 50.0))
-            for idx, p in enumerate(ports)
+            int(p.get("num", idx + 1)): float(p.get("z_ohms", 50.0)) for idx, p in enumerate(ports)
         }
         if set(z0_by_num) != set(range(1, n_ports + 1)):
             return None

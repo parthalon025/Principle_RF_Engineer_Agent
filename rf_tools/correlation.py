@@ -216,8 +216,7 @@ def _result_to_network(result: Any, label: str) -> rf.Network:
         return result
     if not isinstance(result, dict):
         raise CorrelationError(
-            f"{label} result must be an skrf.Network or a dict, got "
-            f"{type(result).__name__}"
+            f"{label} result must be an skrf.Network or a dict, got {type(result).__name__}"
         )
 
     network = result.get("network")
@@ -411,11 +410,7 @@ def correlate_simulation_measurement(
                 "De-embedded fixture effects from the measured network via "
                 f"rf_tools.touchstone.deembed_touchstone (fixture_path="
                 f"{fixture_path!r}"
-                + (
-                    f", output_fixture_path={output_fixture_path!r}"
-                    if output_fixture_path
-                    else ""
-                )
+                + (f", output_fixture_path={output_fixture_path!r}" if output_fixture_path else "")
                 + ") before comparison -- this is the calibration-plane "
                 "normalization step."
             )

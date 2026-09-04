@@ -78,7 +78,9 @@ def _make_fake_qucsator(tmp_path: Path, body: str) -> Path:
 
 ONE_PORT_CIRCUIT = {
     "ports": [{"node": "n1", "num": 1, "z_ohms": 50.0}],
-    "components": [{"type": "R", "name": "Rload", "nodes": ["n1", "gnd"], "properties": {"R": 50.0}}],
+    "components": [
+        {"type": "R", "name": "Rload", "nodes": ["n1", "gnd"], "properties": {"R": 50.0}}
+    ],
 }
 
 TWO_PORT_CIRCUIT = {
@@ -86,7 +88,9 @@ TWO_PORT_CIRCUIT = {
         {"node": "n1", "num": 1, "z_ohms": 50.0},
         {"node": "n2", "num": 2, "z_ohms": 50.0},
     ],
-    "components": [{"type": "R", "name": "Rseries", "nodes": ["n1", "n2"], "properties": {"R": 10.0}}],
+    "components": [
+        {"type": "R", "name": "Rseries", "nodes": ["n1", "n2"], "properties": {"R": 10.0}}
+    ],
 }
 
 LIN_ANALYSIS = {"sweep_type": "lin", "start_hz": 1e9, "stop_hz": 2e9, "points": 2}
@@ -104,7 +108,9 @@ def test_generate_qucs_netlist_one_port_card_order_and_fields():
     assert lines[0].startswith("#")
     assert lines[1] == 'Pac:P1 n1 gnd Num="1" Z="50" P="0" f="1000000000"'
     assert lines[2] == 'R:Rload n1 gnd R="50"'
-    assert lines[-1] == '.SP:SP1 Type="lin" Start="1000000000" Stop="2000000000" Points="2" Noise="no"'
+    assert (
+        lines[-1] == '.SP:SP1 Type="lin" Start="1000000000" Stop="2000000000" Points="2" Noise="no"'
+    )
 
 
 def test_generate_qucs_netlist_two_port_pac_lines_use_num_property():
@@ -173,7 +179,9 @@ def test_generate_qucs_netlist_component_wrong_node_count_raises():
 
 def test_generate_qucs_netlist_invalid_sweep_type_raises():
     with pytest.raises(ValueError, match="sweep_type"):
-        generate_qucs_netlist(ONE_PORT_CIRCUIT, {"start_hz": 1e9, "stop_hz": 2e9, "sweep_type": "const"})
+        generate_qucs_netlist(
+            ONE_PORT_CIRCUIT, {"start_hz": 1e9, "stop_hz": 2e9, "sweep_type": "const"}
+        )
 
 
 def test_generate_qucs_netlist_missing_start_stop_raises():
@@ -246,12 +254,12 @@ def test_qucs_simulator_invokes_dash_i_and_dash_o_with_real_paths(tmp_path: Path
         f'out=""\n'
         f'while [ "$#" -gt 0 ]; do\n'
         f'  if [ "$1" = "-o" ]; then shift; out="$1"; fi\n'
-        f'  shift\n'
+        f"  shift\n"
         f"done\n"
-        f'printf %s \'{output_marker}\' > "$out"\n',
+        f"printf %s '{output_marker}' > \"$out\"\n",
     )
     input_file = tmp_path / "model.net"
-    input_file.write_text("# test\n.SP:SP1 Type=\"lin\" Start=\"1e9\" Stop=\"2e9\" Points=\"2\"\n")
+    input_file.write_text('# test\n.SP:SP1 Type="lin" Start="1e9" Stop="2e9" Points="2"\n')
 
     simulator = QucsSimulator(executable=str(script))
     result = simulator.run({"input_file": str(input_file), "timeout_s": 10})
