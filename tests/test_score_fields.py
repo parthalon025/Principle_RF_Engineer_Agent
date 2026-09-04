@@ -70,17 +70,27 @@ def test_solver_default_score_fields_is_derived_from_the_shared_table():
 
 
 def test_lab_test_plan_field_sources_is_derived_from_the_shared_table():
-    """`orchestration.lab_test_plan._FIELD_SOURCES` groups the SAME shared
-    triples by quantity kind (via that module's own `_classify_unit`) --
-    every triple in the shared table must show up in exactly one group,
-    under the same field/unit pair, and the module's FREQUENCY/GAIN
-    grouping shape (see that module's own "DESIGN QUESTION 2") must be
-    unchanged."""
-    all_grouped_sources = [
-        source for sources in lab_test_plan_module._FIELD_SOURCES.values() for source in sources
+    """`orchestration.lab_test_plan._FIELD_SOURCES`'s FREQUENCY/GAIN groups
+    the SAME shared triples by quantity kind (via that module's own
+    `_classify_unit`) -- every triple in the shared table must show up in
+    exactly one of those groups, under the same field/unit pair, and the
+    module's FREQUENCY/GAIN grouping shape (see that module's own "DESIGN
+    QUESTION 2") must be unchanged.
+
+    S_PARAMETER is a deliberate, documented EXCEPTION (issue #101), checked
+    separately below: `SCORE_FIELD_SOURCES` gives each step exactly one
+    default scoreable field, and SIMULATION's stays `gain_dbi` -- so
+    `vswr`/`return_loss_db` are layered onto `_FIELD_SOURCES` afterward
+    rather than folded into the shared table (see the code comment where
+    `_FIELD_SOURCES[_S_PARAMETER]` is assigned)."""
+    derived_sources = [
+        source
+        for kind, sources in lab_test_plan_module._FIELD_SOURCES.items()
+        if kind != lab_test_plan_module._S_PARAMETER
+        for source in sources
     ]
-    assert len(all_grouped_sources) == len(SCORE_FIELD_SOURCES)
-    assert set(all_grouped_sources) == set(SCORE_FIELD_SOURCES)
+    assert len(derived_sources) == len(SCORE_FIELD_SOURCES)
+    assert set(derived_sources) == set(SCORE_FIELD_SOURCES)
 
     # The specific grouping this module's docstring documents by name.
     assert set(lab_test_plan_module._FIELD_SOURCES["FREQUENCY"]) == {
@@ -91,15 +101,32 @@ def test_lab_test_plan_field_sources_is_derived_from_the_shared_table():
         ScoreFieldSource(DesignStep.SIMULATION, "gain_dbi", "dBi"),
     ]
 
+    # S_PARAMETER itself: NOT derived from SCORE_FIELD_SOURCES, verified as
+    # its own, separately-asserted fact (issue #101).
+    assert set(lab_test_plan_module._FIELD_SOURCES[lab_test_plan_module._S_PARAMETER]) == {
+        ScoreFieldSource(DesignStep.SIMULATION, "vswr", "VSWR"),
+        ScoreFieldSource(DesignStep.SIMULATION, "return_loss_db", "dB"),
+    }
+
 
 def test_solver_and_lab_test_plan_agree_on_every_shared_step():
-    """Cross-module consistency: for every step present in both derived
-    lookups, the (field, unit) pair must be identical -- the exact
+    """Cross-module consistency, for the facts BOTH modules actually derive
+    from the shared table (FREQUENCY/GAIN): for every step present in both
+    derived lookups, the (field, unit) pair must be identical -- the exact
     divergence issue #102 says the old duplication risked (one copy
-    updated, the other left behind, both suites still green)."""
+    updated, the other left behind, both suites still green).
+
+    S_PARAMETER is deliberately excluded from this comparison -- see
+    test_lab_test_plan_field_sources_is_derived_from_the_shared_table. It
+    holds two additional SIMULATION facts (`vswr`, `return_loss_db`) that
+    were never meant to agree with solver.py's one default per step
+    (`gain_dbi`); collapsing all three into one `{step: (field, unit)}`
+    dict here would silently keep only whichever happened to be last,
+    hiding the other two rather than comparing anything meaningful."""
     lab_test_plan_by_step = {
         source.step: (source.result_field, source.unit)
-        for sources in lab_test_plan_module._FIELD_SOURCES.values()
+        for kind, sources in lab_test_plan_module._FIELD_SOURCES.items()
+        if kind != lab_test_plan_module._S_PARAMETER
         for source in sources
     }
     for step, (field, unit) in solver_module._DEFAULT_SCORE_FIELDS.items():
