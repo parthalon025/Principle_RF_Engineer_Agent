@@ -243,7 +243,7 @@ enquiry effort should go.
 | 4 | **Carbon sheet resistance at two passes** | Two passes and one four-point-probe reading either confirms or kills the whole resistive-layer architecture | #106, #128 |
 | ~~5~~ | ~~**TPU's X-band permittivity**~~ | **Resolved 2026-09-03** — εr 2.71 / tanδ 0.099 at 10 GHz, two independent sources, `LITERATURE-SUPPORTED`. What remains is narrower and ranks lower: **no X-band figure for a named, orderable grade**, and grade spread inside one product line is 3.5× on loss | #127, #114 |
 | 6 | **The superposition coupling error bar** | ~~No prior art.~~ **Partly resolved** — Costanzo et al. publish **12–85° max phase error against pitch at 10 GHz** for three element shapes. What has no prior art is the error bar *for our own alphabet*, which still has to be derived | #111 |
-| 7 | **A super-cell sizing rule from a coupling budget** | No convention exists to inherit — confirmed, not assumed. Genuinely derived work | #130 |
+| ~~7~~ | ~~**A super-cell sizing rule from a coupling budget**~~ | **Derived 2026-09-04** — `supercell-sizing-rule.md`. It turned into a **gate on the alphabet** rather than a size: block size is pinned to N = 2 by the scattering requirement, where grouping buys no averaging at all. What replaces it is narrower and ranks lower — **our own alphabet's Δφ_max, measured rather than borrowed**, which needs the bench | #130, #132 |
 | 8 | **Layer-to-layer registration on the NOVA** | Unpublished anywhere. Suspected to be the real geometric risk, ahead of feature size | #106, #115 |
 | 9 | **Does the vacuum table hold silicone?** | Gates the top RF substrate candidate. Voltera's own documentation explicitly does not state it | #106, #114 |
 | 10 | **Whether `R = 3T` or IPC-2223's 6× rule governs** | The patent's rule is *twice as permissive* as the flex-circuit industry standard, so enforcing it approves parts bent twice as tight as IPC allows | #115 |
@@ -269,9 +269,22 @@ does not change — what it is *for* does.
    band, and nothing anywhere addresses how bands compose under superposition.
    Nearest precedent is Marcuvitz's practice of publishing an error bound and
    validity box for every entry.
-3. **A super-cell sizing rule derived from a coupling error budget.** Every
-   block size found in the literature is set by beam geometry, control-line
-   count or fabrication tolerance — never by managing interference.
+3. ~~**A super-cell sizing rule derived from a coupling error budget.**~~
+   **Derived 2026-09-04** — [`supercell-sizing-rule.md`](./supercell-sizing-rule.md),
+   settled on #130. Every block size in the literature is still set by beam
+   geometry, control-line count or fabrication tolerance rather than by managing
+   interference, so there was nothing to adopt; this is our own.
+   **It did not come out as a sizing formula.** Two constraints pull opposite
+   ways — the coupling error falls only as 1/N, while the scattering angle a
+   coded surface exists to produce collapses much faster as blocks coarsen — so
+   the allowed block size is usually **exactly N = 2**, and at N = 2 every cell
+   touches a foreign block and the block averages nothing. The rule therefore
+   collapses into **a gate on the alphabet**: an alphabet whose worst-case
+   unlike-neighbour phase error exceeds the budget on its own cannot be rescued
+   by grouping. **Three of six literature element families have no feasible
+   block size at all**, the variable-size square patch — the field's workhorse —
+   among them. Remains derived work in the sense that nobody has published it;
+   it is now written down rather than open.
 4. **An error bar on the superposition fast tier — for *our* alphabet.**
    Narrowed 2026-09-03: the generic error bar *does* exist. Costanzo et al.
    publish **max reflection-phase error against element pitch at 10 GHz** for
