@@ -25,6 +25,13 @@ class SourceType(StrEnum):
     authoritative-reference tier (standard/textbook/paper): it is the
     engineering team's own precedent, not a manufacturer's or a published
     authority's.
+
+    `PATENT` is a granted patent or published application. It sits at the
+    authoritative-reference tier like a paper, but is deliberately ranked
+    BELOW one -- see `knowledge/provenance.py`'s `PATENT_AUTHORITY_RANK` for
+    why a patent office's examination does not make a patent's technical
+    numbers peer-reviewed. Read that note before citing a patent's figures
+    as evidence.
     """
 
     DATASHEET = "datasheet"
@@ -32,6 +39,7 @@ class SourceType(StrEnum):
     STANDARD = "standard"
     TEXTBOOK = "textbook"
     PAPER = "paper"
+    PATENT = "patent"
     DESIGN_RECORD = "design_record"
 
 

@@ -167,7 +167,7 @@ times in a row from taking a doc or a commit message at face value instead.
   above. Never state a value without one once the agent produces it. A
   knowledge-base chunk cited by the agent inherits its provenance from the
   source document's **source type**: `datasheet`/`application_note` →
-  `MANUFACTURER-SPECIFIED`; `standard`/`textbook`/`paper` →
+  `MANUFACTURER-SPECIFIED`; `standard`/`textbook`/`paper`/`patent` →
   `LITERATURE-SUPPORTED`. An automatically extracted **component**
   specification field is `MANUFACTURER-SPECIFIED` when the extraction was
   unambiguous, `INFERRED` when the read was ambiguous or low-confidence,
@@ -180,9 +180,25 @@ times in a row from taking a doc or a commit message at face value instead.
   engineering history > general web material > LLM inference. Higher wins
   when evidence conflicts.
 - **Source type**: the classification of an ingested knowledge document —
-  `datasheet`, `application_note`, `standard`, `textbook`, `paper`, or
-  `design_record`. Fixed at ingest time; determines the document's default
-  provenance and authority rank.
+  `datasheet`, `application_note`, `standard`, `textbook`, `paper`,
+  `patent`, or `design_record`. Fixed at ingest time; determines the
+  document's default provenance and authority rank.
+- **Patent** (a source type): a granted patent or published application.
+  Sits at the authoritative-reference tier like a `paper`, but ranks
+  deliberately *below* one: a patent office examines for novelty,
+  non-obviousness and candor, not for whether a stated number was measured
+  correctly or reproduces, so its technical figures are published and
+  permanent but not peer-reviewed. Same rank as an arXiv preprint, for the
+  same reason (`knowledge/provenance.py`'s `PATENT_AUTHORITY_RANK`).
+  _Two things it is not._ It is not a component source — component
+  extraction stays restricted to `datasheet`/`application_note`, so a
+  patent is never mined for orderable-part specifications. And its
+  **claims** are not design guidance: a claim is legal text defining the
+  boundary of a monopoly, often describing configurations nobody built or
+  measured, whereas the description's worked examples are closer to a
+  paper's reported results. Chunking is by text and cannot tell the two
+  apart, so a retrieved patent chunk may be either — cite its numbers,
+  never read its claim language as a recommendation.
 - **Authority rank**: a per-document integer position in the evidence
   hierarchy, defaulted from source type (datasheet/application_note sit at
   the manufacturer-spec tier; standard/textbook/paper sit at the
