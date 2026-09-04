@@ -28,6 +28,7 @@ instruments at any point.
 - [How it works](#how-it-works)
 - [The agent surface](#the-agent-surface)
 - [Installation](#installation)
+- [Continuous integration](#continuous-integration)
 - [Development order](#development-order)
 - [Planning in progress](#planning-in-progress)
 - [Documentation map](#documentation-map)
@@ -332,6 +333,32 @@ Free developer accounts, no purchase required
 
 ---
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to `main` and
+every pull request against it, as two separate jobs so a lint failure and a test failure
+are distinguishable at a glance:
+
+| Job | Runs | Needs |
+|---|---|---|
+| **ruff** | `ruff check` and `ruff format --check` | Nothing — installs 8 dev packages, not the project's 169 |
+| **pytest** | The full suite | A `pgvector/pgvector:pg17` service container with `db/schema.sql` applied via `db/apply_schema.py` |
+
+CI holds **no LLM credential** (no `OPENAI_API_KEY`, no `ANTHROPIC_API_KEY`, no
+`LOCAL_LLM_BASE_URL`) and installs none of the optional extras (`hfss`, `measurement`,
+`geometry`, `ltspice`, `kicad`). No test needs a live model or embedding backend to pass;
+the extras' tests skip themselves with a stated reason, and `pytest -rs` prints every skip
+reason in the run log — so nothing is silently unverified.
+
+> [!WARNING]
+> **The `ruff format --check` step is currently expected to fail**, on `main` and on every
+> branch off it. The repo carries pre-existing formatting drift — 55 files at the time of
+> writing — and the fix is [issue #99][i99]'s repo-wide `ruff format` pass, landing as its
+> own commit. It is not a signal about the branch under test, and reformatting files
+> incidentally in an unrelated PR is not the fix. `ruff check` passes.
+
+---
+
 ## Development order
 
 1. Deterministic calculations
@@ -469,6 +496,7 @@ Issues live in [this repo's GitHub Issues][issues], with the label vocabulary
 
 <!-- link definitions -->
 [uv]: https://docs.astral.sh/uv/
+[i99]: https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/99
 [issues]: https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues
 [adr3]: docs/adr/0003-no-review-gate-for-component-extraction.md
 [adr4]: docs/adr/0004-self-hosted-backend-for-restricted-data.md
