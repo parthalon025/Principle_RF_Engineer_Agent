@@ -239,6 +239,61 @@ and a glossary that churns with it stops being trustworthy (see
   `{design_key}-{slug}`; reusing one is rejected with a pointer to the
   existing record, same dedup-and-point-back shape as `ingest_document`'s
   checksum check.
+- **Design family**: the classification of a design's target physics and
+  topology (e.g. absorber, reflection-phase steering surface, polarization
+  converter, diffusive-backscatter surface, plain patch antenna) that
+  determines which analysis/optimization functions, simulation setup, and
+  physical bound apply. Recorded as a structured field on the ARCHITECTURE
+  decision — never left implicit in which hardwired function the loop
+  happened to call (see `docs/adr/0018`). Selection stays human-authored:
+  the loop does not attempt to infer a family from a requirement's prose.
+- **Design family registry**: the open interface every design family
+  implements — a thin common set of spine fields (band, host thickness,
+  both cell periods, host εr/tanδ, conductor σ, incidence/polarisation
+  envelope, ground-plane presence, `R = 3T`, `T ≤ 2mm`) plus family-specific
+  fields that differ in *kind*, not just value, across families: design
+  variables, analysis function, optimizer class, simulation adapter, and
+  physical bound. See `docs/adr/0018` for why this is an open interface
+  rather than one fixed schema with optional fields.
+  _Avoid_: family schema — implies a single shape every family fills in;
+  the per-family parts are genuinely heterogeneous objects, not optional
+  slots in a common shape.
+- **Physical bound** (design family field): a family's fundamental
+  feasibility predicate relating achievable performance to size or
+  thickness — e.g. the Rozanov bound for absorbers, the Gustafsson &
+  Sjöberg bound for reflection-phase steering surfaces, the Nel,
+  Skrivervik & Gustafsson Q-factor bound for patch antennas. A genuinely
+  different function with different required inputs per family, not one
+  formula with a per-family constant swapped in. Its legal values include
+  "none known" — true today for diffusive/coding backscatter-reduction
+  surfaces, where no causality-based bound has been published.
+- **Optimizer class** (design family field): which optimization approach a
+  family's OPTIMIZATION step uses — `CONTINUOUS` (gradient-friendly tuning
+  of a few dimensions, e.g. a patch's length) or `COMBINATORIAL`
+  (genetic-algorithm search over a pre-characterized symbol alphabet,
+  see #130) today. Stored as an open value, not a hardcoded two-literal
+  enum: ML-direct inverse design (train once, map a target response
+  straight to geometry in a single pass, no search loop) is an established
+  third shape in the literature, not yet needed by any family this
+  registry serves but real enough to leave room for.
+  _Avoid_: treating particle-swarm or simulated-annealing as separate
+  values — the literature treats them as siblings of genetic search within
+  `COMBINATORIAL`, not distinct classes.
+- **Simulation adapter** (design family field): which solver a family's
+  SIMULATION step must use — `NEC2` for wire-antenna families,
+  `PALACE_FLOQUET` for periodic-unit-cell families. Necessary because
+  `_handle_simulation`'s data shape (an arbitrary `geometry` dict) looks
+  solver-agnostic but is hardwired to call NEC2, which cannot represent a
+  periodic/Floquet boundary — a family that needs one and doesn't declare
+  `PALACE_FLOQUET` would silently get a wrong-but-plausible answer.
+- **Element/Coding-Alphabet library**: a persistent, cross-run store of
+  characterized symbol-alphabet elements (Tier B design families only, see
+  #130), keyed by `(element family, substrate stack, frequency band,
+  incidence-angle range)` — the same accumulate-once-and-reuse shape as the
+  **Material-property library**, holding each symbol's characterized
+  response so it is looked up rather than re-solved by every design that
+  shares its band and substrate. A pitch or validity-box change
+  invalidates the whole alphabet's entries, not one symbol's.
 - **Verification item**: a `verification_items` row tracking one
   requirement's status (`NOT VERIFIED` default, `PASS`/`FAIL`/`MARGINAL`),
   auto-created per key in a design's `requirements` at design-creation time
