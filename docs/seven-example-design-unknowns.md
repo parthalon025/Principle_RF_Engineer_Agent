@@ -40,11 +40,27 @@ Provenance tags throughout are `CONTEXT.md`'s ladder — `MEASURED` → `SIMULAT
    the unit-cell level at all. For Example 7 this is not a refinement — a primary source
    shows the 10 dB RCS-reduction bandwidth *changes with array size* (§5).
 
-4. **Two of the seven are not buildable on the stated process.** Example 5 needs a BST
-   thin film, whose deposition temperature is incompatible with the NOVA's 40 °C ceiling
-   and with a pliable polymer host. Example 4 needs a host of **εr = 100** — the patent's
-   own host-polymer spec is εr 2–5, and Example 6's host is εr = 10.4, so three of the
-   seven contradict the patent's stated host material range.
+4. **Corrected 2026-09-04 (#108).** This item previously said "two of the seven are not
+   buildable on the stated process," blaming Example 5 on "the NOVA's 40 °C ceiling."
+   That conflated the printer's own ink-viscosity warmer with the real cure step — an
+   *external* oven, already used at 120–135 °C for this programme's other inks (#105).
+   Re-derived per example: **Examples 1 and 2 are the only ones genuinely unbuildable on
+   this process** — they need a solid 3D ceramic piece (Mie-resonance cubes), and no
+   printing or lamination route produces a solid 3D block, in any material. **Example 4**
+   needs a host of **εr = 100**; researched directly (`docs/flexible-high-permittivity-
+   composites.md`) — no published material combines that permittivity with real
+   flexibility at microwave frequency, a materials-physics conflict with the pliable-skin
+   premise, likely permanent rather than a sourcing gap. **Example 5** needs a BST film;
+   a pre-crystallised BST particulate ink cured externally at ~150 °C is a real, published,
+   oven-compatible route (15% tunability measured at 10 GHz) — excluded only because it
+   hasn't been sourced yet, not because the process can't reach it. **Example 6**'s
+   εr = 10.4 substrate looked like the same problem but isn't: permittivity is a free,
+   rescalable design parameter for its polarization-conversion function, confirmed against
+   published, measured low-εr converters (`docs/example6-polarization-converter-
+   permittivity.md`) — it redesigns cleanly onto this programme's flexible substrate
+   shortlist. Net: **2 hard-excluded (process, 1/2), 1 excluded likely-permanently
+   (materials-physics, 4), 1 excluded-for-now (materials-sourcing, revisable, 5), 3
+   buildable today (3, 6, 7).**
 
 5. **Minimum feature sizes are more comfortable than the handoff feared.** The tightest
    printed feature across all seven is **w = 0.2 mm** (Example 6's meander line); Example
@@ -229,7 +245,7 @@ those fields would have looked like a constant.
 | **Objective shape** | µ_eff (1); ε_eff ≈ µ_eff (2); absorptivity (3); ∠Γ coverage curve (4, 5); axial ratio (6); dB reduction vs a reference (7) |
 | **Simulation tier** | A: 1, 2, 3, 6 — B: 4, 5, 7 |
 | **Temperature sensitivity of a design-critical property** | acute for 1, 2 (SrTiO₃ εr falls 325 → 234 from RT to 200 °C) and 5 (ferroelectric BST); second-order for 3, 4, 6, 7 |
-| **Manufacturability on the stated process** | plausible: 3, 6, 7 (min features 0.2–0.6 mm); needs bulk ceramic pick-and-place, not printing: 1, 2; needs an unnamed εr = 100 host: 4; needs BST thin-film deposition above the NOVA's 40 °C ceiling: 5 |
+| **Manufacturability on the stated process** | printable today: 3, 6, 7 (min features 0.2–0.6 mm; 6's high-εr substrate is not load-bearing, redesigns onto this programme's flexible shortlist — #108); excluded, process, no route in any material: 1, 2 (need bulk ceramic pick-and-place); excluded, materials-physics, likely permanent: 4 (needs an unnamed εr = 100 host — no flexible material at that permittivity exists in the microwave-characterised literature, #108); excluded, materials-sourcing gap, revisable: 5 (needs a pre-crystallised BST particulate ink, not yet sourced — the earlier "NOVA's 40 °C ceiling" reasoning was wrong, #108) |
 
 ### 6.3 Inherently human inputs — not derivable by any loop
 
