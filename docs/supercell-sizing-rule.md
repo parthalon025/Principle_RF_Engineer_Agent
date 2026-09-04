@@ -58,9 +58,16 @@ between possible and impossible." It is:
 > 20 dB the square patch at 0.4 λ pitch runs out of feasible block sizes
 > entirely, and interior tuning is what keeps the design available at all.
 
-**An earlier version of this document claimed three of six families were
-infeasible outright. That was an artefact of two borrowed constants and does
-not survive. §7 records what changed and why.**
+**Two corrections are folded in.** An earlier version claimed three of six
+families were infeasible outright — an artefact of two borrowed constants; §7
+records that. And the "no N works" entry above is **conditional on panel size**:
+it holds on a 6 λ coupon and fails on a 30 λ panel, because what binds there is
+not the scattering angle but a **panel-fit constraint the first version omitted
+entirely**. See §5.5.
+
+**And every formula below assumes a square cell on a square lattice.** The
+project's own anchor violates that. §5.5 gives the two-index generalisations,
+verified to reduce to the square case.
 
 ---
 
@@ -243,7 +250,7 @@ Floor from §2, ceiling from §3, at a 10 dB requirement on a 6 λ coupon
 | Minkowski fractal | 0.5 λ | 7 | coarse |
 | Variable-size square patch | 0.5 λ | 8 | coarse |
 | Minkowski fractal | 0.4 λ | 15 | very coarse |
-| Variable-size square patch | 0.4 λ | 21+ | **no feasible N** |
+| Variable-size square patch | 0.4 λ | 21+ | **no feasible N** *(on a 6 λ coupon — see §5.5)* |
 
 **So the rule is a sliding scale, not a gate**, and the useful way to read it is
 as *how much surface resolution a given alphabet costs you at a given
@@ -276,11 +283,77 @@ detuned resonators in one block to widen an absorber's bandwidth
 uses a block for a different reason: it steers nothing, so the §3 ceiling does
 not exist. Same word, opposite sizing pressure.
 
-**Assumes a square cell on a square lattice.** Both the boundary-count in §2.1
+**Assumed a square cell on a square lattice.** Both the boundary-count in §2.1
 and the diffraction geometry in §3 do. Example 3's cell is **4.2 × 12 mm** —
-0.14 λ by 0.40 λ at 10 GHz — which is strongly anisotropic and violates that
-assumption. Whether the rule survives an anisotropic cell is open on
-[#138](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/138).
+0.14 λ by 0.40 λ at 10 GHz, an aspect ratio of 2.86 — which violates it.
+**Answered by [#138](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/138): the rule does not survive unamended.** §5.5 carries the four
+amendments, and the failure runs *against* this document's headline conclusion.
+
+## 5.5 Amendments for non-square cells and finite panels
+
+From [`ishape-interior-tuning.md`](./ishape-interior-tuning.md) §5, re-derived
+and checked here. Each reduces exactly to the square-cell form above, so these
+are generalisations rather than replacements.
+
+**Amendment 1 — the boundary fraction takes two indices.**
+
+```
+    f(Nx, Ny) = 1 − (Nx−2)(Ny−2)/(Nx·Ny)      for Nx, Ny ≥ 2
+              = 1                              if either is 1
+```
+
+Verified identical to `(4N−4)/N²` for Nx = Ny = 2…10.
+
+**Amendment 2 — the lobe is not on the diagonal.**
+
+```
+    sin θ = (λ/2)·√( 1/ax² + 1/ay² )        tan φ = ax / ay
+```
+
+with `ax = Nx·px`, `ay = Ny·py`. Reduces to `λ/(a√2)` when `ax = ay` (checked:
+both give 1.4142 at half-wavelength pitch). **The azimuth term is new and is not
+cosmetic** — at Example 3's 4.2/12 aspect ratio a 1 × 1 block throws its lobes at
+**φ = 19.3° from the long axis, not 45°.** Anyone measuring a coupon needs to
+know where to point the receiving horn.
+
+**Amendment 3 — small blocks can be forbidden outright, and here they are.**
+Requiring `sin θ ≤ 1` for a propagating lobe at all, on Example 3's cell:
+
+| Block | sin θ | Result |
+|---|---|---|
+| 2 × 2 | 1.891 | **evanescent — redirects nothing** |
+| 3 × 2 | 1.344 | evanescent |
+| 4 × 2 | 1.089 | evanescent |
+| **5 × 2** | 0.949 | **71.5°** — the smallest that radiates |
+| 4 × 3 | 0.985 | 79.9° |
+
+In the tall-block limit the condition is simply `ax ≥ λ/2` = **14.99 mm = 3.57
+cells** on the `a₁` axis: *a coding block must be at least half a wavelength
+across on the coding axis, however small the cell.* The square-cell case hides
+this, because at 0.5 λ pitch `N = 2` already satisfies it.
+
+> **This runs opposite to §4's headline.** Because blocks of 4–5 cells and up are
+> *forced* by the physics here, `f(N)` is no longer pinned at 1 and **the block
+> genuinely averages.** "N = 2 is the only size allowed, so grouping averages
+> nothing" is a property of a half-wavelength square cell, not a general truth
+> about coding metasurfaces.
+
+**Amendment 4 — the block has to fit on the panel, twice per axis.** The first
+version omitted this, and on a coupon it is the **binding** constraint:
+
+```
+    2·Nx·px ≤ L        and        2·Ny·py ≤ L
+```
+
+A chessboard needs at least one full period per axis. On #106's 180 mm (6 λ)
+coupon that caps `Ny` at **7** and `Nx` at **21** for Example 3's cell — and
+`Ny` = 7 is already an 84 mm block.
+
+**This is what makes §4's "no N works" conditional.** The square patch at 0.4 λ
+needing N = 29 fails on a 6 λ coupon because 29 blocks do not fit twice, not
+because the scattering angle forbids them; on a 30 λ panel the same alphabet has
+a workable block. **The verdict depends on the size of the part**, which is a
+per-requirement input — and, once again, the coupon is the hard case.
 
 ---
 
@@ -289,7 +362,7 @@ assumption. Whether the rule survives an anisotropic cell is open on
 | Claim | Provenance |
 |---|---|
 | Δφ_max values (12° / 21° / 25° at 0.5 λ; 20° / 45° / 85° at 0.4 λ) | **LITERATURE-SUPPORTED** — Costanzo, Venneri & Di Massa, *IJAP* 2019, [10.1155/2019/4890710](https://doi.org/10.1155/2019/4890710), Table 3 and Figs. 5–7. Method-of-moments, so `SIMULATED` at source |
-| Cancellation identity `RCSR = 20 log₁₀ sin(δ/2)` | **CALCULATED** — two-term aperture average; reproduces the literature's "180° ± 37°" rule of thumb at 10 dB |
+| Cancellation identity `RCSR = 20 log₁₀ sin(δ/2)` | **CALCULATED** — two-term aperture average. The 10 dB case is **confirmed at primary level**: Haji-Ahmadi, Nayyeri, Soleimani & Ramahi, *Sci. Rep.* **7**:11437 (2017), [PMC5595835](https://pmc.ncbi.nlm.nih.gov/articles/PMC5595835/), state *"a phase difference of 180 ± 37° … provides at least 10 dB monostatic RCS reduction"*. The formula returns **36.87°** — agreement to 0.13°, by two independent routes |
 | Boundary fraction `(4N−4)/N²` | **CALCULATED** — counting |
 | Chessboard diffraction angle | **CALCULATED** — Fourier content of the coding pattern; standard result |
 | Specular lobe half-width ≈ λ/(2L) | **CALCULATED** — standard uniform-aperture result |

@@ -236,6 +236,46 @@ document; the rest were made during analysis, several of them mine.**
     than absorbed. See `docs/requirement-derived-thresholds.md` for the full
     audit and the A/B/C classification it proposes.
 
+22. **"No measurement of Example 3 exists anywhere" — wrong, and it was the
+    important half of that finding.** #116 was closed on it. **Example 3 is
+    Landy, Sajuyigbe, Mock, Smith & Padilla, "A Perfect Metamaterial Absorber",
+    *Phys. Rev. Lett.* 100:207402 (2008)** ([arXiv:0803.1670](https://arxiv.org/abs/0803.1670)),
+    reproduced number for number: the patent's FIG. 7F table is Landy's
+    *fabricated* set verbatim — `a1=4.2, a2=12, W=4, G=0.6, t=0.6, L=1.7,
+    H=11.8` mm on FR4, elements *"separated by 0.72mm"*. Verified against the
+    primary source. And it was **measured**: *"our experiments demonstrate a
+    peak absorbance greater than 88 % at 11.5 GHz"*, from complex S-parameters
+    on a large planar sample.
+    **The search was right; the inference was wrong.** The inventors genuinely
+    never published Example 3 — 22 publications, none an absorber, confirmed by
+    the patent's own "Other References". The error was concluding from *"the
+    inventors did not publish it"* that *"nobody published it"*. The patent
+    reproduces someone else's published device, so the search was scoped to the
+    wrong authors. **An exhaustive search of the wrong set is still exhaustive,
+    and still tells you nothing about the right one.**
+    Consequences: the anchor's reference is `LITERATURE-SUPPORTED` from a
+    `MEASURED` original, not capped at `SIMULATED`; this was ranked **#1–2** in
+    §4's unknowns. And it opens a new discrepancy — the patent's ~9.2 GHz
+    against Landy's measured **11.5 GHz for identical dimensions** (#142).
+23. **The 0.2 mm gap in Example 3 is on the H-plane, not the E-plane.** Noted
+    here because it was mine, and because the arithmetic was right while the
+    inference was not. `W` = 4 mm in `a₁` = 4.2 mm does leave **0.2 mm =
+    0.0067 λ**, tighter than Costanzo's tightest — but Landy's Fig. 1(c) puts
+    **E along `a₂`**, where the resonators sit **8.0 mm = 0.267 λ** apart,
+    looser than Costanzo's *loosest*. Coupling is strongest on the E-plane, so
+    the tight gap is on the axis that matters least. There *is* a 0.2 mm gap on
+    the E-plane — the **cut wire on the underside** — which nobody had noticed.
+    **Check which axis carries the field before reading a gap as tight.**
+24. **`docs/supercell-sizing-rule.md` assumed a square cell, and the anchor is
+    not square.** 4.2 × 12 mm is an aspect ratio of 2.86. On that cell **N = 2
+    is evanescent — it redirects nothing** — and the smallest radiating block is
+    **5 × 2 cells**. Because blocks of 4–5 and up are *forced*, `f(N)` drops
+    below 1 and the block genuinely averages, which runs **opposite** to the
+    document's "grouping averages nothing" headline. The rule also **omitted a
+    panel-fit constraint** (`2·N·p ≤ L`) that turns out to bind first on a
+    coupon, making "no feasible N" a statement about part size rather than about
+    the alphabet. Amended in §5.5; see #138.
+
 ### Errors found in published sources
 
 Not our corrections, but ours to route around. Recorded because anyone
