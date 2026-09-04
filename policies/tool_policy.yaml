@@ -171,7 +171,7 @@ design_tracking:
   # a signed DesignReleaseApprovalReceipt, and no workflow issues one, so a
   # release attempt returns release_not_approved rather than writing. The
   # autonomous release ACTION stays unbuilt and stays gated there; see
-  # docs/adr/0015 for why the two coexist.
+  # docs/adr/0016 for why the two coexist.
   - advance_design_status
   # issue #92: interpreting a prose customer requirement into a proposed/
   # confirmed/unscoreable requirement target. Same informational-only
