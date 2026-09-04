@@ -1849,10 +1849,10 @@ def advance_design_loop_step(state: dict, step_input: dict, approval: dict | Non
     (docs/BUILD_PLAN.md's Phase 12). `state` is a prior call's returned
     loop state. `step_input` is step-specific -- see
     orchestration/design_loop.py's per-step handlers for exactly what each
-    current_step expects (e.g. ARCHITECTURE wants "decision"/"rationale";
-    ANALYSIS wants the patch_resonant_frequency_hz inputs eps_r/w_m/h_m/
-    l_m; SIMULATION wants the same geometry/frequency_hz run_nec2_
-    simulation itself takes).
+    current_step expects (e.g. ARCHITECTURE wants "decision"/"rationale"/
+    "design_family"; ANALYSIS wants the patch_resonant_frequency_hz
+    inputs eps_r/w_m/h_m/l_m; SIMULATION wants the same geometry/
+    frequency_hz run_nec2_simulation itself takes).
 
     `approval` is REQUIRED whenever the loop is currently at ARCHITECTURE,
     MEASUREMENT, or REDESIGN_DECISION -- every step that is not a pure

@@ -319,6 +319,17 @@ and a glossary that churns with it stops being trustworthy (see
   `physical_bound` fields this one does not yet declare. #150 and #151 key
   off this field. Selection stays human-authored: the loop does not attempt
   to infer a family from a requirement's prose.
+  _Persistence gap (#167)_: the field does not yet survive the ADR-0011
+  flush to `decision_records` — `orchestration/tooling.py`'s
+  `_flush_target_for` builds its `designs_db.record_decision` call for
+  `architecture_decision`/`redesign_decision` kinds from only
+  `decision.input["decision"]` and `decision.input["rationale"]`, and
+  `db/schema.sql`'s `decision_records` table has no `design_family` column
+  at all. In practice `design_family` currently lives only in the
+  design-loop's in-memory state for one design-loop session; it is gone the
+  moment an iteration flushes. Since #150 and #151 both anchor their own
+  plans to the *persisted* `decision_records` table, neither can actually
+  consume this field yet.
 - **Design family registry**: the open interface every design family
   implements — a thin common set of spine fields (band, host thickness,
   both cell periods, host εr/tanδ, conductor σ, incidence/polarisation
