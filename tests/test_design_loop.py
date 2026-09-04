@@ -473,6 +473,45 @@ def test_analysis_requires_expected_fields():
         advance_loop_step(state, {"eps_r": 4.4})
 
 
+def test_architecture_requires_a_design_family():
+    """#161: design_family is a required, structured slot on the
+    ARCHITECTURE decision -- alongside the existing free-form decision/
+    rationale prose, not replacing it -- so #150/#151 have a grouping key
+    to key off of without parsing prose. No enum/registry validation yet
+    (docs/adr/0018 is the separate, harder ticket for that): a bare string
+    is enough, so a step_input missing the key entirely is the only
+    rejection this ticket adds."""
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target with a simple, low-cost fabrication",
+    }
+    fields = _fingerprint(state, DesignStep.ARCHITECTURE, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        advance_loop_step(state, step_input, approval=receipt)
+
+
+def test_architecture_decision_records_the_design_family_alongside_decision_and_rationale():
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target with a simple, low-cost fabrication",
+        "design_family": "patch_antenna",
+    }
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+    architecture_decision = state.decisions[-1]
+    assert architecture_decision.kind == "architecture_decision"
+    assert architecture_decision.result["design_family"] == "patch_antenna"
+    # The existing prose fields are still there, not replaced by the new
+    # structured field.
+    assert architecture_decision.result["decision"] == step_input["decision"]
+    assert architecture_decision.result["rationale"] == step_input["rationale"]
+
+
 def test_verification_rejects_an_unrecognized_status():
     state = start_design_loop(REQUIREMENTS)
     state = _advance_to(state, DesignStep.VERIFICATION, grant_intermediate_approvals=True)
@@ -898,6 +937,7 @@ def _valid_step_input(_state: DesignLoopState, step: DesignStep) -> dict:
         return {
             "decision": "rectangular microstrip patch on FR4",
             "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": "patch_antenna",
             "eps_r": 4.4,
             "w_m": 0.03,
             "h_m": 0.0016,

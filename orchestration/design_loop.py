@@ -398,7 +398,17 @@ def _require_fields(step_input: dict[str, Any], required: set[str], step_name: s
 def _handle_architecture(
     _state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    _require_fields(step_input, {"decision", "rationale"}, "architecture")
+    # `design_family` (issue #161) is a required structured slot recording
+    # WHICH design family (absorber, reflection-phase steering surface,
+    # patch antenna, ...) this decision targets -- alongside the existing
+    # free-form decision/rationale prose, not replacing it. #150 (cross-run
+    # simulator-trust ledger) and #151 (DesignHistoryIndex/geometry-result
+    # cache) both need this as a grouping key. A bare string is accepted
+    # with no enum/registry validation -- docs/adr/0018's design family
+    # registry (which family declares which analysis/optimizer/simulation-
+    # adapter/physical-bound) is a separate, not-yet-landed ticket; this
+    # field only names the family, it doesn't validate the name against one.
+    _require_fields(step_input, {"decision", "rationale", "design_family"}, "architecture")
     return "architecture_decision", dict(step_input), None
 
 
