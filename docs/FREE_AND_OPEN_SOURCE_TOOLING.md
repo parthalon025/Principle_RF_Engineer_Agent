@@ -37,6 +37,49 @@ Still genuinely unbuilt, as of this note: FEniCSx/DOLFINx and the openEMS-CUDA f
 `rf_tools/filter_synthesis.py` (the closed-form filter-prototype synthesis identified
 as absent from both scikit-rf and this repo).
 
+## What's actually paid, and what runs without any LLM at all
+
+Two axes worth separating out explicitly, since both get lost inside the long tool
+tables below.
+
+**Paid (costs money) — everywhere in this whole survey, only three things:**
+
+| Item | Where it's actually useful despite the cost |
+|---|---|
+| Ansys AEDT/HFSS (`simulation/hfss.py`) | For a team that *already holds* an AEDT license: more mature antenna-specific post-processing (far-field, gain, efficiency) and a longer validation track record than openEMS/NEC2++. Deliberately off this repo's default path (ADR-0012) — the free/OSS stack is a complete, working substitute, not a stand-in waiting to be replaced. |
+| Keysight ADS | No adapter exists here at all — ngspice/Xyce/Qucs-S/LTspice together cover its circuit-level role. ADS's edge is schematic-to-layout Momentum-class planar EM co-simulation, which nothing free/OSS in this survey fully replaces; only worth it for that specific gap. |
+| IEEE Xplore | Standards/papers access. Only relevant if the owner already has employer/university access — no free-developer tier exists the way Digi-Key/Mouser/3GPP/FCC have. |
+
+Everything else in this document — every simulator, every geometry tool, every
+knowledge source, every local-LLM backend — is free-of-charge (OSS or proprietary
+freeware) with **no purchase required at any point**, per ADR-0012's explicit decision
+to keep paid EDA tooling off the default path and physical hardware out of the
+codebase entirely.
+
+**Non-LLM usage — the deterministic engineering toolkit runs with zero AI model calls:**
+
+Every `simulation/*.py` adapter, `rf_tools/calculations.py`, `geometry/*.py`, and
+`rf_tools/correlation.py` is a plain deterministic function or subprocess call — write
+a netlist/deck/config, shell out to a real solver binary (or call a real library), parse
+structured results back out. None of that path touches an LLM. The `CALCULATED` and
+`SIMULATED` provenance tiers in this repo's evidence hierarchy exist specifically
+*because* those results come from deterministic math and physics solvers, not model
+inference — that's the whole reason they outrank `LLM_INFERENCE` in the ranking at the
+top of this document. A caller could drive every solver adapter and calculation
+directly (bypassing `agent/main.py` and `mcp_server/server.py` entirely) and get
+identical results with no LLM configured at all.
+
+The LLM only enters at two specific seams, both configured via `LLM_PROVIDER` /
+`DEFAULT_LLM_BACKEND` (README's "LLM Configuration" section, ADR-0004): (1) the agent's
+own reasoning/tool-orchestration loop (`agent/main.py`, `openai-agents`) — deciding
+*which* deterministic tool to call and how to interpret/report the result; (2)
+knowledge-base document extraction and embedding (`knowledge/extraction_llm.py`,
+`knowledge/embedding.py`) — turning an ingested datasheet/standard/paper into
+structured fields and vectors. Everything in "Self-hosted / free LLM & embedding
+backends" below (Ollama, llama.cpp, LM Studio, HF TEI) is about *which* backend answers
+those two seams, not about whether a given simulator/calculation result required one —
+none of them do.
+
 ## Already free/open-source in this repo
 
 Context, not the deliverable — so the rest of this document doesn't re-suggest adding

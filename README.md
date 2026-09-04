@@ -211,6 +211,7 @@ discipline needs:
 | `local` **(default)** | free | The `ollama` service in `docker-compose.yml`, plus `LOCAL_AGENT_MODEL` |
 | `openai` | paid | `OPENAI_API_KEY` |
 | `anthropic` | paid | `ANTHROPIC_API_KEY` |
+| `runpod` | paid, per-second | `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, `RUNPOD_MODEL` — a RunPod Serverless vLLM endpoint you deploy yourself; scales to zero when idle. For a model too large for local GPU VRAM. Hosted cloud API from a data-egress standpoint, same as `openai`/`anthropic` — not covered by ADR-0004's local-only rule for SENSITIVE/RESTRICTED knowledge-base documents (that's a separate config axis, `DEFAULT_LLM_BACKEND`, untouched by this). |
 
 > [!IMPORTANT]
 > The **knowledge base** makes a separate backend choice (`DEFAULT_LLM_BACKEND`), driven
@@ -270,7 +271,13 @@ survey behind these choices.
   source, see [ra3xdh/qucsator_rf](https://github.com/ra3xdh/qucsator_rf). Note the CLI
   binary `simulation/qucs.py` shells out to is named `qucsator_rf`, **not** the bare
   `qucsator` its upstream project is colloquially called.
-- **ngspice** — `simulation/ngspice.py`
+- **ngspice** — `simulation/ngspice.py`. Verified against a real ngspice
+  install 2026-09-04 (RC-filter `.AC` sweep; see that module's docstring).
+  Linux: `apt install ngspice` — the plain default binary name already
+  matches, no config needed. Windows: no installer exists; run
+  `pwsh scripts/install_ngspice_windows.ps1` (downloads/checksums/extracts
+  a portable build, no Administrator rights required) and set
+  `NGSPICE_BIN` to the path it prints.
 - **Xyce** — `simulation/xyce.py`
 - **LTspice** — batch/CLI mode, via the optional extra: `uv sync --extra ltspice`.
   `simulation/ltspice.py`

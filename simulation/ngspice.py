@@ -92,14 +92,23 @@ SCOPE OF THIS IMPLEMENTATION:
     simulation/openems.py uses for its own still-unimplemented far-field
     extraction.
 
-HONEST CAVEAT: the real `ngspice` binary is NOT installed in this
-environment (confirmed via `which ngspice`, exit 1) and was not available
-to run against these generated netlists. Netlist generation and `wrdata`
-output parsing are built to the documented format cited above; tests
-exercise them only against a fake "ngspice" script (see
-tests/test_ngspice.py), not a real ngspice run. Treat any result as
-unverified end-to-end until it has been run against the real binary at
-least once.
+VERIFIED END TO END 2026-09-04: a real ngspice-47 binary (portable Windows
+build, sha256 59225971bd68cdd1199443649aa4615a9e6d684933f205ab49006a3942518f5a
+-- see scripts/install_ngspice_windows.ps1) was run through
+run_ngspice_simulation() against a plain RC low-pass filter (R=1kOhm,
+C=1uF, cutoff ~159Hz), `.AC dec 5 1 1e6`. Real ngspice accepted the
+generated netlist and `wrdata` output unmodified; the parsed AC result
+matched the filter's known physics (near-unity |v(out)| at 1Hz, rolled off
+to ~1.6e-4 by 1MHz) -- see tests/test_ngspice.py's real-binary test for the
+reproducible version of this same check. This covers the `.AC` analysis
+path, plain R/L/C/V components, and wrdata parsing end to end. NOT yet
+verified against a real binary: `.TRAN`/`.OP` analyses and the `raw_cards`
+escape hatch -- those remain format-verified-against-documentation only,
+same caveat as before. A second real binary (ngspice-42, Ubuntu 24.04's
+apt package -- see this repo's Dockerfile) was also confirmed to exist at
+the adapter's plain default executable name "ngspice" with no NGSPICE_BIN
+override needed on Linux, unlike Windows where the portable build's
+console binary is named "ngspice_con.exe".
 """
 
 from __future__ import annotations
