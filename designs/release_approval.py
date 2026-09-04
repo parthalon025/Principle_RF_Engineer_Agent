@@ -70,9 +70,7 @@ def _canonical_fingerprint(fields: dict[str, Any]) -> str:
 
 def _sign(fingerprint: str, approved_by: str, granted_at: float) -> str:
     raw = f"{fingerprint}:{approved_by}:{granted_at!r}"
-    return hmac.new(
-        _RELEASE_APPROVAL_SIGNING_KEY, raw.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
+    return hmac.new(_RELEASE_APPROVAL_SIGNING_KEY, raw.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -193,9 +191,7 @@ def _problems_with(receipt: Any, fingerprint_fields: dict[str, Any]) -> list[str
             "release -- it was granted for a different design or revision; "
             "request approval again for this exact design revision"
         )
-    expected = _sign(
-        receipt.decision_fingerprint, receipt.approved_by, receipt.granted_at
-    )
+    expected = _sign(receipt.decision_fingerprint, receipt.approved_by, receipt.granted_at)
     if not hmac.compare_digest(expected, receipt.token):
         problems.append(
             "the approval receipt's signature is invalid -- it was not issued "
@@ -206,9 +202,7 @@ def _problems_with(receipt: Any, fingerprint_fields: dict[str, Any]) -> list[str
     return problems
 
 
-def check_design_release_approval_gate(
-    approval: Any, fingerprint_fields: dict[str, Any]
-) -> None:
+def check_design_release_approval_gate(approval: Any, fingerprint_fields: dict[str, Any]) -> None:
     """Raise `DesignReleaseApprovalError` naming exactly what is missing
     unless `approval` is a valid receipt for THIS exact release --
     signature-verified and fingerprint-matched, not merely present."""

@@ -58,9 +58,7 @@ LEGAL_TRANSITIONS: dict[DesignStatus, frozenset[DesignStatus]] = {
     _S.ANALYSIS: frozenset({_S.SIMULATION, _S.FAIL, _S.BLOCKED}),
     _S.SIMULATION: frozenset({_S.OPTIMIZATION, _S.FAIL, _S.BLOCKED}),
     _S.OPTIMIZATION: frozenset({_S.VERIFICATION, _S.FAIL, _S.BLOCKED}),
-    _S.VERIFICATION: frozenset(
-        {_S.CONDITIONAL_PASS, _S.PASS, _S.FAIL, _S.BLOCKED}
-    ),
+    _S.VERIFICATION: frozenset({_S.CONDITIONAL_PASS, _S.PASS, _S.FAIL, _S.BLOCKED}),
     # Only these two may be released, and both may also be sent back for
     # rework -- a CONDITIONAL-PASS especially, since the condition is
     # usually "fix this one thing first".
@@ -111,9 +109,7 @@ def coerce_status(status: DesignStatus | str) -> DesignStatus:
         return DesignStatus(status)
     except ValueError:
         legal = ", ".join(sorted(s.value for s in DesignStatus))
-        raise ValueError(
-            f"unknown design status {status!r}; legal values are: {legal}"
-        ) from None
+        raise ValueError(f"unknown design status {status!r}; legal values are: {legal}") from None
 
 
 def legal_transitions_from(status: DesignStatus | str) -> frozenset[DesignStatus]:
@@ -134,9 +130,7 @@ def transition_requires_release_approval(
     return coerce_status(target) is DesignStatus.RELEASED
 
 
-def check_transition(
-    current: DesignStatus | str, target: DesignStatus | str
-) -> None:
+def check_transition(current: DesignStatus | str, target: DesignStatus | str) -> None:
     """Raise `IllegalStatusTransitionError` unless `current -> target` is legal.
 
     A status may not transition to itself: a no-op write is far more often a

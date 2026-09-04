@@ -49,9 +49,7 @@ def test_an_approval_callback_that_declines_grants_no_receipt():
 
 def test_the_approving_identity_is_required():
     with pytest.raises(DesignReleaseApprovalError, match="approved_by"):
-        request_design_release_approval(
-            FIELDS, approved_by="", approval_callback=lambda _: True
-        )
+        request_design_release_approval(FIELDS, approved_by="", approval_callback=lambda _: True)
 
 
 def test_the_callback_receives_the_exact_fields_being_approved():

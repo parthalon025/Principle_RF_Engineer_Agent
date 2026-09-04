@@ -169,6 +169,5 @@ def test_reference_case_against_a_real_nec2_solve(case_id):
 
     problems = check_reference_case(case, result)
     assert not problems, "\n".join(
-        [f"{case.case_id} did not reproduce its published values:"]
-        + [f"  {p}" for p in problems]
+        [f"{case.case_id} did not reproduce its published values:"] + [f"  {p}" for p in problems]
     )

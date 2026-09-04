@@ -161,10 +161,7 @@ def butterworth_g_values(order: int) -> tuple[float, ...]:
     """
     _validate_order(order)
     g = [1.0]
-    g.extend(
-        2.0 * math.sin((2 * k - 1) * math.pi / (2 * order))
-        for k in range(1, order + 1)
-    )
+    g.extend(2.0 * math.sin((2 * k - 1) * math.pi / (2 * order)) for k in range(1, order + 1))
     g.append(1.0)
     return tuple(g)
 
@@ -223,9 +220,7 @@ def _lowpass_element(position: Position, g: float, r0: float, wc: float) -> Filt
     return FilterElement("shunt", "C", capacitance_f=g / (r0 * wc))
 
 
-def _highpass_element(
-    position: Position, g: float, r0: float, wc: float
-) -> FilterElement:
+def _highpass_element(position: Position, g: float, r0: float, wc: float) -> FilterElement:
     """High-pass swaps each element for its opposite and inverts g.
 
     A series inductor becomes a series capacitor, a shunt capacitor becomes a
@@ -324,9 +319,7 @@ def synthesize_filter(
     perfectly plausible in its output.
     """
     if response not in _RESPONSES:
-        raise ValueError(
-            f"Unknown response {response!r}; expected one of {_RESPONSES}."
-        )
+        raise ValueError(f"Unknown response {response!r}; expected one of {_RESPONSES}.")
     if band not in _BANDS:
         raise ValueError(f"Unknown band {band!r}; expected one of {_BANDS}.")
     if first_element not in ("series", "shunt"):
@@ -343,17 +336,14 @@ def synthesize_filter(
             raise ValueError("cutoff_hz must be positive.")
         if center_hz is not None or bandwidth_hz is not None:
             raise ValueError(
-                f"center_hz/bandwidth_hz do not apply to a {band} filter; "
-                "use cutoff_hz."
+                f"center_hz/bandwidth_hz do not apply to a {band} filter; use cutoff_hz."
             )
         wc = 2 * math.pi * cutoff_hz
         build = _lowpass_element if band == "lowpass" else _highpass_element
         scale_args: tuple[float, ...] = (impedance_ohm, wc)
     else:
         if center_hz is None or bandwidth_hz is None:
-            raise ValueError(
-                f"center_hz and bandwidth_hz are both required for a {band} filter."
-            )
+            raise ValueError(f"center_hz and bandwidth_hz are both required for a {band} filter.")
         if center_hz <= 0:
             raise ValueError("center_hz must be positive.")
         if bandwidth_hz <= 0:
@@ -366,8 +356,7 @@ def synthesize_filter(
             )
         if cutoff_hz is not None:
             raise ValueError(
-                f"cutoff_hz does not apply to a {band} filter; use center_hz "
-                "and bandwidth_hz."
+                f"cutoff_hz does not apply to a {band} filter; use center_hz and bandwidth_hz."
             )
         w0 = 2 * math.pi * center_hz
         delta = bandwidth_hz / center_hz
@@ -375,12 +364,10 @@ def synthesize_filter(
         scale_args = (impedance_ohm, w0, delta)
 
     positions: list[Position] = [
-        ("shunt" if (i % 2 == 0) == (first_element == "shunt") else "series")
-        for i in range(order)
+        ("shunt" if (i % 2 == 0) == (first_element == "shunt") else "series") for i in range(order)
     ]
     elements = tuple(
-        build(position, g_k, *scale_args)
-        for position, g_k in zip(positions, g[1:-1], strict=True)
+        build(position, g_k, *scale_args) for position, g_k in zip(positions, g[1:-1], strict=True)
     )
 
     return FilterNetwork(

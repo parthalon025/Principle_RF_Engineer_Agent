@@ -96,9 +96,7 @@ def test_chebyshev_ripple_must_be_positive():
 
 def test_lowpass_shunt_first_gives_alternating_c_and_l():
     """n=3 Butterworth, 1 GHz, 50 ohm, shunt-first: C, L, C."""
-    net = synthesize_filter(
-        response="butterworth", band="lowpass", order=3, cutoff_hz=1e9
-    )
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
     assert [(e.position, e.topology) for e in net.elements] == [
         ("shunt", "C"),
         ("series", "L"),
@@ -131,9 +129,7 @@ def test_lowpass_series_first_is_the_dual_ladder():
 
 
 def test_highpass_swaps_element_kinds_and_inverts_g():
-    net = synthesize_filter(
-        response="butterworth", band="highpass", order=3, cutoff_hz=1e9
-    )
+    net = synthesize_filter(response="butterworth", band="highpass", order=3, cutoff_hz=1e9)
     assert [(e.position, e.topology) for e in net.elements] == [
         ("shunt", "L"),
         ("series", "C"),
@@ -159,9 +155,7 @@ def test_bandpass_elements_resonate_at_the_centre_frequency():
     assert len(net.elements) == 3
     for element in net.elements:
         assert element.topology in {"LC_SERIES", "LC_PARALLEL"}
-        resonant = 1.0 / (
-            2 * math.pi * math.sqrt(element.inductance_h * element.capacitance_f)
-        )
+        resonant = 1.0 / (2 * math.pi * math.sqrt(element.inductance_h * element.capacitance_f))
         assert resonant == pytest.approx(f0, rel=1e-9)
 
 
@@ -175,9 +169,7 @@ def test_bandstop_elements_also_resonate_at_the_centre_frequency():
         bandwidth_hz=0.5e9,
     )
     for element in net.elements:
-        resonant = 1.0 / (
-            2 * math.pi * math.sqrt(element.inductance_h * element.capacitance_f)
-        )
+        resonant = 1.0 / (2 * math.pi * math.sqrt(element.inductance_h * element.capacitance_f))
         assert resonant == pytest.approx(f0, rel=1e-9)
 
 
@@ -219,16 +211,26 @@ def test_load_impedance_direction_depends_on_how_the_ladder_ends():
     test_even_order_chebyshev_meets_its_ripple_spec_into_its_stated_load."""
     # order 2, shunt-first -> ends on a series inductor -> conductance
     ends_series = synthesize_filter(
-        response="chebyshev", band="lowpass", order=2, ripple_db=3.0,
-        cutoff_hz=1e9, impedance_ohm=50.0, first_element="shunt",
+        response="chebyshev",
+        band="lowpass",
+        order=2,
+        ripple_db=3.0,
+        cutoff_hz=1e9,
+        impedance_ohm=50.0,
+        first_element="shunt",
     )
     assert ends_series.elements[-1].position == "series"
     assert ends_series.load_impedance_ohm == pytest.approx(50.0 / 5.8095, abs=0.01)
 
     # order 2, series-first -> ends on a shunt capacitor -> resistance
     ends_shunt = synthesize_filter(
-        response="chebyshev", band="lowpass", order=2, ripple_db=3.0,
-        cutoff_hz=1e9, impedance_ohm=50.0, first_element="series",
+        response="chebyshev",
+        band="lowpass",
+        order=2,
+        ripple_db=3.0,
+        cutoff_hz=1e9,
+        impedance_ohm=50.0,
+        first_element="series",
     )
     assert ends_shunt.elements[-1].position == "shunt"
     assert ends_shunt.load_impedance_ohm == pytest.approx(50.0 * 5.8095, abs=0.1)
@@ -243,9 +245,7 @@ def test_odd_order_chebyshev_is_matched_to_its_source():
 
 def test_scaling_impedance_scales_l_up_and_c_down():
     """Doubling R0 doubles every inductance and halves every capacitance."""
-    base = synthesize_filter(
-        response="butterworth", band="lowpass", order=3, cutoff_hz=1e9
-    )
+    base = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
     doubled = synthesize_filter(
         response="butterworth",
         band="lowpass",
@@ -253,12 +253,8 @@ def test_scaling_impedance_scales_l_up_and_c_down():
         cutoff_hz=1e9,
         impedance_ohm=100.0,
     )
-    assert doubled.elements[1].inductance_h == pytest.approx(
-        2 * base.elements[1].inductance_h
-    )
-    assert doubled.elements[0].capacitance_f == pytest.approx(
-        base.elements[0].capacitance_f / 2
-    )
+    assert doubled.elements[1].inductance_h == pytest.approx(2 * base.elements[1].inductance_h)
+    assert doubled.elements[0].capacitance_f == pytest.approx(base.elements[0].capacitance_f / 2)
 
 
 # --- input validation -----------------------------------------------------
@@ -266,9 +262,7 @@ def test_scaling_impedance_scales_l_up_and_c_down():
 
 def test_chebyshev_requires_a_ripple():
     with pytest.raises(ValueError, match="ripple_db"):
-        synthesize_filter(
-            response="chebyshev", band="lowpass", order=3, cutoff_hz=1e9
-        )
+        synthesize_filter(response="chebyshev", band="lowpass", order=3, cutoff_hz=1e9)
 
 
 def test_butterworth_rejects_a_ripple():
@@ -286,16 +280,12 @@ def test_butterworth_rejects_a_ripple():
 
 def test_lowpass_requires_cutoff_not_centre():
     with pytest.raises(ValueError, match="cutoff_hz"):
-        synthesize_filter(
-            response="butterworth", band="lowpass", order=3, center_hz=1e9
-        )
+        synthesize_filter(response="butterworth", band="lowpass", order=3, center_hz=1e9)
 
 
 def test_bandpass_requires_centre_and_bandwidth():
     with pytest.raises(ValueError, match="center_hz|bandwidth_hz"):
-        synthesize_filter(
-            response="butterworth", band="bandpass", order=3, cutoff_hz=1e9
-        )
+        synthesize_filter(response="butterworth", band="bandpass", order=3, cutoff_hz=1e9)
 
 
 def test_bandwidth_must_be_narrower_than_the_centre_frequency():
@@ -313,9 +303,7 @@ def test_unknown_response_and_band_are_rejected():
     with pytest.raises(ValueError, match="response"):
         synthesize_filter(response="elliptic", band="lowpass", order=3, cutoff_hz=1e9)
     with pytest.raises(ValueError, match="band"):
-        synthesize_filter(
-            response="butterworth", band="allpass", order=3, cutoff_hz=1e9
-        )
+        synthesize_filter(response="butterworth", band="allpass", order=3, cutoff_hz=1e9)
 
 
 # --- end-to-end: analyze the synthesized ladder as a circuit ---------------
@@ -404,9 +392,7 @@ def test_butterworth_lowpass_matches_its_closed_form_response(order, first_eleme
 
 def test_butterworth_lowpass_is_3db_down_at_cutoff():
     """The textbook definition of the Butterworth cut-off frequency."""
-    net = synthesize_filter(
-        response="butterworth", band="lowpass", order=3, cutoff_hz=1e9
-    )
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
     loss_db = -20 * math.log10(_s21(net, 1e9))
     assert loss_db == pytest.approx(3.0103, abs=1e-4)
 
@@ -425,9 +411,7 @@ def test_chebyshev_lowpass_ripple_stays_within_its_spec(order):
         ripple_db=ripple_db,
         cutoff_hz=fc,
     )
-    losses = [
-        -20 * math.log10(_s21(net, fc * i / 200.0)) for i in range(1, 201)
-    ]
+    losses = [-20 * math.log10(_s21(net, fc * i / 200.0)) for i in range(1, 201)]
     # Confined to [0, ripple] everywhere in the band -- the equal-ripple
     # guarantee. Sampling on a fixed grid cannot land exactly on the nulls, so
     # the floor is asserted as "gets close to 0 dB", not "is 0 dB".
@@ -440,9 +424,7 @@ def test_chebyshev_lowpass_ripple_stays_within_its_spec(order):
 def test_chebyshev_rolls_off_faster_than_butterworth_at_equal_order():
     """The trade the ripple buys: same component count, sharper skirt."""
     fc, order = 1e9, 5
-    butter = synthesize_filter(
-        response="butterworth", band="lowpass", order=order, cutoff_hz=fc
-    )
+    butter = synthesize_filter(response="butterworth", band="lowpass", order=order, cutoff_hz=fc)
     cheby = synthesize_filter(
         response="chebyshev", band="lowpass", order=order, ripple_db=0.5, cutoff_hz=fc
     )
@@ -452,12 +434,8 @@ def test_chebyshev_rolls_off_faster_than_butterworth_at_equal_order():
 def test_highpass_is_the_mirror_of_the_lowpass():
     """A high-pass at wc/w should equal the low-pass at w/wc."""
     fc = 1e9
-    lp = synthesize_filter(
-        response="butterworth", band="lowpass", order=3, cutoff_hz=fc
-    )
-    hp = synthesize_filter(
-        response="butterworth", band="highpass", order=3, cutoff_hz=fc
-    )
+    lp = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=fc)
+    hp = synthesize_filter(response="butterworth", band="highpass", order=3, cutoff_hz=fc)
     for ratio in (0.25, 0.5, 2.0, 4.0):
         assert _s21(hp, fc / ratio) == pytest.approx(_s21(lp, ratio * fc), rel=1e-9)
 
@@ -548,8 +526,6 @@ def test_the_wrong_load_impedance_would_be_caught():
     net = synthesize_filter(
         response="chebyshev", band="lowpass", order=2, ripple_db=3.0, cutoff_hz=1e9
     )
-    wrong = dataclasses.replace(
-        net, load_impedance_ohm=net.source_impedance_ohm * net.g_values[-1]
-    )
+    wrong = dataclasses.replace(net, load_impedance_ohm=net.source_impedance_ohm * net.g_values[-1])
     losses = [-20 * math.log10(_s21(wrong, 1e9 * i / 200.0)) for i in range(1, 201)]
     assert max(losses) > 3.0 + 1e-6

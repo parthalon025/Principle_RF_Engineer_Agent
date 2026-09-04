@@ -102,7 +102,10 @@ class ReferenceCase:
 
 
 def half_wave_dipole_geometry(
-    frequency_hz: float, *, length_wavelengths: float = 0.5, radius_wavelengths: float = 1e-5,
+    frequency_hz: float,
+    *,
+    length_wavelengths: float = 0.5,
+    radius_wavelengths: float = 1e-5,
     segments: int = 21,
 ) -> dict[str, Any]:
     """A centre-fed straight dipole along z, in free space.
@@ -123,8 +126,12 @@ def half_wave_dipole_geometry(
             {
                 "tag": 1,
                 "segments": segments,
-                "x1_m": 0.0, "y1_m": 0.0, "z1_m": -half,
-                "x2_m": 0.0, "y2_m": 0.0, "z2_m": half,
+                "x1_m": 0.0,
+                "y1_m": 0.0,
+                "z1_m": -half,
+                "x2_m": 0.0,
+                "y2_m": 0.0,
+                "z2_m": half,
                 "radius_m": radius_wavelengths * wavelength,
             }
         ],
@@ -136,8 +143,12 @@ def half_wave_dipole_geometry(
             "voltage_imag": 0.0,
         },
         "pattern": {
-            "theta_start_deg": 0.0, "theta_step_deg": 5.0, "theta_count": 37,
-            "phi_start_deg": 0.0, "phi_step_deg": 90.0, "phi_count": 1,
+            "theta_start_deg": 0.0,
+            "theta_step_deg": 5.0,
+            "theta_count": 37,
+            "phi_start_deg": 0.0,
+            "phi_step_deg": 90.0,
+            "phi_count": 1,
         },
     }
 
@@ -229,9 +240,7 @@ def _as_float(value: Any) -> float | None:
     return None if math.isnan(number) else number
 
 
-def check_reference_case(
-    case: ReferenceCase, result: dict[str, Any]
-) -> tuple[Discrepancy, ...]:
+def check_reference_case(case: ReferenceCase, result: dict[str, Any]) -> tuple[Discrepancy, ...]:
     """Every published value `result` failed to reproduce. Empty == passed.
 
     A quantity missing from the result is a discrepancy, not a skip: an

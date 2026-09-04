@@ -616,15 +616,11 @@ def test_a_valid_release_receipt_releases_the_design(db_conn):
     design_id = _make_design(db_conn, design_key="DES-RELEASE")
     _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
     approval = request_design_release_approval(
-        release_fingerprint_fields(
-            design_id=design_id, design_key="DES-RELEASE", revision="A"
-        ),
+        release_fingerprint_fields(design_id=design_id, design_key="DES-RELEASE", revision="A"),
         approved_by="a.engineer",
         approval_callback=lambda _: True,
     )
-    row = update_design_status(
-        db_conn, design_id=design_id, status="RELEASED", approval=approval
-    )
+    row = update_design_status(db_conn, design_id=design_id, status="RELEASED", approval=approval)
     assert row["status"] == "RELEASED"
 
 
@@ -635,20 +631,21 @@ def test_a_release_receipt_for_another_design_is_refused(db_conn):
     other_id = _make_design(db_conn, design_key="DES-OTHER")
     for design_id in (approved_id, other_id):
         _walk(
-            db_conn, design_id,
-            "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS",
+            db_conn,
+            design_id,
+            "ANALYSIS",
+            "SIMULATION",
+            "OPTIMIZATION",
+            "VERIFICATION",
+            "PASS",
         )
     approval = request_design_release_approval(
-        release_fingerprint_fields(
-            design_id=approved_id, design_key="DES-APPROVED", revision="A"
-        ),
+        release_fingerprint_fields(design_id=approved_id, design_key="DES-APPROVED", revision="A"),
         approved_by="a.engineer",
         approval_callback=lambda _: True,
     )
     with pytest.raises(DesignReleaseApprovalError):
-        update_design_status(
-            db_conn, design_id=other_id, status="RELEASED", approval=approval
-        )
+        update_design_status(db_conn, design_id=other_id, status="RELEASED", approval=approval)
     assert read_design(db_conn, other_id)["status"] == "PASS"
 
 
@@ -656,15 +653,11 @@ def test_released_is_terminal_in_the_write_path(db_conn):
     design_id = _make_design(db_conn, design_key="DES-TERMINAL")
     _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
     approval = request_design_release_approval(
-        release_fingerprint_fields(
-            design_id=design_id, design_key="DES-TERMINAL", revision="A"
-        ),
+        release_fingerprint_fields(design_id=design_id, design_key="DES-TERMINAL", revision="A"),
         approved_by="a.engineer",
         approval_callback=lambda _: True,
     )
-    update_design_status(
-        db_conn, design_id=design_id, status="RELEASED", approval=approval
-    )
+    update_design_status(db_conn, design_id=design_id, status="RELEASED", approval=approval)
     with pytest.raises(IllegalStatusTransitionError):
         update_design_status(db_conn, design_id=design_id, status="ANALYSIS")
     assert read_design(db_conn, design_id)["status"] == "RELEASED"
@@ -699,15 +692,11 @@ def test_allow_nonsequential_cannot_reopen_a_released_design(db_conn):
     design_id = _make_design(db_conn, design_key="DES-REOPEN")
     _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
     approval = request_design_release_approval(
-        release_fingerprint_fields(
-            design_id=design_id, design_key="DES-REOPEN", revision="A"
-        ),
+        release_fingerprint_fields(design_id=design_id, design_key="DES-REOPEN", revision="A"),
         approved_by="a.engineer",
         approval_callback=lambda _: True,
     )
-    update_design_status(
-        db_conn, design_id=design_id, status="RELEASED", approval=approval
-    )
+    update_design_status(db_conn, design_id=design_id, status="RELEASED", approval=approval)
     with pytest.raises(IllegalStatusTransitionError):
         update_design_status(
             db_conn, design_id=design_id, status="ANALYSIS", allow_nonsequential=True
