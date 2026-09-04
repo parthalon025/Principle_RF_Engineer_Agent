@@ -258,6 +258,16 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: family schema — implies a single shape every family fills in;
   the per-family parts are genuinely heterogeneous objects, not optional
   slots in a common shape.
+- **Simulation tier** (design family field): whether a family's entire
+  evaluation is a single unit-cell solve (**Tier A** — absorbers and other
+  uniform surfaces, Examples 1, 2, 3, 6) or whether the unit-cell solve only
+  populates a phase-versus-parameter lookup that an aperture-level
+  evaluation then consumes, because the designed-for behaviour — a steered
+  beam, a suppressed backscatter lobe — does not exist at unit-cell level at
+  all (**Tier B** — Examples 4, 5, 7). Established in #107. Cross-cuts,
+  rather than aligns with, the separate port-count, post-processing, and
+  sweep-axis differences between families. Only Tier B families carry a
+  symbol alphabet (#130) and an Element/Coding-Alphabet library entry.
 - **Physical bound** (design family field): a family's fundamental
   feasibility predicate relating achievable performance to size or
   thickness — e.g. the Rozanov bound for absorbers, the Gustafsson &
