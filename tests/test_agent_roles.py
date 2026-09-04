@@ -1,35 +1,47 @@
 """Thin wiring tests for the specialist-role split (issue #34) and the
-principal's delegation/synthesis mechanism (issue #35).
+principal's routing mechanism (issue #35, redesigned).
 
 These tests confirm each role is constructible and that its tool list is
 scoped to its stated domain. They deliberately do NOT re-test the tools'
 own logic -- that is already covered by test_calculations.py,
 test_touchstone.py, and the knowledge test suite.
 
-The issue #35 tests exercise the delegation mechanism (Agent.as_tool()
-wiring and the deterministic role-citation tag) at the level that is
+The routing mechanism was originally built on `Agent.as_tool()` (a nested
+Runner.run() call per delegated question, with a deterministic
+`custom_output_extractor` stamping a "[Role Name] ..." citation onto each
+specialist's result so the principal could synthesize multiple
+contributions into one cited answer). It was replaced with
+`Agent(handoffs=[...])` after live testing against a real local model
+(qwen3.8:27b via Ollama) reproduced a real, repeatable failure specific to
+the nested shape -- see agent/main.py's routing section for the full
+account and the upstream bug reports it traces to (Qwen3.8's official chat
+template hard-crashing on a message sequence with no genuine `user` turn,
+which is exactly what `.as_tool()`'s nested call constructs). Handoffs
+transfer control within the SAME Runner.run() call instead, sidestepping
+that failure mode structurally -- at the cost of the old citation-synthesis
+behavior: the principal now routes to ONE specialist per question, and that
+specialist's own answer becomes the run's final output directly, with no
+principal-side re-synthesis step.
+
+These tests exercise the routing mechanism's wiring at the level that is
 genuinely testable without a configured OPENAI_API_KEY / local LLM backend
 in this environment (see test_literature_corpus.py for the same
-missing-credential constraint elsewhere in this repo). A full live
-multi-domain query through Runner.run_sync is NOT exercised here -- there
-is no model credential in this environment to run it against, and no
-existing test in this repo calls Runner/Agent against a real model to use
-as precedent. What IS verified: the principal role has a delegation tool
-registered per specialist role, each tool wraps the correct specialist
-Agent, and the deterministic output-tagging function produces the
-documented "[Role Name] ..." citation format the principal is instructed
-to carry through into its final answer.
+missing-credential constraint elsewhere in this repo). A full live routed
+query through Runner.run_sync is NOT exercised here for that reason --
+the real, live re-test (against real Ollama/qwen3.8) that validated this
+redesign in the first place lives outside this repo's automated suite (see
+this session's own record, not a file in this tree). What IS verified:
+the principal role has exactly one handoff registered per specialist role,
+each handoff targets the correct specialist Agent, and the principal's own
+direct tool list holds only what's genuinely principal-exclusive.
 """
-
-from types import SimpleNamespace
 
 from agent.main import (
     _ALL_TOOLS,
     _SPEC_BY_KEY,
-    DELEGATION_TOOLS,
     ROLE_SPECS,
     ROLES,
-    _specialist_output_tag,
+    SPECIALIST_HANDOFFS,
     principal,
 )
 from orchestration.policy import assert_all_tools_categorized
@@ -52,72 +64,65 @@ def test_every_role_has_a_non_empty_tool_list():
         assert len(ROLES[spec.key].tools) > 0, f"role {spec.key!r} has no tools"
 
 
-def test_principal_role_has_broad_access():
+def test_principal_role_is_scoped_not_broad():
+    """Superseded by this repo's own real-world local-model testing: giving
+    one agent all 86 calculation/simulation tools at once (the "principal is
+    deliberately unscoped" design this test used to assert, and the
+    docstring history below this comment used to track fact-by-fact)
+    measurably breaks tool-selection reliability on a local model -- a
+    91-tool principal (86 + 5 delegation tools) never called a real tool at
+    all in live testing against qwen3.8:27b/Ollama, claiming tools it
+    plainly had didn't exist. This matches Anthropic's own published tool
+    design guidance ("fewer, higher-leverage tools beat many overlapping
+    ones") and DeepSeek Harness's production tool registry, which stays
+    explicitly *scoped* per agent even at thousands-of-plugins scale.
+
+    The fix: the principal now holds only tools with no other home (the
+    design-record/lifecycle tools and the design-iteration-loop tools,
+    genuinely principal-exclusive -- no specialist role holds them) plus
+    the two search tools it already shared, plus 5 `route_to_<role>_role`
+    handoffs (`agent.handoffs`, not `agent.tools` -- see
+    test_principal_has_one_handoff_per_specialist_role for why this moved
+    off `Agent.as_tool()` entirely, not just a smaller tool list). Every
+    specialist calculation/simulation tool is still fully reachable, just
+    through a handoff rather than directly -- nothing lost, only routed
+    through a smaller, more reliable per-call tool surface. See
+    agent/main.py's `_PRINCIPAL_DIRECT_TOOLS` for the exact, reasoned
+    list."""
     names = _tool_names(ROLES["principal"])
-    assert "calculate_wavelength" in names
-    assert "ingest_document" in names
-    assert "extract_components" in names
-    assert "analyze_touchstone_file" in names
-    # principal is the coordinating role and is deliberately unscoped: the
-    # 11 pre-#36 calculation/knowledge tools, the 35 Phase 1-2 tools added
-    # by issue #36, the search_design_records tool added by issue #37, the
-    # run_nec2_simulation tool added by issue #38, the run_openems_simulation
-    # tool added by issue #39, the run_hfss_simulation tool added by issue
-    # #40, the run_meep_simulation tool added by issue #60, the
-    # optimize_patch_length_for_target_frequency tool added by
-    # issue #41, the correlate_simulated_and_measured tool added
-    # by issue #45, the 3 design-iteration-loop tools (start_design_loop,
-    # advance_design_loop_step, inspect_design_loop_state) added by issue
-    # #46, the 4 design-lifecycle tools (create_design, read_design,
-    # record_decision, verify_requirement) from a separately-merged PR
-    # (#15, docs/adr/0005-0007) reconciled into this branch's specialist-role
-    # tool set, the run_openparem_simulation tool added by issue #62, the
-    # run_elmer_simulation tool added by issue #64, the run_ltspice_
-    # simulation tool added by issue #59, the run_qucs_simulation tool added
-    # by issue #58, the run_kicad_gerber2ems_simulation tool added by issue
-    # #65, the run_ngspice_simulation and run_xyce_simulation tools added by
-    # issue #57, the run_palace_simulation tool added by issue #61, the
-    # run_gprmax_simulation tool added by issue #63, plus 4 more
-    # (lookup_digikey_component, lookup_mouser_component,
-    # lookup_nexar_component, reconcile_component_sources) added by ticket
-    # #67, plus 5 consult_<role>_role delegation tools (issue #35), one per
-    # non-principal specialist, plus the generate_freecad_curved_geometry
-    # tool added by issue #66, plus the 3 requirement-target tools
-    # (propose_requirement_target, mark_requirement_unscoreable,
-    # confirm_requirement_target) added by issue #92 -- principal-only,
-    # matching the create_design/verify_requirement design-tracking
-    # precedent rather than scoping them into a specialist role.
-    #
-    # issue #43 added request_vna_measurement_approval/
-    # measure_vna_s_parameters and issue #44 added 6 more spectrum
-    # analyzer/signal generator/power meter approval+measure/actuate tools
-    # (8 total) -- ticket #90 REMOVED all 8: the SCPI/VISA instrument-
-    # actuation approval gate and every tool built on it are gone (this
-    # system offers no physical-instrument actuation capability at all --
-    # see ADR-0012).
-    #
-    # So the running total is 87 (pre-#92) + 3 (#92) - 8 (#90) = 82. #90's
-    # own branch computed 87 - 8 = 79 against a base that predated #92;
-    # both tickets landed, so both adjustments apply.
-    #
-    # issue #94 adds 1 more (compile_lab_test_plan -- a read-only batched
-    # lab-test-plan compiler, also shared with the test role below), and
-    # issue #95 adds 1 more (run_candidate_search, the candidate solver --
-    # principal-only, same cross-cutting-orchestration reasoning as the
-    # 3 design-iteration-loop tools above). Both were implemented in
-    # parallel against the same 82 baseline and each computed 82 + 1 = 83
-    # on its own branch; both landed, so both apply: 82 + 1 + 1 = 84.
-    #
-    # issue #143 adds 1 more (synthesize_filter_prototype, the closed-form
-    # filter-prototype synthesizer -- also on the microwave role, matching
-    # the calculate_l_network_match precedent for a synthesis tool):
-    # 84 + 1 = 85.
-    #
-    # issue #145 adds 1 more (advance_design_status, the explicit
-    # design-lifecycle transition -- principal-only, matching the
-    # create_design/verify_requirement design-tracking precedent):
-    # 85 + 1 = 86.
-    assert len(names) == 86
+    # Specialist-domain tools are reachable only via handoff now, not directly.
+    assert "calculate_wavelength" not in names
+    assert "ingest_document" not in names
+    assert "extract_components" not in names
+    assert "analyze_touchstone_file" not in names
+    # Design-record/lifecycle tools: still principal-exclusive, still direct.
+    for tool_name in (
+        "create_design",
+        "read_design",
+        "record_decision",
+        "verify_requirement",
+        "advance_design_status",
+        "propose_requirement_target",
+        "mark_requirement_unscoreable",
+        "confirm_requirement_target",
+    ):
+        assert tool_name in names
+    # Shared search tools: still direct.
+    assert "search_knowledge" in names
+    assert "search_design_records" in names
+    # Design-iteration-loop tools (issue #46/#94/#95): still principal-exclusive, still direct.
+    for tool_name in (
+        "start_design_loop",
+        "advance_design_loop_step",
+        "inspect_design_loop_state",
+        "compile_lab_test_plan",
+        "run_candidate_search",
+    ):
+        assert tool_name in names
+    # 8 design-record + 2 search + 5 design-loop = 15 direct tools. The 5
+    # specialist handoffs are NOT in .tools -- see the handoff-specific
+    # tests below for those.
+    assert len(names) == 15
 
 
 def test_principal_module_alias_matches_registry():
@@ -413,7 +418,8 @@ def test_microwave_and_test_roles_get_ngspice_and_xyce_simulation():
     for tool_name in ("run_ngspice_simulation", "run_xyce_simulation"):
         assert tool_name in _tool_names(ROLES["microwave"])
         assert tool_name in _tool_names(ROLES["test"])
-        assert tool_name in _tool_names(ROLES["principal"])
+        # principal reaches this via a route_to_microwave_role/route_to_test_role
+        # handoff now, not directly -- see test_principal_role_is_scoped_not_broad.
         # not systems/antenna/verification's job
         assert tool_name not in _tool_names(ROLES["systems"])
         assert tool_name not in _tool_names(ROLES["antenna"])
@@ -454,7 +460,8 @@ def test_antenna_role_gets_patch_length_optimization_tool():
     # via the generic optimization/ package composes with the Phase 1
     # antenna-synthesis tool this role already owns.
     assert "optimize_patch_length_for_target_frequency" in _tool_names(ROLES["antenna"])
-    assert "optimize_patch_length_for_target_frequency" in _tool_names(ROLES["principal"])
+    # principal reaches this via a route_to_antenna_role handoff now, not
+    # directly -- see test_principal_role_is_scoped_not_broad.
     # not systems/microwave/test/verification's job
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["systems"])
     assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["microwave"])
@@ -470,7 +477,8 @@ def test_antenna_role_gets_freecad_curved_geometry_tool():
     # SIMULATED-provenance reference result test would validate hardware
     # against.
     assert "generate_freecad_curved_geometry" in _tool_names(ROLES["antenna"])
-    assert "generate_freecad_curved_geometry" in _tool_names(ROLES["principal"])
+    # principal reaches this via a route_to_antenna_role handoff now, not
+    # directly -- see test_principal_role_is_scoped_not_broad.
     # not systems/microwave/test/verification's job
     assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["systems"])
     assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["microwave"])
@@ -521,107 +529,71 @@ def test_search_knowledge_is_shared_by_every_role():
 
 
 def test_no_role_has_a_tool_outside_all_currently_wired_tools():
-    all_wired = _tool_names(ROLES["principal"])
+    # Was `_tool_names(ROLES["principal"])` -- valid back when the principal
+    # held every tool, no longer valid now that it's deliberately scoped
+    # (see test_principal_role_is_scoped_not_broad). The true superset is
+    # just _ALL_TOOLS now: every specialist's tools are drawn from it, and
+    # the principal's route_to_<role>_role handoffs live in .handoffs, not
+    # .tools, so they're a separate namespace this check doesn't need to
+    # include (see test_principal_has_one_handoff_per_specialist_role for
+    # that half).
+    all_wired = {tool.name for tool in _ALL_TOOLS}
     for spec in ROLE_SPECS:
         role_names = _tool_names(ROLES[spec.key])
         assert role_names <= all_wired, f"role {spec.key!r} has an unexpected tool"
 
 
 # ---------------------------------------------------------------------------
-# Issue #35: principal delegation and synthesis.
+# Issue #35: principal routing (redesigned from delegation -- see this
+# file's module docstring and agent/main.py's routing section for the full
+# account of why).
 #
-# `Agent.as_tool()` runs the nested specialist agent through `Runner.run`,
-# which requires a live model call -- not feasible in this environment (no
-# OPENAI_API_KEY, no LOCAL_LLM_BASE_URL; see module docstring). These tests
-# instead verify the delegation mechanism's wiring and its deterministic,
-# non-LLM-dependent piece: the role-citation tag every delegated result is
-# stamped with before it can reach the principal's synthesis.
+# `Agent(handoffs=[...])` transfers control to the target agent within the
+# SAME Runner.run() call -- there is no nested Runner.run(), so there is no
+# live-model-call requirement to work around the way `Agent.as_tool()`
+# testing had to (see this file's git history for that prior constraint).
+# What's tested here is still just the wiring: each handoff targets the
+# correct specialist Agent, with the right tool name and description. A
+# full live routed query through Runner.run/Runner.run_sync is still not
+# exercised in this automated suite (same missing-credential constraint as
+# ever in this environment) -- that verification happened live against a
+# real Ollama/qwen3.8 backend outside this repo's test suite.
 # ---------------------------------------------------------------------------
 
 _SPECIALIST_KEYS = ["systems", "microwave", "antenna", "test", "verification"]
 
 
-def test_principal_has_one_delegation_tool_per_specialist_role():
-    names = _tool_names(ROLES["principal"])
+def test_principal_has_one_handoff_per_specialist_role():
+    handoff_tool_names = {h.tool_name for h in ROLES["principal"].handoffs}
     for key in _SPECIALIST_KEYS:
-        assert f"consult_{key}_role" in names, f"missing delegation tool for {key!r}"
-    # principal does not delegate to itself
-    assert "consult_principal_role" not in names
+        assert f"route_to_{key}_role" in handoff_tool_names, f"missing handoff for {key!r}"
+    assert "route_to_principal_role" not in handoff_tool_names
+    # Handoffs are NOT tools -- confirm they don't leak into .tools too.
+    assert not (handoff_tool_names & _tool_names(ROLES["principal"]))
 
 
-def test_delegation_tools_registry_matches_specialist_keys():
-    assert set(DELEGATION_TOOLS.keys()) == set(_SPECIALIST_KEYS)
+def test_specialist_handoffs_registry_matches_specialist_keys():
+    assert set(SPECIALIST_HANDOFFS.keys()) == set(_SPECIALIST_KEYS)
 
 
-def test_each_delegation_tool_wraps_the_correct_specialist_agent():
+def test_each_handoff_targets_the_correct_specialist_agent():
     for key in _SPECIALIST_KEYS:
-        tool = DELEGATION_TOOLS[key]
-        assert tool.name == f"consult_{key}_role"
-        # Agent.as_tool() stamps the wrapped Agent instance on the FunctionTool
-        # it returns -- confirm each delegation tool actually wraps *that*
-        # specialist's Agent, not some other role's.
-        assert tool._agent_instance is ROLES[key]
-        assert tool._agent_instance.name == _SPEC_BY_KEY[key].display_name
+        h = SPECIALIST_HANDOFFS[key]
+        assert h.tool_name == f"route_to_{key}_role"
+        assert h.agent_name == ROLES[key].name
+        assert h.agent_name == _SPEC_BY_KEY[key].display_name
 
 
-def test_delegation_tool_description_names_its_role_and_citation_format():
+def test_handoff_description_names_its_role():
     for key in _SPECIALIST_KEYS:
-        tool = DELEGATION_TOOLS[key]
+        h = SPECIALIST_HANDOFFS[key]
         display_name = _SPEC_BY_KEY[key].display_name
-        assert display_name in tool.description
-        assert f"[{display_name}]" in tool.description
+        assert display_name in h.tool_description
 
 
-def test_principal_instructions_direct_it_to_delegate_and_cite_roles():
+def test_principal_instructions_direct_it_to_route_not_delegate():
     instructions = ROLES["principal"].instructions
-    assert "consult_<role>_role" in instructions
-    assert "specialist role(s) contributed" in instructions
-
-
-def test_specialist_output_tag_produces_the_documented_citation_format():
-    spec = _SPEC_BY_KEY["antenna"]
-    stub_run_result = SimpleNamespace(final_output="Resonant length: 12.4 mm (CALCULATED).")
-    tagged = _specialist_output_tag(spec, stub_run_result)
-    assert tagged == "[Antenna Engineer] Resonant length: 12.4 mm (CALCULATED)."
-    assert tagged.startswith(f"[{spec.display_name}]")
-
-
-def test_multi_domain_query_synthesis_cites_both_contributing_roles():
-    """Representative multi-domain scenario from the ticket: an antenna-
-    sizing question that also needs a stability check (test/verification-
-    adjacent). Exercises the same tagging function `Agent.as_tool()`'s
-    `custom_output_extractor` calls for each delegated result, then confirms
-    a synthesized answer built from both tagged results attributes each
-    contribution to its own specialist role -- without invoking a live
-    model."""
-    antenna_spec = _SPEC_BY_KEY["antenna"]
-    test_spec = _SPEC_BY_KEY["test"]
-
-    antenna_result = SimpleNamespace(
-        final_output=(
-            "For 2.45 GHz, a half-wave dipole is ~61.2 mm (wavelength=122.4 mm, CALCULATED)."
-        )
-    )
-    stability_result = SimpleNamespace(
-        final_output=(
-            "Measured VSWR=1.42 at the antenna port is within the 2:1 spec "
-            "(CALCULATED); no stability concern from this Touchstone data."
-        )
-    )
-
-    antenna_contribution = _specialist_output_tag(antenna_spec, antenna_result)
-    test_contribution = _specialist_output_tag(test_spec, stability_result)
-
-    # This mirrors what the principal's synthesis step composes from its two
-    # consult_<role>_role tool calls: each specialist's citation-tagged
-    # contribution, concatenated into one answer.
-    synthesized_answer = f"{antenna_contribution}\n\n{test_contribution}"
-
-    assert "[Antenna Engineer]" in synthesized_answer
-    assert "[Test Engineer]" in synthesized_answer
-    assert "61.2 mm" in synthesized_answer
-    assert "VSWR=1.42" in synthesized_answer
-    # Each specialist's own text stays out of the other's citation block.
-    antenna_block, test_block = synthesized_answer.split("\n\n")
-    assert "VSWR" not in antenna_block
-    assert "wavelength" not in test_block
+    assert "hand" in instructions.lower()
+    # The old citation-synthesis framing is gone -- routing hands off
+    # control entirely, there is no principal-side re-synthesis step.
+    assert "specialist role(s) contributed" not in instructions

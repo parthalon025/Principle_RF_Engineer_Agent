@@ -153,7 +153,7 @@ discipline needs:
 
 | Role | Focus |
 |---|---|
-| **Principal RF Engineer** | Coordinates the specialists; the only role holding the design-loop and solver tools |
+| **Principal RF Engineer** | Routes to the specialist whose domain fits the question; the only role holding the design-loop tools |
 | **Systems RF Engineer** | Link budgets, cascaded gain/noise figure, electrical-size bookkeeping, knowledge-base ingestion |
 | **Microwave Engineer** | Match, noise figure, S/Z/Y/ABCD conversions, stability circles, impedance matching |
 | **Antenna Engineer** | Electrical size, port match, patch synthesis, conformal/curvature corrections |
@@ -164,7 +164,7 @@ discipline needs:
 
 ```text
 .
-├── agent/            # role-scoped agents + principal delegation/synthesis
+├── agent/            # role-scoped agents + principal-to-specialist routing
 ├── mcp_server/       # the same tool surface over MCP (stdio)
 ├── rf_tools/         # deterministic calculations, Touchstone, correlation
 ├── designs/          # design records, requirement targets, success score
@@ -229,6 +229,19 @@ beside it. Every tool in the first four groups is free or open source, and that 
 alone reaches a working, verified design.
 See [`docs/FREE_AND_OPEN_SOURCE_TOOLING.md`](docs/FREE_AND_OPEN_SOURCE_TOOLING.md) for the
 survey behind these choices.
+
+> [!TIP]
+> Manual install, tool by tool, is one path — `docker compose build app` (or `docker build
+> .`) is the other, and gets you every tool below in one command with no manual step at
+> all: `Dockerfile` builds all 13 solvers plus Gmsh, gerbv, FreeCAD, and KiCad into one
+> Ubuntu 24.04 image (Linux-only; several of these have no native Windows build at all —
+> see the `Dockerfile`'s own header comment for why). Verified 2026-09-04 against a real,
+> from-scratch (`--no-cache`) build: every one of the 17 tools below actually runs inside
+> the built image, checked live (`ngspice -v`, `kicad-cli version`, `gmsh --version`,
+> `gerbv --version`, `FreeCADCmd --version`, `nec2++ -h`, `ElmerSolver -v`, `qucsator_rf
+> --version`, `Xyce -v`, `palace --help`, `python -m gprMax --help`, `python -c "import
+> meep"`, and `openEMS --version`, plus `OpenParEM3D.bin`'s presence/permissions) — not
+> just a green build.
 
 <details>
 <summary><b>Full-wave EM solvers</b> — NEC2++, openEMS, OpenParEM, Elmer, Palace, gprMax, MEEP</summary>

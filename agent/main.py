@@ -7,16 +7,16 @@ import numpy as np
 from agents import (
     Agent,
     AsyncOpenAI,
-    FunctionTool,
+    Handoff,
     ModelSettings,
     Runner,
     function_tool,
+    handoff,
     set_default_openai_api,
     set_default_openai_client,
     set_tracing_disabled,
 )
 from agents.models.default_models import get_default_model_settings
-from agents.run import RunResult
 from dotenv import load_dotenv
 from openai.types.shared import Reasoning
 
@@ -165,7 +165,7 @@ def _resolve_agent_model():
 
         prefix, model_env, model_default, key_env = _LITELLM_PROVIDERS[provider]
         return LitellmModel(
-            model=f"{prefix}/{os.getenv(model_env, model_default)}",
+            model=f"{prefix}/{os.getenv(model_env) or model_default}",
             api_key=os.getenv(key_env),
         )
     if provider == "local":
@@ -221,15 +221,50 @@ def _resolve_agent_model_settings() -> ModelSettings:
         # confirmed by reading it directly) regardless of what the model
         # itself supports (Qwen3.8 natively handles up to 262K, extendable
         # to 1M) -- a well-known Ollama gotcha, not a qwen3.8 limitation.
-        # Confirmed empirically in this repo specifically: the principal
-        # role's 86-tool schema payload (verbose per-tool docstrings) plus
-        # xhigh's own reasoning trace overflowed Ollama's default, and the
-        # model genuinely could not see calculate_wavelength -- despite it
-        # being the FIRST tool in the list -- until num_ctx was raised.
-        # 65536 is a deliberately generous number for THIS repo's actual
-        # tool count, not a universal default; re-check if the tool list
-        # grows substantially larger.
-        extra_body={"options": {"top_k": 20, "num_ctx": 65536}},
+        # CRITICAL: this only takes effect on a FRESH model load -- Ollama
+        # does NOT resize an already-loaded model's context per request
+        # (confirmed empirically: `ollama ps` kept reporting CONTEXT=4096
+        # after several requests with num_ctx=65536, until the model was
+        # explicitly stopped/unloaded and reloaded -- only then did `ollama
+        # ps` show CONTEXT=65536 for real). Any change to this value needs
+        # `ollama stop qwen3.8:27b` (or waiting for its idle-unload) before
+        # it takes effect, and every earlier round of diagnostic testing in
+        # this repo's own history ran against a stale, wrong context size.
+        # 8192 is sized for the CURRENT principal (20 tools, not the
+        # original 86) -- generous headroom without the VRAM/CPU-offload
+        # pressure a much larger window causes on a 16GB card (confirmed:
+        # 65536 pushed this model from 69% GPU-resident to a 50/50 CPU/GPU
+        # split). Re-check if the tool list grows substantially, or if a
+        # specialist role's own reasoning needs more room than this leaves.
+        extra_body={"options": {"top_k": 20, "num_ctx": 8192}},
+    )
+
+
+def _local_reasoning_output_tail() -> str:
+    """Appended to every role's instructions only when LLM_PROVIDER=local.
+
+    Explicit output-format steering for local reasoning-enabled models
+    (Qwen3-family "thinking" mode): tell the model plainly that thinking is
+    welcome and unbounded, but the VISIBLE answer must start directly with
+    the final result -- no restated question, no reasoning preamble. This
+    mirrors the exact prompt change that fixed empty/wrong outputs on the
+    same class of model in prior work (reworded from "reason internally...
+    output ONLY the final result" to "think step by step first, take as
+    long as you need... then write your VISIBLE answer as ONLY the final
+    result, start directly with the answer").
+
+    Omitted for openai/anthropic/runpod, which have their own well-tuned
+    default behavior this repo has no basis to second-guess.
+    """
+    if os.getenv("LLM_PROVIDER", "openai").lower() != "local":
+        return ""
+    return (
+        "\n\n## Output format\n\n"
+        "Think step by step first, internally, for as long as the problem "
+        "actually needs -- do not rush a multi-step design or tool-selection "
+        "decision. Then write your visible answer starting DIRECTLY with the "
+        "final result: no restated question, no meta-commentary about your "
+        "own reasoning process, no preamble."
     )
 
 
@@ -260,7 +295,7 @@ def _configure_hosted_openai_compatible_backend() -> None:
     """
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
     if provider == "local":
-        base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
+        base_url = os.getenv("LOCAL_LLM_BASE_URL") or "http://localhost:11434/v1"
         api_key = os.getenv("LOCAL_LLM_API_KEY") or "unused"
     elif provider == "runpod":
         endpoint_id = os.getenv("RUNPOD_ENDPOINT_ID")
@@ -2181,10 +2216,23 @@ ROLE_SPECS: list[RoleSpec] = [
         key="principal",
         display_name="Principal RF Engineer",
         domain_note=(
-            "You are the coordinating principal-level reviewer, with access to "
-            "every tool below. Bring in a specialist's perspective (systems, "
-            "microwave, antenna, test, verification) as the problem requires. "
-            "You alone also hold the controlled design-iteration loop tools "
+            "You are the coordinating principal-level reviewer. You do NOT hold "
+            "the specialist calculation/simulation tools directly -- hand off "
+            "to the relevant `route_to_<role>_role` specialist (systems, "
+            "microwave, antenna, test, verification) for any RF calculation, "
+            "simulation, or domain-specific analysis; that specialist has the "
+            "tool you need, and takes over the conversation to answer "
+            "directly once you hand off. This is deliberate, not a gap: "
+            "giving one agent dozens of granular tools at once measurably "
+            "degrades tool-selection reliability (see this repo's own "
+            "testing history) -- routing keeps each agent's toolset small "
+            "and its choices reliable. "
+            "You directly hold: the design-record tools (create_design/"
+            "read_design/record_decision/verify_requirement/"
+            "advance_design_status/propose_requirement_target/"
+            "mark_requirement_unscoreable/confirm_requirement_target), "
+            "search_knowledge, search_design_records, and the controlled "
+            "design-iteration loop tools "
             "(start_design_loop/advance_design_loop_step/"
             "inspect_design_loop_state, issue #46) -- walking a design through "
             "requirements/architecture/analysis/simulation/optimization/"
@@ -2535,75 +2583,165 @@ ROLES: dict[str, Agent] = {
         name=_SPEC_BY_KEY[key].display_name,
         model=_resolve_agent_model(),
         model_settings=_resolve_agent_model_settings(),
-        instructions=f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_SPEC_BY_KEY[key].domain_note}",
+        instructions=(
+            f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_SPEC_BY_KEY[key].domain_note}"
+            f"{_local_reasoning_output_tail()}"
+        ),
         tools=list(_SPEC_BY_KEY[key].tools),
     )
     for key in _SPECIALIST_KEYS
 }
 
 # ---------------------------------------------------------------------------
-# Principal delegation and synthesis (issue #35).
+# Principal routing to specialists (issue #35, redesigned).
 #
 # `openai-agents` (>=0.17.4) offers two distinct mechanisms for one agent to
 # involve another:
 #
-#   - `Agent(handoffs=[...])`: one-way control transfer. The target agent
-#     takes over the *whole* conversation; the original agent never
-#     regains control and never sees a return value.
-#   - `Agent.as_tool(...)`: wraps an agent as a `FunctionTool` callable by
-#     another agent. The nested agent runs on generated input, its result
-#     comes back as the tool's return value, and the *calling* agent keeps
-#     driving the conversation and can call further tools/roles afterward.
+#   - `Agent(handoffs=[...])`: one-way control transfer, sequential. The
+#     model emits a plain structured (JSON) tool call to trigger it; the
+#     target agent then takes over the *whole* conversation and its
+#     response becomes the run's final output. The original agent never
+#     regains control within that same Runner.run() call.
+#   - `Agent.as_tool(...)`: wraps an agent as a `FunctionTool`. The nested
+#     agent runs via its OWN internal `Runner.run()` call, and that
+#     nested run's nested request is what a delegating call constructs.
 #
-# The ticket's acceptance criteria -- "delegate a sub-question ... and
-# receive its structured/provenance-tagged result back", "keeps composing",
-# "cites which specialist role(s) contributed which part" -- describes the
-# second shape, not the first: the principal must stay in control and weave
-# multiple specialists' answers into one response, not hand off and vanish.
-# So this uses `Agent.as_tool()`, confirmed present on the installed SDK
-# (agents.Agent.as_tool, see agents/agent.py) rather than `handoffs`.
+# This repo used `.as_tool()` first (see this section's git history for the
+# original citation-synthesis design it was built around). It was replaced
+# after live testing against a real local model (qwen3.8:27b via Ollama)
+# reproduced a real, repeatable failure specific to the nested shape:
+# `openai.InternalServerError: 500 - "no user query found in messages"` on
+# the nested Runner.run() call `.as_tool()` constructs internally --
+# confirmed NOT caused by context size or tool count (reproduced on a
+# freshly-loaded model at a correctly-sized context, with only the 20-tool
+# reduced principal toolset in play). `handoffs=[...]` does not construct a
+# second nested completion request the way `.as_tool()` does -- the target
+# agent continues within the SAME Runner.run() call -- so it does not hit
+# this failure mode.
 #
-# Each specialist is wrapped as a `consult_<role>_role` tool on the
-# principal only (specialists do not delegate to each other, avoiding
-# delegation cycles). `custom_output_extractor` prefixes every nested run's
-# final output with that role's display name in square brackets --
-# deterministic code, not LLM cooperation -- so any specialist contribution
-# that reaches the principal's tool-call history is already citable by role
-# by construction; the principal's instructions additionally ask it to
-# carry that citation through into its own final answer.
+# The real, deliberate behavior change this brings: the principal now
+# ROUTES a question to the one specialist whose domain it matches, and that
+# specialist's own answer becomes the final output directly -- there is no
+# more principal-side synthesis/citation-tagging step combining multiple
+# specialists' contributions into one answer (the old `.as_tool()` design's
+# `custom_output_extractor` citation-tag mechanism and the "keeps composing,
+# cites which specialist role(s) contributed which part" framing are gone
+# with it). A genuinely multi-domain question is handled by the first
+# specialist it's routed to, using its own judgment about what it can
+# answer -- this repo does not currently have a way to chain a second
+# handoff after the first without giving specialists handoffs of their own
+# (deliberately not done here, to avoid delegation cycles and keep each
+# specialist's own tool-selection reliability intact).
 # ---------------------------------------------------------------------------
 
-
-def _specialist_output_tag(spec: RoleSpec, run_result: RunResult) -> str:
-    """Prefix a nested specialist run's final output with its role name, so
-    a delegated result is citable by role wherever it is quoted or logged."""
-    return f"[{spec.display_name}] {run_result.final_output}"
-
-
-def _make_delegation_tool(key: str) -> FunctionTool:
-    spec = _SPEC_BY_KEY[key]
-    role_agent = ROLES[key]
-
-    async def _tag_output(run_result: RunResult) -> str:
-        return _specialist_output_tag(spec, run_result)
-
-    return role_agent.as_tool(
-        tool_name=f"consult_{key}_role",
-        tool_description=(
-            f"Delegate a sub-question to the {spec.display_name} specialist role "
-            f"and receive its structured, provenance-tagged result back so you can "
-            f"synthesize it into your own answer. {spec.domain_note} Its response "
-            f"is prefixed with '[{spec.display_name}]' -- carry that citation "
-            f"through into your final answer so the reader can see which "
-            f"specialist role(s) contributed which part."
-        ),
-        custom_output_extractor=_tag_output,
-    )
-
-
-DELEGATION_TOOLS: dict[str, FunctionTool] = {
-    key: _make_delegation_tool(key) for key in _SPECIALIST_KEYS
+# Short, third-person, routing-only summaries -- deliberately NOT the same
+# text as each specialist's `domain_note` above. `domain_note` is written as
+# second-person internal instructions for that specialist's own ~20-26-tool
+# selection (right down to individual issue numbers and per-simulator
+# caveats) and ranges from ~400 characters (verification) to 2,500+
+# characters (antenna) -- reused verbatim as a handoff's tool description,
+# that produces five wildly uneven, pronoun-switching ("it takes over...
+# You focus on...") tool schemas for the PRINCIPAL to choose between, not
+# five parallel routing options. Live testing against qwen3.8:27b showed the
+# principal reliably recognizing only `route_to_verification_role` -- the
+# shortest, simplest description of the five -- and silently failing to see
+# the other four. These summaries fix that by being short, third-person, and
+# uniformly shaped (what it's for, then what it defers) across all five, so
+# no one handoff's schema dwarfs or grammatically confuses the others.
+_ROUTING_SUMMARY: dict[str, str] = {
+    "systems": (
+        "Link-level and systems-engineering work: cascaded gain/noise-figure "
+        "budgets, IP3/IM3 linearity, wavelength/electrical-size bookkeeping, "
+        "and knowledge-base ingestion/indexing plus datasheet sourcing "
+        "(Digi-Key/Mouser/Nexar). Not for network-level S-parameter detail "
+        "(microwave) or document auditing (verification)."
+    ),
+    "microwave": (
+        "Passive/active RF component and network analysis: VSWR/return "
+        "loss, noise figure, Touchstone S/Z/Y/ABCD conversions, stability "
+        "(K-factor, stability circles), impedance-matching and filter-"
+        "prototype synthesis, IP3/IM3 linearity, and circuit-level "
+        "simulation (Qucs-S, LTspice, ngspice, Xyce) for a matching "
+        "network, filter, or amplifier. Not for system-chain gain/link "
+        "budgeting (systems)."
+    ),
+    "antenna": (
+        "Antenna-specific electrical size, input match, and synthesis "
+        "(patch dimensions, bandwidth/Q, curvature, metamaterial "
+        "permeability, aperture gain), full-wave antenna simulation "
+        "(NEC2++, openEMS, gprMax, HFSS, OpenParEM3D, Elmer, Palace, MEEP), "
+        "real-KiCad-PCB trace/via signal-integrity simulation (gerber2ems -- "
+        "not far-field/gain), and curved/conformal geometry generation. Not "
+        "for receiver-chain gain/noise figure (systems) or S/Z/Y/ABCD/"
+        "stability/matching (microwave)."
+    ),
+    "test": (
+        "Verification and measurement: Touchstone interpolation/"
+        "de-embedding/cascading, comparing measured vs. predicted/"
+        "simulated results across every simulator this repo has, and "
+        "compiling a pre-bench lab test plan. Not for ingesting or "
+        "extracting documents (systems/verification)."
+    ),
+    "verification": (
+        "Knowledge and provenance auditing: reading a stored document's "
+        "full metadata/chunks, extracting and auditing structured "
+        "component specs with per-field provenance, and looking up prior "
+        "design/decision records for precedent. Does not run RF "
+        "calculations or add new documents."
+    ),
 }
+
+SPECIALIST_HANDOFFS: dict[str, Handoff] = {
+    key: handoff(
+        ROLES[key],
+        tool_name_override=f"route_to_{key}_role",
+        tool_description_override=(
+            f"Hand this question off to the {_SPEC_BY_KEY[key].display_name} "
+            f"specialist -- it takes over and answers directly. "
+            f"{_ROUTING_SUMMARY[key]}"
+        ),
+    )
+    for key in _SPECIALIST_KEYS
+}
+
+# The principal's own DIRECT tools -- deliberately NOT `_ALL_TOOLS`. Giving
+# one agent 86+ granular calculation/simulation tools at once measurably
+# degrades tool-selection reliability on a local model (confirmed by this
+# repo's own testing: a 1-tool agent called correctly every time, an
+# 86-tool principal never called a real tool at all, and a 21-tool
+# specialist hallucinated a tool name that doesn't exist anywhere in its
+# schema). This mirrors both Anthropic's own tool-design guidance ("fewer,
+# higher-leverage tools beat many overlapping ones") and DeepSeek Harness's
+# production tool registry, which stays explicitly *scoped* per agent even
+# at thousands-of-plugins scale -- neither exposes everything to every
+# agent. The specialist calculation/simulation tools are still fully
+# reachable, just through a `route_to_<role>_role` handoff rather than
+# directly -- nothing lost, only routed through a smaller, more reliable
+# per-call tool surface. Kept here: the design-record tools and the
+# design-iteration-loop tools that are genuinely principal-exclusive
+# (no specialist role holds them -- see _ALL_TOOLS/RoleSpec history),
+# plus the two search tools this role already shared with others.
+_PRINCIPAL_DIRECT_TOOLS = [
+    # Design-record management (principal-exclusive; no specialist has these)
+    create_design,
+    read_design,
+    record_decision,
+    verify_requirement,
+    advance_design_status,
+    propose_requirement_target,
+    mark_requirement_unscoreable,
+    confirm_requirement_target,
+    # Knowledge lookup (shared with every role / with verification)
+    search_knowledge,
+    search_design_records,
+    # Design-iteration loop (principal-exclusive, issue #46/#94/#95)
+    start_design_loop,
+    advance_design_loop_step,
+    inspect_design_loop_state,
+    compile_lab_test_plan,
+    run_candidate_search,
+]
 
 _principal_spec = _SPEC_BY_KEY["principal"]
 ROLES["principal"] = Agent(
@@ -2612,15 +2750,19 @@ ROLES["principal"] = Agent(
     model_settings=_resolve_agent_model_settings(),
     instructions=(
         f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_principal_spec.domain_note}"
-        "\n\n## Delegating to specialists\n\n"
-        "For a multi-domain question, call the relevant `consult_<role>_role` "
-        "tool(s) (systems, microwave, antenna, test, verification) instead of "
-        "guessing at their domain expertise yourself. Each tool's result comes "
-        "back prefixed with '[<Role Name>]'; when you synthesize your final "
-        "answer, keep that attribution visible so it is clear which "
-        "specialist role(s) contributed which part of the answer."
+        "\n\n## Routing to a specialist\n\n"
+        "For ANY RF calculation, simulation, or domain-specific analysis, "
+        "hand the question off to the one specialist role whose domain it "
+        "matches (systems, microwave, antenna, test, verification) -- you "
+        "do not hold those tools directly, and that specialist will answer "
+        "directly once you hand off. Only use your own direct tools "
+        "(design-record management, the design-iteration loop, or "
+        "knowledge search) for what's actually your own job: tracking a "
+        "design's state, not computing RF values yourself."
+        f"{_local_reasoning_output_tail()}"
     ),
-    tools=list(_ALL_TOOLS) + list(DELEGATION_TOOLS.values()),
+    tools=list(_PRINCIPAL_DIRECT_TOOLS),
+    handoffs=list(SPECIALIST_HANDOFFS.values()),
 )
 
 # Kept as a module-level name for backward compatibility.
