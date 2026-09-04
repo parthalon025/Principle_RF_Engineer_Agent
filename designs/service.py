@@ -46,6 +46,8 @@ from __future__ import annotations
 from typing import Any
 
 from designs import db
+from designs.lifecycle import IllegalStatusTransitionError, legal_transitions_from
+from designs.release_approval import DesignReleaseApprovalError
 from designs.validation import InvalidRequirementsError, InvalidVerificationStatusError
 
 
@@ -220,18 +222,51 @@ def record_engineering_result(
     return {"engineering_result_id": row["id"]}
 
 
-def update_design_status(design_id: int, status: str) -> dict[str, Any]:
-    """Set a design's `status` (docs/adr/0011). See `designs.db.update_design_status`
-    for the full write-path contract (`status` value check, `updated_at`
-    bump). An unknown `design_id` or invalid `status` returns a structured
-    `status`-tagged result instead of raising, matching every other
-    function in this module; a write that fails for any other reason
-    still raises.
+def update_design_status(
+    design_id: int,
+    status: str,
+    *,
+    approval: Any = None,
+    allow_nonsequential: bool = False,
+) -> dict[str, Any]:
+    """Set a design's `status` (docs/adr/0011, issue #145). See
+    `designs.db.update_design_status` for the full write-path contract
+    (`status` value check, lifecycle ordering, the RELEASED approval gate,
+    `updated_at` bump). Every refusal returns a structured `status`-tagged
+    result instead of raising, matching every other function in this module;
+    a write that fails for any other reason still raises.
+
+    The three refusals are tagged apart because they need different fixes:
+
+    - `invalid_status` -- that is not one of the nine legal values at all.
+    - `illegal_transition` -- a real status, but not reachable from where
+      this design currently is. `legal_next` names what is.
+    - `release_not_approved` -- the move to RELEASED needs a signed
+      human-approval receipt (`designs.release_approval`), and none valid
+      for this design revision was supplied.
     """
     conn = db.get_connection()
     try:
         try:
-            row = db.update_design_status(conn, design_id=design_id, status=status)
+            row = db.update_design_status(
+                conn,
+                design_id=design_id,
+                status=status,
+                approval=approval,
+                allow_nonsequential=allow_nonsequential,
+            )
+        except IllegalStatusTransitionError as exc:
+            conn.rollback()
+            return {
+                "status": "illegal_transition",
+                "message": str(exc),
+                "current_status": exc.current.value,
+                "requested_status": exc.target.value,
+                "legal_next": sorted(s.value for s in legal_transitions_from(exc.current)),
+            }
+        except DesignReleaseApprovalError as exc:
+            conn.rollback()
+            return {"status": "release_not_approved", "message": str(exc)}
         except ValueError as exc:
             conn.rollback()
             return {"status": "invalid_status", "message": str(exc)}

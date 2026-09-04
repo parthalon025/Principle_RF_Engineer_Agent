@@ -25,11 +25,11 @@ class DesignStatus(StrEnum):
     two-value `DRAFT`/`ACTIVE` stand-in without having consulted
     `OPERATIONS.md` first).
 
-    `create_design` (#17) only ever writes `DRAFT`. No transition logic
-    between the other nine states, and no enforcement of `OPERATIONS.md`'s
-    state order, exists yet in this ticket or its #18-#21 siblings -- this
-    enum only fixes which values the column may legally hold, not how a
-    design moves between them.
+    `create_design` (#17) only ever writes `DRAFT`. This enum fixes which
+    values the column may legally hold; `designs.lifecycle` holds the
+    ordering between them and `designs.release_approval` the gate on
+    `RELEASED`, both added by issue #145 as the transition logic ADR-0007
+    deferred.
     """
 
     DRAFT = "DRAFT"

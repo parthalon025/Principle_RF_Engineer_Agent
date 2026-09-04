@@ -151,6 +151,8 @@ def test_registered_tool_count_matches_old_plus_new():
     # its own branch; both landed, so both apply: 77 + 1 + 1 = 79.
     #
     # issue #143 adds 1 more (synthesize_filter_prototype): 79 + 1 = 80.
+    #
+    # issue #145 adds 1 more (advance_design_status): 80 + 1 = 81.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -177,6 +179,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1
         + 1
         + 1  # issue #143: synthesize_filter_prototype
+        + 1  # issue #145: advance_design_status
     )
     assert len(registered_names) == expected
 

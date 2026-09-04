@@ -28,6 +28,7 @@ from designs.service import create_design as _create_design
 from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
+from designs.service import update_design_status as _update_design_status
 from designs.service import verify_requirement as _verify_requirement
 from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
 from knowledge.component_resolution import (
@@ -1492,6 +1493,31 @@ def record_decision(
     )
 
 
+@function_tool
+def advance_design_status(design_id: int, status: str) -> dict:
+    """Advance a design through docs/OPERATIONS.md's lifecycle (issue #145):
+    DRAFT -> ANALYSIS -> SIMULATION -> OPTIMIZATION -> VERIFICATION ->
+    CONDITIONAL-PASS/PASS/FAIL/BLOCKED -> RELEASED.
+
+    Only legal next steps are accepted. A design cannot skip a stage, cannot
+    jump straight to RELEASED, and cannot move at all once RELEASED (a released
+    design gets a new revision instead). Work in progress can go BLOCKED from
+    any stage, and FAIL/BLOCKED/CONDITIONAL-PASS return to ANALYSIS for rework.
+    A refusal comes back tagged illegal_transition with a legal_next list
+    naming what IS reachable from here.
+
+    RELEASED additionally requires a signed human-approval receipt, which this
+    tool cannot supply: no human-facing approval workflow is wired up in this
+    codebase, so a release attempt returns release_not_approved. That is the
+    intended behaviour -- a design must never reach RELEASED autonomously
+    (docs/adr/0007; docs/BUILD_PLAN.md's Phase 12).
+
+    This is the explicit path, for design work tracked outside the opt-in
+    design loop (ADR-0010). The loop persists its own status at each iteration
+    boundary (ADR-0011) and does not go through here."""
+    return _update_design_status(design_id=design_id, status=status)
+
+
 # strict_mode=False: `expected`/`actual` are free-form JSON evidence values
 # (a number, a dict of measured quantities, whatever the verification
 # method produced) -- same open-schema reason as `create_design` above.
@@ -2046,6 +2072,7 @@ _ALL_TOOLS = [
     read_design,
     record_decision,
     verify_requirement,
+    advance_design_status,
     propose_requirement_target,
     mark_requirement_unscoreable,
     confirm_requirement_target,

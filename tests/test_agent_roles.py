@@ -112,7 +112,12 @@ def test_principal_role_has_broad_access():
     # filter-prototype synthesizer -- also on the microwave role, matching
     # the calculate_l_network_match precedent for a synthesis tool):
     # 84 + 1 = 85.
-    assert len(names) == 85
+    #
+    # issue #145 adds 1 more (advance_design_status, the explicit
+    # design-lifecycle transition -- principal-only, matching the
+    # create_design/verify_requirement design-tracking precedent):
+    # 85 + 1 = 86.
+    assert len(names) == 86
 
 
 def test_principal_module_alias_matches_registry():

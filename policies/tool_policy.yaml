@@ -160,6 +160,11 @@ design_tracking:
   - create_design
   - record_decision
   - verify_requirement
+  # issue #145: lifecycle transitions. Ordering is enforced deterministically
+  # in designs/lifecycle.py and the RELEASED gate in designs/release_approval.py,
+  # so no policy-layer gate is needed here -- same reasoning as the requirement
+  # -target tools below.
+  - advance_design_status
   # issue #92: interpreting a prose customer requirement into a proposed/
   # confirmed/unscoreable requirement target. Same informational-only
   # category as create_design/verify_requirement -- no runtime gate: the

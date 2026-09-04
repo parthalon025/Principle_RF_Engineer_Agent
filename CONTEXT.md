@@ -145,9 +145,13 @@ and a glossary that churns with it stops being trustworthy (see
   off of via `design_id`. `status` is `docs/OPERATIONS.md`'s existing
   workflow lifecycle, not a value set invented for this feature area:
   `DRAFT → ANALYSIS → SIMULATION → OPTIMIZATION → VERIFICATION →
-  CONDITIONAL-PASS/PASS/FAIL/BLOCKED → RELEASED`, where `RELEASED` already
-  requires human approval (see `docs/adr/0007`). A design is created in
-  `DRAFT`; nothing yet builds the transitions between the other states.
+  CONDITIONAL-PASS/PASS/FAIL/BLOCKED → RELEASED`. A design is created in
+  `DRAFT` and moves one legal step at a time: it cannot skip a stage, cannot
+  reach `RELEASED` without a signed human-approval receipt, and cannot move
+  at all once `RELEASED` — a released design gets a new `revision` rather
+  than being edited back into engineering. Work in progress can become
+  `BLOCKED` from any stage, and `FAIL`/`BLOCKED`/`CONDITIONAL-PASS` return to
+  `ANALYSIS` for rework (see `docs/adr/0007`).
   `requirements` is `{requirement_id: {requirement: <text>, ...}}`, keyed
   the same way `verification_items.requirement_id` references it.
   `architecture` is a functional-block map,
