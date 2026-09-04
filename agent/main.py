@@ -1852,7 +1852,10 @@ def advance_design_loop_step(state: dict, step_input: dict, approval: dict | Non
     current_step expects (e.g. ARCHITECTURE wants "decision"/"rationale"/
     "design_family"; ANALYSIS wants the patch_resonant_frequency_hz
     inputs eps_r/w_m/h_m/l_m; SIMULATION wants the same geometry/
-    frequency_hz run_nec2_simulation itself takes).
+    frequency_hz run_nec2_simulation itself takes, PLUS
+    reference_impedance_ohms -- the impedance SIMULATION's own derived
+    vswr/return_loss_db are scored against, stated explicitly every call,
+    never assumed to be 50 ohms (issue #101)).
 
     `approval` is REQUIRED whenever the loop is currently at ARCHITECTURE,
     MEASUREMENT, or REDESIGN_DECISION -- every step that is not a pure
@@ -1947,10 +1950,11 @@ def run_candidate_search(
     start_design_loop or a prior advance_design_loop_step call, carrying
     design_id) -- never a bare design_loop-layer state. `candidates` is a
     non-empty list of dicts, each supplying the fields the driven steps
-    need (e.g. eps_r/w_m/h_m/l_m for ANALYSIS, geometry/frequency_hz for
-    SIMULATION, target_frequency_hz/length_lower_m/length_upper_m for
-    OPTIMIZATION). `score_specs` names which steps to score and against
-    what target (a designs.requirement_targets PROPOSED/CONFIRMED target),
+    need (e.g. eps_r/w_m/h_m/l_m for ANALYSIS, geometry/frequency_hz/
+    reference_impedance_ohms for SIMULATION, target_frequency_hz/
+    length_lower_m/length_upper_m for OPTIMIZATION). `score_specs` names
+    which steps to score and against what target (a
+    designs.requirement_targets PROPOSED/CONFIRMED target),
     keyed by step name ("analysis"/"simulation"/"optimization").
 
     This tool NEVER constructs, forges, or accepts an approval receipt,

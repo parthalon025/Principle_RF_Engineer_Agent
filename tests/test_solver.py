@@ -169,6 +169,7 @@ def _full_candidate(tmp_path: Path, fake_nec2pp: Path, **overrides) -> dict:
         **_BASE_CANDIDATE,
         "geometry": _DIPOLE_GEOMETRY,
         "frequency_hz": 300e6,
+        "reference_impedance_ohms": 50.0,
         "executable": str(fake_nec2pp),
         "workdir": str(tmp_path / "nec2_run"),
         "target_frequency_hz": 2.45e9,
@@ -253,6 +254,7 @@ def test_score_specs_must_share_a_step_with_the_driven_span(tmp_path):
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -364,6 +366,7 @@ def test_solver_halts_at_measurement_with_pending_approval_reported(tmp_path):
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -442,6 +445,7 @@ def test_solver_halts_at_a_gated_redesign_decision_step_with_no_receipt_ever_cre
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -512,6 +516,7 @@ def test_solver_halts_out_of_scope_at_verification(tmp_path):
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -757,6 +762,7 @@ def test_full_span_drives_and_scores_all_three_ungated_steps(tmp_path):
         **_BASE_CANDIDATE,
         "geometry": _DIPOLE_GEOMETRY,
         "frequency_hz": 300e6,
+        "reference_impedance_ohms": 50.0,
         "executable": str(fake_nec2pp),
         "workdir": str(tmp_path / "nec2_run"),
         "target_frequency_hz": 2.45e9,

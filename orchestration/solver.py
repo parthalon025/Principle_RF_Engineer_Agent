@@ -396,7 +396,13 @@ _ORDERED_UNGATED_SPAN: tuple[DesignStep, ...] = (
 # -- this module performs no validation of its own on these.
 _REQUIRED_FIELDS: dict[DesignStep, tuple[str, ...]] = {
     DesignStep.ANALYSIS: ("eps_r", "w_m", "h_m", "l_m"),
-    DesignStep.SIMULATION: ("geometry", "frequency_hz"),
+    # reference_impedance_ohms (issue #101): _handle_simulation now derives
+    # VSWR/return loss from the feed-point impedance it already computes,
+    # and requires its caller to state the reference impedance explicitly
+    # -- never silently assumed to be 50 ohms. A candidate driving
+    # SIMULATION through this module must carry it the same way it must
+    # carry geometry/frequency_hz.
+    DesignStep.SIMULATION: ("geometry", "frequency_hz", "reference_impedance_ohms"),
     DesignStep.OPTIMIZATION: (
         "eps_r",
         "w_m",
@@ -725,7 +731,9 @@ def run_candidate_search(
       - `candidates`: a non-empty list of plain dicts, each the union of
         whatever `_REQUIRED_FIELDS`/`_OPTIONAL_FIELDS` the steps actually
         driven need (e.g. `eps_r`/`w_m`/`h_m`/`l_m` for ANALYSIS,
-        `geometry`/`frequency_hz` for SIMULATION, plus `target_frequency_
+        `geometry`/`frequency_hz`/`reference_impedance_ohms` for
+        SIMULATION -- the last one stated explicitly per candidate, never
+        assumed to be 50 ohms (issue #101) -- plus `target_frequency_
         hz`/`length_lower_m`/`length_upper_m` for OPTIMIZATION). An
         optional `"note"` key, if present, is forwarded to every scored
         step's `success_score(note=...)` call for that candidate.

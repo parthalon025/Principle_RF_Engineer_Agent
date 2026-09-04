@@ -113,6 +113,44 @@ _SIMULATION_DECISION = _decision(
     kind="simulation",
 )
 
+# A SIMULATION decision carrying the VSWR/return-loss fields
+# orchestration/design_loop.py's _handle_simulation records since issue
+# #101 -- _SIMULATION_DECISION above predates that and deliberately still
+# lacks them (see test_vswr_requirement_with_no_traced_value_is_flagged_
+# no_result below, which still needs a decision that legitimately carries
+# no vswr value).
+_SIMULATION_DECISION_WITH_VSWR = _decision(
+    "simulation",
+    {
+        "provenance": "SIMULATED",
+        "impedance": {"resistance_ohms": 82.6979, "reactance_ohms": 46.3060},
+        "pattern": [],
+        "gain_dbi": 6.2,
+        "average_power_gain_linear": 0.9,
+        "simulator": "nec2pp",
+        "reference_impedance_ohms": 50.0,
+        "reflection_coefficient_magnitude": 0.40333507086482756,
+        "vswr": 2.35196506839923,
+        "return_loss_db": 7.8866802699461624,
+        "frequency_hz": 2.45e9,
+        "single_frequency_prediction": True,
+    },
+    "SIMULATED",
+    kind="simulation",
+)
+
+
+def _vswr_target(**overrides):
+    kwargs = {"value": 2.0, "comparator": "AT_MOST", "unit": "VSWR"}
+    kwargs.update(overrides)
+    return propose_target(**kwargs)
+
+
+def _return_loss_target(**overrides):
+    kwargs = {"value": 10.0, "comparator": "AT_LEAST", "unit": "dB"}
+    kwargs.update(overrides)
+    return propose_target(**kwargs)
+
 
 def _freq_target(**overrides):
     kwargs = {"value": 2.45e9, "comparator": "EQUALS", "unit": "Hz", "tolerance": 5e7}
@@ -270,9 +308,10 @@ def test_frequency_requirement_with_no_analysis_decision_is_flagged_no_result():
     assert item["expected"] is None
 
 
-def test_vswr_requirement_is_flagged_no_result_a_known_tool_set_gap():
-    # VSWR/dB has no _FIELD_SOURCES entry at all -- see this module's
-    # docstring, "DESIGN QUESTION 2", the named VSWR/S-parameter gap.
+def test_vswr_requirement_with_no_traced_value_is_flagged_no_result():
+    # _SIMULATION_DECISION predates issue #101 and carries no vswr field at
+    # all (e.g. as if NEC2's impedance parse had failed) -- still correctly
+    # flagged, since nothing this iteration recorded a matching value.
     target = propose_target(value=2.0, comparator="AT_MOST", unit="VSWR")
     state = _state(
         {"r1": {"requirement": "VSWR <= 2.0", "target": target}},
@@ -281,7 +320,81 @@ def test_vswr_requirement_is_flagged_no_result_a_known_tool_set_gap():
     item = compile_lab_test_plan(state)["items"][0]
     assert item["method"] == "measurement"
     assert item["flag"]["reason"] == (UnverifiableReason.NO_ENGINEERING_RESULT_THIS_ITERATION.value)
-    assert "no step in this loop's current tool set" in item["flag"]["detail"]
+
+
+# ---------------------------------------------------------------------------
+# DESIGN QUESTION 2, VSWR/return-loss closure (issue #101): SIMULATION's own
+# derived vswr/return_loss_db fields ARE traceable expected values now, with
+# their reference impedance and single-frequency status carried through.
+# ---------------------------------------------------------------------------
+
+
+def test_vswr_requirement_traces_expected_to_simulation_decision():
+    state = _state(
+        {"r1": {"requirement": "VSWR <= 2.0 across the band", "target": _vswr_target()}},
+        [_SIMULATION_DECISION_WITH_VSWR],
+    )
+    item = compile_lab_test_plan(state)["items"][0]
+    assert item["flag"] is None
+    assert item["method"] == "measurement"
+    assert item["expected"]["value"] == pytest.approx(2.35196506839923)
+    assert item["expected"]["unit"] == "VSWR"
+    assert item["expected"]["provenance"] == "SIMULATED"
+    assert item["expected"]["source_step"] == "simulation"
+    # The reference impedance is recorded alongside the value, never
+    # assumed -- issue #101's own acceptance criterion.
+    assert item["expected"]["reference_impedance_ohms"] == 50.0
+    # A single-point NEC2 solve against what is usually a band requirement
+    # ("across the band") -- explicitly marked as such, not silently
+    # presented as if it covered the whole band.
+    assert item["expected"]["single_frequency_prediction"] is True
+    assert "Single-frequency" in item["notes"]
+
+
+def test_return_loss_requirement_traces_expected_to_simulation_decision():
+    state = _state(
+        {"r1": {"requirement": "Return loss >= 10 dB", "target": _return_loss_target()}},
+        [_SIMULATION_DECISION_WITH_VSWR],
+    )
+    item = compile_lab_test_plan(state)["items"][0]
+    assert item["flag"] is None
+    assert item["expected"]["value"] == pytest.approx(7.8866802699461624)
+    assert item["expected"]["unit"] == "dB"
+    assert item["expected"]["provenance"] == "SIMULATED"
+    assert item["expected"]["source_step"] == "simulation"
+    assert item["expected"]["reference_impedance_ohms"] == 50.0
+    assert item["expected"]["single_frequency_prediction"] is True
+
+
+def test_vswr_and_return_loss_targets_each_trace_their_own_field_not_each_others():
+    # A "VSWR" target must not accidentally pick up the return_loss_db
+    # value (or vice versa) -- exact-unit-string matching keeps the two
+    # S-parameter quantities distinct even though both are touchstone-
+    # measurable "S_PARAMETER"-kind units.
+    state = _state(
+        {
+            "vswr_req": {"requirement": "VSWR <= 2.0", "target": _vswr_target()},
+            "rl_req": {"requirement": "Return loss >= 10 dB", "target": _return_loss_target()},
+        },
+        [_SIMULATION_DECISION_WITH_VSWR],
+    )
+    plan = compile_lab_test_plan(state)
+    by_id = {item["requirement_id"]: item for item in plan["items"]}
+    assert by_id["vswr_req"]["expected"]["value"] == pytest.approx(2.35196506839923)
+    assert by_id["rl_req"]["expected"]["value"] == pytest.approx(7.8866802699461624)
+
+
+def test_frequency_expected_value_carries_no_single_frequency_prediction_flag():
+    # single_frequency_prediction is read straight off the recorded
+    # decision's own result -- ANALYSIS/OPTIMIZATION never set it, so it is
+    # honestly absent (None), not defaulted to True/False by this module.
+    state = _state(
+        {"r1": {"requirement": "Resonates at 2.45 GHz", "target": _freq_target()}},
+        [_ANALYSIS_DECISION],
+    )
+    item = compile_lab_test_plan(state)["items"][0]
+    assert item["expected"]["single_frequency_prediction"] is None
+    assert item["expected"]["reference_impedance_ohms"] is None
 
 
 def test_frequency_requirement_stated_in_ghz_does_not_match_hz_field_by_unit_string():

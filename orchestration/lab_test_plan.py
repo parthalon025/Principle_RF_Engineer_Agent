@@ -210,15 +210,21 @@ state.iteration`) -- never the requirement's own target value restated as
 if it were a prediction, and never a number this module computes fresh.
 `_FIELD_SOURCES` is a small, closed table: quantity kind -> the ordered
 list of (step, result-field, canonical unit) this loop's OWN, currently
-wired tool set can produce that kind of number from -- built, at import
-time, by grouping `orchestration/score_fields.py`'s `SCORE_FIELD_SOURCES`
-(issue #102's single source of truth for these triples) by quantity kind
-via this module's own `_classify_unit`, rather than writing the triples
-down a second time here. `orchestration/solver.py` derives a differently-
-shaped lookup (flat, by step) from that identical table; see `orchestration/
-score_fields.py`'s own docstring for why one module's indexing is never
-imposed on the other's, and tests/test_score_fields.py for the direct
-proof both stay derived, not independently maintained:
+wired tool set can produce that kind of number from. FREQUENCY and GAIN
+are built, at import time, by grouping `orchestration/score_fields.py`'s
+`SCORE_FIELD_SOURCES` (issue #102's single source of truth for those
+triples) by quantity kind via this module's own `_classify_unit`, rather
+than writing the triples down a second time here. `orchestration/
+solver.py` derives a differently-shaped lookup (flat, one entry per step)
+from that identical table; see `orchestration/score_fields.py`'s own
+docstring for why one module's indexing is never imposed on the other's,
+and tests/test_score_fields.py for the direct proof both stay derived, not
+independently maintained. S_PARAMETER is layered on afterward instead of
+folded into the shared table -- see the code comment where `_FIELD_SOURCES[
+_S_PARAMETER]` is assigned: `orchestration/score_fields.py` gives each step
+exactly ONE default scoreable field, and SIMULATION's stays `gain_dbi`;
+`vswr`/`return_loss_db` are a second and third fact about that same step's
+same evidence, not a competing default.
 
   - FREQUENCY: `ANALYSIS`'s `resonant_frequency_hz`
     (`rf_tools.calculations.patch_resonant_frequency_hz`), then
@@ -227,6 +233,9 @@ proof both stay derived, not independently maintained:
     frequency`) -- both `Hz`.
   - GAIN: `SIMULATION`'s `gain_dbi` (`simulation.nec2pp.
     run_nec2_simulation`'s NEC2 radiation-pattern parse) -- `dBi`.
+  - S_PARAMETER: `SIMULATION`'s `vswr` (canonical unit `"VSWR"`) and
+    `return_loss_db` (canonical unit `"dB"`) -- issue #101's own closure of
+    the gap this section used to describe (see the paragraph below).
 
 `_find_expected` walks this iteration's decisions in their recorded
 (= `STEP_ORDER`) order and keeps overwriting its candidate on every match,
@@ -236,25 +245,33 @@ and an `OPTIMIZATION` result is a refinement of what `ANALYSIS` first
 computed. This falls out of `STEP_ORDER`'s own ordering for free; no
 separate step-priority table was needed or written.
 
-A NAMED, HONEST GAP: VSWR/return-loss/insertion-loss (`dB`,
-"S_PARAMETER_DB" quantity kind) has NO entry in `_FIELD_SOURCES` at all,
-even though it is touchstone-measurable (DESIGN QUESTION 1, reason 3
-above never fires for it) and even though `SIMULATION`'s own result
-carries an `impedance` value that VSWR/return loss could, in principle, be
-derived from. It is not derived here. Doing so would be exactly the
-"fresh calculation this module must not perform" this ticket's own design
-guidance rules out ("not a fresh calculation you perform") -- computing a
-number `run_nec2_simulation` never itself returned would mean this
-module's `expected` field no longer traces to a decision the loop actually
-recorded, silently reintroducing the "an LLM/deterministic layer invents a
-number nobody asked it to compute" problem this whole codebase's
-provenance discipline exists to prevent (`rf_tools/calculations.py`,
-`docs/adr/0003`). A requirement stated in VSWR/dB today always falls
-through to `NO_ENGINEERING_RESULT_THIS_ITERATION` -- correctly, since
-nothing in this loop's current tool set computes that scalar. Closing this
-gap needs a real ANALYSIS/SIMULATION step that records a VSWR or
-return-loss number as part of its own output (a future ticket's job, not
-a silent addition here).
+A GAP THAT WAS HERE, NOW CLOSED (issue #101): VSWR/return-loss used to
+have NO entry in `_FIELD_SOURCES` at all, even though both are
+touchstone-measurable (DESIGN QUESTION 1, reason 3 never fires for them)
+and even though `SIMULATION`'s own result already carried the `impedance`
+value they are derived from. The fix landed upstream, exactly where this
+section originally said it had to: `orchestration/design_loop.py`'s own
+`_handle_simulation` now derives `vswr`/`return_loss_db` (plus the
+`reference_impedance_ohms` they were computed against, and a
+`single_frequency_prediction` flag -- see that function's own docstring)
+as part of ITS OWN recorded result, using arithmetic over a value
+`run_nec2_simulation` already returned -- not a second solver run. This
+module still computes nothing fresh: it only reads `vswr`/`return_loss_db`
+off the decision the loop already recorded, the same way it has always
+read `resonant_frequency_hz`/`gain_dbi`. A requirement stated in VSWR/dB
+now traces an `expected` value whenever SIMULATION ran this iteration and
+its impedance parsed to a finite, defined value; it still correctly falls
+through to `NO_ENGINEERING_RESULT_THIS_ITERATION` when SIMULATION hasn't
+run this iteration, or when the underlying quantity was itself
+mathematically undefined (a perfect match makes return loss infinite; a
+total mismatch makes VSWR infinite -- `_handle_simulation` records `None`
+for either, never a guessed number). Insertion loss (`S21`, also
+conventionally stated in `dB`) remains a real, separate, still-open gap:
+nothing in this loop's tool set computes it, and `_S_PARAMETER`'s own `dB`
+canonical unit is shared with return loss (`S11`) purely because this
+project's requirement-target vocabulary has no separate unit string for
+the two -- a `"dB"` target is read as return loss here, since that is the
+only `S21`-or-`S11` scalar this loop's tool set has ever produced.
 
 WHY NOT CALL `designs.success_score.success_score()` HERE. That function
 scores a recorded `actual_value` against a target -- but before the lab
@@ -365,7 +382,7 @@ from typing import Any
 
 from designs.requirement_targets import TargetStatus
 
-from .design_loop import VERIFICATION_STATUSES, DesignLoopState, LoopDecision
+from .design_loop import VERIFICATION_STATUSES, DesignLoopState, DesignStep, LoopDecision
 from .score_fields import SCORE_FIELD_SOURCES, ScoreFieldSource
 
 _TOUCHSTONE = "measurement"
@@ -512,12 +529,25 @@ def _build_field_sources() -> dict[str, list[ScoreFieldSource]]:
 
 # quantity kind -> ordered (step, result-field, canonical unit) candidates
 # this loop's own currently-wired tools can supply a same-quantity number
-# for. See this module's docstring, "DESIGN QUESTION 2", including the
-# named VSWR/S-parameter gap this table deliberately leaves open (nothing
-# in SCORE_FIELD_SOURCES classifies to S_PARAMETER, so that kind simply
-# never appears as a key below -- the same "no entry at all" gap as before,
-# now falling out of the shared table rather than a hand-omitted key).
+# for. See this module's docstring, "DESIGN QUESTION 2".
 _FIELD_SOURCES: dict[str, list[ScoreFieldSource]] = _build_field_sources()
+
+# S_PARAMETER is deliberately NOT folded into orchestration/score_fields.py's
+# shared SCORE_FIELD_SOURCES (issue #102): that table gives solver.py's
+# _DEFAULT_SCORE_FIELDS exactly ONE (result_field, unit) per step, and
+# SIMULATION's default scoreable field is -- and stays -- gain_dbi. VSWR and
+# return loss are a second and third fact about the SAME step's SAME
+# feed-point-impedance evidence, not competitors for that one "default
+# scoreable value" slot a candidate search picks. Closed by issue #101:
+# _handle_simulation now derives both fields from the same feed-point
+# impedance it already returns (see that function's own docstring). "VSWR"/
+# "dB" are exact-string canonical units, same discipline as FREQUENCY/GAIN
+# above -- a "VSWR" target traces only vswr, a "dB" target traces only
+# return_loss_db, never each other's value.
+_FIELD_SOURCES[_S_PARAMETER] = [
+    ScoreFieldSource(DesignStep.SIMULATION, "vswr", "VSWR"),
+    ScoreFieldSource(DesignStep.SIMULATION, "return_loss_db", "dB"),
+]
 
 
 def _find_expected(
@@ -634,6 +664,16 @@ def _compile_item(
             "provenance": source_decision.provenance,
             "source_step": source_decision.step,
             "source_iteration": source_decision.iteration,
+            # Read straight off the recorded decision's own result -- never
+            # computed here (issue #101's own "no value computed at
+            # plan-compile time" rule applies to these two exactly as it
+            # does to `value` itself). Both are None for a source that
+            # never carries them (ANALYSIS/OPTIMIZATION's frequency, for
+            # instance) -- honestly absent, not defaulted.
+            "reference_impedance_ohms": source_decision.result.get("reference_impedance_ohms"),
+            "single_frequency_prediction": source_decision.result.get(
+                "single_frequency_prediction"
+            ),
         }
 
     if not touchstone_measurable:
@@ -688,20 +728,37 @@ def _compile_item(
             detail = (
                 f"this requirement's unit ({target.get('unit')!r}) is "
                 "Touchstone-measurable, but no step in this loop's current "
-                "tool set computes that scalar yet (a known gap -- see this "
-                "module's docstring, 'DESIGN QUESTION 2', VSWR/S-parameter "
-                "gap). The bench measurement can still be taken; there is "
-                "simply no expected value to compare it against going in."
+                "tool set computes that scalar yet (see this module's "
+                "docstring, 'DESIGN QUESTION 2' -- FREQUENCY and "
+                "S_PARAMETER/VSWR/return-loss are covered as of issue #101; "
+                "this branch is what a future, still-uncovered quantity kind "
+                "would fall through to). The bench measurement can still be "
+                "taken; there is simply no expected value to compare it "
+                "against going in."
             )
         item["status"] = _BLOCKED
         item["flag"] = _flag(UnverifiableReason.NO_ENGINEERING_RESULT_THIS_ITERATION, detail)
         item["notes"] = detail
     else:
         item["expected"] = expected
-        item["notes"] = (
+        note = (
             f"expected value traced to this iteration's {expected['source_step']} "
             f"decision ({expected['provenance']})."
         )
+        if expected["single_frequency_prediction"]:
+            # Design question 3 in this ticket's own issue (#101): a
+            # single-point prediction stood up against what is often a
+            # band-shaped requirement is weak evidence for the whole band
+            # -- said plainly here, not silently offered as if it were a
+            # swept-band answer.
+            note += (
+                " Single-frequency prediction only (NEC2++'s adapter solves "
+                f"at one frequency, {expected['source_step']}'s own "
+                "frequency_hz) -- if this requirement covers a band, this "
+                "value confirms only the one point simulated, not the whole "
+                "band."
+            )
+        item["notes"] = note
     return item
 
 
