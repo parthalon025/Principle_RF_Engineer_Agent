@@ -17,6 +17,13 @@ last edited about an hour before that code landed and hasn't caught up.
 The findings below are evaluated against the real, current code — they are
 extensions to an existing implementation, not a from-scratch design.
 
+> **Editorial note (added later).** The "What's still open" section quoted
+> above no longer exists. `CONTEXT.md` has since been reduced to a glossary,
+> precisely because that section went stale three times over — this review
+> caught the first instance. Implementation status now lives in `README.md`,
+> and open work in GitHub Issues. The sentence above is preserved as an
+> accurate record of what the file said at the time, not as a live pointer.
+
 ## What the Notion hub covers
 
 Hub page: **"Database Engineering & Pipelines — Tool-Agnostic Deep Dive"**

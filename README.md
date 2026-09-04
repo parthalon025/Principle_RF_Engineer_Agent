@@ -68,8 +68,9 @@ This is the **only** confidence vocabulary in the project. There is no parallel
 becomes a `CALCULATED` one ([ADR-0003][adr3], [ADR-0014][adr14]).
 
 > [!NOTE]
-> `CONTEXT.md` holds the domain model and the open scope questions. Read it before
-> adding vocabulary.
+> `CONTEXT.md` is the project's glossary — what each domain term means, and which
+> synonyms to avoid. Read it before adding vocabulary. It holds no implementation
+> status: what is built is described here, and open work lives in GitHub Issues.
 
 ---
 
@@ -180,7 +181,7 @@ discipline needs:
 ├── tests/
 ├── examples/
 ├── docs/             # ADRs, build plan, roadmap, security, license matrix
-├── CONTEXT.md        # domain model and open scope questions
+├── CONTEXT.md        # the domain glossary (terms only, no status)
 ├── AGENTS.md         # repo conventions for AI coding agents
 ├── docker-compose.yml
 ├── pyproject.toml
@@ -305,7 +306,9 @@ These three are the free/OSS answer to Keysight ADS, for which no adapter exists
 
 Free developer accounts, no purchase required
 ([#67](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/67)). Set in
-`.env` — see `.env.example`:
+`.env` — see `.env.example`. All three clients are implemented and tested against fakes,
+but none has been exercised against the live API here (no credential, no outbound
+network), so treat the first credentialed run as unproven:
 
 `DIGIKEY_CLIENT_ID` / `DIGIKEY_CLIENT_SECRET` · `MOUSER_API_KEY` ·
 `NEXAR_CLIENT_ID` / `NEXAR_CLIENT_SECRET`
@@ -326,7 +329,10 @@ Free developer accounts, no purchase required
   real, working `HfssSimulator` adapter for teams that already hold one, confined to a
   controlled licensed workstation (`check_hfss_workstation_confinement`). It is
   deliberately **not** part of the path to a working, verified design ([ADR-0012][adr12]).
-  Install with `uv sync --extra hfss`.
+  Install with `uv sync --extra hfss`. Note that the adapter is written and
+  citation-sourced against the real PyAEDT API but has **never been exercised against a
+  real HFSS install** — no unlicensed environment can run it, so treat the first licensed
+  run as unproven.
 - **Keysight ADS** — no adapter exists in this repo. Use the circuit solvers above.
 
 </details>
@@ -382,8 +388,12 @@ for teams that already hold an AEDT license.
 > ([ADR-0012][adr12]). Re-entering that scope means rebuilding it deliberately against
 > whatever this system looks like then, not flipping a flag.
 
+Both planning docs describe an *intended* sequence, and the repo has grown past both —
+read them as a plan, not as a record of what is in the tree. This section and the rest of
+this README are the status source; open work is in GitHub Issues.
+
 See [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md) for
-the detailed sequence, and [`docs/SECURITY.md`](docs/SECURITY.md) plus
+the intended sequence, and [`docs/SECURITY.md`](docs/SECURITY.md) plus
 `policies/tool_policy.yaml` for the tool-permission model.
 
 ---
@@ -431,7 +441,7 @@ prior art, the superposition coupling error bar, and the rest.
 
 | Document | Holds |
 |---|---|
-| [`CONTEXT.md`](CONTEXT.md) | The domain model and open scope questions |
+| [`CONTEXT.md`](CONTEXT.md) | The domain glossary — every project term, and the synonyms to avoid |
 | [`docs/adr/`](docs/adr/) | Architecture decision records — the *why* behind every constraint above |
 | [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) | The twelve-phase build sequence |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestones 0.1 → 1.0 |
@@ -439,6 +449,7 @@ prior art, the superposition coupling error bar, and the rest.
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Design lifecycle and operational conventions |
 | [`docs/LICENSE_MATRIX.md`](docs/LICENSE_MATRIX.md) | Full upstream-license inventory |
 | [`docs/FREE_AND_OPEN_SOURCE_TOOLING.md`](docs/FREE_AND_OPEN_SOURCE_TOOLING.md) | The free/OSS survey behind the solver choices |
+| [`docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`](docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md) | Gap analysis of the knowledge pipeline (embedding-version tracking, chunk dedup, retrieval feedback) |
 | [`AGENTS.md`](AGENTS.md) / [`docs/agents/`](docs/agents/) | Repo conventions for AI coding agents |
 
 ---
