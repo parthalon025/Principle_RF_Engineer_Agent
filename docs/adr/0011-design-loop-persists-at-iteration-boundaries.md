@@ -85,3 +85,35 @@ persistence calls are added there, not inside `advance_loop_step` itself.
   for a value already trustworthy. Every existing caller (the ~65
   agent/MCP tool wrappers) is unaffected: the override defaults to unset,
   preserving today's lookup-only behavior exactly.
+
+## Amendment: `orchestration/tooling.py` also re-reads requirements at every hand-back, not just writes at iteration boundaries (issue #100, 2026-09-04)
+
+This ADR's own architecture split — `design_loop.py` stays pure and
+DB-free, `tooling.py` is where the database calls live — turned out to cut
+only one way in the original implementation: `tooling.py` *wrote*
+`designs.requirements` (via `designs.requirement_targets`, #92) but never
+*read* it back into a loop's own carried state. `DesignLoopState.requirements`
+stayed exactly what `start_design_loop` captured once, for the life of the
+loop — so a target proposed or confirmed after loop start via
+`propose_requirement_target`/`confirm_requirement_target` landed on the
+persisted `designs.requirements` column while every caller's held loop
+state kept showing the pre-target snapshot. Issue #100 found this via
+`orchestration/lab_test_plan.py`'s own defensive re-read (a fix scoped to
+that one consumer, not the underlying gap) and named three options; this
+picks option 2 — refresh at the layer that already owns the database call,
+not inside `design_loop.py` (ADR's own "stays pure" premise), and not by
+retiring the carried-state design entirely (option 3, the most invasive of
+the three).
+
+`advance_design_loop_step` and `inspect_design_loop_state` — the two
+`tooling.py` functions that ever hand a state dict back to a caller after
+loop start — now both re-read `designs.requirements` fresh
+(`designs.db.read_design`, the same call `lab_test_plan.py`'s own
+belt-and-braces re-read already used) and substitute it for whatever the
+loop's own in-memory `requirements` carried, whenever the state dict
+carries a `design_id`. Only the top-level `requirements` field is
+replaced — `decisions[0]` (the REQUIREMENTS decision `start_design_loop`
+recorded once, at loop start) is untouched, so the record of what was
+originally stated is never overwritten by a later interpretation of it.
+`design_loop.py` gains no new database awareness for this, same as the
+original PERSISTENCE design above.

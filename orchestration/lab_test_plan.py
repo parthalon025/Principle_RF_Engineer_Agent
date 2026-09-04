@@ -70,10 +70,11 @@ ESTABLISHES (this ticket follows that precedent one package over):
     choice `designs/requirement_targets.py` made for its own three I/O
     wrappers rather than adding them to `designs/service.py`.
 
-REQUIREMENTS FRESHNESS -- A REAL GAP THIS MODULE WORKS AROUND, NOT
-INVENTS. `DesignLoopState.requirements` is set exactly once, in
+REQUIREMENTS FRESHNESS -- A REAL GAP THIS MODULE ORIGINALLY WORKED AROUND
+ON ITS OWN, NOW ALSO CLOSED ONE LAYER DOWN (issue #100). At the time this
+module was written, `DesignLoopState.requirements` was set exactly once, in
 `start_design_loop`, and NOTHING in `orchestration/design_loop.py` or
-`orchestration/tooling.py` ever updates it again -- not even
+`orchestration/tooling.py` ever updated it again -- not even
 `advance_design_loop_step`'s own REDESIGN_DECISION flush. Meanwhile
 `designs.requirement_targets.propose_requirement_target`/
 `confirm_requirement_target`/`mark_requirement_unscoreable` (#92) write
@@ -81,25 +82,44 @@ their `target` key straight onto the *persisted* `designs.requirements`
 JSONB column via `design_id` -- a completely different storage location
 from the loop-state dict an agent is holding. Call one of those after a
 loop is already past ARCHITECTURE and the loop's own `state["requirements"]`
-is now stale: it still reflects whatever targets existed at
-`start_design_loop` time, not the confirmed target an engineer proposed
-five minutes ago. `compile_lab_test_plan_for_loop` closes that gap the
-only honest way available without changing `design_loop.py`/`tooling.py`'s
-own state design (out of this ticket's territory): when the extended state
-dict carries a `design_id` (i.e., it came from `start_new_design_loop`/
-`advance_design_loop_step`, not bare `orchestration.design_loop.
-start_design_loop`), it re-reads `designs.requirements` fresh via
-`designs.db.read_design` and passes THAT to the pure core instead of the
-loop's own frozen copy; `state.decisions`/`state.iteration`/`state.loop_id`
-still come from the loop state itself, since those are the loop's own
-authoritative history and nothing else recomputes them. This is exactly
-the "(or a design's requirements plus recorded decisions)" alternative
-this ticket's own placement guidance names -- `requirements`, as a plain
-override parameter on the pure core, is how both phrasings of that
-guidance are satisfied by one function rather than two competing ones. A
-bare pure-state caller (no `design_id`) falls back to `state.requirements`
-verbatim, honestly stale-if-stale, since there is nowhere fresher to read
-from.
+was stale: it still reflected whatever targets existed at
+`start_design_loop` time, not a target confirmed five minutes ago. This
+module closed that gap the only way available at the time without changing
+`design_loop.py`/`tooling.py`'s own state design (out of this ticket's own
+territory): when the extended state dict carries a `design_id` (i.e., it
+came from `start_new_design_loop`/`advance_design_loop_step`, not bare
+`orchestration.design_loop.start_design_loop`), `compile_lab_test_plan_
+for_loop` re-reads `designs.requirements` fresh via `designs.db.read_design`
+and passes THAT to the pure core instead of the loop's own frozen copy;
+`state.decisions`/`state.iteration`/`state.loop_id` still come from the
+loop state itself, since those are the loop's own authoritative history and
+nothing else recomputes them. This is exactly the "(or a design's
+requirements plus recorded decisions)" alternative this ticket's own
+placement guidance names -- `requirements`, as a plain override parameter
+on the pure core, is how both phrasings of that guidance are satisfied by
+one function rather than two competing ones. A bare pure-state caller (no
+`design_id`) falls back to `state.requirements` verbatim, honestly
+stale-if-stale, since there is nowhere fresher to read from.
+
+Issue #100 fixed the underlying gap one layer down, in
+`orchestration/tooling.py` itself: `advance_design_loop_step` and
+`inspect_design_loop_state` now both re-read `designs.requirements` fresh
+(the same `designs.db.read_design` call) before handing a state dict back
+to a caller, whenever `design_id` is present -- see that module's
+docstring, "REQUIREMENTS FRESHNESS". That means a `state` dict this module
+receives, if it came straight from one of those two calls (as
+`compile_lab_test_plan_for_loop`'s own docstring already says it should),
+is already fresh by the time it arrives here, and this module's own re-read
+above is redundant in that common case. It is kept anyway, deliberately, as
+belt-and-braces rather than removed: a caller can still hold a `state` dict
+that predates its most recent `advance_design_loop_step`/
+`inspect_design_loop_state` call (propose/confirm a target, then compile a
+plan against an older dict without re-inspecting first), and this module
+exists precisely to protect the one decision -- what to bring to a lab
+trip -- where a silently stale target would be the most expensive kind of
+wrong. A second, harmless read-only `SELECT` on an already-read-only path
+is a small price for that guarantee holding regardless of what the caller
+did or didn't call in between.
 
 WHY NO APPROVAL GATE, NO DATABASE WRITE, NO STATE MUTATION. This ticket's
 own acceptance criteria says so directly ("Requesting the plan advances
@@ -781,8 +801,12 @@ def compile_lab_test_plan_for_loop(state: dict[str, Any]) -> dict[str, Any]:
     When `state` carries a `design_id` (i.e. it came from the `orchestration.
     tooling` wrappers, which back a loop with a real `designs` row), this
     re-reads that design's `requirements` fresh from the database rather
-    than trusting the loop's own frozen `state['requirements']` snapshot --
-    see "REQUIREMENTS FRESHNESS". Without a `design_id`, falls back to the
+    than trusting `state['requirements']` as given -- belt-and-braces as of
+    issue #100 (`orchestration.tooling.advance_design_loop_step`/
+    `inspect_design_loop_state` already refresh `requirements` before
+    returning `state`, so this is usually a second read of data that was
+    already fresh, kept for the caller who holds an older `state` dict --
+    see "REQUIREMENTS FRESHNESS"). Without a `design_id`, falls back to the
     loop's own `requirements` verbatim, honestly stale-if-stale.
 
     Read-only in every case: no write, no mutation of `state`, no approval
