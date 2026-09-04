@@ -542,7 +542,7 @@ class HfssSimulator(Simulator):
         defaults to the real check_hfss_workstation_confinement."""
         self._hfss_factory = hfss_factory
         self._confinement_check = confinement_check or check_hfss_workstation_confinement
-        self.archive_dir = Path(archive_dir or os.getenv("HFSS_ARCHIVE_DIR", "hfss_archive"))
+        self.archive_dir = Path(archive_dir or os.getenv("HFSS_ARCHIVE_DIR") or "hfss_archive")
 
     def _real_hfss_factory(self, **kwargs: Any) -> Any:
         Hfss = _import_pyaedt_hfss_class()
