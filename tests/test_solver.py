@@ -907,6 +907,14 @@ class _FakeConn:
 
 
 def test_design_id_defaults_to_no_seeding_and_never_touches_the_database(monkeypatch):
+    # _state_at_analysis() built first, and unpatched: its own bootstrap
+    # through tooling.advance_design_loop_step legitimately touches the
+    # database now (issue #100's fresh-requirements read), which is
+    # unrelated to what THIS test checks -- that run_candidate_search
+    # itself never touches it when design_id is not supplied. The
+    # monkeypatch below is installed only around that call.
+    state = _state_at_analysis()
+
     def _must_not_be_called(*args, **kwargs):
         raise AssertionError(
             "designs_db.get_connection must not be called when design_id is not supplied"
@@ -914,7 +922,6 @@ def test_design_id_defaults_to_no_seeding_and_never_touches_the_database(monkeyp
 
     monkeypatch.setattr(solver_module.designs_db, "get_connection", _must_not_be_called)
 
-    state = _state_at_analysis()
     target = _exact_frequency_target(_BASE_CANDIDATE)
     result = run_candidate_search(state, [_BASE_CANDIDATE], {"analysis": {"target": target}})
 
@@ -923,6 +930,13 @@ def test_design_id_defaults_to_no_seeding_and_never_touches_the_database(monkeyp
 
 
 def test_design_id_with_no_prior_recorded_rows_leaves_prior_best_score_none(monkeypatch):
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note on test_design_id_defaults_to_no_seeding_and_never_touches_the_
+    # database above; its bootstrap now legitimately touches the database
+    # (issue #100), and must not be caught by the fake connection below,
+    # which is shaped only for run_candidate_search's own seeding read.
+    state = _state_at_analysis()
+
     monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
     monkeypatch.setattr(
         solver_module.designs_db,
@@ -930,7 +944,6 @@ def test_design_id_with_no_prior_recorded_rows_leaves_prior_best_score_none(monk
         lambda conn, design_id, tool_names: {name: [] for name in tool_names},
     )
 
-    state = _state_at_analysis()
     target = _exact_frequency_target(_BASE_CANDIDATE)
     result = run_candidate_search(
         state, [_BASE_CANDIDATE], {"analysis": {"target": target}}, design_id=42
@@ -946,6 +959,12 @@ def test_design_id_reports_the_best_prior_score_and_its_recording_ordinal(monkey
     the first or the last) and that prior_iteration is that row's own
     1-based position among this design's recorded rows for the step, not
     its database id."""
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note earlier in this Group 6 block; its bootstrap now legitimately
+    # touches the database (issue #100) and must not be caught by the fake
+    # connection below.
+    state = _state_at_analysis()
+
     target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
     prior_rows = [
         {"id": 101, "value": {"resonant_frequency_hz": 2.20e9}, "created_at": "2026-01-01"},
@@ -965,7 +984,6 @@ def test_design_id_reports_the_best_prior_score_and_its_recording_ordinal(monkey
         step="analysis", target=target, actual_value=2.451e9, actual_unit="Hz"
     )["score_percent"]
 
-    state = _state_at_analysis()
     result = run_candidate_search(
         state, [_BASE_CANDIDATE], {"analysis": {"target": target}}, design_id=99
     )
@@ -1034,6 +1052,12 @@ def test_design_id_pairs_two_scoreable_steps_by_matching_ordinal(monkeypatch):
     cross-combination (90% analysis & 95% simulation -> 90%), a different
     prior_best_score/prior_iteration this test would catch.
     """
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note earlier in this Group 6 block; its bootstrap now legitimately
+    # touches the database (issue #100) and must not be caught by the fake
+    # connection below.
+    state = _state_at_analysis()
+
     analysis_target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
     simulation_target = propose_target(value=8.0, comparator="EQUALS", unit="dBi", tolerance=2.0)
 
@@ -1074,7 +1098,6 @@ def test_design_id_pairs_two_scoreable_steps_by_matching_ordinal(monkeypatch):
     # otherwise this test could pass even with a pairing bug.
     assert ordinal2_overall != mismatched_cross_overall
 
-    state = _state_at_analysis()
     result = run_candidate_search(
         state,
         [_BASE_CANDIDATE],
@@ -1099,6 +1122,12 @@ def test_design_id_skips_an_ordinal_when_only_one_step_scores_there(monkeypatch)
     score would wrongly win; correctly skipped, ordinal 3's fully-paired
     80%/80% (overall 80%) wins instead.
     """
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note earlier in this Group 6 block; its bootstrap now legitimately
+    # touches the database (issue #100) and must not be caught by the fake
+    # connection below.
+    state = _state_at_analysis()
+
     analysis_target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
     simulation_target = propose_target(value=8.0, comparator="EQUALS", unit="dBi", tolerance=2.0)
 
@@ -1148,7 +1177,6 @@ def test_design_id_skips_an_ordinal_when_only_one_step_scores_there(monkeypatch)
     # skip branch could accidentally still land on the right answer.
     assert ordinal2_simulation_only > ordinal3_overall > ordinal1_overall
 
-    state = _state_at_analysis()
     result = run_candidate_search(
         state,
         [_BASE_CANDIDATE],
