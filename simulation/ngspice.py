@@ -259,9 +259,7 @@ def generate_ngspice_netlist(
     return "\n".join(lines) + "\n"
 
 
-def parse_ngspice_wrdata(
-    text: str, outputs: list[str], analysis_type: str
-) -> dict[str, Any]:
+def parse_ngspice_wrdata(text: str, outputs: list[str], analysis_type: str) -> dict[str, Any]:
     """Parse a `wrdata` output file (see generate_ngspice_netlist()) into
     structured per-output data, aligned with either a frequency (AC) or
     time (TRAN/OP) axis.

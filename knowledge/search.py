@@ -96,9 +96,7 @@ def search_knowledge(
     each match's own native score descending within its group -- never a
     single blended score across match types (see module docstring).
     """
-    source_type_values = (
-        [st.value for st in source_types] if source_types is not None else None
-    )
+    source_type_values = [st.value for st in source_types] if source_types is not None else None
     conn = db.get_connection()
     try:
         results: list[dict[str, Any]] = []

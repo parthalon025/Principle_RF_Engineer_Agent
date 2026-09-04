@@ -142,7 +142,9 @@ def test_advance_loop_step_rejects_approval_granted_for_different_content():
         "step": DesignStep.ARCHITECTURE.value,
         "content": other_input,
     }
-    receipt = request_loop_step_approval(fields, approved_by="jane", approval_callback=lambda f: True)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
     with pytest.raises(OrchestrationError, match="does not match"):
         advance_loop_step(state, step_input, approval=receipt)
 
@@ -170,7 +172,9 @@ def test_a_granted_receipt_round_trips_through_a_dict_and_still_works():
     state = start_design_loop(REQUIREMENTS)
     step_input = _valid_step_input(state, DesignStep.ARCHITECTURE)
     fields = _fingerprint(state, DesignStep.ARCHITECTURE, step_input)
-    receipt = request_loop_step_approval(fields, approved_by="jane", approval_callback=lambda f: True)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
     receipt_dict = receipt.to_dict()
     assert isinstance(receipt_dict, dict)
 
@@ -182,7 +186,9 @@ def test_forged_token_is_rejected():
     state = start_design_loop(REQUIREMENTS)
     step_input = _valid_step_input(state, DesignStep.ARCHITECTURE)
     fields = _fingerprint(state, DesignStep.ARCHITECTURE, step_input)
-    receipt = request_loop_step_approval(fields, approved_by="jane", approval_callback=lambda f: True)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
     forged = LoopStepApprovalReceipt(
         token="0" * 64,
         decision_fingerprint=receipt.decision_fingerprint,
@@ -390,7 +396,9 @@ def test_invalid_redesign_next_action_is_rejected():
         "next_action": "release_to_manufacturing",
     }
     fields = _fingerprint(state, DesignStep.REDESIGN_DECISION, step_input)
-    receipt = request_loop_step_approval(fields, approved_by="jane", approval_callback=lambda f: True)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
     with pytest.raises(DesignLoopValidationError, match="next_action"):
         advance_loop_step(state, step_input, approval=receipt)
 
@@ -461,7 +469,11 @@ def test_completed_loop_has_no_further_action_available_but_to_start_a_new_one()
     state = _grant_and_advance(
         state,
         DesignStep.REDESIGN_DECISION,
-        step_input_override={"decision": "ship it", "rationale": "meets spec", "next_action": "accept_design"},
+        step_input_override={
+            "decision": "ship it",
+            "rationale": "meets spec",
+            "next_action": "accept_design",
+        },
     )
     assert state.completed
     with pytest.raises(OrchestrationError):

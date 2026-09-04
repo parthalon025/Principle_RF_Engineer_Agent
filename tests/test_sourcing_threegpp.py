@@ -51,9 +51,7 @@ def test_ingest_3gpp_spec_calls_ingest_document_with_standard_source_type(tmp_pa
         fetch_fn=fake_fetch,
     )
 
-    assert fetched_urls == [
-        "https://www.3gpp.org/ftp/Specs/archive/38_series/38.331/38331-h00.zip"
-    ]
+    assert fetched_urls == ["https://www.3gpp.org/ftp/Specs/archive/38_series/38.331/38331-h00.zip"]
     assert captured["source_type"] == "standard"
     assert captured["license"] == "3gpp-copyright"
     assert captured["classification"] == "PUBLIC"

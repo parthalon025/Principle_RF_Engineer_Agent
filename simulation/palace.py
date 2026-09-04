@@ -252,9 +252,7 @@ class PalaceSimulator(Simulator):
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise SimulatorError(
-                f"Palace timed out after {timeout_s}s: {exc}"
-            ) from exc
+            raise SimulatorError(f"Palace timed out after {timeout_s}s: {exc}") from exc
         if completed.returncode != 0:
             raise SimulatorError(
                 f"Palace failed ({completed.returncode}): {completed.stderr[-4000:]}"

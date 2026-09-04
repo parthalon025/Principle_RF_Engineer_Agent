@@ -111,9 +111,7 @@ def test_generate_xyce_netlist_print_line_for_outputs():
 
 
 def test_generate_xyce_netlist_no_print_line_when_print_file_is_none():
-    netlist = generate_xyce_netlist(
-        PRINT_ONLY_JOB, print_file=None, touchstone_file=None
-    )
+    netlist = generate_xyce_netlist(PRINT_ONLY_JOB, print_file=None, touchstone_file=None)
     assert ".PRINT" not in netlist
 
 
@@ -261,7 +259,7 @@ def test_xyce_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeyp
 # caveat, and its extra caveat specifically on the .LIN path).
 # ---------------------------------------------------------------------------
 
-_FAKE_XYCE_PY = '''#!{python}
+_FAKE_XYCE_PY = """#!{python}
 import sys
 
 netlist_path = sys.argv[1]
@@ -273,14 +271,12 @@ for name, content in OUTPUT_FILES.items():
         f.write(content)
 
 sys.exit(0)
-'''
+"""
 
 
 def _make_fake_xyce_py(tmp_path: Path, output_files: dict[str, str]) -> Path:
     script = tmp_path / "fake_xyce_realistic.py"
-    script.write_text(
-        _FAKE_XYCE_PY.format(python=sys.executable, output_files=output_files)
-    )
+    script.write_text(_FAKE_XYCE_PY.format(python=sys.executable, output_files=output_files))
     script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return script
 

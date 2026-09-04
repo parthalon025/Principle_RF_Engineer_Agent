@@ -208,9 +208,7 @@ def test_upsert_component_updates_on_matching_manufacturer_and_part_number(db_co
     draft = _draft(checksum_sha256="4" * 64)
     doc_row = insert_document(db_conn, draft, authority_rank=20)
 
-    first_specs = {
-        "gain_db": {"value": 20.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}
-    }
+    first_specs = {"gain_db": {"value": 20.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}}
     first = upsert_component(
         db_conn,
         manufacturer="Acme RF",

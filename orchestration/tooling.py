@@ -115,6 +115,7 @@ def _tool_name_for(decision: LoopDecision) -> str:
     `engineering_results.tool_name` -- a straight per-step lookup."""
     return _STEP_TO_TOOL_NAME[decision.step]
 
+
 # LoopDecision.kind values that carry a computed result, bound for
 # engineering_results -- everything else (architecture_decision,
 # redesign_decision -> decision_records; verification_record ->

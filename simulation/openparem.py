@@ -399,8 +399,7 @@ def generate_openparem_project_config(
     frequency_plan = project.get("frequency_plan") or {}
     if not any(frequency_plan.get(k) for k in ("linear", "log", "point")):
         raise ValueError(
-            "project['frequency_plan'] must supply a non-empty 'linear', 'log', or "
-            "'point' list"
+            "project['frequency_plan'] must supply a non-empty 'linear', 'log', or 'point' list"
         )
 
     lines: list[str] = ["#OpenParEM3Dproject 1.0", f"# {comment}"]
@@ -413,9 +412,7 @@ def generate_openparem_project_config(
     lines.append(
         f"mesh.refinement.fraction        {_fmt(project.get('mesh_refinement_fraction', 0.005))}"
     )
-    lines.append(
-        f"mesh.quality.limit              {_fmt(project.get('mesh_quality_limit', 20.0))}"
-    )
+    lines.append(f"mesh.quality.limit              {_fmt(project.get('mesh_quality_limit', 20.0))}")
     lines.append(
         f"mesh.save.refined               {_bool(project.get('mesh_save_refined', False))}"
     )
@@ -592,14 +589,12 @@ def generate_openparem_ports_file(ports: dict[str, Any]) -> str:
         impedance_definition = port.get("impedance_definition", "PV")
         if impedance_definition not in _VALID_IMPEDANCE_DEFINITION:
             raise ValueError(
-                f"port {idx}['impedance_definition'] must be one of "
-                f"{_VALID_IMPEDANCE_DEFINITION}"
+                f"port {idx}['impedance_definition'] must be one of {_VALID_IMPEDANCE_DEFINITION}"
             )
         impedance_calculation = port.get("impedance_calculation", "modal")
         if impedance_calculation not in _VALID_IMPEDANCE_CALCULATION:
             raise ValueError(
-                f"port {idx}['impedance_calculation'] must be one of "
-                f"{_VALID_IMPEDANCE_CALCULATION}"
+                f"port {idx}['impedance_calculation'] must be one of {_VALID_IMPEDANCE_CALCULATION}"
             )
         modes = port.get("modes")
         if not modes:
@@ -615,8 +610,7 @@ def generate_openparem_ports_file(ports: dict[str, Any]) -> str:
             integration_path = mode.get("integration_path")
             if sport is None or not integration_path:
                 raise ValueError(
-                    f"port {idx} ({name!r}) mode {mode_idx} missing 'sport' or "
-                    "'integration_path'"
+                    f"port {idx} ({name!r}) mode {mode_idx} missing 'sport' or 'integration_path'"
                 )
             ip_type = integration_path.get("type")
             ip_path = integration_path.get("path")
@@ -627,8 +621,7 @@ def generate_openparem_ports_file(ports: dict[str, Any]) -> str:
                 )
             if not ip_path:
                 raise ValueError(
-                    f"port {idx} ({name!r}) mode {mode_idx} missing "
-                    "integration_path['path']"
+                    f"port {idx} ({name!r}) mode {mode_idx} missing integration_path['path']"
                 )
             lines.append("   Mode")
             lines.append(f"      Sport={int(sport)}")

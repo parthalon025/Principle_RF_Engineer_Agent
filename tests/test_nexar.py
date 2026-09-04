@@ -62,14 +62,10 @@ def _download_stub(dest_path: Path):
 def test_refuses_without_allow_external_network_tools(monkeypatch):
     monkeypatch.delenv("ALLOW_EXTERNAL_NETWORK_TOOLS", raising=False)
     with pytest.raises(ExternalNetworkToolsDisabledError):
-        lookup_nexar_datasheet(
-            "LM358DR", license="manufacturer-datasheet", classification="PUBLIC"
-        )
+        lookup_nexar_datasheet("LM358DR", license="manufacturer-datasheet", classification="PUBLIC")
 
 
-def test_ok_match_downloads_and_calls_ingest_document_with_correct_arguments(
-    tmp_path, monkeypatch
-):
+def test_ok_match_downloads_and_calls_ingest_document_with_correct_arguments(tmp_path, monkeypatch):
     monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
     ingest_spy = _IngestSpy(result={"status": "ingested", "document_id": 7})
     pdf_path = tmp_path / "LM358DR.pdf"

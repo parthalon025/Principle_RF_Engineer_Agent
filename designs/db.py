@@ -51,8 +51,7 @@ class DanglingComponentReferenceError(Exception):
     def __init__(self, offending: list[dict[str, Any]]):
         self.offending = offending
         detail = "; ".join(
-            f"block {o['block']!r} references component_id={o['component_id']} "
-            "(no such component)"
+            f"block {o['block']!r} references component_id={o['component_id']} (no such component)"
             for o in offending
         )
         super().__init__(f"architecture has dangling component_id reference(s): {detail}")
@@ -98,9 +97,7 @@ class RecordKeyCollisionError(Exception):
         super().__init__(f"record_key already in use: {record_key!r} (id={existing['id']})")
 
 
-def find_decision_by_record_key(
-    conn: psycopg.Connection, record_key: str
-) -> dict[str, Any] | None:
+def find_decision_by_record_key(conn: psycopg.Connection, record_key: str) -> dict[str, Any] | None:
     """Return the `decision_records` row with this `record_key`, if any --
     `record_key` is globally unique (`db/schema.sql`), so at most one row
     can ever match."""

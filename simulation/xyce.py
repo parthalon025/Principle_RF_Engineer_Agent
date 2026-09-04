@@ -377,9 +377,7 @@ def run_xyce_simulation(
     want_lin = bool(ports)
 
     print_file = work_dir / "xyce_output.csv" if want_print else None
-    touchstone_file = (
-        work_dir / f"xyce_s_parameters.s{len(ports)}p" if want_lin else None
-    )
+    touchstone_file = work_dir / f"xyce_s_parameters.s{len(ports)}p" if want_lin else None
 
     netlist_file.write_text(
         generate_xyce_netlist(

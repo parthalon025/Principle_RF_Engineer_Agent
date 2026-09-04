@@ -98,11 +98,7 @@ def _neg_log_marginal_likelihood(
         return 1e10
     alpha = np.linalg.solve(chol.T, np.linalg.solve(chol, y_train))
     n = len(y_train)
-    nll = (
-        0.5 * y_train @ alpha
-        + np.sum(np.log(np.diagonal(chol)))
-        + 0.5 * n * np.log(2 * np.pi)
-    )
+    nll = 0.5 * y_train @ alpha + np.sum(np.log(np.diagonal(chol))) + 0.5 * n * np.log(2 * np.pi)
     return float(nll)
 
 
@@ -248,9 +244,7 @@ def bayesian_optimize(
     """
     validate_parameters(parameters)
     if n_initial_points < 2:
-        raise ValueError(
-            "n_initial_points must be >= 2 (a GP needs at least two points to fit)."
-        )
+        raise ValueError("n_initial_points must be >= 2 (a GP needs at least two points to fit).")
     if n_iterations < 0:
         raise ValueError("n_iterations must be >= 0.")
 

@@ -592,8 +592,14 @@ def generate_gerber2ems_config(config: dict[str, Any]) -> dict[str, Any]:
 
     cfg: dict[str, Any] = {"format_version": _CONFIG_FORMAT_VERSION}
     passthrough_keys = (
-        "frequency", "max_steps", "pixel_size", "via", "grid",
-        "ports", "traces", "differential_pairs",
+        "frequency",
+        "max_steps",
+        "pixel_size",
+        "via",
+        "grid",
+        "ports",
+        "traces",
+        "differential_pairs",
     )
     for key in passthrough_keys:
         if key in config:

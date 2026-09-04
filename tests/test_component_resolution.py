@@ -154,9 +154,7 @@ def test_reconcile_components_same_part_across_sources_writes_one_row(db_conn):
     assert set(reconciled[0]["sources"]) == {"digikey", "mouser"}
 
     with db_conn.cursor() as cur:
-        cur.execute(
-            "SELECT count(*) FROM components WHERE manufacturer = %s", ("Acme RF",)
-        )
+        cur.execute("SELECT count(*) FROM components WHERE manufacturer = %s", ("Acme RF",))
         (count,) = cur.fetchone()
     assert count == 1
 
@@ -177,9 +175,7 @@ def test_reconcile_components_different_package_across_sources_writes_two_rows(d
     assert part_numbers == {"T67-PKG-DR", "T67-PKG-PWR"}
 
     with db_conn.cursor() as cur:
-        cur.execute(
-            "SELECT count(*) FROM components WHERE manufacturer = %s", ("Acme RF",)
-        )
+        cur.execute("SELECT count(*) FROM components WHERE manufacturer = %s", ("Acme RF",))
         (count,) = cur.fetchone()
     assert count == 2
 

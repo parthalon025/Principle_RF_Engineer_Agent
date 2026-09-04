@@ -93,7 +93,7 @@ def test_create_design_auto_creates_one_verification_item_per_requirement(db_con
         items = cur.fetchall()
 
     assert [i[0] for i in items] == ["REQ-1", "REQ-2", "REQ-3"]
-    for (requirement_id, requirement_text, status) in items:
+    for requirement_id, requirement_text, status in items:
         assert requirement_text == f"Requirement {requirement_id}."
         assert status == "NOT VERIFIED"
 
@@ -199,9 +199,7 @@ def test_record_engineering_result_writes_one_row_with_expected_fields(db_conn):
     assert row["confidence"] is None
 
     with db_conn.cursor() as cur:
-        cur.execute(
-            "SELECT count(*) FROM engineering_results WHERE design_id = %s", (design_id,)
-        )
+        cur.execute("SELECT count(*) FROM engineering_results WHERE design_id = %s", (design_id,))
         (count,) = cur.fetchone()
     assert count == 1
 

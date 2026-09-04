@@ -210,7 +210,11 @@ def cleanup_documents():
 
 
 def _seed_committed_doc(
-    *, checksum: str, contents: list[str], authority_rank: int = 20, status: str | None = None,
+    *,
+    checksum: str,
+    contents: list[str],
+    authority_rank: int = 20,
+    status: str | None = None,
     **draft_overrides,
 ) -> dict:
     draft = _draft(checksum_sha256=checksum, **draft_overrides)

@@ -12,8 +12,7 @@ import pytest
 from knowledge.sourcing import etsi
 
 _REAL_DELIVER_URL = (
-    "https://www.etsi.org/deliver/etsi_ts/119600_119699/119612/"
-    "02.02.01_60/ts_119612v020201p.pdf"
+    "https://www.etsi.org/deliver/etsi_ts/119600_119699/119612/02.02.01_60/ts_119612v020201p.pdf"
 )
 
 

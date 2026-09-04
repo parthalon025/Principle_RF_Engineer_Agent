@@ -121,9 +121,7 @@ def _fetch_result(design_id: int) -> dict:
     conn = psycopg.connect(os.environ["DATABASE_URL"])
     try:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                "SELECT * FROM engineering_results WHERE design_id = %s", (design_id,)
-            )
+            cur.execute("SELECT * FROM engineering_results WHERE design_id = %s", (design_id,))
             row = cur.fetchone()
     finally:
         conn.close()

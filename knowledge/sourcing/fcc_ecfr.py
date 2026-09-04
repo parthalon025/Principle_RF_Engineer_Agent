@@ -63,10 +63,7 @@ _TITLES_URL = "https://www.ecfr.gov/api/versioner/v1/titles.json"
 
 
 def _full_text_url(as_of_date: str, title: int, part: int) -> str:
-    return (
-        f"https://www.ecfr.gov/api/versioner/v1/full/{as_of_date}/"
-        f"title-{title}.xml?part={part}"
-    )
+    return f"https://www.ecfr.gov/api/versioner/v1/full/{as_of_date}/title-{title}.xml?part={part}"
 
 
 def _resolve_as_of_date(title: int, fetch_fn: Callable[[str], bytes]) -> str:

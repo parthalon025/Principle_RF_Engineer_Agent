@@ -40,9 +40,7 @@ class Nec2ppSimulator(Simulator):
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise SimulatorError(
-                f"NEC2++ timed out after {timeout_s}s: {exc}"
-            ) from exc
+            raise SimulatorError(f"NEC2++ timed out after {timeout_s}s: {exc}") from exc
         if completed.returncode != 0:
             raise SimulatorError(
                 f"NEC2++ failed ({completed.returncode}): {completed.stderr[-4000:]}"
@@ -200,9 +198,7 @@ def generate_nec2_deck(
         gpflag = 1
         epsr = ground_condition["epsilon_r"]
         sig = ground_condition["conductivity_s_m"]
-        gn_line = "GN " + " ".join(
-            [_fmt_int(0), _fmt_int(0), _fmt_num(epsr), _fmt_num(sig)]
-        )
+        gn_line = "GN " + " ".join([_fmt_int(0), _fmt_int(0), _fmt_num(epsr), _fmt_num(sig)])
     else:
         raise ValueError(
             "ground_condition must be 'free_space', 'perfect', or "

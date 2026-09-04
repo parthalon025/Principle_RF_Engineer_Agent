@@ -291,7 +291,6 @@ def analyze_touchstone_file(path: str, design_id: int | None = None) -> dict:
     return result
 
 
-
 # ---------------------------------------------------------------------------
 # Phase 1-2 calculations and Touchstone capabilities as tools (issue #36).
 #
@@ -563,9 +562,7 @@ def calculate_quality_factor_from_fractional_bandwidth(fbw: float, vswr: float =
 
 
 @function_tool
-def calculate_curvature_length_correction_factor(
-    l_m: float, radius_of_curvature_m: float
-) -> dict:
+def calculate_curvature_length_correction_factor(l_m: float, radius_of_curvature_m: float) -> dict:
     """Calculate the first-order geometric length-correction factor (L/chord) for a
     patch bent to a radius of curvature. Restricted to L/R < 0.5; approximation only."""
     return {
@@ -791,9 +788,7 @@ def run_nec2_simulation(geometry: dict, frequency_hz: float, timeout_s: int = 60
     citation) but NOT against a real nec2++ binary -- none is installed in this
     environment; treat any result as unverified end-to-end until it has been run
     against the real tool at least once."""
-    return _run_nec2_simulation(
-        geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s
-    )
+    return _run_nec2_simulation(geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s)
 
 
 @function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
@@ -1006,9 +1001,7 @@ def run_elmer_simulation(
     against real gmsh/ElmerGrid/ElmerSolver binaries -- none is installed in this
     environment; treat any result as unverified end-to-end until it has been run
     against the real tools at least once."""
-    return _run_elmer_simulation(
-        geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s
-    )
+    return _run_elmer_simulation(geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s)
 
 
 @function_tool(strict_mode=False)  # same rationale as run_elmer_simulation above --
@@ -1089,9 +1082,7 @@ def run_ltspice_simulation(
     against a real LTspice binary -- none is installed in this environment;
     treat any result as unverified end-to-end until it has been run against
     the real tool at least once."""
-    return _run_ltspice_simulation(
-        netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s
-    )
+    return _run_ltspice_simulation(netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s)
 
 
 @function_tool(strict_mode=False)  # `config`'s shape (gerber2ems's own optional
@@ -2471,8 +2462,10 @@ def run(query: str) -> str:
     result = Runner.run_sync(principal, query)
     return result.final_output
 
+
 if __name__ == "__main__":
     import sys
+
     query = " ".join(sys.argv[1:]) or (
         "Explain the engineering workflow you will use for RF design and identify "
         "which claims require calculation, simulation, measurement, or human approval."

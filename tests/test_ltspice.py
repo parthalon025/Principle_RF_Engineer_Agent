@@ -97,7 +97,7 @@ def _bind_fake(tmp_path: Path, script_body: str) -> type:
     return bound
 
 
-_FAKE_SUCCESS_BODY = '''
+_FAKE_SUCCESS_BODY = """
 import sys
 from pathlib import Path
 from spicelib import RawWrite
@@ -129,9 +129,9 @@ writer.add_trace(Trace("V(in)", vin))
 writer.add_trace(Trace("V(out)", vout))
 writer.save(str(netlist_path.with_suffix(".raw")))
 sys.exit(0)
-'''
+"""
 
-_FAKE_FAILURE_BODY = '''
+_FAKE_FAILURE_BODY = """
 import sys
 from pathlib import Path
 
@@ -142,15 +142,15 @@ netlist_arg = args[2][2:] if args[2].startswith("Z:") else args[2]
 netlist_path = Path(netlist_arg)
 netlist_path.with_suffix(".log").write_text("Fatal error: circuit does not converge\\n")
 sys.exit(1)
-'''
+"""
 
-_FAKE_SLOW_BODY = '''
+_FAKE_SLOW_BODY = """
 import sys
 import time
 
 time.sleep(5)
 sys.exit(0)
-'''
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +292,7 @@ def _write_ac_raw_fixture(path: Path) -> None:
     writer = RawWrite(plot_name="AC Analysis", fastacces=False)
     writer.add_trace(Trace("frequency", [1e6, 2e6, 3e6], numerical_type="complex"))
     writer.add_trace(Trace("V(in)", [complex(1.0, 0.0)] * 3))
-    writer.add_trace(
-        Trace("V(out)", [complex(0.5, -0.1), complex(0.4, -0.2), complex(0.3, -0.3)])
-    )
+    writer.add_trace(Trace("V(out)", [complex(0.5, -0.1), complex(0.4, -0.2), complex(0.3, -0.3)]))
     writer.save(str(path))
 
 

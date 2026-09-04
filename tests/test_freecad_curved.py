@@ -373,7 +373,7 @@ def test_generate_freecad_macro_contains_expected_api_calls():
     assert "Part.makePolygon(pts, True)" in macro
     assert "Part.Face([wire])" in macro
     assert ".extrude(" in macro
-    assert 'doc.addObject("Part::Feature", \'patch\')' in macro
+    assert "doc.addObject(\"Part::Feature\", 'patch')" in macro
     assert "feature.Placement = App.Placement(App.Vector(*" in macro
     assert "App.Rotation())" in macro
     assert "Part.makeCompound(built_shapes)" in macro

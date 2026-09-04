@@ -152,7 +152,25 @@ def test_registered_tool_count_matches_old_plus_new():
     expected = (
         11
         + len(NEW_TOOL_NAMES)
-        + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 4 + 1 + 1 + 1
+        + 1
+        + 1
+        + 1
+        + 1
+        + 1
+        + 1
+        + 3
+        + 4
+        + 1
+        + 1
+        + 1
+        + 1
+        + 1
+        + 2
+        + 1
+        + 4
+        + 1
+        + 1
+        + 1
         + 3
         + 1
         + 1
@@ -907,9 +925,7 @@ def test_run_gprmax_simulation_calls_through(tmp_path: Path, monkeypatch):
         "domain_m": [0.1, 0.1, 0.1],
         "resolution_m": 0.002,
         "half_space": {"z_m": 0.04, "epsilon_r": 6.0, "conductivity_s_m": 0.01},
-        "conductors": [
-            {"shape": "box", "p1_m": [0.03, 0.03, 0.04], "p2_m": [0.07, 0.07, 0.04]}
-        ],
+        "conductors": [{"shape": "box", "p1_m": [0.03, 0.03, 0.04], "p2_m": [0.07, 0.07, 0.04]}],
         "port": {
             "polarization": "z",
             "position_m": [0.05, 0.05, 0.04],
@@ -917,9 +933,7 @@ def test_run_gprmax_simulation_calls_through(tmp_path: Path, monkeypatch):
             "center_frequency_hz": 1.0e9,
         },
     }
-    result = server.run_gprmax_simulation(
-        geometry, fdtd={"time_window_s": 6e-8}, timeout_s=10
-    )
+    result = server.run_gprmax_simulation(geometry, fdtd={"time_window_s": 6e-8}, timeout_s=10)
 
     assert result["provenance"] == "SIMULATED"
     assert result["simulator"] == "gprMax"
@@ -1013,8 +1027,9 @@ class _FakeHfssForMcpTest:
 def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
     from simulation.hfss import run_hfss_simulation as real_run_hfss_simulation
 
-    def fake_run(geometry, frequency_hz, sweep=None, project_name="hfss_project",
-                 design_name="hfss_design"):
+    def fake_run(
+        geometry, frequency_hz, sweep=None, project_name="hfss_project", design_name="hfss_design"
+    ):
         return real_run_hfss_simulation(
             geometry=geometry,
             frequency_hz=frequency_hz,
@@ -1071,8 +1086,7 @@ _FAKE_OPENPAREM3D_RESULTS_CSV = (
 )
 
 _FAKE_OPENPAREM3D_FARFIELD_CSV = (
-    "#S-port,frequency(GHz),gain,directivity,radiation efficiency\n"
-    "1,2.45,5.23,5.90,0.89\n"
+    "#S-port,frequency(GHz),gain,directivity,radiation efficiency\n1,2.45,5.23,5.90,0.89\n"
 )
 
 

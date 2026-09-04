@@ -245,7 +245,10 @@ def test_generate_openems_xml_port_excitation_and_lumped_element():
     xml_text = generate_openems_xml(PATCH_GEOMETRY)
     assert '<Excitation Name="feed_exc" Type="0" Frequency="2.45e+09" Delay="0">' in xml_text
     assert '<Excite X="0" Y="0" Z="1"/>' in xml_text  # z-directed port
-    assert '<LumpedElement Name="feed_R" Direction="2" Caps="0" R="50" C="0" L="0" LEtype="0">' in xml_text
+    assert (
+        '<LumpedElement Name="feed_R" Direction="2" Caps="0" R="50" C="0" L="0" LEtype="0">'
+        in xml_text
+    )
 
 
 def test_generate_openems_xml_port_probe_boxes():
@@ -333,9 +336,7 @@ def test_generate_openems_xml_polygon_missing_points_raises():
 def test_generate_openems_xml_polygon_too_few_points_raises():
     geometry = {
         **PATCH_GEOMETRY,
-        "conductors": [
-            {"name": "bad", "shape": "polygon", "points_m": [[0.0, 0.0], [1.0, 1.0]]}
-        ],
+        "conductors": [{"name": "bad", "shape": "polygon", "points_m": [[0.0, 0.0], [1.0, 1.0]]}],
     }
     with pytest.raises(ValueError, match="at least 3"):
         generate_openems_xml(geometry)
@@ -464,9 +465,7 @@ def test_generate_openems_xml_missing_material_field_raises():
 def test_generate_openems_xml_invalid_shape_raises():
     geometry = {
         **PATCH_GEOMETRY,
-        "conductors": [
-            {"name": "bad", "shape": "sphere", "p1_m": [0, 0, 0], "p2_m": [1, 1, 1]}
-        ],
+        "conductors": [{"name": "bad", "shape": "sphere", "p1_m": [0, 0, 0], "p2_m": [1, 1, 1]}],
     }
     with pytest.raises(ValueError, match="shape"):
         generate_openems_xml(geometry)
@@ -688,9 +687,7 @@ def test_openems_simulator_custom_extra_args(tmp_path: Path):
 
 
 def test_openems_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_openems(
-        tmp_path, 'echo "boom: invalid mesh" >&2\nexit 1\n'
-    )
+    script = _make_fake_openems(tmp_path, 'echo "boom: invalid mesh" >&2\nexit 1\n')
     xml_file = tmp_path / "model.xml"
     xml_file.write_text("<openEMS/>")
 

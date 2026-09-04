@@ -193,7 +193,7 @@ def cascade_touchstone(paths: list[str]) -> rf.Network:
 
     result = networks[0]
     for network in networks[1:]:
-        result = result ** network
+        result = result**network
     return result
 
 

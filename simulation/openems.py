@@ -41,9 +41,7 @@ class OpenemsSimulator(Simulator):
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise SimulatorError(
-                f"openEMS timed out after {timeout_s}s: {exc}"
-            ) from exc
+            raise SimulatorError(f"openEMS timed out after {timeout_s}s: {exc}") from exc
         if completed.returncode != 0:
             raise SimulatorError(
                 f"openEMS failed ({completed.returncode}): {completed.stderr[-4000:]}"
@@ -339,19 +337,14 @@ def _polygon_primitive_xml(prim: dict[str, Any]) -> str:
         raise ValueError("polygon primitive requires 'points_m'")
     points = prim["points_m"]
     if len(points) < 3:
-        raise ValueError(
-            f"polygon primitive requires at least 3 points_m, got {len(points)}"
-        )
+        raise ValueError(f"polygon primitive requires at least 3 points_m, got {len(points)}")
     normal_axis = prim.get("normal_axis", "z")
     if normal_axis not in _AXIS_INDEX:
         raise ValueError(
-            "polygon primitive 'normal_axis' must be 'x', 'y', or 'z', got "
-            f"{normal_axis!r}"
+            f"polygon primitive 'normal_axis' must be 'x', 'y', or 'z', got {normal_axis!r}"
         )
     elevation = prim.get("elevation_m", 0.0)
-    vertices = "".join(
-        f'<Vertex X1="{_fmt(x)}" X2="{_fmt(y)}"/>' for x, y in points
-    )
+    vertices = "".join(f'<Vertex X1="{_fmt(x)}" X2="{_fmt(y)}"/>' for x, y in points)
     return (
         f'<Polygon Elevation="{_fmt(elevation)}" NormDir="{_AXIS_INDEX[normal_axis]}" '
         f'QtyVertices="{len(points)}">' + vertices + "</Polygon>"
@@ -459,9 +452,7 @@ def generate_openems_xml(
     if not ports:
         raise ValueError("geometry['ports'] must be a non-empty list")
     mesh = geometry.get("mesh")
-    if not mesh or not all(
-        mesh.get(k) for k in ("x_lines_m", "y_lines_m", "z_lines_m")
-    ):
+    if not mesh or not all(mesh.get(k) for k in ("x_lines_m", "y_lines_m", "z_lines_m")):
         raise ValueError(
             "geometry['mesh'] must supply non-empty 'x_lines_m'/'y_lines_m'/'z_lines_m'"
         )
@@ -519,9 +510,7 @@ def generate_openems_xml(
             raise ValueError(f"conductor {idx} missing required field(s): {missing}")
         name = cond.get("name", f"conductor_{idx + 1}")
         parts.append(
-            f'<Metal Name="{name}"><Primitives>'
-            + _primitive_xml(cond)
-            + "</Primitives></Metal>"
+            f'<Metal Name="{name}"><Primitives>' + _primitive_xml(cond) + "</Primitives></Metal>"
         )
 
     default_frequency_hz = geometry.get("frequency_hz")
@@ -645,9 +634,7 @@ def _read_port_time_series(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return data[:, 0].astype(float), data[:, 1].astype(float)
 
 
-def _compute_s_parameters_from_probes(
-    workdir: Path, ports: list[dict[str, Any]]
-) -> dict[str, Any]:
+def _compute_s_parameters_from_probes(workdir: Path, ports: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute real S-parameters from openEMS's port_ut/port_it-style
     ProbeBox time-domain dumps in `workdir`, for the excited port actually
     driven (see _excited_port_index) -- see this module's header comment
@@ -759,7 +746,7 @@ def _compute_s_parameters_from_probes(
     values: dict[str, list[list[float]]] = {}
     for i_idx, name in enumerate(names):
         s_name = f"S{i_idx + 1}{excited_idx + 1}"
-        s_vals = (v_ref[name][mask] / denom[mask])
+        s_vals = v_ref[name][mask] / denom[mask]
         values[s_name] = [[complex(v).real, complex(v).imag] for v in s_vals]
 
     result: dict[str, Any] = {
@@ -790,9 +777,9 @@ def _compute_s_parameters_from_probes(
         try:
             import skrf as rf
 
-            s = np.array(
-                [complex(re, im) for re, im in values["S11"]], dtype=complex
-            ).reshape(-1, 1, 1)
+            s = np.array([complex(re, im) for re, im in values["S11"]], dtype=complex).reshape(
+                -1, 1, 1
+            )
             network = rf.Network(
                 frequency=rf.Frequency.from_f(frequency_hz / 1e9, unit="ghz"),
                 s=s,
