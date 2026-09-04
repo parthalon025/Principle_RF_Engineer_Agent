@@ -239,6 +239,39 @@ and a glossary that churns with it stops being trustworthy (see
   `{design_key}-{slug}`; reusing one is rejected with a pointer to the
   existing record, same dedup-and-point-back shape as `ingest_document`'s
   checksum check.
+- **Symbol** (Tier B design family element): a single characterised member
+  of a symbol alphabet — its geometry and tuning parameter, its
+  characterised reflection response (`|Γ|` and `∠Γ` versus frequency across
+  the family's band), a provenance rung *per quantity* rather than one for
+  the whole record, and a validity box. Admission requires all three in
+  evidence: printed successfully at the declared process conditions,
+  geometry measured, and response characterised — so any design built from
+  admitted symbols is printable by construction (#130).
+- **Symbol alphabet** (design family field, Tier B only): the finite,
+  characterised set of symbols a Tier B family assembles designs from by
+  choosing and placing them, rather than tuning continuous dimensions.
+  Characterised on a continuous parameter but admitting only a quantised
+  set as letters — a deliberate deviation from field norm (published
+  practice tabulates a continuous phase-versus-parameter curve), traded
+  for admission-by-printability and pre-measurability. Turns a family's
+  optimizer class from continuous tuning into combinatorial selection and
+  placement. Tier A families never declare one (#130).
+  _Avoid_: element library — this project's alphabet specifically admits
+  only symbols that have been printed, measured, and validity-boxed; a
+  generic "library" doesn't carry that admission bar.
+- **Validity box**: the stated set of conditions a symbol's or alphabet's
+  characterised numbers hold under — pitch, substrate, ink, pass count,
+  cure schedule, incidence-angle range, and the neighbour set it was
+  characterised against (Marcuvitz's practice, #130/#131). Any change to it
+  invalidates the record it covers; a pitch change invalidates an entire
+  alphabet's `Δφ_max`, not one symbol's.
+- **`Δφ_max`**: the worst-case unlike-neighbour phase error a symbol
+  alphabet exhibits at its design pitch — a property of the alphabet, not
+  of any one symbol, measured once by comparing a symbol's characterised
+  phase curve against the same symbol with its two E-plane neighbours
+  swapped for the alphabet's extremes. Sets the phase budget a coding
+  block's size must satisfy against the requirement's own RCS-reduction
+  target (#130).
 - **Design family**: the classification of a design's target physics and
   topology (e.g. absorber, reflection-phase steering surface, polarization
   converter, diffusive-backscatter surface, plain patch antenna) that
@@ -258,6 +291,16 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: family schema — implies a single shape every family fills in;
   the per-family parts are genuinely heterogeneous objects, not optional
   slots in a common shape.
+- **Simulation tier** (design family field): whether a family's entire
+  evaluation is a single unit-cell solve (**Tier A** — absorbers and other
+  uniform surfaces, Examples 1, 2, 3, 6) or whether the unit-cell solve only
+  populates a phase-versus-parameter lookup that an aperture-level
+  evaluation then consumes, because the designed-for behaviour — a steered
+  beam, a suppressed backscatter lobe — does not exist at unit-cell level at
+  all (**Tier B** — Examples 4, 5, 7). Established in #107. Cross-cuts,
+  rather than aligns with, the separate port-count, post-processing, and
+  sweep-axis differences between families. Only Tier B families carry a
+  symbol alphabet (#130) and an Element/Coding-Alphabet library entry.
 - **Physical bound** (design family field): a family's fundamental
   feasibility predicate relating achievable performance to size or
   thickness — e.g. the Rozanov bound for absorbers, the Gustafsson &
