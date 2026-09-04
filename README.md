@@ -414,9 +414,16 @@ Two of its settled constraints govern how anything from that effort should be re
   and, optionally, a desired one. Hardness is asserted, never inferred, and preference
   enters as an explicitly recorded constraint — never as scoring bias.
 
-> [!NOTE]
-> The map's supporting research documents live on their own branches (`research/*` and
-> `claude/open-repo-ctrg29`), not on `main`. Don't go looking for them in `docs/`.
+The map's fifteen supporting research documents are on `main`, under `docs/` — substrate
+shortlists, MXene printability, the Rozanov thickness/bandwidth bound, element-library
+prior art, the superposition coupling error bar, and the rest.
+
+> [!TIP]
+> **Start at [`docs/RUNNING-LISTS.md`](docs/RUNNING-LISTS.md)** — stranded sources, open
+> questions for the patent's inventors, corrections, and the ranked unknowns. It is the
+> index to the other fourteen. The map's own body lists which of its earlier claims those
+> documents have since overturned; where a research document and the handoff disagree,
+> the research document wins.
 
 ---
 
