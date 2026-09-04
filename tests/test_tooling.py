@@ -580,6 +580,65 @@ def test_flush_failure_is_atomic_and_leaves_design_status_untouched(cleanup_desi
     assert stored["engineering_results"] == []  # none of the 5 computed results landed either
 
 
+def test_fresh_requirements_failure_leaves_the_redesign_decision_flush_uncommitted(
+    cleanup_designs, tmp_path, monkeypatch
+):
+    """Code-review fix on issue #100: advance_design_loop_step's own
+    _fresh_requirements(design_id) read must run BEFORE the
+    REDESIGN_DECISION flush, not after -- it has no data dependency on the
+    flush (it neither reads nor writes designs.requirements). Simulates
+    that read's own DB connection/read failing on the exact call that
+    would otherwise immediately follow a successful flush, and asserts
+    nothing from the flush landed: `designs.status` is still whatever it
+    was before this call (DRAFT), and no decision_records/
+    engineering_results rows exist for it.
+
+    Reproduces the bug this test guards against: under the ordering this
+    fixes (fresh-requirements read AFTER the flush), the flush would
+    already have committed -- design status ANALYSIS/PASS,
+    decision_records/engineering_results already written -- by the time
+    this same simulated failure raised, so this test's assertions below
+    would fail (status would read PASS, decision_records/
+    engineering_results would be non-empty) even though the caller only
+    ever saw an exception and still holds their pre-call `state`."""
+    state = start_new_design_loop(
+        "TOOL-FRESH-FAIL", "Fresh Requirements Failure Test", "A", REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    # Drive to REDESIGN_DECISION first, unpatched -- _fresh_requirements is
+    # called (successfully) on every one of these intermediate steps too
+    # (see orchestration/tooling.py's module docstring, "REQUIREMENTS
+    # FRESHNESS"), so the sabotage below is installed only after that real
+    # traffic is done, to isolate it to the one call under test.
+    state = _drive_to_redesign_decision(state, tmp_path)
+
+    class _FreshRequirementsReadFailed(Exception):
+        pass
+
+    import orchestration.tooling as tooling_module
+
+    def _boom(design_id_arg: int) -> dict[str, Any]:
+        assert design_id_arg == design_id
+        raise _FreshRequirementsReadFailed("fresh requirements read failed (simulated)")
+
+    monkeypatch.setattr(tooling_module, "_fresh_requirements", _boom)
+
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    with pytest.raises(_FreshRequirementsReadFailed):
+        _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    stored = read_design(design_id)
+    assert stored["status"] == "DRAFT"  # never reached PASS -- the flush never ran
+    assert stored["decision_records"] == []  # nothing landed
+    assert stored["engineering_results"] == []  # none of the 5 computed results landed either
+
+
 # ---------------------------------------------------------------------------
 # The candidate solver's decisions persist at the existing flush (issue #95).
 #

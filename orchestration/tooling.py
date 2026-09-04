@@ -417,10 +417,12 @@ def advance_design_loop_step(
     A `REDESIGN_DECISION` transition (docs/adr/0011) additionally flushes
     every decision recorded since the last flush to the database and
     moves `designs.status` -- see this module's docstring's "PERSISTENCE"
-    section. If that flush fails, this call raises
-    `DesignLoopPersistenceError` and returns nothing: `state` (which the
-    caller still holds) remains the only valid state, exactly as if the
-    step had never advanced.
+    section. This flush runs LAST, after the fresh-`requirements` read
+    below succeeds, specifically so that a raise from EITHER step -- the
+    read or the flush -- leaves `state` (which the caller still holds) as
+    the only valid state, exactly as if the step had never advanced: no
+    call to this function ever raises after writing something the caller
+    has no way to know landed.
 
     Returns the loop's new state dict. Query its "pending_approval" key
     (also present on the state returned by inspect_design_loop_state) to
@@ -442,6 +444,29 @@ def advance_design_loop_step(
 
     new_loop_state = advance_loop_step(loop_state, step_input=step_input, approval=approval)
 
+    # issue #100: substitute the persisted designs.requirements column
+    # fresh, rather than handing back new_loop_state's own carried copy --
+    # see this module's docstring, "REQUIREMENTS FRESHNESS". design_id is
+    # guaranteed non-None here (checked above), and only the top-level
+    # `requirements` field changes -- `decisions[0]` (the REQUIREMENTS
+    # decision) is untouched.
+    #
+    # Deliberately done BEFORE the REDESIGN_DECISION flush below (code
+    # review on issue #100): _fresh_requirements has no data dependency on
+    # the flush -- it neither reads nor writes designs.requirements -- so
+    # reading it first means a failure here (e.g. the read's own DB
+    # connection dying) happens before _flush_decisions ever runs, keeping
+    # this function's "the caller's pre-call state remains the only valid
+    # state" guarantee true for this failure mode too, not just a flush
+    # failure. Reading it after, as a prior version of this function did,
+    # meant a failure here could follow an already-committed flush: the
+    # caller sees this call raise, retries with their still-held pre-call
+    # state, and replays _flush_decisions with the same persisted_count --
+    # which then fails on a record_key collision against the writes their
+    # first, "failed" call actually made, with nothing in that error
+    # pointing back at what really happened.
+    new_loop_state = replace(new_loop_state, requirements=_fresh_requirements(design_id))
+
     next_action = step_input.get("next_action") if step_input else None
     if current_step_before == DesignStep.REDESIGN_DECISION.value and next_action in (
         "iterate",
@@ -457,14 +482,6 @@ def advance_design_loop_step(
             final_status=final_status,
         )
         persisted_count = len(new_loop_state.decisions)
-
-    # issue #100: substitute the persisted designs.requirements column
-    # fresh, rather than handing back new_loop_state's own carried copy --
-    # see this module's docstring, "REQUIREMENTS FRESHNESS". design_id is
-    # guaranteed non-None here (checked above), and only the top-level
-    # `requirements` field changes -- `decisions[0]` (the REQUIREMENTS
-    # decision) is untouched.
-    new_loop_state = replace(new_loop_state, requirements=_fresh_requirements(design_id))
 
     result = new_loop_state.to_dict()
     result["design_id"] = design_id

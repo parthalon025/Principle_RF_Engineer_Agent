@@ -1880,7 +1880,16 @@ def inspect_design_loop_state(state: dict) -> dict:
     every decision recorded so far with its own provenance, and whether an
     approval is currently pending (and for which step). Safe to call at any
     point mid-loop, not just at completion; does not mutate or advance the
-    loop, and does not touch the database."""
+    loop.
+
+    When `state` carries a `design_id`, this opens a real database
+    connection and substitutes `requirements` with a fresh read of the
+    persisted `designs.requirements` column (issue #100), so a target
+    proposed or confirmed via `designs.requirement_targets` after `state`
+    was captured is reflected here without the caller re-reading the
+    design themselves -- everything else is passed through unchanged,
+    read-only. Without a `design_id`, this never touches the database and
+    `requirements` is returned exactly as given."""
     return _inspect_design_loop_state(state)
 
 
