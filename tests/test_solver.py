@@ -861,3 +861,142 @@ def test_result_field_override_with_explicit_unit_scores_a_different_field(tmp_p
     score = result["trail"][0]["steps"][1]["score"]
     assert score["actual_value"] == pytest.approx(2.02793)
     assert score["unit"] == "linear"
+
+
+# ---------------------------------------------------------------------------
+# Group 6: optional design_id -- seeding the plateau baseline from a
+# design's own prior-recorded scores (issue #87's cross-run-learning
+# follow-up to issue #95's own user story #21, "a design's score history
+# across iterations"). Still no live database: run_candidate_search's own
+# design_id-seeding code path talks to designs.db.read_engineering_
+# results_for_scoring, which THIS suite fakes -- the same "fakes for the
+# seam only" precedent this file's fake NEC2++ executable already
+# establishes for the simulator seam -- so a design_id here never needs to
+# be a real designs row, matching this whole file's existing conceit for
+# every OTHER design_id used above.
+# ---------------------------------------------------------------------------
+
+
+class _FakeConn:
+    """Stands in for designs.db.get_connection()'s real psycopg.Connection
+    -- run_candidate_search only ever calls .close() on it once
+    designs.db.read_engineering_results_for_scoring (also faked below) has
+    already been monkeypatched to ignore the connection object entirely."""
+
+    def close(self):
+        pass
+
+
+def test_design_id_defaults_to_no_seeding_and_never_touches_the_database(monkeypatch):
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError(
+            "designs_db.get_connection must not be called when design_id is not supplied"
+        )
+
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", _must_not_be_called)
+
+    state = _state_at_analysis()
+    target = _exact_frequency_target(_BASE_CANDIDATE)
+    result = run_candidate_search(state, [_BASE_CANDIDATE], {"analysis": {"target": target}})
+
+    assert result["prior_best_score"] is None
+    assert result["prior_iteration"] is None
+
+
+def test_design_id_with_no_prior_recorded_rows_leaves_prior_best_score_none(monkeypatch):
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {name: [] for name in tool_names},
+    )
+
+    state = _state_at_analysis()
+    target = _exact_frequency_target(_BASE_CANDIDATE)
+    result = run_candidate_search(
+        state, [_BASE_CANDIDATE], {"analysis": {"target": target}}, design_id=42
+    )
+
+    assert result["prior_best_score"] is None
+    assert result["prior_iteration"] is None
+
+
+def test_design_id_reports_the_best_prior_score_and_its_recording_ordinal(monkeypatch):
+    """Three canned prior ANALYSIS rows for design_id=99, closest-to-target
+    in the MIDDLE -- proves both that the correct one is picked (not just
+    the first or the last) and that prior_iteration is that row's own
+    1-based position among this design's recorded rows for the step, not
+    its database id."""
+    target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
+    prior_rows = [
+        {"id": 101, "value": {"resonant_frequency_hz": 2.20e9}, "created_at": "2026-01-01"},
+        {"id": 102, "value": {"resonant_frequency_hz": 2.451e9}, "created_at": "2026-01-02"},
+        {"id": 103, "value": {"resonant_frequency_hz": 2.10e9}, "created_at": "2026-01-03"},
+    ]
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {"patch_resonant_frequency_hz": prior_rows},
+    )
+
+    from designs.success_score import success_score
+
+    expected_score_percent = success_score(
+        step="analysis", target=target, actual_value=2.451e9, actual_unit="Hz"
+    )["score_percent"]
+
+    state = _state_at_analysis()
+    result = run_candidate_search(
+        state, [_BASE_CANDIDATE], {"analysis": {"target": target}}, design_id=99
+    )
+
+    assert result["prior_best_score"] == pytest.approx(expected_score_percent)
+    assert result["prior_iteration"] == 2
+
+
+def test_design_id_seed_shortens_the_plateau_window(tmp_path, monkeypatch):
+    """Mirrors test_score_plateau_stops_after_the_window's own unreachable-
+    target/identical-candidate setup exactly, but seeds one prior recorded
+    ANALYSIS row scoring identically to every new candidate here -- so the
+    plateau-window list starts with 1 entry already in it (the seed)
+    instead of 0. plateau_window=3 needs 4 entries to compare; with the
+    seed occupying one, only 3 NEW candidates are needed (candidates_
+    evaluated == 3) where the unseeded sibling test needs 4 -- the seed
+    genuinely shortens the search, not just changes its reported numbers.
+    """
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    same_candidate = _full_candidate(tmp_path, fake_nec2pp)
+    # Unreachable target, matching test_score_plateau_stops_after_the_window
+    # -- isolates plateau detection from target_satisfaction.
+    target = propose_target(value=1.0e9, comparator="EQUALS", unit="Hz", tolerance=1.0)
+
+    seed_frequency_hz = patch_resonant_frequency_hz(
+        same_candidate["eps_r"], same_candidate["w_m"], same_candidate["h_m"], same_candidate["l_m"]
+    )
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {
+            "patch_resonant_frequency_hz": [
+                {"id": 1, "value": {"resonant_frequency_hz": seed_frequency_hz}, "created_at": "x"}
+            ]
+        },
+    )
+
+    candidates = [same_candidate] * 6
+    result = run_candidate_search(
+        state,
+        candidates,
+        {"analysis": {"target": target}},
+        plateau_window=3,
+        plateau_epsilon=0.5,
+        design_id=7,
+    )
+
+    assert result["prior_best_score"] is not None
+    assert result["prior_iteration"] == 1
+    assert result["stop_reason"] == "score_plateau"
+    assert result["candidates_evaluated"] == 3

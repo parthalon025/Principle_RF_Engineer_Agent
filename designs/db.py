@@ -560,6 +560,55 @@ def verify_requirement(
     return row
 
 
+def read_engineering_results_for_scoring(
+    conn: psycopg.Connection,
+    design_id: int,
+    tool_names: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Read-only: every `engineering_results` row recorded for `design_id`
+    whose `tool_name` is one of `tool_names`, grouped by `tool_name` and
+    ordered `id` ascending (recording order) within each group.
+
+    Built for `orchestration.solver.run_candidate_search`'s optional
+    `design_id` parameter (issue #87's cross-run-learning follow-up to
+    #95's own user story #21, "a design's score history across
+    iterations"): that caller needs, for a small fixed set of step
+    tool_names, every value this design has ever recorded for each -- so it
+    can find the best-scoring one and seed a NEW search's plateau-window
+    baseline from a design's own past results, instead of starting cold
+    every call. This function only ever SELECTs -- it is the read half of
+    that read/write split, matching every other plain-read function in
+    this module (`find_decision_by_record_key`, `read_design`); scoring
+    the returned raw values against a target is the caller's job, not
+    this one's -- `designs/db.py` computes nothing here, same as
+    everywhere else in this module.
+
+    Returns `{tool_name: [{"id": ..., "tool_name": ..., "value": ...,
+    "created_at": ...}, ...]}` -- every requested `tool_name` is a key
+    even when it has no matching rows (an empty list, not an absent key),
+    so a caller iterating `tool_names` never has to guess between "no
+    rows yet" and "wasn't asked for". `value` is exactly the JSONB
+    payload `record_engineering_result` stored for that row (a step's raw
+    result dict, e.g. `{"resonant_frequency_hz": ...}`) -- not a score.
+    `tool_names=[]` returns `{}` without querying the database at all.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {name: [] for name in tool_names}
+    if not tool_names:
+        return grouped
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT id, tool_name, value, created_at FROM engineering_results "
+            "WHERE design_id = %s AND tool_name = ANY(%s) ORDER BY id",
+            (design_id, list(tool_names)),
+        )
+        rows = cur.fetchall()
+
+    for row in rows:
+        grouped[row["tool_name"]].append(_serialize_row(row))
+    return grouped
+
+
 def record_engineering_result(
     conn: psycopg.Connection,
     design_id: int,
