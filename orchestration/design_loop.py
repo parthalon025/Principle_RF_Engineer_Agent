@@ -192,24 +192,30 @@ class LoopDecision:
     is NOT replaced or superseded by this field -- the two answer unrelated
     questions and both remain necessary.
 
-    `.get("iteration", 1)` on from_dict, matching this dataclass's existing
-    optional-field convention (`provenance`/`approved_by` are also read via
-    `.get`). Be honest about what that default is worth: for a
-    `DesignLoopState` serialized BEFORE this field existed, 1 is correct
-    only if that state never completed a REDESIGN_DECISION
-    `next_action="iterate"` transition. A pre-field dump that cycled twice
-    carries decisions from iterations 1, 2 and 3 with no per-decision
-    `iteration` recorded anywhere, and this default silently reports all of
-    them as iteration 1. That is accepted rather than solved because there
-    are no such dumps: docs/adr/0011 records that this loop "predates any
-    real caller, so no compatibility shim was added", and the same holds
-    here. If a real pre-field multi-iteration state ever does turn up, its
-    boundaries are recoverable without this field -- decisions accumulate
-    in STEP_ORDER order and each iteration contributes exactly one
-    ARCHITECTURE-through-REDESIGN_DECISION cycle, so counting
-    REDESIGN_DECISION entries reconstructs them -- but nothing in this
-    module does that today, and nothing should until there is a dump that
-    needs it."""
+    `iteration` is `None` when nobody recorded one -- exactly a
+    `DesignLoopState` serialized BEFORE this field existed (issue #88's own
+    prefactor shipped with a `.get("iteration", 1)` default instead; issue
+    #135 replaced it, once a saved multi-round loop was no longer
+    hypothetical). Guessing `1` for a missing value is only ever correct
+    for a loop saved during round 1 -- for a loop saved during round 5,
+    every decision in it would be mislabeled "round 1", indistinguishable
+    from a decision genuinely recorded in round 1. That is the same
+    category of mistake as tagging an assumption `MEASURED`: a guess
+    written down as though it were a fact, in a codebase whose whole
+    discipline is that a recorded value carries an honest account of where
+    it came from (CONTEXT.md, Provenance). `None` reads as "nobody recorded
+    this," which is exactly what happened, and matches how `provenance`/
+    `approved_by` already tolerate absence on this same dataclass.
+    `from_dict` fills a missing value with `None` accordingly; a consumer
+    that groups or filters `DesignLoopState.decisions` by `iteration` (see
+    the paragraph above -- the lab-test-plan and candidate-solver readers
+    this field was added for) must treat `None` as its own case, belonging
+    in neither round's bucket, rather than folding it into round 1.
+
+    Everything freshly recorded still gets a real `int`: every
+    `LoopDecision(...)` call in this module (`start_design_loop`,
+    `advance_loop_step`) passes `iteration=state.iteration` explicitly --
+    `None` is reachable only through `from_dict` on a pre-#88 dump."""
 
     step: str
     kind: str
@@ -218,7 +224,7 @@ class LoopDecision:
     provenance: str | None
     approved_by: str | None
     recorded_at: float
-    iteration: int = 1
+    iteration: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -242,7 +248,7 @@ class LoopDecision:
             provenance=data.get("provenance"),
             approved_by=data.get("approved_by"),
             recorded_at=data["recorded_at"],
-            iteration=data.get("iteration", 1),
+            iteration=data.get("iteration"),
         )
 
 

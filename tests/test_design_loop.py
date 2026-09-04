@@ -324,17 +324,80 @@ def test_loop_decision_iteration_round_trips_through_to_dict_and_from_dict():
 
 def test_loop_decision_from_dict_tolerates_a_pre_88_dump_with_no_iteration_field():
     """A DesignLoopState serialized before issue #88 has no `iteration` key
-    on any decision -- from_dict must still load it, defaulting each
-    decision's iteration to 1 (see LoopDecision's own docstring for why 1
-    is the only value such a dump's decisions could have meant)."""
+    on any decision -- from_dict must still load it, but it must NOT guess
+    which round produced it. A pre-#88 dump could have come from any round
+    (issue #135): filling the blank with 1 would misrepresent a decision
+    genuinely recorded in round 5 as round 1. from_dict defaults the
+    missing value to None -- "nobody recorded this" -- instead."""
     state = start_design_loop(REQUIREMENTS)
     legacy_dict = state.to_dict()
     for decision_dict in legacy_dict["decisions"]:
         del decision_dict["iteration"]
 
     restored = DesignLoopState.from_dict(legacy_dict)
-    assert restored.decisions[0].iteration == 1
+    assert restored.decisions[0].iteration is None
     assert isinstance(restored.decisions[0], LoopDecision)
+
+
+def test_loop_decision_from_dict_keeps_a_real_recorded_iteration():
+    """A decision that DOES carry an `iteration` field (every dump from
+    issue #88 onward) must still round-trip to its real value, not be
+    swept into the same None bucket as a genuinely unknown one."""
+    state = start_design_loop(REQUIREMENTS)
+    as_dict = state.to_dict()
+    assert as_dict["decisions"][0]["iteration"] == 1
+
+    restored = DesignLoopState.from_dict(as_dict)
+    assert restored.decisions[0].iteration == 1
+
+
+def test_grouping_decisions_by_iteration_treats_none_as_its_own_case():
+    """A mixed old/new decision list -- some decisions carry a real
+    `iteration` (freshly recorded, or a post-#135 dump), others carry
+    `None` (a pre-#88 dump with no round recorded at all, issue #135).
+    Filtering for "this round's decisions" must not lump the unknown-round
+    decision into round 1's bucket, and filtering for "round 1's
+    decisions" must not include it either -- it belongs in neither."""
+    now = 0.0
+    unknown_round = LoopDecision(
+        step=DesignStep.ARCHITECTURE.value,
+        kind="architecture_decision",
+        input={},
+        result={"decision": "legacy, pre-#88"},
+        provenance=None,
+        approved_by="a.human",
+        recorded_at=now,
+        iteration=None,
+    )
+    round_one = LoopDecision(
+        step=DesignStep.ANALYSIS.value,
+        kind="calculation",
+        input={},
+        result={},
+        provenance="CALCULATED",
+        approved_by=None,
+        recorded_at=now,
+        iteration=1,
+    )
+    round_two = LoopDecision(
+        step=DesignStep.ANALYSIS.value,
+        kind="calculation",
+        input={},
+        result={},
+        provenance="CALCULATED",
+        approved_by=None,
+        recorded_at=now,
+        iteration=2,
+    )
+    decisions = [unknown_round, round_one, round_two]
+
+    round_1_decisions = [d for d in decisions if d.iteration == 1]
+    round_2_decisions = [d for d in decisions if d.iteration == 2]
+    unknown_decisions = [d for d in decisions if d.iteration is None]
+
+    assert round_1_decisions == [round_one]
+    assert round_2_decisions == [round_two]
+    assert unknown_decisions == [unknown_round]
 
 
 def test_state_round_trips_through_to_dict_and_from_dict():
