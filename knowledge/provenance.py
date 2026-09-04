@@ -11,6 +11,21 @@ Ticket #11 adds `component_field_provenance`: the analogous pure mapping for
 one extracted component specification field's provenance, from its
 extraction confidence and whether it passed `knowledge.validation`'s
 physical-plausibility bound (ADR-0003).
+
+`patent` joins the authoritative-reference tier but takes its own, lower
+default rank -- see `PATENT_AUTHORITY_RANK`.
+
+A LIMIT WORTH KNOWING BEFORE INGESTING A PATENT: this pipeline chunks a
+document by text, and nothing in it distinguishes a patent's CLAIMS from
+its DESCRIPTION. Those are different kinds of writing. A claim is legal
+text defining the boundary of a monopoly -- deliberately broad, often
+describing configurations nobody built or measured -- while the
+description's worked examples are closer to a paper's reported results. A
+retrieved patent chunk may be either, and `search_knowledge` cannot tell a
+caller which. So a patent's numbers are usable as cited evidence, but claim
+language must never be read as design guidance, and this module cannot
+enforce that distinction for you. Section-aware chunking would be the real
+fix and is not built.
 """
 
 from __future__ import annotations
@@ -31,6 +46,7 @@ _SOURCE_TYPE_TIER: dict[SourceType, str] = {
     SourceType.STANDARD: LITERATURE_SUPPORTED,
     SourceType.TEXTBOOK: LITERATURE_SUPPORTED,
     SourceType.PAPER: LITERATURE_SUPPORTED,
+    SourceType.PATENT: LITERATURE_SUPPORTED,
     SourceType.DESIGN_RECORD: INTERNAL_HISTORY,
 }
 
@@ -41,6 +57,32 @@ _TIER_AUTHORITY_RANK: dict[str, int] = {
     INTERNAL_HISTORY: 60,
 }
 
+# A granted patent is externally published, permanently archived and
+# citable, so it belongs at the authoritative-reference tier -- but it is
+# NOT peer-reviewed, and ranking it level with a `paper` (40) would say it
+# is. A patent office examines for novelty, non-obviousness and candor; it
+# does not check that a stated permittivity was measured correctly, that a
+# simulated result was labelled as simulated, or that a number reproduces.
+# The applicant also has a structural incentive to disclose the minimum and
+# claim broadly. That places a patent's technical figures in the same
+# position as an arXiv preprint's -- formally published and permanent, but
+# unvetted for technical accuracy -- so it takes the same rank, for the same
+# reason, rather than sharing the peer-reviewed tier's.
+#
+# Deliberately a separate constant from ARXIV_PREPRINT_AUTHORITY_RANK below
+# even though the values coincide today: the two justifications are
+# independent, and collapsing them would mean revisiting arXiv's moderation
+# policy every time someone reconsidered patents.
+PATENT_AUTHORITY_RANK = 50
+
+# Source types whose default rank is deliberately NOT their tier's rank.
+# CONTEXT.md already documents authority rank as "overridable per document";
+# this is the narrower case of a whole source TYPE whose default differs, so
+# no caller has to remember to pass an override for every patent ingested.
+_SOURCE_TYPE_AUTHORITY_RANK: dict[SourceType, int] = {
+    SourceType.PATENT: PATENT_AUTHORITY_RANK,
+}
+
 
 def provenance_tier_for(source_type: SourceType) -> str:
     """Return the evidence-hierarchy tier a source type defaults to."""
@@ -48,7 +90,13 @@ def provenance_tier_for(source_type: SourceType) -> str:
 
 
 def default_authority_rank(source_type: SourceType) -> int:
-    """Return the default `documents.authority_rank` for a source type."""
+    """Return the default `documents.authority_rank` for a source type --
+    its tier's rank, unless the type carries its own explicit default (see
+    `_SOURCE_TYPE_AUTHORITY_RANK`, and `PATENT_AUTHORITY_RANK` for the one
+    case that does and why)."""
+    override = _SOURCE_TYPE_AUTHORITY_RANK.get(source_type)
+    if override is not None:
+        return override
     return _TIER_AUTHORITY_RANK[provenance_tier_for(source_type)]
 
 

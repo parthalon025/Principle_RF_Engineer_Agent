@@ -1266,9 +1266,15 @@ def ingest_document(
     classification: str,
     supersedes_document_id: int | None = None,
 ) -> dict:
-    """Parse a datasheet/standard/textbook/paper PDF via docling, chunk it, and store it.
-    Pass supersedes_document_id to declare this upload a newer revision of that document
-    (never inferred from title); omit it for a plain new, independent document."""
+    """Parse a document PDF via docling, chunk it, and store it. source_type must be one
+    of: datasheet, application_note, standard, textbook, paper, patent, design_record --
+    it is fixed at ingest time and sets the document's default provenance and authority
+    rank, so a wrong value permanently mis-ranks everything retrieved from it. Note
+    patent: its numbers are citable evidence but rank below a peer-reviewed paper (a
+    patent office does not check that a stated number reproduces), and its claim text is
+    legal boundary-setting, never design guidance. Pass supersedes_document_id to declare
+    this upload a newer revision of that document (never inferred from title); omit it for
+    a plain new, independent document."""
     return _ingest_document(
         file_path=file_path,
         source_type=source_type,
