@@ -276,9 +276,11 @@ and a glossary that churns with it stops being trustworthy (see
   topology (e.g. absorber, reflection-phase steering surface, polarization
   converter, diffusive-backscatter surface, plain patch antenna) that
   determines which analysis/optimization functions, simulation setup, and
-  physical bound apply. Recorded as a structured field on the ARCHITECTURE
-  decision — never left implicit in which hardwired function the loop
-  happened to call (see `docs/adr/0018`). Selection stays human-authored:
+  physical bound apply (see `docs/adr/0018`). Declared as a structured
+  field on the ARCHITECTURE decision, not left implicit in which hardwired
+  function the loop happened to call — that field is `_handle_architecture`'s
+  target shape, not yet its current one; #161 is the open implementing
+  ticket. Selection stays human-authored:
   the loop does not attempt to infer a family from a requirement's prose.
 - **Design family registry**: the open interface every design family
   implements — a thin common set of spine fields (band, host thickness,
