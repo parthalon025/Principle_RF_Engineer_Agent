@@ -80,7 +80,11 @@ three the issue lays out -- "closest to the existing architecture"):
 functions that ever hand a state dict back to a caller after loop start,
 both call `_fresh_requirements` first and substitute its result for
 whatever `state`/`new_loop_state` carried in, whenever a `design_id` is
-present. `orchestration/design_loop.py` gains no database awareness for
+present -- falling back to that already-carried value, not raising, if
+`design_id` names no real row (found during integration: `tests/
+test_solver.py` deliberately never persists a design, by design; see
+`_fresh_requirements`'s own docstring). `orchestration/design_loop.py`
+gains no database awareness for
 this, same as PERSISTENCE below -- the read lives in this module, the
 layer that already talks to Postgres. Only the top-level `requirements`
 field is replaced; `state["decisions"][0]` (the REQUIREMENTS decision
@@ -332,7 +336,7 @@ def _flush_decisions(
         conn.close()
 
 
-def _fresh_requirements(design_id: int) -> dict[str, Any]:
+def _fresh_requirements(design_id: int, fallback: dict[str, Any]) -> dict[str, Any]:
     """Re-read `designs.requirements` fresh from the database for
     `design_id` -- see this module's docstring, "REQUIREMENTS FRESHNESS"
     (issue #100). Reuses `designs_db.read_design` (the same function
@@ -341,18 +345,30 @@ def _fresh_requirements(design_id: int) -> dict[str, Any]:
     open connection per step-advancing/inspecting call is not a real cost
     for a locally run, interactive design loop, and a second, parallel
     "just the requirements column" read path would be a second place to
-    keep in sync with `read_design`'s own. Raises `designs_db.
-    UnknownDesignError` if `design_id` names no real `designs` row (should
-    not happen for a state dict this module's own functions produced; a
-    bug-shaped state deserves a loud failure, not a silently stale
-    result)."""
+    keep in sync with `read_design`'s own.
+
+    Returns `fallback` -- the caller's own already-known requirements --
+    instead of raising when `design_id` names no real `designs` row.
+    Originally this raised `designs_db.UnknownDesignError` unconditionally,
+    reasoning a missing row "should not happen for a state dict this
+    module's own functions produced." That was wrong: `tests/test_solver.py`
+    (issue #95, predating this ticket) deliberately builds a TOOLING-shaped
+    state with a synthetic, never-persisted `design_id` specifically so its
+    suite needs no live database -- an intentional, documented pattern this
+    function cannot tell apart from a genuinely corrupted design_id, since
+    both look identical from here (no matching row). Crashing an unrelated
+    step-advance/inspect call over a side-channel freshness read finding
+    nothing to refresh from is a worse failure mode than quietly keeping
+    what the caller already had -- there is nowhere fresher to read from
+    either way, and the caller's own value is not being asserted stale, only
+    left exactly as honest as it was before this function ran."""
     conn = designs_db.get_connection()
     try:
         design = designs_db.read_design(conn, design_id)
     finally:
         conn.close()
     if design is None:
-        raise designs_db.UnknownDesignError(design_id)
+        return fallback
     return design["requirements"]
 
 
@@ -465,7 +481,10 @@ def advance_design_loop_step(
     # which then fails on a record_key collision against the writes their
     # first, "failed" call actually made, with nothing in that error
     # pointing back at what really happened.
-    new_loop_state = replace(new_loop_state, requirements=_fresh_requirements(design_id))
+    new_loop_state = replace(
+        new_loop_state,
+        requirements=_fresh_requirements(design_id, fallback=new_loop_state.requirements),
+    )
 
     next_action = step_input.get("next_action") if step_input else None
     if current_step_before == DesignStep.REDESIGN_DECISION.value and next_action in (
@@ -512,7 +531,10 @@ def inspect_design_loop_state(state: dict[str, Any]) -> dict[str, Any]:
     loop_state = DesignLoopState.from_dict(state)
     design_id = state.get("design_id")
     if design_id is not None:
-        loop_state = replace(loop_state, requirements=_fresh_requirements(design_id))
+        loop_state = replace(
+            loop_state,
+            requirements=_fresh_requirements(design_id, fallback=loop_state.requirements),
+        )
     result = loop_state.to_dict()
     result["design_id"] = design_id
     result["design_key"] = state.get("design_key")

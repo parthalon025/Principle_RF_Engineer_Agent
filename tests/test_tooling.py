@@ -232,6 +232,7 @@ def test_advance_design_loop_step_reflects_a_target_confirmed_after_start(cleanu
         {
             "decision": "rectangular microstrip patch on FR4",
             "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": "patch_antenna",
         },
     )
 
