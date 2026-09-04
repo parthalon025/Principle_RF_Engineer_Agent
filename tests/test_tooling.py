@@ -360,6 +360,7 @@ def _drive_to_redesign_decision(
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -689,6 +690,7 @@ def test_solver_produced_decisions_persist_at_the_redesign_decision_flush(
         "l_m": 0.0286,
         "geometry": _DIPOLE_GEOMETRY,
         "frequency_hz": 300e6,
+        "reference_impedance_ohms": 50.0,
         "executable": str(fake_nec2pp),
         "workdir": str(tmp_path / "nec2_run"),
         "target_frequency_hz": 2.45e9,

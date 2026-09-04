@@ -9,6 +9,41 @@ def wavelength(f_hz: float, c_m_s: float = 299_792_458.0) -> float:
     return c_m_s / f_hz
 
 
+def reflection_coefficient_from_impedance(z_load: complex, z0: float = 50.0) -> complex:
+    """Voltage reflection coefficient Gamma looking into a load impedance,
+    referenced to z0 (standard transmission-line result, Pozar, "Microwave
+    Engineering"):
+
+        Gamma = (z_load - z0) / (z_load + z0)
+
+    z_load may be a plain float (a purely resistive impedance) or a
+    complex number (resistance + j*reactance, e.g. a NEC2/openEMS
+    feed-point impedance). z0 defaults to 50 ohms, matching every other
+    z0-parameterized conversion in this module (s_to_z/z_to_s/s_to_y/...).
+    That default is fine for this general-purpose math function -- the
+    caller-facing layer this feeds (orchestration/design_loop.py's
+    SIMULATION step, issue #101) requires its own caller to state the
+    reference impedance explicitly and records whatever value was used
+    alongside the result, rather than leaning on this default silently.
+
+    |Gamma| from the return value feeds directly into vswr_from_gamma/
+    return_loss_db above, both of which take |Gamma| (a magnitude), not an
+    impedance.
+    """
+    if z0 <= 0:
+        raise ValueError("Reference impedance z0 must be positive.")
+    z = complex(z_load)
+    z0c = complex(z0)
+    denom = z + z0c
+    if denom == 0:
+        raise ValueError(
+            "Reflection coefficient is undefined when z_load + z0 = 0 "
+            "(a negative-resistance load exactly cancelling the reference "
+            "impedance)."
+        )
+    return (z - z0c) / denom
+
+
 def vswr_from_gamma(gamma_mag: float) -> float:
     if not 0 <= gamma_mag < 1:
         raise ValueError("Reflection coefficient magnitude must be in [0, 1).")

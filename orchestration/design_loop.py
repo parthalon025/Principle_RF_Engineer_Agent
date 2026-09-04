@@ -26,7 +26,11 @@ built and tested -- not reimplementing any of them:
                 is THE recommended one for a two-ended eps_r" is a genuine
                 new design question ADR-0015 does not settle -- left for a
                 separate ticket rather than decided inline here.
-  - SIMULATION  calls simulation.nec2pp.run_nec2_simulation (Phase 6).
+  - SIMULATION  calls simulation.nec2pp.run_nec2_simulation (Phase 6), then
+                (issue #101) derives VSWR/return loss from that call's own
+                feed-point impedance against an explicit
+                reference_impedance_ohms -- see _handle_simulation's own
+                docstring.
   - OPTIMIZATION calls
                 optimization.rf_objectives.optimize_patch_length_for_target_
                 frequency (Phase 9), the one named optimization use case
@@ -110,6 +114,11 @@ from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
 from rf_tools.calculations import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
+from rf_tools.calculations import (
+    reflection_coefficient_from_impedance as _reflection_coefficient_from_impedance,
+)
+from rf_tools.calculations import return_loss_db as _return_loss_db
+from rf_tools.calculations import vswr_from_gamma as _vswr_from_gamma
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
@@ -521,7 +530,40 @@ def _handle_analysis(
 def _handle_simulation(
     _state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    _require_fields(step_input, {"geometry", "frequency_hz"}, "simulation")
+    """Runs run_nec2_simulation, then (issue #101) derives VSWR and return
+    loss from the feed-point impedance that call already returns, against
+    an explicit `reference_impedance_ohms` step_input MUST state -- never
+    silently assumed to be 50 ohms (CONTEXT.md's provenance discipline:
+    every recorded number's inputs are stated, not guessed). This is
+    deterministic arithmetic over SIMULATION's own already-computed
+    impedance, not a second solver run -- no new evidence is manufactured,
+    only a different reading of the same evidence, so the result still
+    carries run_nec2_simulation's own SIMULATED provenance, not a fresh
+    CALCULATED one.
+
+    NEC2++'s adapter only ever solves at ONE frequency (the frequency_hz
+    this step_input states) -- so the derived vswr/return_loss_db is
+    inherently a single-frequency point prediction, honestly recorded as
+    `single_frequency_prediction=True`: a requirement typically stated as
+    a band (e.g. "VSWR <= 2.0 across 8-12 GHz") is not fully evaluated by
+    one point. orchestration/lab_test_plan.py surfaces this flag alongside
+    the traced expected value rather than silently presenting one
+    frequency's answer as if it covered the whole band.
+
+    vswr_from_gamma/return_loss_db are each undefined at one of the two
+    physical extremes (|Gamma| == 0: perfect match, return loss is
+    infinite; |Gamma| == 1: total mismatch, VSWR is infinite) -- each is
+    caught independently so the whole step doesn't fail just because the
+    OTHER quantity happens to be finite; a genuinely undefined value is
+    recorded as None, never guessed at. impedance itself can also be None
+    (run_nec2_simulation's own parser found no ANTENNA INPUT PARAMETERS
+    block) -- nothing to derive from, so vswr/return_loss_db/
+    reflection_coefficient_magnitude are all None, but the step still
+    advances: the underlying simulation itself completed.
+    """
+    _require_fields(
+        step_input, {"geometry", "frequency_hz", "reference_impedance_ohms"}, "simulation"
+    )
     result = _run_nec2_simulation(
         geometry=step_input["geometry"],
         frequency_hz=step_input["frequency_hz"],
@@ -529,6 +571,34 @@ def _handle_simulation(
         executable=step_input.get("executable"),
         workdir=step_input.get("workdir"),
     )
+
+    reference_impedance_ohms = step_input["reference_impedance_ohms"]
+    reflection_coefficient_magnitude: float | None = None
+    vswr: float | None = None
+    return_loss_db_value: float | None = None
+    impedance = result.get("impedance")
+    if impedance is not None:
+        z_load = complex(impedance["resistance_ohms"], impedance["reactance_ohms"])
+        gamma = _reflection_coefficient_from_impedance(z_load, reference_impedance_ohms)
+        reflection_coefficient_magnitude = abs(gamma)
+        try:
+            vswr = _vswr_from_gamma(reflection_coefficient_magnitude)
+        except ValueError:
+            vswr = None  # |Gamma| == 1: total mismatch, VSWR is undefined (infinite)
+        try:
+            return_loss_db_value = _return_loss_db(reflection_coefficient_magnitude)
+        except ValueError:
+            return_loss_db_value = None  # |Gamma| == 0: perfect match, return loss undefined
+
+    result = {
+        **result,
+        "reference_impedance_ohms": reference_impedance_ohms,
+        "reflection_coefficient_magnitude": reflection_coefficient_magnitude,
+        "vswr": vswr,
+        "return_loss_db": return_loss_db_value,
+        "frequency_hz": step_input["frequency_hz"],
+        "single_frequency_prediction": True,
+    }
     return "simulation", result, result.get("provenance", "SIMULATED")
 
 

@@ -41,6 +41,7 @@ import numpy as np
 import pytest
 import skrf as rf
 
+import orchestration.design_loop as design_loop_module
 from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
 from measurement.external import ExternalMeasurementError
 from orchestration.approval import (
@@ -600,6 +601,177 @@ def test_analysis_rejects_a_material_property_with_no_library_data():
         )
 
 
+# ---------------------------------------------------------------------------
+# Group 2c (issue #101): SIMULATION derives VSWR/return loss from its own
+# feed-point impedance, against an explicitly caller-stated reference
+# impedance. These stub out run_nec2_simulation itself (monkeypatching the
+# name orchestration/design_loop.py imports it under) rather than driving a
+# real/fake nec2++ subprocess -- that subprocess path is exercised for real
+# by the end-to-end test below (Group 5); isolating this arithmetic from
+# subprocess execution keeps these tests fast and independent of whether a
+# shell can exec a Python script directly (which native Windows cannot do
+# without going through the interpreter -- issue #159's own tracked gap,
+# see test_end_to_end_full_requirements_to_redesign_cycle below).
+# ---------------------------------------------------------------------------
+
+
+def _fake_nec2_result(
+    resistance_ohms: float = 82.6979, reactance_ohms: float = 46.3060, **overrides
+):
+    """A run_nec2_simulation-shaped return value, carrying the same
+    feed-point impedance tests/test_nec2pp.py's/this file's own NEC-2
+    User's Guide 'Example 1' sample output parses to, by default."""
+    result = {
+        "provenance": "SIMULATED",
+        "impedance": {
+            "tag": 0,
+            "segment": 4,
+            "voltage_real_v": 1.0,
+            "voltage_imag_v": 0.0,
+            "current_real_a": 0.00920585,
+            "current_imag_a": -0.00515474,
+            "resistance_ohms": resistance_ohms,
+            "reactance_ohms": reactance_ohms,
+            "admittance_real_mhos": 0.00920585,
+            "admittance_imag_mhos": -0.00515474,
+            "power_w": 0.00460292,
+        },
+        "pattern": [],
+        "gain_dbi": None,
+        "average_power_gain_linear": None,
+        "simulator": "NEC2++",
+        "status": "COMPLETED",
+        "workdir": "/fake/workdir",
+        "input_file": "/fake/workdir/model.nec",
+    }
+    result.update(overrides)
+    return result
+
+
+def _advance_to_simulation(monkeypatch, fake_result) -> DesignLoopState:
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", lambda **kw: fake_result)
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    state = advance_loop_step(state, _valid_step_input(state, DesignStep.ANALYSIS))
+    assert state.current_step == DesignStep.SIMULATION.value
+    return state
+
+
+def test_simulation_requires_reference_impedance_ohms_explicitly(monkeypatch):
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result())
+    with pytest.raises(DesignLoopValidationError, match="missing required field"):
+        advance_loop_step(state, {"geometry": _DIPOLE_GEOMETRY, "frequency_hz": 300e6})
+
+
+def test_simulation_derives_vswr_and_return_loss_from_feed_point_impedance(monkeypatch):
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result())
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.step == DesignStep.SIMULATION.value
+    assert decision.provenance == "SIMULATED"
+    # Independently computed from (82.6979 + j46.3060) referenced to 50
+    # ohms -- see tests/test_calculations.py's own
+    # test_reflection_coefficient_of_a_known_complex_impedance.
+    assert decision.result["reflection_coefficient_magnitude"] == pytest.approx(0.40333507086482756)
+    assert decision.result["vswr"] == pytest.approx(2.35196506839923)
+    assert decision.result["return_loss_db"] == pytest.approx(7.8866802699461624)
+    # The reference impedance is recorded verbatim alongside the value --
+    # never silently assumed (issue #101's own acceptance criterion).
+    assert decision.result["reference_impedance_ohms"] == 50.0
+    assert decision.result["frequency_hz"] == 300e6
+    # NEC2++'s adapter only ever solves at one frequency -- honestly
+    # flagged, so a reader never mistakes this for a swept-band answer.
+    assert decision.result["single_frequency_prediction"] is True
+
+
+def test_simulation_reference_impedance_is_never_silently_defaulted_to_50(monkeypatch):
+    """The same feed-point impedance, scored against a DIFFERENT explicit
+    reference impedance, produces a materially different VSWR -- proving
+    the value actually came from step_input, not a hardcoded 50 ohms."""
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result())
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 75.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["reference_impedance_ohms"] == 75.0
+    assert decision.result["vswr"] != pytest.approx(2.35196506839923)
+
+
+def test_simulation_vswr_undefined_at_total_mismatch_is_recorded_as_none(monkeypatch):
+    # A short-circuit feed point (0 ohms): |Gamma| = 1 exactly -- VSWR is
+    # mathematically infinite/undefined (vswr_from_gamma's own domain is
+    # [0, 1)), so it is recorded as None rather than raising and failing
+    # the whole step. Return loss (0 dB at total reflection) is finite and
+    # still computed.
+    state = _advance_to_simulation(
+        monkeypatch, _fake_nec2_result(resistance_ohms=0.0, reactance_ohms=0.0)
+    )
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["vswr"] is None
+    assert decision.result["return_loss_db"] == pytest.approx(0.0)
+
+
+def test_simulation_return_loss_undefined_at_perfect_match_is_recorded_as_none(monkeypatch):
+    # A feed point exactly at the reference impedance: |Gamma| = 0 -- VSWR
+    # is a valid, finite 1.0, but return loss (-20*log10(0)) is
+    # mathematically infinite/undefined, so it is recorded as None.
+    state = _advance_to_simulation(
+        monkeypatch, _fake_nec2_result(resistance_ohms=50.0, reactance_ohms=0.0)
+    )
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["vswr"] == pytest.approx(1.0)
+    assert decision.result["return_loss_db"] is None
+
+
+def test_simulation_with_no_parsed_impedance_records_no_vswr_but_still_advances(monkeypatch):
+    # A defensive case: if run_nec2_simulation's own parse ever fails to
+    # find an ANTENNA INPUT PARAMETERS block (impedance=None), there is
+    # nothing to derive VSWR/return loss from -- recorded as None, not
+    # raised, since the underlying simulation itself still completed.
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result(impedance=None))
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["vswr"] is None
+    assert decision.result["return_loss_db"] is None
+    assert decision.result["reflection_coefficient_magnitude"] is None
+    assert decision.result["reference_impedance_ohms"] == 50.0
+
+
 def test_verification_rejects_an_unrecognized_status():
     state = start_design_loop(REQUIREMENTS)
     state = _advance_to(state, DesignStep.VERIFICATION, grant_intermediate_approvals=True)
@@ -912,9 +1084,13 @@ def test_end_to_end_full_requirements_to_redesign_cycle(tmp_path: Path):
             "frequency_hz": 300e6,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
+            "reference_impedance_ohms": 50.0,
         },
     )
     seen_steps.append(DesignStep.SIMULATION)
+    assert state.decisions[-1].result["reference_impedance_ohms"] == 50.0
+    assert state.decisions[-1].result["vswr"] is not None
+    assert state.decisions[-1].result["return_loss_db"] is not None
 
     state = advance_loop_step(
         state,
