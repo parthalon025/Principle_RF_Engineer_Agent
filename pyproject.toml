@@ -110,7 +110,7 @@ package = true
 # name, not a directory prefix -- "knowledge" alone would not pull in the
 # "knowledge.sourcing" subpackage (ticket #68's 3GPP/ETSI/FCC/arXiv thin
 # clients), so it is listed explicitly, same as every other top-level entry.
-include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "knowledge.sourcing", "optimization", "measurement", "orchestration", "designs", "geometry"]
+include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "knowledge.sourcing", "optimization", "measurement", "orchestration", "designs", "geometry", "verification"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

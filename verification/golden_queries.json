@@ -1,0 +1,41 @@
+[
+  {
+    "query_id": "satcom-ku-k-ka",
+    "query": "Ku Ka bands metamaterial antenna",
+    "expected_documents": ["army_sbir_a214-029"],
+    "notes": "The Ku/K/Ka band list appears only in Army SBIR topic A214-029, in the same paragraph as 'metamaterials' and 'antenna'."
+  },
+  {
+    "query_id": "muos-uhf-satcom",
+    "query": "MUOS UHF SATCOM metaferrite antenna",
+    "expected_documents": ["sbir_award_136890_si2_technologies"],
+    "notes": "MUOS appears only in the SI2 Technologies award, co-occurring with UHF SATCOM and metaferrite."
+  },
+  {
+    "query_id": "octave-bandwidth-vhf",
+    "query": "octave bandwidth VHF UHF antennas",
+    "expected_documents": ["sbir_award_145942_metamaterials_inc"],
+    "notes": "'octave bandwidth' appears only in the MetaMaterials.LLC award."
+  },
+  {
+    "query_id": "cloaking-stealth",
+    "query": "metamaterial cloaking stealth targets",
+    "expected_documents": ["ieee_aess_metamaterial_scanning"],
+    "notes": "'cloaking' appears only in the IEEE AESS presentation abstract."
+  },
+  {
+    "query_id": "patent-inventors",
+    "query": "Bankowski Meitzler inventors",
+    "expected_documents": ["us_patent_11005187B2"],
+    "notes": "Both inventor surnames appear only in US11005187B2, on its Inventors line."
+  },
+  {
+    "query_id": "metaferrite-antennas",
+    "query": "metaferrite antennas low profile",
+    "expected_documents": [
+      "sbir_award_136890_si2_technologies",
+      "sbir_award_145942_metamaterials_inc"
+    ],
+    "notes": "'metaferrite' appears in both SBIR awards and nowhere else. A deliberate multi-document expectation: recall must handle a query with more than one right answer, and a change that finds only one of the two should show up as 0.5, not as a pass."
+  }
+]
