@@ -94,10 +94,11 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: Meta-atom — an optics-context term, not this project's.
 - **Customer requirement**: a stated design target for one antenna/EM-skin
   design — frequency band, gain or VSWR/bandwidth target, form factor,
-  host-surface curvature, and platform — that anchors a request for
-  design guidance. Distinct from a Component's specification, which
-  describes an existing manufactured part rather than a target for a new
-  one.
+  host-surface curvature, platform, and ground-plane presence (whether the
+  host surface is asserted to be a reliable conductive backing) — that
+  anchors a request for design guidance. Distinct from a Component's
+  specification, which describes an existing manufactured part rather
+  than a target for a new one.
 - **Requirement-derived constraint**: a design parameter (a threshold, a
   bend radius, a band) whose value comes from one specific Customer
   requirement. Re-derived fresh every design pass from the requirement's
@@ -135,6 +136,26 @@ and a glossary that churns with it stops being trustworthy (see
   to one number: a decisive property's bracket produces a visibly wide
   spread in the resulting rank — the spread itself is the signal that
   this guess matters — while a minor property's bracket barely moves it.
+- **Fabrication capability**: the configured, cross-run set of what a
+  specific piece of equipment can currently build — which processes, what
+  cure ceiling, what minimum feature size, whether it can embed a discrete
+  component — checked per candidate design, the same way a Material-
+  property library entry is checked per material: not re-derived per
+  requirement, and never hardcoded into the loop's own logic. Three
+  independent, easily-conflated stages: **print** (laying down a flat
+  pattern — no fabrication process this project uses can produce a solid,
+  volumetric shape), **cure** (setting/cross-linking a printed material —
+  gated by whether the finished part can leave its host and reach an
+  external oven, not by any one machine's own built-in warming plate,
+  which exists only to keep ink viscosity steady during printing), and
+  **laminate** (bonding an already-cured, separately-built layer onto the
+  final host). A design that fails today's capability check is excluded
+  from selection with the reason stated, never silently dropped — the
+  same treatment a Material-property library miss gets.
+  _Avoid_: fabrication route — describes one chosen path through a
+  capability, not the configured set a path gets chosen from; printer
+  capability — too narrow, since cure and lamination are not properties
+  of the printer alone.
 - **Design guidance**: the agent's output for a customer requirement — a
   parameter recommendation (e.g. unit-cell spacing, layer stack, expected
   gain) with rationale tracing back to CALCULATED results and/or
