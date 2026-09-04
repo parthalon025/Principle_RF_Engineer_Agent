@@ -10,6 +10,7 @@ from agents import (
     Handoff,
     ModelSettings,
     Runner,
+    RunResult,
     function_tool,
     handoff,
     set_default_openai_api,
@@ -50,7 +51,7 @@ from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
 from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
-from orchestration.policy import assert_all_tools_categorized
+from orchestration.policy import assert_all_tools_categorized, category_for
 from orchestration.solver import run_candidate_search as _run_candidate_search
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
@@ -2771,7 +2772,11 @@ ROLES["principal"] = Agent(
         "directly once you hand off. Only use your own direct tools "
         "(design-record management, the design-iteration loop, or "
         "knowledge search) for what's actually your own job: tracking a "
-        "design's state, not computing RF values yourself."
+        "design's state, not computing RF values yourself. Never label a "
+        "value you reasoned out yourself CALCULATED -- that label means a "
+        "calculation tool actually computed it. If you (or the specialist "
+        "you hand off to) work a number out by reasoning instead of calling "
+        "a calculation tool, label it INFERRED or ASSUMED instead."
         f"{_local_reasoning_output_tail()}"
     ),
     tools=list(_PRINCIPAL_DIRECT_TOOLS),
@@ -2782,8 +2787,132 @@ ROLES["principal"] = Agent(
 principal = ROLES["principal"]
 
 
+# ---------------------------------------------------------------------------
+# Issue #158: provenance-integrity guard.
+#
+# Live-testing against a real local Ollama backend reproduced a failure
+# mode distinct from the routing-recall bug this branch's rebase target
+# (#165) fixed: on some draws, a role skips every calculation tool AND
+# every route_to_<role>_role handoff, answers a squarely tool-shaped
+# question from its own reasoning instead -- then labels that hand-computed
+# number CALCULATED anyway. CONTEXT.md's Provenance entry and
+# prompts/principal_engineer.md's "Mandatory provenance" section both
+# define CALCULATED as "deterministic calculation" specifically -- the kind
+# "Numerical discipline" says to get from a tool "instead of mental
+# arithmetic". A reader has no way to tell a mislabeled hand-computed value
+# apart from a genuinely tool-verified one, so this is a provenance-
+# integrity violation, not a wording nuance.
+#
+# WHERE THIS IS WIRED, AND WHY ONLY HERE: the prior version of this fix
+# (see git history on this branch) also hooked `Agent.as_tool()`'s
+# `custom_output_extractor` to guard each specialist's nested result before
+# it reached the principal. That mechanism is gone -- issue #165's routing
+# redesign (this section's own "Principal routing to specialists" comment
+# above) replaced `.as_tool()` with `Agent(handoffs=[...])`, which transfers
+# control to the specialist WITHIN THE SAME `Runner.run()` call instead of
+# starting a second, nested one. Concretely verified (not assumed) against
+# this repo's actual installed `openai-agents` version: a scripted fake
+# model driven through a real `Runner.run()` call -- one turn emitting a
+# handoff tool call, the next (now running as the handed-off-to agent)
+# emitting a real function-tool call, a final turn emitting the answer --
+# shows the specialist's own post-handoff `tool_call_item` lands in the
+# SAME top-level `RunResult.new_items` list `run()` below already inspects.
+# There is no second `RunResult` for a specialist's answer to hide a
+# mislabeled claim inside of anymore, and no `custom_output_extractor`
+# hook left to attach a second guard to even if there were -- one guard
+# here, on the run's own top-level result, now covers the principal's own
+# answer AND every specialist's handed-off answer.
+#
+# `_assert_calculated_provenance_is_tool_backed` is the "cheap runtime
+# guard" the issue's own suggested next steps floated: a CALCULATED claim
+# in `final_output` with no matching tool call anywhere in that run's
+# `new_items` gets rejected -- fail closed, the same idiom
+# orchestration/policy.py's PolicyError already establishes for a policy
+# violation, rather than silently letting a mislabeled claim reach the
+# user. A HandoffCallItem does not count: handing control to another agent
+# is not itself a deterministic calculation.
+#
+# NARROWER THAN "any tool call at all" (a real gap a reviewer of this
+# branch's prior version found before it merged): a run can legitimately
+# call an unrelated tool -- search_knowledge, read_document -- and
+# separately hand-compute and mislabel an unrelated RF value in the same
+# final_output. A bare "does new_items contain *a* tool_call_item"
+# check passes that run, exactly the mislabeling issue #158 reports,
+# right past the guard meant to catch it. So this checks that the tool
+# call is specifically categorized `calculation` in
+# policies/tool_policy.yaml (orchestration/policy.py's `category_for`,
+# the same lookup `enforce()` already uses for its own gating) -- the
+# category that file's own comment defines as "Deterministic,
+# CALCULATED-provenance functions". A tool_call_item for search_knowledge
+# or read_document does not satisfy this; one for calculate_cascade_gain
+# (or any other calculation-category tool) does.
+#
+# Deliberately a plain substring check on `final_output`, not a structured
+# parse -- "cheap" per the issue's own framing, and this repo's own
+# provenance labels are always the bare uppercase token from the closed set
+# in CONTEXT.md's Provenance entry. This can false-positive on a
+# CALCULATED-that-isn't-a-label mention in running prose; a real structured
+# provenance parse would be the fuller fix, not attempted here.
+# ---------------------------------------------------------------------------
+
+
+class ProvenanceIntegrityError(RuntimeError):
+    """Raised when a run's `final_output` labels a result CALCULATED with no
+    calculation-category tool call anywhere in that run's `new_items` to
+    back it -- see issue #158. `_assert_calculated_provenance_is_tool_backed`
+    raises this; nothing here rewrites the label instead, since silently
+    "fixing" a claim nobody actually reviewed would just trade one
+    unverifiable label for another."""
+
+
+def _run_result_has_calculation_tool_call(result: RunResult) -> bool:
+    """True if `result.new_items` contains at least one real `tool_call_item`
+    whose tool is categorized `calculation` in `policies/tool_policy.yaml` --
+    the only kind of item that can back a CALCULATED provenance label. A
+    `handoff_call_item` alone does not count (handing control to another
+    agent is not itself a deterministic calculation), and neither does a
+    `tool_call_item` for a tool outside the `calculation` category (e.g.
+    search_knowledge) -- see this section's module-level comment above for
+    the concrete mislabeling that gap would otherwise miss."""
+    return any(
+        getattr(item, "type", None) == "tool_call_item"
+        and category_for(getattr(item, "tool_name", None)) == "calculation"
+        for item in result.new_items
+    )
+
+
+def _assert_calculated_provenance_is_tool_backed(result: RunResult) -> None:
+    """Raise `ProvenanceIntegrityError` if `result.final_output` claims
+    CALCULATED provenance but this run never actually called a
+    calculation-category tool -- see issue #158 and this section's
+    module-level comment above. Does nothing for any other provenance label
+    (INFERRED/ASSUMED/etc. never claimed a tool verified them, so there is
+    nothing to enforce) and does nothing when a CALCULATED claim genuinely
+    is tool-backed.
+    """
+    if "CALCULATED" in result.final_output and not _run_result_has_calculation_tool_call(result):
+        raise ProvenanceIntegrityError(
+            "final_output labels a result CALCULATED, but no calculation-"
+            "category tool_call_item (policies/tool_policy.yaml) appears "
+            "anywhere in this run's new_items -- the number came from the "
+            "model's own reasoning (or from an unrelated tool call), not a "
+            "deterministic calculation tool. Relabel as INFERRED or "
+            "ASSUMED (or call the calculation tool / route to the "
+            "specialist role that would actually compute it) instead of "
+            "reporting it as CALCULATED. See issue #158 and "
+            "prompts/principal_engineer.md's Mandatory provenance section."
+        )
+
+
 def run(query: str) -> str:
     result = Runner.run_sync(principal, query)
+    # Issue #158: native handoffs (route_to_<role>_role) keep the whole
+    # routed exchange in this one top-level RunResult -- new_items
+    # accumulates across the handoff, so this single check covers both the
+    # principal's own final answer and a specialist's handed-off answer.
+    # See this section's module-level comment above for how that was
+    # confirmed against this repo's actual installed SDK, not assumed.
+    _assert_calculated_provenance_is_tool_backed(result)
     return result.final_output
 
 

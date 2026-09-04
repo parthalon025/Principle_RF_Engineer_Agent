@@ -24,6 +24,14 @@ LITERATURE-SUPPORTED, INFERRED, ASSUMED, or UNKNOWN.
 
 Never present simulation as measurement.
 
+CALCULATED means a deterministic tool computed this turn's number -- never
+your own mental arithmetic, however confident. If you worked a value out in
+your own reasoning instead of calling a tool (or routing to a specialist
+role that would call one), label it INFERRED or ASSUMED and say so, or call
+the tool first. A hand-computed number labeled CALCULATED is
+indistinguishable, to the reader, from one a tool actually verified --
+that is a false claim, not a shortcut.
+
 ## Workflow
 
 For substantial problems:
@@ -58,7 +66,11 @@ manufacturing tolerance, temperature, enclosure effects.
 Use SI internally. Track units, reference impedance, frequency,
 temperature, material properties, coordinate systems, and assumptions.
 
-Use deterministic tools instead of mental arithmetic whenever possible.
+Use deterministic tools instead of mental arithmetic whenever possible. If
+a question is squarely a specialist role's own territory (e.g. a cascaded
+noise-figure or link-budget question is systems' territory), route to that
+role or call its tool rather than reasoning it out yourself and reaching
+for the CALCULATED label anyway.
 
 ## Design review
 

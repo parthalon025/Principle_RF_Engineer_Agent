@@ -36,12 +36,18 @@ each handoff targets the correct specialist Agent, and the principal's own
 direct tool list holds only what's genuinely principal-exclusive.
 """
 
+from types import SimpleNamespace
+
+import pytest
+
 from agent.main import (
     _ALL_TOOLS,
     _SPEC_BY_KEY,
     ROLE_SPECS,
     ROLES,
     SPECIALIST_HANDOFFS,
+    ProvenanceIntegrityError,
+    _assert_calculated_provenance_is_tool_backed,
     principal,
 )
 from orchestration.policy import assert_all_tools_categorized
@@ -597,3 +603,178 @@ def test_principal_instructions_direct_it_to_route_not_delegate():
     # The old citation-synthesis framing is gone -- routing hands off
     # control entirely, there is no principal-side re-synthesis step.
     assert "specialist role(s) contributed" not in instructions
+
+
+def test_principal_instructions_never_claim_reasoned_out_values_as_calculated():
+    # Issue #158: the principal's own routing instructions must say, in
+    # its own words, not to reach for CALCULATED on a value it reasoned out
+    # itself rather than getting from a calculation tool/specialist.
+    instructions = ROLES["principal"].instructions
+    assert "CALCULATED" in instructions
+    assert "INFERRED" in instructions
+
+
+# ---------------------------------------------------------------------------
+# Issue #158: a CALCULATED claim with no backing calculation-tool call is a
+# provenance-integrity violation, not a labeling nuance -- CONTEXT.md's
+# Provenance entry and prompts/principal_engineer.md's "Mandatory
+# provenance" section both define CALCULATED as "deterministic
+# calculation", specifically the kind the "Numerical discipline" section
+# says to get from a tool instead of mental arithmetic. A live-reproduced
+# failure (issue #158's own repro) showed the principal skipping both
+# specialist routing and its own calculation tools, hand-computing a
+# cascaded noise figure, and still labeling the answer (CALCULATED) --
+# indistinguishable, to a reader, from a genuinely tool-verified result.
+#
+# `_assert_calculated_provenance_is_tool_backed` is the "cheap runtime
+# guard" the issue's own suggested next steps floated: it inspects a
+# RunResult's new_items for a `calculation`-category tool_call_item (see
+# policies/tool_policy.yaml and orchestration/policy.py's `category_for`)
+# and raises ProvenanceIntegrityError if none is found -- fail closed, the
+# same idiom orchestration/policy.py's PolicyError already establishes for
+# a policy violation, rather than silently letting a mislabeled claim
+# through. Tested here with plain SimpleNamespace stand-ins for RunResult
+# (matching this file's existing no-live-model-credential constraint, see
+# module docstring) since the guard only reads `.final_output` and
+# `.new_items[*].type`/`.new_items[*].tool_name`.
+#
+# ONLY A run()-LEVEL GUARD, NO SEPARATE SPECIALIST-SIDE HOOK: this branch's
+# prior version (see git history) also guarded each specialist's nested
+# result via the `Agent.as_tool()` `custom_output_extractor` hook. That
+# hook doesn't exist post-#165 -- routing is now `Agent(handoffs=[...])`,
+# which keeps a specialist's own tool calls in the SAME top-level
+# RunResult.new_items the run()-level guard below already inspects (see
+# agent/main.py's own module comment right above `run()` for how this was
+# concretely verified against this repo's installed SDK, not assumed). The
+# tests below exercise the guard function directly against synthetic
+# new_items shaped like what a real routed run's accumulated new_items
+# looks like post-handoff (a handoff_call_item/handoff_output_item pair
+# followed by the specialist's own tool_call_item), to document that this
+# one guard is sufficient for a handed-off answer too.
+# ---------------------------------------------------------------------------
+
+
+def test_calculated_claim_backed_by_a_calculation_tool_call_is_accepted():
+    stub_result = SimpleNamespace(
+        final_output="Cascaded noise figure: 3.47 dB (CALCULATED).",
+        new_items=[SimpleNamespace(type="tool_call_item", tool_name="calculate_cascade_gain")],
+    )
+    _assert_calculated_provenance_is_tool_backed(stub_result)  # must not raise
+
+
+def test_calculated_claim_with_no_tool_call_is_rejected():
+    stub_result = SimpleNamespace(
+        # issue #158's own live repro text.
+        final_output="**3.47 dB** (CALCULATED)\n\nFriis Cascaded Noise Figure Breakdown: ...",
+        new_items=[SimpleNamespace(type="message_output_item")],
+    )
+    with pytest.raises(ProvenanceIntegrityError):
+        _assert_calculated_provenance_is_tool_backed(stub_result)
+
+
+def test_calculated_claim_with_empty_item_list_is_rejected():
+    stub_result = SimpleNamespace(
+        final_output="Cascaded noise figure: 3.47 dB (CALCULATED).",
+        new_items=[],
+    )
+    with pytest.raises(ProvenanceIntegrityError):
+        _assert_calculated_provenance_is_tool_backed(stub_result)
+
+
+def test_handoff_call_item_alone_does_not_back_a_calculated_claim():
+    # A handoff transfers control to another agent; it is not itself a
+    # deterministic calculation, so it must not satisfy the guard on its
+    # own (mirrors issue #158's own "no handoff_call_item and no
+    # tool_call_item" observation).
+    stub_result = SimpleNamespace(
+        final_output="3.47 dB (CALCULATED).",
+        new_items=[SimpleNamespace(type="handoff_call_item", tool_name="route_to_systems_role")],
+    )
+    with pytest.raises(ProvenanceIntegrityError):
+        _assert_calculated_provenance_is_tool_backed(stub_result)
+
+
+def test_non_calculated_claim_needs_no_tool_call():
+    # INFERRED/ASSUMED/etc. never claimed a tool verified them, so the
+    # guard has nothing to enforce here.
+    stub_result = SimpleNamespace(
+        final_output="Rough order-of-magnitude estimate: ~3 dB (INFERRED), not tool-verified.",
+        new_items=[],
+    )
+    _assert_calculated_provenance_is_tool_backed(stub_result)  # must not raise
+
+
+def test_calculated_claim_with_a_non_tool_item_present_is_still_rejected():
+    # A message or reasoning item in new_items must not be mistaken for a
+    # tool call -- only an actual calculation-category tool_call_item backs
+    # the label.
+    stub_result = SimpleNamespace(
+        final_output="3.47 dB (CALCULATED).",
+        new_items=[
+            SimpleNamespace(type="message_output_item"),
+            SimpleNamespace(type="reasoning_item"),
+        ],
+    )
+    with pytest.raises(ProvenanceIntegrityError):
+        _assert_calculated_provenance_is_tool_backed(stub_result)
+
+
+def test_calculated_claim_backed_by_an_unrelated_tool_call_is_still_rejected():
+    # The real spec gap a reviewer of this branch's prior version found:
+    # calling SOME tool during the run does not license labeling an
+    # unrelated hand-computed value CALCULATED. search_knowledge is a real,
+    # legitimate tool_call_item -- categorized read_only, not calculation
+    # (policies/tool_policy.yaml) -- so it must not satisfy this guard.
+    stub_result = SimpleNamespace(
+        final_output="Cascaded noise figure: 3.47 dB (CALCULATED).",
+        new_items=[SimpleNamespace(type="tool_call_item", tool_name="search_knowledge")],
+    )
+    with pytest.raises(ProvenanceIntegrityError):
+        _assert_calculated_provenance_is_tool_backed(stub_result)
+
+
+def test_calculated_claim_backed_by_a_calculation_call_among_unrelated_calls_is_accepted():
+    # A run that legitimately calls an unrelated tool AND a real
+    # calculation tool in the same turn should still pass -- the guard
+    # looks for at least one calculation-category call, not that every
+    # call is one.
+    stub_result = SimpleNamespace(
+        final_output="Wavelength: 12.24 cm (CALCULATED).",
+        new_items=[
+            SimpleNamespace(type="tool_call_item", tool_name="search_knowledge"),
+            SimpleNamespace(type="tool_call_item", tool_name="calculate_wavelength"),
+        ],
+    )
+    _assert_calculated_provenance_is_tool_backed(stub_result)  # must not raise
+
+
+def test_calculated_claim_backed_by_an_uncategorized_tool_name_is_rejected():
+    # A tool_call_item whose name isn't in policies/tool_policy.yaml at all
+    # (category_for returns None) must not accidentally satisfy the guard.
+    stub_result = SimpleNamespace(
+        final_output="3.47 dB (CALCULATED).",
+        new_items=[SimpleNamespace(type="tool_call_item", tool_name="not_a_real_tool_name")],
+    )
+    with pytest.raises(ProvenanceIntegrityError):
+        _assert_calculated_provenance_is_tool_backed(stub_result)
+
+
+def test_calculated_claim_accepted_across_a_simulated_handoff():
+    # Documents the post-#165 architecture fact this guard relies on:
+    # native handoffs keep the WHOLE routed exchange in one top-level
+    # RunResult, so new_items looks like [handoff_call_item,
+    # handoff_output_item, <specialist's own tool_call_item>, ...] by the
+    # time run() sees it -- not a separate nested RunResult the run()-level
+    # guard can't see into. Shaped after this repo's own scripted-fake-
+    # model verification of that fact against the installed SDK (see
+    # agent/main.py's module comment above run()).
+    stub_result = SimpleNamespace(
+        final_output="Cascaded noise figure: 3.47 dB (CALCULATED).",
+        new_items=[
+            SimpleNamespace(type="handoff_call_item", tool_name="route_to_systems_role"),
+            SimpleNamespace(type="handoff_output_item", tool_name=None),
+            SimpleNamespace(type="tool_call_item", tool_name="calculate_cascade_gain"),
+            SimpleNamespace(type="message_output_item", tool_name=None),
+        ],
+    )
+    _assert_calculated_provenance_is_tool_backed(stub_result)  # must not raise
