@@ -60,7 +60,13 @@ TOOL_NAMES = list(TOOL_KWARGS)
 
 
 def _invoke_agent_tool(tool_name: str, **kwargs):
-    tool = next(t for t in agent_main.principal.tools if t.name == tool_name)
+    # Calculation tools live on the specialist roles now, not the principal
+    # (issue #35's handoffs redesign scoped the principal down to design-record/
+    # search/design-loop tools only) -- search every role's tools, not just
+    # principal's, to find the one FunctionTool object each named tool is
+    # wrapped into (the same object regardless of which role's list holds it).
+    all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
+    tool = next(t for t in all_tools if t.name == tool_name)
     args_json = json.dumps(kwargs)
     ctx = ToolContext(
         context=None, tool_name=tool_name, tool_call_id="test-call", tool_arguments=args_json
