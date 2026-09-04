@@ -196,6 +196,32 @@ document; the rest were made during analysis, several of them mine.**
     magnitude should be re-filed as an intra-cell stack-modelling figure; the
     coupling error bar is Costanzo's 12–85°.
 
+20. **The super-cell sizing rule's own phase budget was borrowed from the wrong
+    problem.** `docs/supercell-sizing-rule.md` as first published gated on
+    **±22.5°**, the half-step of 3-bit phase quantisation — a **beam-forming**
+    convention, applied to a **backscatter-reduction** design. That is precisely
+    the trap item 13 above records, written by the same pass that then fell into
+    it. Its companion constant, a 30° minimum scattering angle, was picked
+    rather than derived.
+    **Corrected 2026-09-04 by deriving both from the objective.** A chessboard
+    reduces RCS by cancellation, so the surviving echo is `sin(δ/2)` and
+    `RCSR_dB = 20·log₁₀(sin(δ/2))`, which inverts to
+    `δ_budget = 2·arcsin(10^(−RCSR_dB/20))` — **36.9° at 10 dB**, not 22.5°
+    (and 22.5° silently corresponds to a 14.2 dB requirement nobody stated).
+    The ceiling's real floor is the panel's own specular lobe, ≈ `λ/(2L)` —
+    **4.8°** for a 6 λ coupon, **0.95°** for a 30 λ panel.
+    **Consequence: the headline claim "three of six element families have no
+    feasible block size" does not survive.** At 10 dB all six are feasible. The
+    rule bites at demanding reduction levels — at 20 dB the size-tuned square
+    patch at 0.4 λ pitch has no feasible N — and what interior tuning buys is
+    **headroom and spatial resolution** (N = 2 versus N = 9 at 10 dB, so
+    4.5× finer control), not the difference between possible and impossible.
+    **The durable lesson: define failure against the purpose, not against an
+    internal metric.** A threshold in degrees is not a requirement. Every
+    threshold in this loop should be traceable to something a customer would
+    write down, and a constant that cannot be traced that way is a smuggled
+    assumption.
+
 ### Errors found in published sources
 
 Not our corrections, but ours to route around. Recorded because anyone
