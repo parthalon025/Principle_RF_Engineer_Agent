@@ -99,8 +99,22 @@ and a glossary that churns with it stops being trustworthy (see
   anchors a request for design guidance. Distinct from a Component's
   specification, which describes an existing manufactured part rather
   than a target for a new one.
-- **Threshold/Objective**: the two values a Customer requirement's numeric
-  target may carry, adopted from defence-acquisition practice (JCIDS
+- **Requirement target**: the structured interpretation (`value`,
+  `comparator`, `unit`, optional `tolerance`) an agent proposes for one
+  Customer requirement's prose, so a Success score has something to
+  measure a design's progress against (#92). Provenance is always
+  `ASSUMED` — even once a human confirms it, it is still nobody's
+  measurement, simulation or calculation, just a reading of the customer's
+  own words — so confirmation is tracked as a separate `target_status` axis
+  (`PROPOSED` → `CONFIRMED`, plus `confirmed_by`/`confirmed_at`) rather than
+  inventing a stronger provenance tier. A requirement whose prose yields no
+  defensible target is `UNSCOREABLE`, with the reason recorded, never given
+  an invented number.
+  _Avoid_: a `CONFIRMED` provenance tier — Provenance's eight-value set is
+  fixed; confirmation is a trust signal about the reading, not a new kind
+  of evidence.
+- **Threshold/Objective**: the two values a Requirement target's numeric
+  value may carry, adopted from defence-acquisition practice (JCIDS
   Enclosure B, via #122) to settle #117. **Threshold** is the minimum
   acceptable value — a candidate that fails it is rejected outright, so it
   prunes the candidate space. **Objective** is the desired value — among
