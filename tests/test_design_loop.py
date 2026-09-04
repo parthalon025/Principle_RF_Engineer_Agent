@@ -41,6 +41,7 @@ import numpy as np
 import pytest
 import skrf as rf
 
+from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
 from measurement.external import ExternalMeasurementError
 from orchestration.approval import (
     LoopStepApprovalReceipt,
@@ -510,6 +511,93 @@ def test_architecture_decision_records_the_design_family_alongside_decision_and_
     # structured field.
     assert architecture_decision.result["decision"] == step_input["decision"]
     assert architecture_decision.result["rationale"] == step_input["rationale"]
+
+
+# ---------------------------------------------------------------------------
+# Group 2b (issue #154, ADR-0015): ANALYSIS wired to the Material-property
+# library -- a caller may supply 'material_property' (a
+# designs.material_properties.resolve_material_property result) instead of
+# a bare 'eps_r' number. A confident single-value lookup behaves exactly
+# like the existing eps_r path; a Family fallback bracket or a set of
+# disagreeing citations is computed at BOTH ends of the range (ADR-0015's
+# Consequences section), never collapsed to one number.
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_accepts_material_property_in_place_of_eps_r():
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    assert material_property["low"] != material_property["high"]  # sanity: this is the spread case
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    state = advance_loop_step(
+        state,
+        {"material_property": material_property, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286},
+    )
+    result = state.decisions[-1].result
+    assert "resonant_frequency_hz" not in result
+    assert result["resonant_frequency_hz_low"] < result["resonant_frequency_hz_high"]
+    assert result["material_property"] == material_property
+    assert state.decisions[-1].provenance == "CALCULATED"
+
+
+def test_analysis_material_property_degenerates_to_a_single_value_for_one_confident_entry():
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    material_property = dict(material_property, low=4.4, high=4.4, entries=[])  # a confident, agreed value
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    step_input_material = {
+        "material_property": material_property,
+        "w_m": 0.03,
+        "h_m": 0.0016,
+        "l_m": 0.0286,
+    }
+    state_material = advance_loop_step(state, step_input_material)
+    result_material = state_material.decisions[-1].result
+
+    state_direct = advance_loop_step(state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286})
+    result_direct = state_direct.decisions[-1].result
+
+    assert result_material["resonant_frequency_hz"] == result_direct["resonant_frequency_hz"]
+    assert "resonant_frequency_hz_low" not in result_material
+
+
+def test_analysis_rejects_both_eps_r_and_material_property():
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    with pytest.raises(DesignLoopValidationError, match="exactly one"):
+        advance_loop_step(
+            state,
+            {
+                "eps_r": 4.4,
+                "material_property": material_property,
+                "w_m": 0.03,
+                "h_m": 0.0016,
+                "l_m": 0.0286,
+            },
+        )
+
+
+def test_analysis_rejects_a_material_property_with_no_library_data():
+    material_property = resolve_material_property(
+        [], material="unobtainium foam", property_name="eps_r", frequency_hz=9.5e9
+    )
+    assert material_property["status"] == "no_data"
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    with pytest.raises(DesignLoopValidationError, match="no usable"):
+        advance_loop_step(
+            state,
+            {"material_property": material_property, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286},
+        )
 
 
 def test_verification_rejects_an_unrecognized_status():
