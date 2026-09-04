@@ -4,6 +4,7 @@ from knowledge.provenance import (
     INTERNAL_HISTORY,
     LITERATURE_SUPPORTED,
     MANUFACTURER_SPECIFIED,
+    PATENT_AUTHORITY_RANK,
     UNKNOWN,
     component_field_provenance,
     default_authority_rank,
@@ -40,6 +41,34 @@ def test_literature_tier_outranks_internal_history_tier():
     assert default_authority_rank(SourceType.STANDARD) < default_authority_rank(
         SourceType.DESIGN_RECORD
     )
+
+
+def test_patent_is_literature_supported():
+    assert provenance_tier_for(SourceType.PATENT) == LITERATURE_SUPPORTED
+
+
+def test_patent_ranks_below_a_peer_reviewed_paper():
+    # A patent office examines for novelty/non-obviousness/candor, not for
+    # whether a stated number was measured correctly or reproduces. Ranking
+    # a patent level with a peer-reviewed paper would claim a review that
+    # never happened -- see PATENT_AUTHORITY_RANK's own note.
+    assert default_authority_rank(SourceType.PATENT) > default_authority_rank(SourceType.PAPER)
+
+
+def test_patent_still_outranks_internal_history():
+    # It is unvetted for technical accuracy, but it is still externally
+    # published and permanently archived -- better evidence than this team's
+    # own unreviewed precedent.
+    assert default_authority_rank(SourceType.PATENT) < default_authority_rank(
+        SourceType.DESIGN_RECORD
+    )
+
+
+def test_patent_default_rank_needs_no_per_document_override():
+    # The point of _SOURCE_TYPE_AUTHORITY_RANK: a patent lands at its honest
+    # rank without any caller remembering to pass authority_rank_override,
+    # unlike the arXiv case which is a per-source (not per-type) override.
+    assert default_authority_rank(SourceType.PATENT) == PATENT_AUTHORITY_RANK
 
 
 # All four (extraction_confidence, physically_valid) combinations (ticket
