@@ -8,6 +8,7 @@ from designs.db import (
     UnknownVerificationItemError,
     create_design,
     read_design,
+    read_engineering_results_for_scoring,
     record_decision,
     record_engineering_result,
     update_design_status,
@@ -223,6 +224,107 @@ def test_record_engineering_result_stores_dict_value_as_jsonb(db_conn):
     )
     assert row["value"] == payload
     assert row["provenance"] == "CALCULATED"
+
+
+# ---------------------------------------------------------------------------
+# read_engineering_results_for_scoring (issue #87's cross-run-learning
+# follow-up to #95): a plain, read-only SELECT -- orchestration/solver.py's
+# run_candidate_search(design_id=...) is the one caller, using it to seed a
+# new search's plateau-window baseline from a design's own past results.
+# Matches this file's existing db_conn convention: one rolled-back
+# transaction per test does both the write (record_engineering_result) and
+# the read under test.
+# ---------------------------------------------------------------------------
+
+
+def test_read_engineering_results_for_scoring_returns_empty_lists_for_no_rows(db_conn):
+    design_id = _make_design(db_conn, design_key="ER-SCORE-1")
+    result = read_engineering_results_for_scoring(
+        db_conn, design_id, ["patch_resonant_frequency_hz", "run_nec2_simulation"]
+    )
+    assert result == {"patch_resonant_frequency_hz": [], "run_nec2_simulation": []}
+
+
+def test_read_engineering_results_for_scoring_returns_rows_in_recording_order(db_conn):
+    design_id = _make_design(db_conn, design_key="ER-SCORE-2")
+    for freq_hz in (2.40e9, 2.44e9, 2.46e9):
+        record_engineering_result(
+            db_conn,
+            design_id=design_id,
+            tool_name="patch_resonant_frequency_hz",
+            value={"resonant_frequency_hz": freq_hz},
+            # patch_resonant_frequency_hz is a design-loop-internal function
+            # name, not one of designs.provenance's ~65 registered agent/MCP
+            # tool names -- explicit provenance is the same escape hatch
+            # orchestration/tooling.py's own flush uses for it (see
+            # record_engineering_result's own docstring).
+            provenance="CALCULATED",
+        )
+
+    result = read_engineering_results_for_scoring(
+        db_conn, design_id, ["patch_resonant_frequency_hz"]
+    )
+
+    rows = result["patch_resonant_frequency_hz"]
+    assert [row["value"]["resonant_frequency_hz"] for row in rows] == [2.40e9, 2.44e9, 2.46e9]
+    assert all("id" in row and "created_at" in row for row in rows)
+
+
+def test_read_engineering_results_for_scoring_filters_by_design_id(db_conn):
+    design_a = _make_design(db_conn, design_key="ER-SCORE-3A")
+    design_b = _make_design(db_conn, design_key="ER-SCORE-3B")
+    record_engineering_result(
+        db_conn,
+        design_id=design_a,
+        tool_name="patch_resonant_frequency_hz",
+        value={"resonant_frequency_hz": 2.40e9},
+        provenance="CALCULATED",
+    )
+    record_engineering_result(
+        db_conn,
+        design_id=design_b,
+        tool_name="patch_resonant_frequency_hz",
+        value={"resonant_frequency_hz": 9.90e9},
+        provenance="CALCULATED",
+    )
+
+    result = read_engineering_results_for_scoring(
+        db_conn, design_a, ["patch_resonant_frequency_hz"]
+    )
+
+    assert [
+        row["value"]["resonant_frequency_hz"] for row in result["patch_resonant_frequency_hz"]
+    ] == [2.40e9]
+
+
+def test_read_engineering_results_for_scoring_filters_by_tool_name(db_conn):
+    design_id = _make_design(db_conn, design_key="ER-SCORE-4")
+    record_engineering_result(
+        db_conn,
+        design_id=design_id,
+        tool_name="patch_resonant_frequency_hz",
+        value={"resonant_frequency_hz": 2.40e9},
+        provenance="CALCULATED",
+    )
+    record_engineering_result(
+        db_conn,
+        design_id=design_id,
+        tool_name="run_nec2_simulation",
+        value={"gain_dbi": 6.0},
+        provenance="SIMULATED",
+    )
+
+    result = read_engineering_results_for_scoring(
+        db_conn, design_id, ["patch_resonant_frequency_hz"]
+    )
+
+    assert list(result.keys()) == ["patch_resonant_frequency_hz"]
+    assert len(result["patch_resonant_frequency_hz"]) == 1
+
+
+def test_read_engineering_results_for_scoring_with_no_tool_names_returns_empty_dict(db_conn):
+    design_id = _make_design(db_conn, design_key="ER-SCORE-5")
+    assert read_engineering_results_for_scoring(db_conn, design_id, []) == {}
 
 
 def test_create_design_rejects_malformed_requirements_and_writes_nothing(db_conn):
