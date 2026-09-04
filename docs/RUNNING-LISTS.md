@@ -196,6 +196,86 @@ document; the rest were made during analysis, several of them mine.**
     magnitude should be re-filed as an intra-cell stack-modelling figure; the
     coupling error bar is Costanzo's 12–85°.
 
+20. **The super-cell sizing rule's own phase budget was borrowed from the wrong
+    problem.** `docs/supercell-sizing-rule.md` as first published gated on
+    **±22.5°**, the half-step of 3-bit phase quantisation — a **beam-forming**
+    convention, applied to a **backscatter-reduction** design. That is precisely
+    the trap item 13 above records, written by the same pass that then fell into
+    it. Its companion constant, a 30° minimum scattering angle, was picked
+    rather than derived.
+    **Corrected 2026-09-04 by deriving both from the objective.** A chessboard
+    reduces RCS by cancellation, so the surviving echo is `sin(δ/2)` and
+    `RCSR_dB = 20·log₁₀(sin(δ/2))`, which inverts to
+    `δ_budget = 2·arcsin(10^(−RCSR_dB/20))` — **36.9° at 10 dB**, not 22.5°
+    (and 22.5° silently corresponds to a 14.2 dB requirement nobody stated).
+    The ceiling's real floor is the panel's own specular lobe, ≈ `λ/(2L)` —
+    **4.8°** for a 6 λ coupon, **0.95°** for a 30 λ panel.
+    **Consequence: the headline claim "three of six element families have no
+    feasible block size" does not survive.** At 10 dB all six are feasible. The
+    rule bites at demanding reduction levels — at 20 dB the size-tuned square
+    patch at 0.4 λ pitch has no feasible N — and what interior tuning buys is
+    **headroom and spatial resolution** (N = 2 versus N = 9 at 10 dB, so
+    4.5× finer control), not the difference between possible and impossible.
+    **The durable lesson: define failure against the purpose, not against an
+    internal metric.** A threshold in degrees is not a requirement. Every
+    threshold in this loop should be traceable to something a customer would
+    write down, and a constant that cannot be traced that way is a smuggled
+    assumption.
+
+21. **The same error is queued up in #110, and has not fired yet.**
+    `docs/absorber-scoring-conventions.md` §1 lists **"the threshold is 90 %
+    absorption, equivalently −10 dB reflectivity"** among four things that can be
+    **"adopted without argument"**. That is a *journal reporting convention* —
+    the document says so itself, noting IEEE Std 1128 stops at 5 GHz and
+    standardises measurement rather than scoring — and adopting it as a
+    pass/fail line is the same move that put ±22.5° into the super-cell rule.
+    It also contradicts **#117's already-settled "silence is permissive"**:
+    a convention adopted as a threshold converts a silence into a hard prune, on
+    the authority of a literature the customer never cited.
+    **Not yet an error — #110 is open.** Recorded here so it is decided rather
+    than absorbed. See `docs/requirement-derived-thresholds.md` for the full
+    audit and the A/B/C classification it proposes.
+
+22. **"No measurement of Example 3 exists anywhere" — wrong, and it was the
+    important half of that finding.** #116 was closed on it. **Example 3 is
+    Landy, Sajuyigbe, Mock, Smith & Padilla, "A Perfect Metamaterial Absorber",
+    *Phys. Rev. Lett.* 100:207402 (2008)** ([arXiv:0803.1670](https://arxiv.org/abs/0803.1670)),
+    reproduced number for number: the patent's FIG. 7F table is Landy's
+    *fabricated* set verbatim — `a1=4.2, a2=12, W=4, G=0.6, t=0.6, L=1.7,
+    H=11.8` mm on FR4, elements *"separated by 0.72mm"*. Verified against the
+    primary source. And it was **measured**: *"our experiments demonstrate a
+    peak absorbance greater than 88 % at 11.5 GHz"*, from complex S-parameters
+    on a large planar sample.
+    **The search was right; the inference was wrong.** The inventors genuinely
+    never published Example 3 — 22 publications, none an absorber, confirmed by
+    the patent's own "Other References". The error was concluding from *"the
+    inventors did not publish it"* that *"nobody published it"*. The patent
+    reproduces someone else's published device, so the search was scoped to the
+    wrong authors. **An exhaustive search of the wrong set is still exhaustive,
+    and still tells you nothing about the right one.**
+    Consequences: the anchor's reference is `LITERATURE-SUPPORTED` from a
+    `MEASURED` original, not capped at `SIMULATED`; this was ranked **#1–2** in
+    §4's unknowns. And it opens a new discrepancy — the patent's ~9.2 GHz
+    against Landy's measured **11.5 GHz for identical dimensions** (#142).
+23. **The 0.2 mm gap in Example 3 is on the H-plane, not the E-plane.** Noted
+    here because it was mine, and because the arithmetic was right while the
+    inference was not. `W` = 4 mm in `a₁` = 4.2 mm does leave **0.2 mm =
+    0.0067 λ**, tighter than Costanzo's tightest — but Landy's Fig. 1(c) puts
+    **E along `a₂`**, where the resonators sit **8.0 mm = 0.267 λ** apart,
+    looser than Costanzo's *loosest*. Coupling is strongest on the E-plane, so
+    the tight gap is on the axis that matters least. There *is* a 0.2 mm gap on
+    the E-plane — the **cut wire on the underside** — which nobody had noticed.
+    **Check which axis carries the field before reading a gap as tight.**
+24. **`docs/supercell-sizing-rule.md` assumed a square cell, and the anchor is
+    not square.** 4.2 × 12 mm is an aspect ratio of 2.86. On that cell **N = 2
+    is evanescent — it redirects nothing** — and the smallest radiating block is
+    **5 × 2 cells**. Because blocks of 4–5 and up are *forced*, `f(N)` drops
+    below 1 and the block genuinely averages, which runs **opposite** to the
+    document's "grouping averages nothing" headline. The rule also **omitted a
+    panel-fit constraint** (`2·N·p ≤ L`) that turns out to bind first on a
+    coupon, making "no feasible N" a statement about part size rather than about
+    the alphabet. Amended in §5.5; see #138.
+
 ### Errors found in published sources
 
 Not our corrections, but ours to route around. Recorded because anyone
@@ -243,7 +323,7 @@ enquiry effort should go.
 | 4 | **Carbon sheet resistance at two passes** | Two passes and one four-point-probe reading either confirms or kills the whole resistive-layer architecture | #106, #128 |
 | ~~5~~ | ~~**TPU's X-band permittivity**~~ | **Resolved 2026-09-03** — εr 2.71 / tanδ 0.099 at 10 GHz, two independent sources, `LITERATURE-SUPPORTED`. What remains is narrower and ranks lower: **no X-band figure for a named, orderable grade**, and grade spread inside one product line is 3.5× on loss | #127, #114 |
 | 6 | **The superposition coupling error bar** | ~~No prior art.~~ **Partly resolved** — Costanzo et al. publish **12–85° max phase error against pitch at 10 GHz** for three element shapes. What has no prior art is the error bar *for our own alphabet*, which still has to be derived | #111 |
-| 7 | **A super-cell sizing rule from a coupling budget** | No convention exists to inherit — confirmed, not assumed. Genuinely derived work | #130 |
+| ~~7~~ | ~~**A super-cell sizing rule from a coupling budget**~~ | **Derived 2026-09-04** — `supercell-sizing-rule.md`. It turned into a **gate on the alphabet** rather than a size: block size is pinned to N = 2 by the scattering requirement, where grouping buys no averaging at all. What replaces it is narrower and ranks lower — **our own alphabet's Δφ_max, measured rather than borrowed**, which needs the bench | #130, #132 |
 | 8 | **Layer-to-layer registration on the NOVA** | Unpublished anywhere. Suspected to be the real geometric risk, ahead of feature size | #106, #115 |
 | 9 | **Does the vacuum table hold silicone?** | Gates the top RF substrate candidate. Voltera's own documentation explicitly does not state it | #106, #114 |
 | 10 | **Whether `R = 3T` or IPC-2223's 6× rule governs** | The patent's rule is *twice as permissive* as the flex-circuit industry standard, so enforcing it approves parts bent twice as tight as IPC allows | #115 |
@@ -269,9 +349,22 @@ does not change — what it is *for* does.
    band, and nothing anywhere addresses how bands compose under superposition.
    Nearest precedent is Marcuvitz's practice of publishing an error bound and
    validity box for every entry.
-3. **A super-cell sizing rule derived from a coupling error budget.** Every
-   block size found in the literature is set by beam geometry, control-line
-   count or fabrication tolerance — never by managing interference.
+3. ~~**A super-cell sizing rule derived from a coupling error budget.**~~
+   **Derived 2026-09-04** — [`supercell-sizing-rule.md`](./supercell-sizing-rule.md),
+   settled on #130. Every block size in the literature is still set by beam
+   geometry, control-line count or fabrication tolerance rather than by managing
+   interference, so there was nothing to adopt; this is our own.
+   **It did not come out as a sizing formula.** Two constraints pull opposite
+   ways — the coupling error falls only as 1/N, while the scattering angle a
+   coded surface exists to produce collapses much faster as blocks coarsen — so
+   the allowed block size is usually **exactly N = 2**, and at N = 2 every cell
+   touches a foreign block and the block averages nothing. The rule therefore
+   collapses into **a gate on the alphabet**: an alphabet whose worst-case
+   unlike-neighbour phase error exceeds the budget on its own cannot be rescued
+   by grouping. **Three of six literature element families have no feasible
+   block size at all**, the variable-size square patch — the field's workhorse —
+   among them. Remains derived work in the sense that nobody has published it;
+   it is now written down rather than open.
 4. **An error bar on the superposition fast tier — for *our* alphabet.**
    Narrowed 2026-09-03: the generic error bar *does* exist. Costanzo et al.
    publish **max reflection-phase error against element pitch at 10 GHz** for
