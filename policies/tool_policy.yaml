@@ -160,10 +160,18 @@ design_tracking:
   - create_design
   - record_decision
   - verify_requirement
-  # issue #145: lifecycle transitions. Ordering is enforced deterministically
-  # in designs/lifecycle.py and the RELEASED gate in designs/release_approval.py,
-  # so no policy-layer gate is needed here -- same reasoning as the requirement
-  # -target tools below.
+  # issue #145: design-lifecycle transitions. Uncategorized as informational
+  # because the constraints are enforced deterministically in the code --
+  # ordering in designs/lifecycle.py, the RELEASED gate in
+  # designs/release_approval.py -- not by a policy-layer check. Same reasoning
+  # as the requirement-target tools below.
+  #
+  # Note on manufacturing_release (approval_required, below): this tool can
+  # NAME RELEASED as a destination, but it cannot reach it. The gate requires
+  # a signed DesignReleaseApprovalReceipt, and no workflow issues one, so a
+  # release attempt returns release_not_approved rather than writing. The
+  # autonomous release ACTION stays unbuilt and stays gated there; see
+  # docs/adr/0015 for why the two coexist.
   - advance_design_status
   # issue #92: interpreting a prose customer requirement into a proposed/
   # confirmed/unscoreable requirement target. Same informational-only

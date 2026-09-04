@@ -189,5 +189,24 @@ and a glossary that churns with it stops being trustworthy (see
   `engineering_results` name against a `requirement_id`, since a wrong
   automatic match would be a silently wrong verification.
 
+- **Golden query**: a question paired with the knowledge-base documents that
+  ought to answer it, held in `verification/golden_queries.json`. The fixed
+  set of them is what lets a change to embedding, chunking or ranking be
+  scored: without known-right answers, a retrieval regression and a retrieval
+  improvement look identical. Expected documents are named at document
+  granularity, never chunk — which chunk of a paper answered a question is not
+  a stable thing to assert.
+  _Avoid_: test query — these are graded against known answers, not merely
+  executed.
+- **Reference case**: a simulation problem whose correct answer is published
+  independently of this codebase (e.g. a half-wave dipole's 73 + j42.5 ohm
+  feed impedance), run end to end through a solver adapter so the deck we
+  generate, the solver, and the parser are checked together. Distinct from the
+  adapter's own tests, which use hand-built fakes and can only show that we
+  talk to the solver correctly, not that the solver told us the truth. Passing
+  one is what would let `SIMULATED` mean *validated* simulation in the
+  **Evidence hierarchy** above.
+  _Avoid_: benchmark — that measures speed, not correctness.
+
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).

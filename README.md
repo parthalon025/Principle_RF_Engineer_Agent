@@ -173,7 +173,7 @@ discipline needs:
 ├── geometry/         # unit-cell arrays, curved/conformal host surfaces
 ├── optimization/     # sweeps, grid/Bayesian search, GA, gradient
 ├── measurement/      # externally-obtained results only (no instrument control)
-├── verification/     # verification matrix, retrieval-quality gate, solver reference cases
+├── verification/     # verification matrix, retrieval-quality gate, simulator reference cases
 ├── knowledge/        # ingestion, embedding, extraction, component lookup
 ├── db/               # Postgres schema + init
 ├── policies/         # tool_policy.yaml (the permission model)

@@ -211,18 +211,30 @@ def test_bandstop_inverts_the_bandpass_branch_topologies():
     ]
 
 
-def test_load_impedance_reflects_the_final_g_value():
-    """Even-order Chebyshev presents a load that is not the source impedance."""
-    net = synthesize_filter(
-        response="chebyshev",
-        band="lowpass",
-        order=2,
-        ripple_db=3.0,
-        cutoff_hz=1e9,
-        impedance_ohm=50.0,
+def test_load_impedance_direction_depends_on_how_the_ladder_ends():
+    """g_(N+1) is a load RESISTANCE when the ladder ends shunt and a load
+    CONDUCTANCE when it ends series (Pozar fig. 8.25), so it is multiplied in
+    one case and divided in the other. Reading it as a resistance both ways
+    produces a filter that misses its own ripple spec -- see
+    test_even_order_chebyshev_meets_its_ripple_spec_into_its_stated_load."""
+    # order 2, shunt-first -> ends on a series inductor -> conductance
+    ends_series = synthesize_filter(
+        response="chebyshev", band="lowpass", order=2, ripple_db=3.0,
+        cutoff_hz=1e9, impedance_ohm=50.0, first_element="shunt",
     )
-    assert net.load_impedance_ohm == pytest.approx(50.0 * 5.8095, abs=0.1)
+    assert ends_series.elements[-1].position == "series"
+    assert ends_series.load_impedance_ohm == pytest.approx(50.0 / 5.8095, abs=0.01)
 
+    # order 2, series-first -> ends on a shunt capacitor -> resistance
+    ends_shunt = synthesize_filter(
+        response="chebyshev", band="lowpass", order=2, ripple_db=3.0,
+        cutoff_hz=1e9, impedance_ohm=50.0, first_element="series",
+    )
+    assert ends_shunt.elements[-1].position == "shunt"
+    assert ends_shunt.load_impedance_ohm == pytest.approx(50.0 * 5.8095, abs=0.1)
+
+
+def test_odd_order_chebyshev_is_matched_to_its_source():
     odd = synthesize_filter(
         response="chebyshev", band="lowpass", order=3, ripple_db=3.0, cutoff_hz=1e9
     )
@@ -339,7 +351,15 @@ def _branch_impedance(element, f_hz):
 
 
 def _s21(network, f_hz):
-    """|S21| of the synthesized ladder at `f_hz`, by ABCD cascade."""
+    """|S21| of the synthesized ladder at `f_hz`, by ABCD cascade.
+
+    Referenced to the source impedance at port 1 and to the network's OWN
+    stated load impedance at port 2. That distinction is the whole point: an
+    even-order Chebyshev is deliberately not terminated in its source
+    impedance, so measuring it into R0 at both ends reports a filter that
+    misses its ripple spec even when the synthesis is correct -- and, worse,
+    hides a wrong load impedance when the synthesis is not.
+    """
     abcd = [[1 + 0j, 0j], [0j, 1 + 0j]]
     for element in network.elements:
         z = _branch_impedance(element, f_hz)
@@ -357,9 +377,12 @@ def _s21(network, f_hz):
                 abcd[1][0] * m[0][1] + abcd[1][1] * m[1][1],
             ],
         ]
-    z0 = network.source_impedance_ohm
+    rs = network.source_impedance_ohm
+    rl = network.load_impedance_ohm
     a, b, c, d = abcd[0][0], abcd[0][1], abcd[1][0], abcd[1][1]
-    return abs(2.0 / (a + b / z0 + c * z0 + d))
+    # Generalized to unequal real reference impedances; reduces to the usual
+    # 2 / (A + B/Z0 + C*Z0 + D) when rl == rs.
+    return abs(2.0 * math.sqrt(rs * rl) / (a * rl + b + c * rs * rl + d * rs))
 
 
 @pytest.mark.parametrize("order", [3, 5])
@@ -479,3 +502,54 @@ def test_bandstop_rejects_the_centre_and_passes_both_skirts():
     assert _s21(net, f0 * 0.9999) < 1e-3
     assert _s21(net, f0 / 8) == pytest.approx(1.0, abs=1e-3)
     assert _s21(net, f0 * 8) == pytest.approx(1.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("order", [2, 4])
+@pytest.mark.parametrize("ripple_db", [0.5, 3.0])
+@pytest.mark.parametrize("first_element", ["shunt", "series"])
+def test_even_order_chebyshev_meets_its_ripple_spec_into_its_stated_load(
+    order, ripple_db, first_element
+):
+    """The test that catches a wrong load impedance.
+
+    An even-order equal-ripple filter is only 0-to-ripple dB flat when it is
+    terminated in the load its own prototype calls for. Every earlier
+    end-to-end check used an odd order, where g_(N+1) is exactly 1 and the
+    load equals the source -- which makes a wrong load-impedance formula
+    completely invisible. This one exercises both ladder orientations at even
+    order, where g_(N+1) is 5.81 at 3 dB and the direction actually matters.
+
+    Terminating the shunt-first order-2 3 dB design at 290 ohms instead of
+    8.6 ohms runs 3-12 dB of passband loss against a 0-3 dB spec.
+    """
+    fc = 1e9
+    net = synthesize_filter(
+        response="chebyshev",
+        band="lowpass",
+        order=order,
+        ripple_db=ripple_db,
+        cutoff_hz=fc,
+        first_element=first_element,
+    )
+    losses = [-20 * math.log10(_s21(net, fc * i / 200.0)) for i in range(1, 201)]
+    assert all(-1e-6 <= loss <= ripple_db + 1e-6 for loss in losses), (
+        f"passband loss {min(losses):.3f}..{max(losses):.3f} dB is outside the "
+        f"0..{ripple_db} dB spec, into load {net.load_impedance_ohm:.3f} ohm"
+    )
+    assert min(losses) < 1e-3
+    assert max(losses) == pytest.approx(ripple_db, abs=1e-6)
+
+
+def test_the_wrong_load_impedance_would_be_caught():
+    """Guards the guard: confirm the check above actually fails on the bug it
+    was written for, rather than passing for an unrelated reason."""
+    import dataclasses
+
+    net = synthesize_filter(
+        response="chebyshev", band="lowpass", order=2, ripple_db=3.0, cutoff_hz=1e9
+    )
+    wrong = dataclasses.replace(
+        net, load_impedance_ohm=net.source_impedance_ohm * net.g_values[-1]
+    )
+    losses = [-20 * math.log10(_s21(wrong, 1e9 * i / 200.0)) for i in range(1, 201)]
+    assert max(losses) > 3.0 + 1e-6

@@ -550,25 +550,7 @@ def synthesize_filter_prototype(
         bandwidth_hz=bandwidth_hz,
         first_element=first_element,
     )
-    return {
-        "response": network.response,
-        "band": network.band,
-        "order": network.order,
-        "source_impedance_ohm": network.source_impedance_ohm,
-        "load_impedance_ohm": network.load_impedance_ohm,
-        "ripple_db": network.ripple_db,
-        "g_values": list(network.g_values),
-        "elements": [
-            {
-                "position": e.position,
-                "topology": e.topology,
-                "inductance_h": e.inductance_h,
-                "capacitance_f": e.capacitance_f,
-            }
-            for e in network.elements
-        ],
-        "provenance": "CALCULATED",
-    }
+    return {**network.to_dict(), "provenance": "CALCULATED"}
 
 
 @function_tool

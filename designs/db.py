@@ -23,7 +23,12 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from designs.lifecycle import check_transition, transition_requires_release_approval
+from designs.lifecycle import (
+    TERMINAL_STATUSES,
+    check_transition,
+    coerce_status,
+    transition_requires_release_approval,
+)
 from designs.models import DesignStatus, VerificationStatus
 from designs.provenance import provenance_for_tool
 from designs.release_approval import (
@@ -431,9 +436,10 @@ def update_design_status(
     `allow_nonsequential=True` skips the *ordering* check only, for a caller
     that has legitimately walked the stages in memory and is persisting the
     outcome at an iteration boundary rather than at each step -- the design
-    loop's flush, per ADR-0011. It never skips the release gate, and never
-    permits entering `RELEASED` out of order: releasing is the one transition
-    no caller may relax.
+    loop's flush, per ADR-0011. Three things it never does: skip the release
+    gate, permit entering `RELEASED` out of order, or let a design leave a
+    terminal status. It relaxes the order work moves in, never whether
+    finished work can be reopened.
 
     The current row is read `FOR UPDATE` so the check and the write cannot
     straddle a concurrent transition.
@@ -453,7 +459,12 @@ def update_design_status(
             raise UnknownDesignError(design_id)
 
         releasing = transition_requires_release_approval(current["status"], status)
-        if releasing or not allow_nonsequential:
+        # A terminal status is terminal for every caller: `allow_nonsequential`
+        # relaxes the ORDER work moves in, not whether finished work can be
+        # reopened. Without this a loop flush could walk a RELEASED design back
+        # to ANALYSIS, contradicting the terminality the lifecycle promises.
+        leaving_terminal = coerce_status(current["status"]) in TERMINAL_STATUSES
+        if releasing or leaving_terminal or not allow_nonsequential:
             check_transition(current["status"], status)
         if releasing:
             check_design_release_approval_gate(

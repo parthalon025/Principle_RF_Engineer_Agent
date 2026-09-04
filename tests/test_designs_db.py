@@ -691,6 +691,30 @@ def test_allow_nonsequential_never_opens_the_release_gate(db_conn):
     assert read_design(db_conn, design_id)["status"] == "DRAFT"
 
 
+def test_allow_nonsequential_cannot_reopen_a_released_design(db_conn):
+    """A terminal status is terminal for every caller. The ordering escape
+    hatch relaxes the order work moves in, not whether finished work can be
+    reopened -- otherwise a loop flush could walk a RELEASED design back to
+    ANALYSIS and contradict the terminality the lifecycle promises."""
+    design_id = _make_design(db_conn, design_key="DES-REOPEN")
+    _walk(db_conn, design_id, "ANALYSIS", "SIMULATION", "OPTIMIZATION", "VERIFICATION", "PASS")
+    approval = request_design_release_approval(
+        release_fingerprint_fields(
+            design_id=design_id, design_key="DES-REOPEN", revision="A"
+        ),
+        approved_by="a.engineer",
+        approval_callback=lambda _: True,
+    )
+    update_design_status(
+        db_conn, design_id=design_id, status="RELEASED", approval=approval
+    )
+    with pytest.raises(IllegalStatusTransitionError):
+        update_design_status(
+            db_conn, design_id=design_id, status="ANALYSIS", allow_nonsequential=True
+        )
+    assert read_design(db_conn, design_id)["status"] == "RELEASED"
+
+
 def test_an_unknown_status_is_still_rejected_before_the_row_is_read(db_conn):
     design_id = _make_design(db_conn, design_key="DES-BADSTATUS")
     with pytest.raises(ValueError, match="status must be one of"):

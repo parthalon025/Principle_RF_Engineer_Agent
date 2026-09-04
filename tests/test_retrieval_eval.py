@@ -245,3 +245,11 @@ def test_a_query_result_is_immutable():
     with pytest.raises((AttributeError, TypeError)):
         report.results[0].recall = 0.0  # type: ignore[misc]
     assert isinstance(report.results[0], QueryResult)
+
+
+def test_an_empty_report_is_refused_rather_than_dividing_by_zero():
+    """Every aggregate divides by the number of queries. An empty report would
+    raise ZeroDivisionError from a property, far from the cause -- and a gate
+    built on one would be silently meaningless."""
+    with pytest.raises(ValueError, match="at least one"):
+        EvaluationReport(k=5, results=())

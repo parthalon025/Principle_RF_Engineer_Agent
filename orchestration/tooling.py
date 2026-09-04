@@ -273,8 +273,10 @@ def _flush_decisions(
             # but persists only at the iteration boundary (ADR-0011), so the
             # column moves in one step where the lifecycle expects several.
             # The ordering check is relaxed for that; the RELEASED gate is not,
-            # and this flush never writes RELEASED (see _final_status_for:
-            # ANALYSIS to iterate, PASS when done).
+            # and this flush never writes RELEASED (final_status below is
+            # ANALYSIS to iterate, PASS when done), nor may it move a design
+            # out of a terminal status -- update_design_status enforces both
+            # regardless of this flag.
             designs_db.update_design_status(
                 conn,
                 design_id=design_id,

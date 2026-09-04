@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
@@ -142,7 +142,17 @@ class EvaluationReport:
     """Every query's result plus the aggregates a gate decides on."""
 
     k: int
-    results: tuple[QueryResult, ...] = field(default=())
+    results: tuple[QueryResult, ...]
+
+    def __post_init__(self) -> None:
+        # Every aggregate below divides by len(results). An empty report would
+        # raise ZeroDivisionError from a property, far from the cause -- and a
+        # gate built on one would be silently meaningless. Refuse it here.
+        if not self.results:
+            raise ValueError(
+                "an EvaluationReport needs at least one scored query; an empty "
+                "report has no meaningful aggregate to gate on"
+            )
 
     @property
     def mean_recall(self) -> float:

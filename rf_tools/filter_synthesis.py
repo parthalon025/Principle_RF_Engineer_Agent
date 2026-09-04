@@ -31,15 +31,19 @@ simulator adapters. This module stops at ideal lumped elements, which is where
 the closed-form arithmetic stops being exact.
 
 Provenance: every value returned here is `CALCULATED` -- deterministic
-arithmetic on the caller's inputs, no measurement and no model fitting. The
-mapping lives in `designs/provenance.py`, keyed by tool name, never set here.
+arithmetic on the caller's inputs, no measurement and no model fitting. This
+module returns plain numbers and carries no provenance field itself; the
+`synthesize_filter_prototype` tool wrappers tag the result `CALCULATED`
+inline, following `calculate_l_network_match`'s precedent for a synthesis
+tool. It is deliberately not in `designs/provenance.py`'s table, which maps
+only those tools that write an `engineering_results` row.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 __all__ = [
     "FilterElement",
@@ -89,9 +93,17 @@ class FilterNetwork:
     even-order Chebyshev it is *not* the source impedance. That is a real
     property of equal-ripple filters, not a rounding artefact -- an even-order
     equal-ripple prototype ends on a deliberate mismatch, and the mismatch
-    grows with ripple. An even-order 3 dB design lands about 5.8x the source
-    impedance, which usually means picking an odd order instead or accepting an
-    impedance transformation.
+    grows with ripple. That usually means picking an odd order instead, or
+    accepting an impedance transformation.
+
+    Which direction the mismatch goes depends on how the ladder ends, because
+    `g_{N+1}` is not always a resistance. In the standard prototype it is a
+    load *resistance* when the last element is a shunt capacitor, and a load
+    *conductance* when the last element is a series inductor (Pozar, fig.
+    8.25). So a 3 dB even-order design lands at about 5.8x the source
+    impedance one way round and about 0.17x it the other -- reading
+    `g_{N+1}` as a resistance in both cases gets one of them badly wrong,
+    and the resulting filter does not meet its own ripple spec.
     """
 
     response: Response
@@ -105,6 +117,31 @@ class FilterNetwork:
     ripple_db: float | None
     g_values: tuple[float, ...]
     elements: tuple[FilterElement, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable form, for crossing an agent/MCP tool boundary.
+
+        Lives here rather than in each tool wrapper so the two surfaces cannot
+        drift into reporting different fields for the same network.
+        """
+        return {
+            "response": self.response,
+            "band": self.band,
+            "order": self.order,
+            "source_impedance_ohm": self.source_impedance_ohm,
+            "load_impedance_ohm": self.load_impedance_ohm,
+            "ripple_db": self.ripple_db,
+            "g_values": list(self.g_values),
+            "elements": [
+                {
+                    "position": e.position,
+                    "topology": e.topology,
+                    "inductance_h": e.inductance_h,
+                    "capacitance_f": e.capacitance_f,
+                }
+                for e in self.elements
+            ],
+        }
 
 
 def _validate_order(order: int) -> None:
@@ -237,6 +274,20 @@ def _bandstop_element(
     )
 
 
+def _load_impedance(r0: float, g_last: float, last_position: Position) -> float:
+    """Denormalize `g_{N+1}` into a real load impedance.
+
+    `g_{N+1}` is a load *resistance* when the ladder ends in a shunt element
+    and a load *conductance* when it ends in a series element (Pozar, fig.
+    8.25) -- so it is divided in one case and multiplied in the other.
+    Treating it as a resistance in both directions silently produces a filter
+    that misses its own ripple specification: an order-2, 3 dB Chebyshev
+    terminated at 290 ohms instead of 8.6 ohms runs 3-12 dB of passband loss
+    where the spec says 0-3 dB.
+    """
+    return r0 * g_last if last_position == "shunt" else r0 / g_last
+
+
 def synthesize_filter(
     *,
     response: Response,
@@ -337,7 +388,7 @@ def synthesize_filter(
         band=band,
         order=order,
         source_impedance_ohm=impedance_ohm,
-        load_impedance_ohm=impedance_ohm * g[-1],
+        load_impedance_ohm=_load_impedance(impedance_ohm, g[-1], positions[-1]),
         cutoff_hz=cutoff_hz,
         center_hz=center_hz,
         bandwidth_hz=bandwidth_hz,

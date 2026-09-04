@@ -1,4 +1,4 @@
-"""The RELEASED human-approval gate for a design (issue #145, ADR-0007).
+"""The RELEASED human-approval gate for a design (issue #145; ADR-0007, ADR-0015).
 
 `docs/OPERATIONS.md` states it outright -- "RELEASED requires human approval"
 -- and ADR-0007 carries that into `designs.status` while deferring the
