@@ -1,4 +1,4 @@
-"""Design-status transition rules (issue #145; docs/adr/0015).
+"""Design-status transition rules (issue #145; docs/adr/0016).
 
 ADR-0007 settled which nine values `designs.status` may hold, and said
 outright that "how a design moves between them ... remains future work".
