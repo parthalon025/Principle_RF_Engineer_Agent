@@ -926,7 +926,14 @@ def run_candidate_search(
     `score_specs`/`design_id` shape, or an out-of-range budget/plateau
     parameter) -- before any candidate is evaluated. Never raises for a
     single candidate's own drive failing (see "DESIGN QUESTION 4") -- that
-    is recorded on the candidate's own trail entry instead.
+    is recorded on the candidate's own trail entry instead. NOT covered by
+    that `SolverError` guarantee: when `design_id` is supplied, a hard
+    failure of `designs_db.get_connection()`/`designs_db.
+    read_engineering_results_for_scoring()` itself (e.g. the database being
+    unreachable) propagates as whatever exception that call raises,
+    uncaught here -- `_prior_best_from_design` only catches a single prior
+    ROW's own scoring failure (see its docstring), never a connection-level
+    one. A documented, disclosed choice, not a defect.
 
     Returns a dict:
       - `provenance`: always `"CALCULATED"` -- every score and stopping
