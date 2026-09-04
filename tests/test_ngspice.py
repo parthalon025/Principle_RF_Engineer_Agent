@@ -20,6 +20,7 @@ transcribed from a real ngspice run -- see that module's honest caveat.
 """
 
 import os
+import shutil
 import stat
 import sys
 from pathlib import Path
@@ -334,3 +335,52 @@ def test_run_ngspice_simulation_propagates_simulator_error_on_failure(tmp_path: 
             executable=str(script),
             workdir=str(tmp_path / "run2"),
         )
+
+
+# ---------------------------------------------------------------------------
+# The one test in this file NOT limited to a fake stand-in: runs against a
+# real ngspice binary when one is available. See
+# scripts/install_ngspice_windows.ps1 for a no-installer, no-Administrator
+# way to get one on Windows; on Linux/macOS, `apt install ngspice` /
+# `brew install ngspice`. Skipped (not failed) with no real binary present,
+# so this stays out of CI's unconditional path. Reproduces the exact check
+# recorded in simulation/ngspice.py's "VERIFIED END TO END" docstring note.
+# ---------------------------------------------------------------------------
+
+
+def test_ngspice_real_binary_rc_filter_ac_sweep_if_available(tmp_path: Path):
+    executable = (
+        os.environ.get("NGSPICE_BIN") or shutil.which("ngspice_con") or shutil.which("ngspice")
+    )
+    if not executable:
+        pytest.skip("no real ngspice binary available (NGSPICE_BIN unset, not on PATH)")
+
+    job = {
+        "components": [
+            {"type": "V", "name": "V1", "n1": "in", "n2": "0", "dc": 0, "ac_mag": 1, "ac_phase": 0},
+            {"type": "R", "name": "R1", "n1": "in", "n2": "out", "value": 1000},
+            {"type": "C", "name": "C1", "n1": "out", "n2": "0", "value": 1e-6},
+        ],
+        "analysis": {
+            "type": "ac",
+            "sweep_type": "dec",
+            "points": 5,
+            "start_freq_hz": 1,
+            "stop_freq_hz": 1e6,
+        },
+        "outputs": ["v(out)"],
+    }
+    result = run_ngspice_simulation(job, executable=executable, workdir=str(tmp_path / "real_run"))
+
+    assert result["status"] == "COMPLETED"
+    assert len(result["scale"]) == 31  # 5 points/decade x 6 decades (1Hz-1MHz) + 1
+    assert result["scale"][0] == pytest.approx(1.0)
+    assert result["scale"][-1] == pytest.approx(1e6)
+    vout = result["values"]["v(out)"]
+    passband_mag = abs(complex(*vout[0]))
+    stopband_mag = abs(complex(*vout[-1]))
+    # Near DC, an RC low-pass filter passes the input almost unattenuated.
+    assert passband_mag == pytest.approx(1.0, abs=0.01)
+    # Three-plus decades above the ~159Hz cutoff, it should be rolled off
+    # hard -- three orders of magnitude below the passband value.
+    assert stopband_mag < 1e-3

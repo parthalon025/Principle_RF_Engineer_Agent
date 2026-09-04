@@ -27,7 +27,7 @@ from verification.simulator_reference_cases import (
 
 def _passing_result(resistance=73.0, reactance=42.5, gain=2.15):
     return {
-        "impedance": {"resistance_ohm": resistance, "reactance_ohm": reactance},
+        "impedance": {"resistance_ohms": resistance, "reactance_ohms": reactance},
         "gain_dbi": gain,
         "provenance": "SIMULATED",
     }
@@ -103,7 +103,7 @@ def test_a_missing_quantity_is_a_failure_not_a_skip():
 
 def test_a_non_numeric_value_is_a_failure():
     result = _passing_result()
-    result["impedance"]["resistance_ohm"] = "n/a"
+    result["impedance"]["resistance_ohms"] = "n/a"
     problems = check_reference_case(HALF_WAVE_DIPOLE, result)
     assert [p.name for p in problems] == ["input_resistance"]
 

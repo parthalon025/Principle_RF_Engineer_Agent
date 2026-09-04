@@ -14,7 +14,7 @@ class OpenemsSimulator(Simulator):
     name = "openEMS"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("OPENEMS_BIN", "openEMS")
+        self.executable = executable or os.getenv("OPENEMS_BIN") or "openEMS"
 
     def run(self, job: dict) -> SimulationResult:
         xml_file = Path(job["xml_file"]).resolve()

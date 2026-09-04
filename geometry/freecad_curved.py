@@ -728,7 +728,7 @@ def _run_freecadcmd(
     module's own Application::processFiles()/runApplication() citation."""
     if not script_path.exists():
         raise FreecadGeometryError(f"FreeCAD macro file not found: {script_path}")
-    exe = executable or os.getenv("FREECAD_BIN", "FreeCADCmd")
+    exe = executable or os.getenv("FREECAD_BIN") or "FreeCADCmd"
     try:
         completed = subprocess.run(
             [exe, str(script_path)],

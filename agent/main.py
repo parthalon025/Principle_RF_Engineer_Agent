@@ -8,14 +8,17 @@ from agents import (
     Agent,
     AsyncOpenAI,
     FunctionTool,
+    ModelSettings,
     Runner,
     function_tool,
     set_default_openai_api,
     set_default_openai_client,
     set_tracing_disabled,
 )
+from agents.models.default_models import get_default_model_settings
 from agents.run import RunResult
 from dotenv import load_dotenv
+from openai.types.shared import Reasoning
 
 from designs.requirement_targets import confirm_requirement_target as _confirm_requirement_target
 from designs.requirement_targets import (
@@ -150,9 +153,10 @@ _LITELLM_PROVIDERS = {
 
 def _resolve_agent_model():
     """Build the value to pass as every Agent's `model=`: a plain model-name
-    string for the "openai" (SDK default provider) and "local" (routed via
-    _configure_local_llm_backend's default client, below) providers, or a
-    `agents.extensions.models.litellm_model.LitellmModel` instance -- a
+    string for the "openai" (SDK default provider), "local", and "runpod"
+    providers (the latter two routed via
+    _configure_hosted_openai_compatible_backend's default client, below), or
+    a `agents.extensions.models.litellm_model.LitellmModel` instance -- a
     `Model` object, not a string -- for any LiteLLM-routed provider like
     "anthropic". `Agent.model` accepts either (`str | Model`)."""
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
@@ -166,31 +170,123 @@ def _resolve_agent_model():
         )
     if provider == "local":
         return os.getenv("LOCAL_AGENT_MODEL", "gpt-oss:20b")
+    if provider == "runpod":
+        model = os.getenv("RUNPOD_MODEL")
+        if not model:
+            raise RuntimeError(
+                "LLM_PROVIDER=runpod requires RUNPOD_MODEL to be set to the exact "
+                "model name your RunPod Serverless vLLM endpoint was deployed with "
+                "-- there is no sensible default the way LOCAL_AGENT_MODEL has "
+                "Ollama's, since a RunPod endpoint is deployed for one specific "
+                "model at creation time."
+            )
+        return model
     return os.getenv("OPENAI_MODEL", "gpt-5.5")
 
 
-def _configure_local_llm_backend() -> None:
-    """When LLM_PROVIDER=local, point the SDK's default OpenAI-compatible
-    client at LOCAL_LLM_BASE_URL (Ollama by default) instead of OpenAI's
-    API, so a plain model-name string from _resolve_agent_model resolves
-    against the local server -- no per-Agent wiring needed. A no-op for
-    every other provider."""
+def _resolve_agent_model_settings() -> ModelSettings:
+    """Sampling/reasoning settings for `Agent(model_settings=...)`.
+
+    Scoped to `LLM_PROVIDER=local` only (Ollama serving LOCAL_AGENT_MODEL) --
+    the SDK's own `get_default_model_settings()` for every other provider,
+    since this repo has no basis to second-guess OpenAI's/Anthropic's own
+    recommended defaults, and a paid API's reasoning effort has direct cost
+    implications nothing here asked to change. (Passing `model_settings=None`
+    to `Agent(...)` is a TypeError, unlike simply omitting the argument --
+    `Agent.model_settings`'s own default is `get_default_model_settings()`,
+    not `None`, so returning that here for the non-local case reproduces
+    exactly what omitting the kwarg would have done.)
+
+    Values are Qwen3.8's own documented defaults for its "thinking" mode
+    (the model's default mode): temperature=1.0, top_p=0.95, top_k=20,
+    presence_penalty=0.0, reasoning_effort="xhigh" -- "xhigh" specifically,
+    not "high": Qwen3.8 only supports xhigh/medium/low, and "xhigh" (not
+    "high") is both its own default and the deepest level it offers, for
+    the most thorough analysis on this repo's multi-step RF design-loop
+    tool-calling. `top_k` has no native `ModelSettings` field (OpenAI's API
+    doesn't expose one) -- passed via `extra_body["options"]`, the
+    documented mechanism Ollama's OpenAI-compatible endpoint uses for
+    llama.cpp-native sampling parameters that aren't part of the OpenAI
+    wire format itself.
+    """
     if os.getenv("LLM_PROVIDER", "openai").lower() != "local":
+        return get_default_model_settings()
+    return ModelSettings(
+        temperature=1.0,
+        top_p=0.95,
+        presence_penalty=0.0,
+        reasoning=Reasoning(effort="xhigh"),
+        # num_ctx: Ollama serves a model at its OWN small default context
+        # window (no num_ctx in `ollama show qwen3.8:27b --parameters`,
+        # confirmed by reading it directly) regardless of what the model
+        # itself supports (Qwen3.8 natively handles up to 262K, extendable
+        # to 1M) -- a well-known Ollama gotcha, not a qwen3.8 limitation.
+        # Confirmed empirically in this repo specifically: the principal
+        # role's 86-tool schema payload (verbose per-tool docstrings) plus
+        # xhigh's own reasoning trace overflowed Ollama's default, and the
+        # model genuinely could not see calculate_wavelength -- despite it
+        # being the FIRST tool in the list -- until num_ctx was raised.
+        # 65536 is a deliberately generous number for THIS repo's actual
+        # tool count, not a universal default; re-check if the tool list
+        # grows substantially larger.
+        extra_body={"options": {"top_k": 20, "num_ctx": 65536}},
+    )
+
+
+def _configure_hosted_openai_compatible_backend() -> None:
+    """When LLM_PROVIDER is "local" or "runpod", point the SDK's default
+    OpenAI-compatible client at that provider's endpoint instead of OpenAI's
+    own API, so a plain model-name string from _resolve_agent_model resolves
+    against it -- no per-Agent wiring needed. A no-op for every other
+    provider ("openai", and any _LITELLM_PROVIDERS entry -- those route
+    through LitellmModel instances instead and need no default-client
+    override here).
+
+    "runpod" is RunPod's Serverless vLLM endpoint (pay-per-second, scales to
+    zero when idle): api.runpod.ai/v2/<endpoint_id>/openai/v1, genuinely
+    OpenAI-wire-compatible so it needs no LiteLLM routing, just a different
+    base_url/api_key than "local"'s Ollama default. Unlike "local", there is
+    no sensible base_url default -- RUNPOD_ENDPOINT_ID and RUNPOD_API_KEY
+    must both be set, or this fails loudly at import time rather than
+    producing a confusing 401/404 on the first agent call.
+
+    Per ADR-0004, this function only ever affects the AGENT's own reasoning
+    (LLM_PROVIDER) -- the knowledge base's separate DEFAULT_LLM_BACKEND
+    (local/external) gate for SENSITIVE/RESTRICTED documents is untouched by
+    either branch here. "runpod" is a hosted cloud API from a data-egress
+    standpoint, the same category as "openai"/"anthropic" -- it just also
+    happens to be OpenAI-wire-compatible, which is why it's handled
+    alongside "local" here rather than through _LITELLM_PROVIDERS.
+    """
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    if provider == "local":
+        base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
+        api_key = os.getenv("LOCAL_LLM_API_KEY") or "unused"
+    elif provider == "runpod":
+        endpoint_id = os.getenv("RUNPOD_ENDPOINT_ID")
+        api_key = os.getenv("RUNPOD_API_KEY")
+        if not endpoint_id or not api_key:
+            raise RuntimeError(
+                "LLM_PROVIDER=runpod requires both RUNPOD_ENDPOINT_ID and "
+                "RUNPOD_API_KEY to be set -- see .env.example."
+            )
+        base_url = f"https://api.runpod.ai/v2/{endpoint_id}/openai/v1"
+    else:
         return
-    base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
-    client = AsyncOpenAI(base_url=base_url, api_key=os.getenv("LOCAL_LLM_API_KEY") or "unused")
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
     set_default_openai_client(client, use_for_tracing=False)
-    # Self-hosted OpenAI-compatible servers (Ollama, llama.cpp, LM Studio)
-    # implement the older /v1/chat/completions surface, not OpenAI's newer
-    # /v1/responses API that this SDK defaults to.
+    # Self-hosted/self-served OpenAI-compatible servers (Ollama, llama.cpp,
+    # LM Studio, RunPod's vLLM Serverless workers) implement the older
+    # /v1/chat/completions surface, not OpenAI's newer /v1/responses API
+    # this SDK defaults to.
     set_default_openai_api("chat_completions")
-    # No real OPENAI_API_KEY exists in this mode, so trace uploads to
+    # No real OPENAI_API_KEY exists in either mode, so trace uploads to
     # OpenAI's platform would only fail noisily -- turn tracing off rather
     # than let every run attempt and fail one.
     set_tracing_disabled(True)
 
 
-_configure_local_llm_backend()
+_configure_hosted_openai_compatible_backend()
 
 
 @function_tool
@@ -2438,6 +2534,7 @@ ROLES: dict[str, Agent] = {
     key: Agent(
         name=_SPEC_BY_KEY[key].display_name,
         model=_resolve_agent_model(),
+        model_settings=_resolve_agent_model_settings(),
         instructions=f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_SPEC_BY_KEY[key].domain_note}",
         tools=list(_SPEC_BY_KEY[key].tools),
     )
@@ -2512,6 +2609,7 @@ _principal_spec = _SPEC_BY_KEY["principal"]
 ROLES["principal"] = Agent(
     name=_principal_spec.display_name,
     model=_resolve_agent_model(),
+    model_settings=_resolve_agent_model_settings(),
     instructions=(
         f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_principal_spec.domain_note}"
         "\n\n## Delegating to specialists\n\n"

@@ -1,0 +1,9 @@
+.git/
+.claude/worktrees/
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.env

@@ -13,7 +13,7 @@ class Nec2ppSimulator(Simulator):
     name = "NEC2++"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("NEC2PP_BIN", "nec2++")
+        self.executable = executable or os.getenv("NEC2PP_BIN") or "nec2++"
 
     def run(self, job: dict) -> SimulationResult:
         input_file = Path(job["input_file"]).resolve()

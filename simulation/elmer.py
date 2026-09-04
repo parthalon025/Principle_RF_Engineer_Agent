@@ -316,7 +316,7 @@ class ElmerSimulator(Simulator):
     name = "Elmer/VectorHelmholtz"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("ELMERSOLVER_BIN", "ElmerSolver")
+        self.executable = executable or os.getenv("ELMERSOLVER_BIN") or "ElmerSolver"
 
     def run(self, job: dict) -> SimulationResult:
         sif_file = Path(job["sif_file"]).resolve()
@@ -484,7 +484,7 @@ def run_gmsh_meshing(
     default output format is newer MSH4, which ElmerGrid cannot read."""
     if not geo_file.exists():
         raise SimulatorError(f"gmsh .geo file not found: {geo_file}")
-    exe = executable or os.getenv("GMSH_BIN", "gmsh")
+    exe = executable or os.getenv("GMSH_BIN") or "gmsh"
     try:
         completed = subprocess.run(
             [exe, str(geo_file), "-3", "-format", "msh2", "-o", str(msh_file)],
@@ -524,7 +524,7 @@ def run_elmergrid_conversion(
     path."""
     if not msh_file.exists():
         raise SimulatorError(f"Gmsh mesh file not found: {msh_file}")
-    exe = executable or os.getenv("ELMERGRID_BIN", "ElmerGrid")
+    exe = executable or os.getenv("ELMERGRID_BIN") or "ElmerGrid"
     stem = msh_file.with_suffix("").name
     try:
         completed = subprocess.run(

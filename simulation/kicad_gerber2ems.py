@@ -239,7 +239,7 @@ class KicadGerber2emsSimulator(Simulator):
     name = "gerber2ems"
 
     def __init__(self, executable: str | None = None):
-        self.executable = executable or os.getenv("GERBER2EMS_BIN", "gerber2ems")
+        self.executable = executable or os.getenv("GERBER2EMS_BIN") or "gerber2ems"
 
     def run(self, job: dict) -> SimulationResult:
         workdir = Path(job["workdir"]).resolve()

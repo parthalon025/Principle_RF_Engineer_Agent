@@ -31,9 +31,10 @@ services:
   # LLM & embedding backends"). It serves both the agent's own reasoning
   # (agent/main.py, LLM_PROVIDER=local) and the knowledge base's local
   # embeddings/extraction (ADR-0004, DEFAULT_LLM_BACKEND=local) from one
-  # OpenAI-compatible HTTP API -- `docker compose up` brings this up
-  # alongside postgres, so nothing outside this repo needs to be running
-  # separately for the local path to work end to end.
+  # OpenAI-compatible HTTP API. This service alone is NOT enough, though --
+  # a bare `ollama` container has no models loaded; see ollama-pull below,
+  # which is what actually makes "nothing outside this repo needs to be
+  # running separately" true end to end.
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
@@ -55,6 +56,68 @@ services:
               count: all
               capabilities: [gpu]
 
+  # One-shot: pulls whatever models .env actually specifies (LOCAL_AGENT_MODEL/
+  # LOCAL_EXTRACTION_MODEL/LOCAL_EMBEDDING_MODEL -- falling back to this
+  # project's documented defaults, gpt-oss:20b and bge-m3, only for whichever
+  # of those .env leaves unset) into the ollama service above, then exits.
+  # Reads from the SAME .env file at the repo root -- docker compose
+  # substitutes ${VAR} in this file from it automatically, no separate
+  # env_file: needed here. Without this, `ollama` starts with zero models
+  # loaded and every local LLM_PROVIDER/DEFAULT_LLM_BACKEND call fails on
+  # first use -- this is what closes that gap so the whole stack is
+  # genuinely usable from a cold `docker compose up` with no manual
+  # `ollama pull` step. Re-running is cheap: `ollama pull` on an
+  # already-present model is a fast no-op, not a re-download -- so pulling
+  # LOCAL_AGENT_MODEL and LOCAL_EXTRACTION_MODEL separately even when
+  # they're the same model (this repo's usual case) costs nothing extra.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      AGENT_MODEL: ${LOCAL_AGENT_MODEL:-gpt-oss:20b}
+      EXTRACTION_MODEL: ${LOCAL_EXTRACTION_MODEL:-gpt-oss:20b}
+      EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-bge-m3}
+    entrypoint: ["sh", "-c"]
+    command:
+      - "until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull \"$$AGENT_MODEL\" && ollama pull \"$$EXTRACTION_MODEL\" && ollama pull \"$$EMBEDDING_MODEL\""
+    restart: "no"
+
+  # The whole program plus every solver/geometry binary the Dockerfile can
+  # install on Linux -- see Dockerfile's own header comment for what's in
+  # here and why (several tools, e.g. MEEP, have no native Windows path at
+  # all). Not a long-running server by default (mcp_server/server.py speaks
+  # stdio, not a network port) -- meant for `docker compose run app <cmd>`,
+  # e.g. `docker compose run --rm app uv run pytest`.
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://rf:rf_dev_password@postgres:5432/rfengineer
+      LOCAL_LLM_BASE_URL: http://ollama:11434/v1
+    volumes:
+      # Live code sync (edit on the host, no rebuild needed to pick it up)
+      # -- but NOT the host's own .venv: that's a Windows-native venv with
+      # incompatible binaries, and bind-mounting it over the image's
+      # Linux-built one would break every import. app_venv (below) is a
+      # separate named volume specifically so /app/.venv inside the
+      # container stays backed by container-native storage, persisting
+      # across `docker compose run` invocations without the host's .venv
+      # ever shadowing it.
+      - .:/app
+      - app_venv:/app/.venv
+
 volumes:
   rf_pgdata:
   ollama_data:
+  app_venv:
