@@ -44,7 +44,7 @@ def _decision(
     step: str,
     result: dict,
     provenance: str | None,
-    iteration: int = 1,
+    iteration: int | None = 1,
     kind: str = "calculation",
 ) -> LoopDecision:
     return LoopDecision(
@@ -364,6 +364,55 @@ def test_a_decision_from_a_prior_iteration_is_not_used_as_this_iterations_expect
     item = compile_lab_test_plan(state)["items"][0]
     assert item["expected"] is None
     assert item["flag"]["reason"] == (UnverifiableReason.NO_ENGINEERING_RESULT_THIS_ITERATION.value)
+
+
+def test_a_decision_with_unknown_iteration_is_not_used_as_this_iterations_expected():
+    """A decision loaded from a pre-#88 dump carries `iteration=None`
+    (issue #135) -- "nobody recorded which round this came from," not
+    "round 1." It must not be mistaken for evidence belonging to the
+    loop's current round, the same way a genuinely-stale prior-iteration
+    decision (the sibling test above) is excluded."""
+    unknown_round_analysis = _decision(
+        "analysis",
+        {"function": "patch_resonant_frequency_hz", "resonant_frequency_hz": 2.40e9},
+        "CALCULATED",
+        iteration=None,
+    )
+    state = _state(
+        {"r1": {"requirement": "Resonates at 2.45 GHz", "target": _freq_target()}},
+        [unknown_round_analysis],
+        iteration=1,
+    )
+    item = compile_lab_test_plan(state)["items"][0]
+    assert item["expected"] is None
+    assert item["flag"]["reason"] == (UnverifiableReason.NO_ENGINEERING_RESULT_THIS_ITERATION.value)
+
+
+def test_mixed_unknown_and_current_iteration_decisions_only_the_current_one_is_used():
+    """A mixed old/new decisions list -- one decision with no recorded
+    round at all (`iteration=None`) alongside a real current-iteration one
+    -- traces the expected value only to the current-iteration decision,
+    never the unknown one, and never conflates the two."""
+    unknown_round_analysis = _decision(
+        "analysis",
+        {"function": "patch_resonant_frequency_hz", "resonant_frequency_hz": 2.40e9},
+        "CALCULATED",
+        iteration=None,
+    )
+    current_iteration_analysis = _decision(
+        "analysis",
+        {"function": "patch_resonant_frequency_hz", "resonant_frequency_hz": 2.46e9},
+        "CALCULATED",
+        iteration=1,
+    )
+    state = _state(
+        {"r1": {"requirement": "Resonates at 2.45 GHz", "target": _freq_target()}},
+        [unknown_round_analysis, current_iteration_analysis],
+        iteration=1,
+    )
+    item = compile_lab_test_plan(state)["items"][0]
+    assert item["expected"]["value"] == pytest.approx(2.46e9)
+    assert item["expected"]["source_iteration"] == 1
 
 
 def test_a_decision_from_the_current_iteration_is_used_even_if_not_the_latest_overall():
