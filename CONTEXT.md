@@ -107,14 +107,23 @@ domain-doc conventions) installed via the Matt Pocock Claude Code skills.
   covers the calculation, Touchstone, knowledge, and design-layer
   functions with real fixtures (Postgres integration tests for `knowledge/
   db.py`/`designs/db.py`, hand-built fakes for the simulator/instrument I/O
-  seams) — but there is still no verification corpus (a golden-query
-  fixture with expected results, and a recall/quality gate run before an
-  embedding-model, chunking, or ranking change ships) for the knowledge
-  pipeline, the simulator adapters, or the agent's end-to-end behavior. See
-  `docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md` for a fuller gap analysis of
-  the knowledge pipeline specifically (embedding-model/version tracking,
-  chunk-level content-hash dedup, and a retrieval-feedback/citation log are
-  also flagged there as not yet built).
+  seams), plus a first, minimal **verification corpus**
+  (`tests/test_verification_corpus.py`): a hand-picked golden-query fixture
+  against the real `knowledge/corpus/` files, gating on recall@5 and a
+  zero-result rate for `search_knowledge`'s lexical path (the only path
+  that runs without a paid embedding credential in this environment).
+  Still missing: the same kind of gate for the simulator adapters
+  (reference-case validation against independently-sourced expected
+  values, so a shared bug in a simulator and in `rf_tools/calculations.py`
+  can't both agree and pass silently) and for the agent's end-to-end
+  behavior, and the fuller knowledge-pipeline quality contract (nDCG/MRR/
+  citation precision) `docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`
+  describes — recall@k + zero-result rate was chosen as the cheap subset
+  that catches "search returns nothing" and "search returns the wrong
+  thing" without needing a relevance-grading scheme; add the rest only if
+  that proves too coarse. That review also flags embedding-model/version
+  tracking, chunk-level content-hash dedup, and a retrieval-feedback/
+  citation log as separately not yet built.
 
 ## What's still open
 
@@ -133,11 +142,11 @@ actual code before trusting either direction.
 
 Genuinely not yet built, as of this revision: closed-form filter-prototype
 synthesis (order/ripple/cutoff → g-value table → ladder network -- no
-`rf_tools/filter_synthesis.py` or equivalent exists); a verification/eval
-corpus (a golden-query fixture with expected results and a recall/quality
-gate for the knowledge pipeline; reference-case validation against
-independently-sourced expected values for the simulator adapters — see
-"Correctness bar" above); and the design-status transitions between
+`rf_tools/filter_synthesis.py` or equivalent exists); the simulator-adapter
+half of the verification corpus (reference-case validation against
+independently-sourced expected values — see "Correctness bar" above for
+what now exists on the knowledge-pipeline half); and the design-status
+transitions between
 `DRAFT` and the later lifecycle states (see **Design** below). For HFSS
 and the three distributor knowledge clients specifically: the code is
 implemented and tested against fakes, but each is gated on a resource this

@@ -23,7 +23,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import psycopg
 import pytest
 from dotenv import load_dotenv
 
@@ -117,23 +116,6 @@ def test_ingested_army_sbir_excerpt_is_retrievable_via_lexical_search(db_conn):
     # authority_rank on the stored row must match what a "paper" source
     # type defaults to (LITERATURE-SUPPORTED tier -- rank 40).
     assert row["authority_rank"] == authority_rank == 40
-
-
-@pytest.fixture
-def cleanup_documents():
-    """Tracks document ids created via ingest_document (which commits its
-    own connection) and deletes them afterward -- mirrors
-    tests/test_ingest.py and tests/test_read.py."""
-    ids: list[int] = []
-    yield ids
-    if not ids:
-        return
-    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM documents WHERE id = ANY(%s)", (ids,))
-    finally:
-        conn.close()
 
 
 def test_real_corpus_file_ingests_and_is_readable(cleanup_documents):

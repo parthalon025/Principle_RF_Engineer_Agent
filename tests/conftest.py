@@ -21,3 +21,22 @@ def db_conn():
     finally:
         conn.rollback()
         conn.close()
+
+
+@pytest.fixture
+def cleanup_documents():
+    """Tracks document ids created via ingest_document (which commits its
+    own connection, so db_conn's rollback-on-teardown doesn't apply) and
+    deletes them afterward. Shared by tests/test_literature_corpus.py and
+    tests/test_verification_corpus.py, both of which ingest real
+    knowledge/corpus/ files end to end."""
+    ids: list[int] = []
+    yield ids
+    if not ids:
+        return
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM documents WHERE id = ANY(%s)", (ids,))
+    finally:
+        conn.close()
