@@ -37,6 +37,11 @@ A **golden query** is a question plus the documents that ought to answer it.
 committed. `tests/test_retrieval_gate.py` runs them through the real search
 and fails if mean recall drops below its threshold.
 
+Measured baseline in CI: **recall 1.000, precision 1.000, reciprocal rank
+1.000** across all six — every expected document comes back as the first
+result. The gate is therefore set at 1.0, and any drop is a regression rather
+than noise.
+
 Three metrics, in plain terms:
 
 | Metric | Question it answers |

@@ -51,13 +51,26 @@ _CORPUS_DIR = Path(__file__).resolve().parent.parent / "knowledge" / "corpus"
 #: Results considered per query. Five is what a reader actually looks at.
 K = 5
 
-#: Gate floor for mean recall@K. Every shipped golden query was verified
-#: lexically reachable against the corpus, so the expected value here is 1.0.
-#: The floor sits below that deliberately: it absorbs ts_rank ordering jitter
-#: (a hit sliding out of the top K when many chunks match) without going red,
-#: while still catching any real collapse in retrieval. Raise it toward 1.0
-#: once CI has established a stable baseline across a few runs.
-MIN_MEAN_RECALL = 0.8
+#: Gate floor for mean recall@K.
+#:
+#: Set to 1.0 on measured evidence, not aspiration. The first CI run against a
+#: real Postgres reported recall 1.000, precision 1.000 and reciprocal rank
+#: 1.000 across all six queries -- every expected document came back as the
+#: FIRST result. There is no jitter to absorb: lexical retrieval here is
+#: plainto_tsquery plus ts_rank over a fixed committed corpus, which is
+#: deterministic, and an earlier 0.8 floor was set on a guess about ranking
+#: jitter that the measurement disproved.
+#:
+#: 0.8 was also too loose to do its job: with six queries, one breaking
+#: completely still scores 5/6 = 0.833 and would have passed. The companion
+#: test below catches a query that returns NOTHING relevant, but not one that
+#: silently drops to partial recall -- e.g. the two-document metaferrite query
+#: finding only one of its pair.
+#:
+#: If a semantic backend is ever configured in CI, its results join the ranked
+#: list and could legitimately push a lexical hit out of the top K. The fix
+#: then is a larger K or a re-verified fixture -- not a lowered gate.
+MIN_MEAN_RECALL = 1.0
 
 
 @pytest.fixture
