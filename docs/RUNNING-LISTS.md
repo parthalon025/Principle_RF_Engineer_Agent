@@ -30,8 +30,10 @@ matters**, so a browsing session can be prioritised rather than exhaustive.
 | **incose.org** | HTTP 403 | INCOSE *Guide to Writing Requirements* V4. Rule text was never quoted first-hand, so its rule numbers are deliberately not asserted anywhere | #122 |
 | **ISO/IEC/IEEE 29148** | Paywalled | The civil-side requirements standard | #122 |
 | **2021 JCIDS Manual, DoDI 5000.85, CRS IF12817** | HTTP 403 | Current editions. Threshold/objective is quoted from the **2009 and 2012** editions instead | #122 |
-| **Rozanov (2000)**, "Ultimate thickness to bandwidth ratio of radar absorbers" | Behind IEEE | The original statement of the thickness/bandwidth bound. Its result is verified through two independent open-access restatements that agree with each other, but **the original was never read** | #129, #110 |
+| ~~**Rozanov (2000)**, "Ultimate thickness to bandwidth ratio of radar absorbers"~~ | ~~Behind IEEE~~ — **resolved 2026-09-05**, retrieved outside Xplore and read directly | ~~The original statement of the thickness/bandwidth bound, never read~~ — now read first-hand. Equations (6), (7), (9), (10), (14), all constants and **all four stated assumptions** are quoted verbatim in [`rozanov-bound-primary-source.md`](./rozanov-bound-primary-source.md). The decisive one the restatements did not carry: the bound assumes the absorber is **"overlying a perfectly reflecting plane"** at **normal incidence** | #129, #110, #133 |
 | **A 2025 Wiley paper on absorber quality criteria** | HTTP 403 | Explicitly on this subject. The critique of `RL_min` as a scoring metric currently rests on **secondary summaries** of it | #110 |
+| **JOSA B / Optica** | Not previously recorded as blocked; full text unreachable this pass | Smith & Pendry, "Homogenization of metamaterials by field averaging" (2006) — the field-averaging basis for effective-parameter retrieval. Not on arXiv, not on the Duke group page. #111's homogenisation-validity case currently rests on Alù, Koschny and Menzel instead, which agree with each other | #111 |
+| **ScienceDirect**, a 2015 waveguide characterisation of **BASF Elastollan 1185A** | HTTP 403 (same block as the existing ScienceDirect row) | An X-band (8.2–12.3 GHz) permittivity measurement for a **named, orderable TPU grade**. This is the repo's oldest standing substrate-data complaint — every TPU figure held today is for generic or unnamed material, against a BASF unfilled range spanning tanδ 0.040–0.140 at 1 MHz | #114, #127 |
 
 **Environment note.** A headless browser was set up and reaches sites through
 the agent proxy with `--disable-quic --ssl-version-max=tls1.2`. It does **not**
@@ -47,7 +49,7 @@ before recording an absence:**
 - **PubMed Central mirrors MDPI** and is not bot-blocked.
 - **University repositories hold IEEE post-prints.** The corroborating TPU
   measurement came from Pavia's repository after Xplore returned 403.
-- **`pymupdf` is installed** and extracts text, fonts and embedded figures. One
+- **`pymupdf` extracts text, fonts and embedded figures.** (**Corrected 2026-09-05:** it is *not* pre-installed in every session — a research agent found it absent and `pip install`ed it without trouble. The capability holds; the "already there" claim does not.) One
   "unextractable" datasheet turned out to use a custom font subset with a fixed
   **+29 character-code offset** — recoverable, not lost.
 - **Digitise the figure** when the running text gives only a range. The TPU
@@ -306,6 +308,94 @@ adopting these results will hit the same thing.
     mean *no magnetic filler added*. It measures tanδ 0.099 at 10 GHz — lossier
     than FR4 by ~5.8×. A skim-reader records the opposite of what the paper
     measured.
+
+25. **`docs/absorber-scoring-conventions.md` says Example 3 is ground-backed.
+    Three other places in this repo say it is not, and they are right.**
+    That document asserts it at lines 14, 48, 62 and 349, and collapses
+    absorptivity to `A = 1 − |S₁₁|²` on the strength of it — calling the result
+    *"the single most useful simplification in this document"*, tagged
+    `LITERATURE-SUPPORTED, and unanimous`. It is not unanimous.
+    `docs/seven-example-design-unknowns.md` lines 184–186, 202 and 345 record
+    Example 3 as **two-port, Floquet on both faces, no ground plane**, with the
+    reason stated: *FIG. 7G plots a non-zero Transmission trace, so the
+    structure is not metal-backed*. **Correction 18 above independently agrees**
+    — it settles FIG. 7G's y-axis as carrying a `|S₂₁|` Transmission trace and
+    absorbance as `1 − |S₁₁|² − |S₂₁|²`, which is the two-port form. And Landy
+    et al.'s device suppresses transmission with a **cut wire**, not a ground
+    plane, which is why a transmission trace exists at all.
+    **The likely cause is a category error, not a slip.** ADR-0017 makes skins
+    *this programme builds* print their own reflector, so our own designs really
+    are one-port. Example 3 is **somebody else's device**, used as the blind
+    reproduction target, and the programme's default was applied to it.
+    **Consequences, both live:** #133's fixture, format and cost conclusions
+    (one-port `.s1p`, "no new format needed", US$2,300–4,800 chamber) were
+    scoped for the wrong measurement; and Rozanov's bound requires a
+    perfectly reflecting backing (correction 26), so #129's Example 3 headroom
+    figures rest on an assumption that example does not satisfy.
+
+26. **Rozanov (2000) has now been read first-hand, and it is metal-backed by
+    assumption.** The bound's own opening sentence, verbatim: *"We consider a
+    slab of thickness d, permittivity ε = ε′ − iε″, and permeability
+    μ = μ′ − iμ″, **overlying a perfectly reflecting plane** and illuminated at
+    **normal incidence** by a monochromatic plane wave."* Eq. (6) is stated for
+    *"any **metal-backed** magnetodielectric layer"*. Two open-access
+    restatements had been used in its place and neither carried this as
+    prominently. Full equations, constants and the four stated assumptions are
+    in [`rozanov-bound-primary-source.md`](./rozanov-bound-primary-source.md).
+    Also recovered, and absent from the restatements: the ultimate `d/Δλ` at
+    −10 dB is **1/13.9** for the best possible non-magnetic narrow-band
+    absorber against **1/3.2** for a plain Dallenbach screen — so clever design
+    buys a factor of ~4.3 and no more, and **magnetic materials are the only
+    way to move the limit at all**.
+
+27. **`8.5–10.5 GHz` is FIG. 7G's plot axis, and it is being used as Example 3's
+    requirement band.** The patent's own prose, retrieved verbatim: *"The plot
+    of FIG. 7G shows simulated scattering performance of the EM skin 700 over
+    **select frequencies ranging from 8.5-10.5×10⁹ Hz (a sub-band of the
+    X-band)**."* That describes what was plotted. Nothing states the device is
+    required to absorb across it. It nonetheless now appears as a specification
+    in `docs/absorber-scoring-conventions.md:374` — *"The requirement is
+    '≥90% absorption across 8.5–10.5 GHz'"* — and at :189, :376, :390, in
+    `docs/HANDOFF-metamaterial-printing-grill.md:73`'s band column, and behind
+    **every headroom number** in `docs/absorber-thickness-bandwidth-bound.md`
+    (:39, :301, :304, :774–775). **Rozanov's bound is linear in Δλ**, so each of
+    those scales one-for-one with an axis label.
+    **This is correction 20's failure mode, second instance — and correction 21
+    predicted it in this exact file.** 21 recorded the −10 dB threshold as
+    "not yet an error, #110 is open". The band is the same move and it has
+    already fired. The rule stands unchanged: *a number read off a plot is not
+    a requirement.*
+
+28. **The FR4-permittivity explanation for the patent-vs-Landy 20% frequency gap
+    is dead by arithmetic.** The patent states its own simulation inputs:
+    *"a 0.87 mm-thick absorber metamaterial layer using FR4 dielectric layer of
+    permittivity of 4.8 and loss tangent of 0.017."* Resonance goes as
+    `1/√ε_eff`, so the observed `11.5/9.2 = 1.25` needs an effective-permittivity
+    ratio of **1.5625**. FR4's *entire* documented X-band spread (≈3.8–5.5,
+    Djordjević et al., IEEE T-EMC 43(4):662–667, 2001) gives at most **1.447**,
+    i.e. a 20.3% shift under an unrealistic 100%-field-in-substrate assumption;
+    a realistic 4.8-vs-4.3 comparison gives **5.7%**. Also ruled out: figure
+    misattribution (the FIG. 7G caption ties its assumptions explicitly to
+    EM skin 700), and measurement-versus-simulation scatter (Landy's own
+    simulated and measured peaks agree to **0.2%** — 11.48 vs 11.5 GHz).
+    **Genuine absence, routes stated:** the patent contains no figure-generation
+    methodology for Example 3 — full text searched via FreePatentsOnline for
+    "boundary", "periodic", "Floquet", "infinite array", "CST", "HFSS",
+    "solver"; none appear near Example 3. #142 stays open with a much smaller
+    hypothesis space.
+
+29. **FSV was chosen for #116/#168 on the grounds that the frequency
+    disagreement is small. It is about five linewidths.** #110 selected Feature
+    Selective Validation over RMS error specifically because FSV *"avoids
+    over-penalizing"* the patent-vs-Landy shift, and #168 restates it as *"a
+    small resonance-frequency shift."* **Landy's own resonance is 4% wide
+    (FWHM)**, so a ~20–25% offset separates the two curves by roughly five of
+    their own widths — they barely overlap, and a feature-matching metric may
+    report near-total disagreement exactly as RMS would. The choice may still be
+    right for other reasons; the stated reason needs re-testing before #168
+    builds on it. Related: **no FSV implementation exists in any language**, and
+    IEEE's own FSV committee page states no reference implementation ships with
+    the standard — a properly established absence, not a failed search.
 
 ---
 
