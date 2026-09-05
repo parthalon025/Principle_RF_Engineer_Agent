@@ -193,6 +193,73 @@ degrading away from centre** (`INFERRED`, not `MANUFACTURER-SPECIFIED`; this is 
 not Voltera's claim). It should be **measured on the machine in hand** before any design leans
 on it. That is a bench task, and the map already says the NOVA is in hand.
 
+### 3.1 Programme assumption, recorded 2026-09-05: global alignment is achievable manually
+
+**The assumption, at its honest rung.** The programme asserts that layer-to-layer alignment
+adequate for this work **is achievable with manual camera-assisted adjustment**. Provenance
+`ASSUMED` — nobody has measured it on this machine, and Voltera publishes no figure. It is
+**asserted, not inferred**, following the same rule #117 set for every other requirement
+constraint, and it holds for one pass: reversible, and confirmed or overturned by #106's
+coupon run rather than by argument.
+
+**What it releases.** Three things were waiting on this number and no longer are:
+
+- **ADR-0017's risk-dodge stops being load-bearing.** That decision keeps the bottom layer
+  unpatterned partly because "there's nothing on a blank layer to misalign against" — a way of
+  not depending on an unmeasured figure. Under this assumption a **patterned** buried layer is
+  available, and with it any architecture that puts geometry on more than the top layer.
+- **#128's stack-building question becomes an ordinary trade-off.** Laminating two printed
+  films and printing a dielectric spacer both stop being blocked, and the choice reverts to
+  cure temperature, adhesion and total thickness.
+- **#115's first question resolves the other way.** With registration assumed adequate, the
+  binding geometric number is the **feature floor** again — 100 µm minimum trace against the
+  200 µm these designs use — not placement or registration.
+
+**What it does not release.** The electrical objection on
+[#138](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/138) is untouched:
+Example 3's cut wire sits **0.2 mm from its neighbour on the E-plane**, the strong-coupling
+axis, giving a **20.7×** gap excursion across a 1.5:1 alphabet against **21.1×** for the square
+patch [#130](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/130) ruled out.
+Aligning the layers perfectly does not change how strongly neighbouring cells couple. Two
+independent objections stood against a buried alphabet; this assumption clears one of them.
+
+### 3.2 The carve-out: what manual adjustment structurally cannot fix
+
+**Stating this is the point of recording the assumption at all** — it narrows the claim rather
+than widening it.
+
+A human aligning on fiducials corrects the layer **as a rigid body**: shifted, rotated. It does
+nothing about the layer changing *size or shape*. Each layer takes its own thermal cure, so the
+substrate sees two cycles before the stack is finished.
+
+```
+    180 mm coupon  ×  0.1 % dimensional change  =  180 µm at the edges
+```
+
+**In plain terms.** *A tenth of a percent is a very small stretch — and across a coupon this
+size it is already as large as the whole printed feature. Line up the corners perfectly and the
+middle and the edges still land wherever the material decided to put them.* Voltera's own
+alignment documentation concedes the same thing qualitatively: *"there is always going to be
+some distortion the further from the center you get."*
+
+On FR4 this is a small effect. On the **silicone and TPU** this programme actually wants, it is
+not: elastomers move considerably more than 0.1 % with temperature and humidity, and that is
+precisely the substrate class the conformal requirement drives toward.
+
+**So the assumption's honest form is narrower than "registration is fine":**
+
+> **Global alignment is achievable manually. Local dimensional stability across a 180 mm
+> flexible panel is a separate, unmeasured question.**
+
+**And the distribution is the quantity, not the mean.** A coding surface's phase error is set by
+the **worst-placed cell**, not the average one — so "±X µm typical" is the wrong answer shape
+here even once someone measures it.
+
+**The cheap experiment that settles it.** Print the same fiducial grid twice with a cure
+between, image it, and report the **spread across the panel** rather than the offset at the
+corners. One plate, and it separates rigid-body misalignment (correctable) from dimensional
+change (not). This sharpens #106 item 4 rather than adding to it.
+
 ## 4. Double-sided printing: undocumented on NOVA
 
 **The comparison table is unambiguous about where this capability lives:**
