@@ -548,7 +548,9 @@ def test_analysis_material_property_degenerates_to_a_single_value_for_one_confid
     material_property = resolve_material_property(
         FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
     )
-    material_property = dict(material_property, low=4.4, high=4.4, entries=[])  # a confident, agreed value
+    material_property = dict(
+        material_property, low=4.4, high=4.4, entries=[]
+    )  # a confident, agreed value
 
     state = start_design_loop(REQUIREMENTS)
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
@@ -561,7 +563,9 @@ def test_analysis_material_property_degenerates_to_a_single_value_for_one_confid
     state_material = advance_loop_step(state, step_input_material)
     result_material = state_material.decisions[-1].result
 
-    state_direct = advance_loop_step(state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286})
+    state_direct = advance_loop_step(
+        state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
+    )
     result_direct = state_direct.decisions[-1].result
 
     assert result_material["resonant_frequency_hz"] == result_direct["resonant_frequency_hz"]

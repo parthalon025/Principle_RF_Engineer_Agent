@@ -621,7 +621,11 @@ def test_fresh_requirements_failure_leaves_the_redesign_decision_flush_uncommitt
 
     import orchestration.tooling as tooling_module
 
-    def _boom(design_id_arg: int) -> dict[str, Any]:
+    # Mirrors _fresh_requirements' real signature exactly, `fallback` included
+    # and deliberately not defaulted: a default here would let this double
+    # drift out of step with production again without any test noticing, which
+    # is how it came to be stale in the first place.
+    def _boom(design_id_arg: int, fallback: dict[str, Any]) -> dict[str, Any]:
         assert design_id_arg == design_id
         raise _FreshRequirementsReadFailed("fresh requirements read failed (simulated)")
 

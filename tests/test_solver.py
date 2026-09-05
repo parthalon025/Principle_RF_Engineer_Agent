@@ -1012,7 +1012,23 @@ def test_design_id_seed_shortens_the_plateau_window(tmp_path, monkeypatch):
     seed_frequency_hz = patch_resonant_frequency_hz(
         same_candidate["eps_r"], same_candidate["w_m"], same_candidate["h_m"], same_candidate["l_m"]
     )
-    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    # NOTE: unlike its sibling seeding tests, this one is the only one that
+    # both seeds from a fake AND needs its candidates to really evaluate --
+    # so `get_connection` is deliberately NOT faked here. `designs.db` is one
+    # module object shared by orchestration/solver.py and orchestration/
+    # tooling.py (both `import designs.db as designs_db`), so faking
+    # `get_connection` on it is global: it would also intercept the real read
+    # that driving each candidate now performs, via advance_design_loop_step
+    # -> _fresh_requirements -> read_design (issue #100), which calls
+    # .cursor() on the connection. _FakeConn has no .cursor, so every
+    # candidate would fail at ANALYSIS, score None, never reach
+    # best_so_far.append(), and the plateau could never fire -- the search
+    # would run the full budget and stop with "evaluation_budget".
+    #
+    # Faking only the read below is sufficient and safe: _prior_best_from_
+    # design does nothing with the connection except hand it to this function
+    # (which ignores it) and close it, so a real connection serves the seed
+    # path unchanged while leaving candidate driving its real database.
     monkeypatch.setattr(
         solver_module.designs_db,
         "read_engineering_results_for_scoring",
