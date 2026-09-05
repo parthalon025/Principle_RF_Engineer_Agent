@@ -172,7 +172,7 @@ This is the sharpest gap in the whole investigation, and it needs stating withou
 - **XYZ accuracy ± 20 µm** ([technical specifications](https://www.voltera.io/technical-specifications)) — where the print head lands relative to where it was commanded, within one print.
 - **XY tool-to-tool positional accuracy ± 15 µm** ([NOVA brochure, pre-release](https://ecelab.pratt.duke.edu/sites/ecelab.pratt.duke.edu/files/2024/Voltera%20NOVA%20brochure.pdf)) — how well the probe module and the dispenser module agree on where a point is. Marked "pre-release specifications are estimates and subject to change".
 - **Step resolution 2.5 µm (X) × 7 µm (Y) × 1.25 µm (Z)**; **print height resolution ± 10 µm**.
-- **Camera 8 MP, 17 µm/pixel**, with AR overlay.
+- **Camera 8 MP, 17 µm/pixel**, with AR overlay. **Conflicts with the live product page — see §3.3.**
 - **Alignment method: "Manual with camera assist."**
 
 **What Voltera does not publish, anywhere:** a layer-to-layer registration figure. The
@@ -192,6 +192,186 @@ on that. A realistic expectation is **one to a few camera pixels — tens of mic
 degrading away from centre** (`INFERRED`, not `MANUFACTURER-SPECIFIED`; this is our estimate,
 not Voltera's claim). It should be **measured on the machine in hand** before any design leans
 on it. That is a bench task, and the map already says the NOVA is in hand.
+
+### 3.1 Programme assumption, recorded 2026-09-05: global alignment is achievable manually
+
+**The assumption, at its honest rung.** The programme asserts that layer-to-layer alignment
+adequate for this work **is achievable with manual camera-assisted adjustment**. Provenance
+`ASSUMED` — nobody has measured it on this machine, and Voltera publishes no figure. It is
+**asserted, not inferred**, following the same rule #117 set for every other requirement
+constraint, and it holds for one pass: reversible, and confirmed or overturned by #106's
+coupon run rather than by argument.
+
+**What it releases.** Three things were waiting on this number and no longer are:
+
+- **ADR-0017's risk-dodge stops being load-bearing.** That decision keeps the bottom layer
+  unpatterned partly because "there's nothing on a blank layer to misalign against" — a way of
+  not depending on an unmeasured figure. Under this assumption a **patterned** buried layer is
+  available, and with it any architecture that puts geometry on more than the top layer.
+- **#128's stack-building question becomes an ordinary trade-off.** Laminating two printed
+  films and printing a dielectric spacer both stop being blocked, and the choice reverts to
+  cure temperature, adhesion and total thickness.
+- **#115's first question resolves the other way.** With registration assumed adequate, the
+  binding geometric number is the **feature floor** again — 100 µm minimum trace against the
+  200 µm these designs use — not placement or registration.
+
+**What it does not release.** The electrical objection on
+[#138](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/138) is untouched:
+Example 3's cut wire sits **0.2 mm from its neighbour on the E-plane**, the strong-coupling
+axis, giving a **20.7×** gap excursion across a 1.5:1 alphabet against **21.1×** for the square
+patch [#130](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/130) ruled out.
+Aligning the layers perfectly does not change how strongly neighbouring cells couple. Two
+independent objections stood against a buried alphabet; this assumption clears one of them.
+
+### 3.2 The carve-out: what manual adjustment structurally cannot fix
+
+**Stating this is the point of recording the assumption at all** — it narrows the claim rather
+than widening it.
+
+A human aligning on fiducials corrects the layer **as a rigid body**: shifted, rotated. It does
+nothing about the layer changing *size or shape*. Each layer takes its own thermal cure, so the
+substrate sees two cycles before the stack is finished.
+
+```
+    180 mm coupon  ×  0.1 % dimensional change  =  180 µm at the edges
+```
+
+**In plain terms.** *A tenth of a percent is a very small stretch — and across a coupon this
+size it is already as large as the whole printed feature. Line up the corners perfectly and the
+middle and the edges still land wherever the material decided to put them.* Voltera's own
+alignment documentation concedes the same thing qualitatively: *"there is always going to be
+some distortion the further from the center you get."*
+
+On FR4 this is a small effect. On the **silicone and TPU** this programme actually wants, it is
+not: elastomers move considerably more than 0.1 % with temperature and humidity, and that is
+precisely the substrate class the conformal requirement drives toward.
+
+**So the assumption's honest form is narrower than "registration is fine":**
+
+> **Global alignment is achievable manually. Local dimensional stability across a 180 mm
+> flexible panel is a separate, unmeasured question.**
+
+**And the distribution is the quantity, not the mean.** A coding surface's phase error is set by
+the **worst-placed cell**, not the average one — so "±X µm typical" is the wrong answer shape
+here even once someone measures it.
+
+**The cheap experiment that settles it.** Print the same fiducial grid twice with a cure
+between, image it, and report the **spread across the panel** rather than the offset at the
+corners. One plate, and it separates rigid-body misalignment (correctable) from dimensional
+change (not). This sharpens #106 item 4 rather than adding to it.
+
+### 3.3 The live product page, read 2026-09-05 — five corrections and one refuted arithmetic
+
+Read directly from [voltera.io/products/nova](https://www.voltera.io/products/nova). All
+`MANUFACTURER-SPECIFIED` unless marked otherwise. Where it disagrees with the pre-release
+brochure this document already cites, both are recorded rather than one silently replacing the
+other.
+
+**1. The camera spec conflicts with the brochure, and the live page gives the smaller number.**
+
+| Source | Camera |
+|---|---|
+| NOVA brochure (pre-release), cited in §3 | **8 MP**, 17 µm/pixel |
+| Live product page, 2026-09-05 | **"1920 × 1080 Image size"**, **"17 µm/pixel Camera resolution [2]"** |
+
+1920 × 1080 is **2.07 MP**, not 8. Possibly an 8 MP sensor delivering a 1080p image, possibly a
+changed spec — the page does not say. What matters is the **field of view**, because that is
+what decides whether two fiducials can share one frame:
+
+```
+    1920 × 17 µm  =  32.6 mm        1080 × 17 µm  =  18.4 mm
+```
+
+**This refutes an earlier estimate of ~55 × 42 mm**, which was computed from the brochure's
+8 MP figure. The frame is **≈ 33 × 18 mm**, so covering a 180 mm coupon takes **≈ 6 frames
+across**, not three. Gantry error between frames therefore enters a full-panel registration
+measurement more often than assumed. `CALCULATED` from the page's own two numbers.
+
+**2. Camera resolution is not a constant.** Footnote [2]: **"Dependent on substrate height."**
+The 17 µm/pixel figure is for some unstated working distance. A 2 mm silicone sheet and a thin
+PET film do not image at the same scale, so any registration measurement must record the
+substrate it was taken on.
+
+**3. Voltera claims registration errors are eliminated, and publishes no number for it.**
+The page says the augmented-reality overlay lets you **"accurately position and align patterns"**
+and, verbatim, **"Eliminate registration errors."** That is a stronger claim than anything in
+§3 — and it is **marketing language with no figure attached**, from the same vendor that
+publishes no layer-to-layer registration specification anywhere. It neither confirms nor refutes
+§3.1's assumption; it is a vendor claim, and this repo's ladder puts an unquantified
+manufacturer assertion below a measurement. Record it, do not lean on it.
+
+**4. Four layers is not a hard ceiling.** The page states **"Up to 4 stack-up layers [3]"** with
+footnote **"[3] More stack-up layers are possible under certain conditions."** This document and
+#106 both record "4 layers" as a limit. It is a *typical* figure, not a cap, and the conditions
+are unstated.
+
+**5. Silicone is absent from the substrate list.** The page names **TPU, PET, polyimide
+(Kapton), textiles, glass, ceramic**. Silicone — the top RF candidate from #114 on measured loss —
+does **not** appear. That does not make it impossible, but it means #106 item 5 (silicone on the
+vacuum table) is testing something the vendor does not claim, which raises its priority rather
+than lowering it. TPU *is* listed, which strengthens TPU's practical case over silicone's.
+
+**Two further reads, both negative and both useful:**
+
+- **No curing specification.** The only temperature figure is **"up to 40 °C (material)"**, which
+  is ink conditioning, not cure. Nothing on the page contradicts the standing finding that curing
+  needs an external oven — and the whole "can the part leave the host to be baked" question
+  (RUNNING-LISTS correction 3) therefore stands unchanged.
+- **Dielectric ink: the product page names none** — only marketing mention of **"conductor,
+  dielectric, and adhesive layers"**, with both named example materials being conductors
+  (Creative Materials EXP 2613-40 gold; Celanese Micromax Intexar PE874 stretchable silver).
+  **This is a gap in the product page, NOT a gap in what is known** — see the correction below.
+
+**One spec worth carrying forward:** **"≥ 10⁷ S/m Conductivity (single pass)"**. Copper is
+5.8 × 10⁷ S/m, so a single pass reaches within about 6× of copper in bulk conductivity — and per
+RUNNING-LISTS correction 4, at RF the penalty goes as `1/√σ`, so **≈ 2.4× in surface
+resistance**, not 6×. Relevant to the reflector layer, where a good conductor is wanted.
+
+### 3.4 Correction to §3.3, and two blog reads that add little
+
+**Correcting §3.3's dielectric bullet.** An earlier pass read the product page alone and
+reported that a printed dielectric spacer was "unconfirmed on this machine." **That was a
+failure to read this document's own §1**, which had already settled it — and settled it more
+usefully. The ink exists, is named, is sold by Voltera and appears in Voltera's own multi-layer
+white paper (**ACI SI3104**, $99.99/2 mL). What §1 establishes is that it **cannot serve as the
+spacer**: 9–14 µm per layer × 3 layers = **27–42 µm**, against a 0.85–2.0 mm requirement —
+about **62 layers** to reach 0.87 mm on a machine validated to four, and electrically **0.87°
+of phase** at 10 GHz. *"The substrate is the spacer. There is no third option."*
+
+**The lesson is the repo's own standing rule, inverted.** The rule guards against recording an
+absence the world does not have. This was the mirror image: recording an absence **this
+document had already closed**, by consulting one source instead of the file being edited.
+Check the repo before checking the web.
+
+**Two sources read 2026-09-05, both adding little:**
+
+**[Voltera's multilayer flexible/stretchable blog](https://www.voltera.io/blog/print-multilayer-flexible-stretchable-circuits-nova)** — already
+within §3's stated search scope ("no registration figure of any kind appears in Voltera's
+documentation, white papers, blog or spec sheet"), and confirms it: **zero registration
+numbers**. Four small additions:
+
+- **Corroborates the 4-layer footnote from a second first-party source**, verbatim: *"Designs
+  with more than 4 stack-up layers are achievable but depend on a number of factors."*
+- **A distinction worth not conflating.** `Plan` generates *"smart probe points, taking into
+  account subtle height changes each subsequent layer creates."* That is **Z compensation** —
+  the machine re-probes height as the stack grows. It is **not XY registration**, and the
+  marketing framing invites reading it as though it were.
+- **Three named materials not previously recorded here:** `ACI FS0142` semi-sintering ink,
+  `Voltera Conductor 3`, and `T4 solder paste` (the machine dispenses solder paste too).
+- **Every demonstrated multilayer stack is on PET or paper** — flexible membrane keyboard
+  (3 layers, PET), electroluminescent circuit (4 layers, paper/PET), LED roulette (3 layers,
+  PET). **No TPU or silicone multilayer example exists in Voltera's own demonstrations**,
+  despite TPU being on the substrate list. A relevant negative for the conformal-skin case,
+  and it compounds §3.2's dimensional-stability carve-out: the substrates Voltera has actually
+  proven multilayer on are the dimensionally stable ones.
+
+**[Wevolver, "Electronics that bend the rules"](https://www.wevolver.com/article/electronics-that-bend-the-rules-the-benefit-of-flexible-multilayer-designs)** —
+**a dead end, recorded so nobody reads it twice.** Checked specifically for bend-radius rules,
+IPC-2223 multipliers, neutral-axis treatment, registration tolerances and multilayer failure
+modes under bending. It contains **none of them** — no `R = 3T`, no 6× rule, no IPC reference,
+no strain distribution, no fatigue or delamination data. Editorial content built around
+Voltera's four-layer capability. **#115's bend-rule question gets nothing from it**, and that
+question still needs IPC-2223 itself or a fabricator DFM guide quoting its multipliers.
 
 ## 4. Double-sided printing: undocumented on NOVA
 
