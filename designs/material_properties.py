@@ -231,7 +231,7 @@ def add_entry(
         if not isinstance(note, str) or not note.strip():
             raise InvalidMaterialPropertyError(
                 "an ASSUMED entry requires a non-empty note explaining where "
-                "the value came from, even \"no source, just entering it\" "
+                'the value came from, even "no source, just entering it" '
                 "(ADR-0015)"
             )
 
@@ -447,8 +447,7 @@ FR4_SEED_ENTRIES: list[dict[str, Any]] = [
         value=4.4,
         unit="unitless",
         provenance=LITERATURE_SUPPORTED,
-        citation="F:\\data\\rf_metamaterials\\chunks\\10.25046_aj040310.json "
-        "(9.1-10.2 GHz design)",
+        citation="F:\\data\\rf_metamaterials\\chunks\\10.25046_aj040310.json (9.1-10.2 GHz design)",
     ),
     add_entry(
         material="FR4",
@@ -458,8 +457,7 @@ FR4_SEED_ENTRIES: list[dict[str, Any]] = [
         value=0.02,
         unit="unitless",
         provenance=LITERATURE_SUPPORTED,
-        citation="F:\\data\\rf_metamaterials\\chunks\\10.25046_aj040310.json "
-        "(9.1-10.2 GHz design)",
+        citation="F:\\data\\rf_metamaterials\\chunks\\10.25046_aj040310.json (9.1-10.2 GHz design)",
     ),
     add_entry(
         material="FR4",
