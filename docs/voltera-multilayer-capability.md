@@ -172,7 +172,7 @@ This is the sharpest gap in the whole investigation, and it needs stating withou
 - **XYZ accuracy ± 20 µm** ([technical specifications](https://www.voltera.io/technical-specifications)) — where the print head lands relative to where it was commanded, within one print.
 - **XY tool-to-tool positional accuracy ± 15 µm** ([NOVA brochure, pre-release](https://ecelab.pratt.duke.edu/sites/ecelab.pratt.duke.edu/files/2024/Voltera%20NOVA%20brochure.pdf)) — how well the probe module and the dispenser module agree on where a point is. Marked "pre-release specifications are estimates and subject to change".
 - **Step resolution 2.5 µm (X) × 7 µm (Y) × 1.25 µm (Z)**; **print height resolution ± 10 µm**.
-- **Camera 8 MP, 17 µm/pixel**, with AR overlay.
+- **Camera 8 MP, 17 µm/pixel**, with AR overlay. **Conflicts with the live product page — see §3.3.**
 - **Alignment method: "Manual with camera assist."**
 
 **What Voltera does not publish, anywhere:** a layer-to-layer registration figure. The
@@ -259,6 +259,75 @@ here even once someone measures it.
 between, image it, and report the **spread across the panel** rather than the offset at the
 corners. One plate, and it separates rigid-body misalignment (correctable) from dimensional
 change (not). This sharpens #106 item 4 rather than adding to it.
+
+### 3.3 The live product page, read 2026-09-05 — five corrections and one refuted arithmetic
+
+Read directly from [voltera.io/products/nova](https://www.voltera.io/products/nova). All
+`MANUFACTURER-SPECIFIED` unless marked otherwise. Where it disagrees with the pre-release
+brochure this document already cites, both are recorded rather than one silently replacing the
+other.
+
+**1. The camera spec conflicts with the brochure, and the live page gives the smaller number.**
+
+| Source | Camera |
+|---|---|
+| NOVA brochure (pre-release), cited in §3 | **8 MP**, 17 µm/pixel |
+| Live product page, 2026-09-05 | **"1920 × 1080 Image size"**, **"17 µm/pixel Camera resolution [2]"** |
+
+1920 × 1080 is **2.07 MP**, not 8. Possibly an 8 MP sensor delivering a 1080p image, possibly a
+changed spec — the page does not say. What matters is the **field of view**, because that is
+what decides whether two fiducials can share one frame:
+
+```
+    1920 × 17 µm  =  32.6 mm        1080 × 17 µm  =  18.4 mm
+```
+
+**This refutes an earlier estimate of ~55 × 42 mm**, which was computed from the brochure's
+8 MP figure. The frame is **≈ 33 × 18 mm**, so covering a 180 mm coupon takes **≈ 6 frames
+across**, not three. Gantry error between frames therefore enters a full-panel registration
+measurement more often than assumed. `CALCULATED` from the page's own two numbers.
+
+**2. Camera resolution is not a constant.** Footnote [2]: **"Dependent on substrate height."**
+The 17 µm/pixel figure is for some unstated working distance. A 2 mm silicone sheet and a thin
+PET film do not image at the same scale, so any registration measurement must record the
+substrate it was taken on.
+
+**3. Voltera claims registration errors are eliminated, and publishes no number for it.**
+The page says the augmented-reality overlay lets you **"accurately position and align patterns"**
+and, verbatim, **"Eliminate registration errors."** That is a stronger claim than anything in
+§3 — and it is **marketing language with no figure attached**, from the same vendor that
+publishes no layer-to-layer registration specification anywhere. It neither confirms nor refutes
+§3.1's assumption; it is a vendor claim, and this repo's ladder puts an unquantified
+manufacturer assertion below a measurement. Record it, do not lean on it.
+
+**4. Four layers is not a hard ceiling.** The page states **"Up to 4 stack-up layers [3]"** with
+footnote **"[3] More stack-up layers are possible under certain conditions."** This document and
+#106 both record "4 layers" as a limit. It is a *typical* figure, not a cap, and the conditions
+are unstated.
+
+**5. Silicone is absent from the substrate list.** The page names **TPU, PET, polyimide
+(Kapton), textiles, glass, ceramic**. Silicone — the top RF candidate from #114 on measured loss —
+does **not** appear. That does not make it impossible, but it means #106 item 5 (silicone on the
+vacuum table) is testing something the vendor does not claim, which raises its priority rather
+than lowering it. TPU *is* listed, which strengthens TPU's practical case over silicone's.
+
+**Two further reads, both negative and both useful:**
+
+- **No curing specification.** The only temperature figure is **"up to 40 °C (material)"**, which
+  is ink conditioning, not cure. Nothing on the page contradicts the standing finding that curing
+  needs an external oven — and the whole "can the part leave the host to be baked" question
+  (RUNNING-LISTS correction 3) therefore stands unchanged.
+- **Dielectric ink is not confirmed.** The page mentions **"conductor, dielectric, and adhesive
+  layers"** as things commonly stacked, and **"assign multiple materials across up to four
+  stack-up layers"** — but names no dielectric ink and gives no dielectric specification. #128's
+  third stack-building option (print a dielectric spacer between conductors) remains
+  **unconfirmed on this machine**, and the two named example materials are both conductors
+  (Creative Materials EXP 2613-40 gold; Celanese Micromax Intexar PE874 stretchable silver).
+
+**One spec worth carrying forward:** **"≥ 10⁷ S/m Conductivity (single pass)"**. Copper is
+5.8 × 10⁷ S/m, so a single pass reaches within about 6× of copper in bulk conductivity — and per
+RUNNING-LISTS correction 4, at RF the penalty goes as `1/√σ`, so **≈ 2.4× in surface
+resistance**, not 6×. Relevant to the reflector layer, where a good conductor is wanted.
 
 ## 4. Double-sided printing: undocumented on NOVA
 
