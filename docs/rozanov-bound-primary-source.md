@@ -86,6 +86,24 @@ requirement asks for both beyond what the inequality allows, no amount of
 design effort will produce it — the answer is "make it thicker, or accept a
 narrower band."
 
+**The broad-band headline, and what everyone is actually quoting.** Eq. (10)
+continues, verbatim:
+
+> "For nonmagnetic broad-band absorbers (μs,i ≡ 1), it follows from (10) that
+> the application of any multilayer slab made of dielectrics with any
+> physically realizable frequency dependence of the permittivity cannot
+> provide 10-dB reflectance level, if the thickness of the absorber is less
+> than **λmax/17.2**."
+
+**The abstract rounds this to 1/17; the derivation gives 1/17.2.** Anyone
+quoting "1/17" is quoting the abstract rather than Eq. (10) — worth knowing,
+because that is the route by which the figure reaches most secondary sources.
+
+*Plainly: an ordinary non-magnetic coating that must cut reflected radar power
+to about a tenth across a wide band can never be thinner than about a
+seventeenth of the longest wavelength it has to absorb — roughly 6% of that
+wavelength, as an absolute floor.*
+
 ---
 
 ## 2. The number the restatements did not carry
@@ -101,6 +119,7 @@ Rozanov's §IV comparison is worth quoting because it is the practical payload:
 |---|---|
 | Plain Dallenbach screen | 1 / 3.2 |
 | **Best possible narrow-band non-magnetic dielectric** | **1 / 13.9** |
+| Best possible **broad-band** non-magnetic multilayer, Eq. (10) | **1 / 17.2** |
 
 **In plain terms.** A plain single-layer absorber has to be about a third of
 the bandwidth's worth of wavelength thick. A perfectly optimised one can be
@@ -124,8 +143,21 @@ Read directly from §II and §III, not inferred:
 |---|---|---|---|
 | a | **Normal incidence** | "illuminated at normal incidence by a monochromatic plane wave" (§II ¶1) | No, as stated |
 | b | **Backed by a perfectly reflecting plane** | "overlying a perfectly reflecting plane" (§II ¶1); Eq. (6) "any **metal-backed** magnetodielectric layer" | **This is the one that fails for Example 3** |
-| c | **Linear and causal medium** | Kramers–Kronig / minimum-phase analyticity used to extend ρ(ω) into the complex plane (§III) | No — it is what makes the integral finite |
+| c | **Linear and causal medium** | Kramers–Kronig / minimum-phase analyticity used to extend ρ(ω) into the complex plane (§III), cited to Nussenzveig ref. [8] | No — it is what makes the integral finite |
 | d | Passive, no gain | implicit in the analyticity argument | No |
+
+**An honesty note on (c) and (d).** The paper does *not* restate "linear,
+time-invariant, passive" as a labelled assumption list. They are implicit in
+its invocation of Kramers–Kronig causality and the analyticity of ρ(ω).
+Standard in this literature, but this is inferred-from-method rather than
+quoted, and is flagged as such rather than dressed up as a citation.
+
+**And the bound is not a non-magnetic result.** μ appears throughout the
+derivation; the widely-quoted 1/17.2 is the **special case μ_s,i ≡ 1**. The
+paper also gives two sharper, narrower corollaries the restatements omit:
+Eqs. (12)/(13) for absorbers with strong magnetic dispersion — *"valid only if
+the imaginary part of the permeability is negligibly small at λmax"* — and
+Eq. (14) for the narrow-band quarter-wave case assumed thin (|ε| ≫ |μ|).
 
 **Assumption (b) is not a technicality.** `docs/absorber-thickness-bandwidth-bound.md:182`
 already flagged it as *"the one genuinely escapable assumption"* and §2.2 of
