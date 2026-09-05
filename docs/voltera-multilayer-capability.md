@@ -317,17 +317,61 @@ than lowering it. TPU *is* listed, which strengthens TPU's practical case over s
   is ink conditioning, not cure. Nothing on the page contradicts the standing finding that curing
   needs an external oven — and the whole "can the part leave the host to be baked" question
   (RUNNING-LISTS correction 3) therefore stands unchanged.
-- **Dielectric ink is not confirmed.** The page mentions **"conductor, dielectric, and adhesive
-  layers"** as things commonly stacked, and **"assign multiple materials across up to four
-  stack-up layers"** — but names no dielectric ink and gives no dielectric specification. #128's
-  third stack-building option (print a dielectric spacer between conductors) remains
-  **unconfirmed on this machine**, and the two named example materials are both conductors
+- **Dielectric ink: the product page names none** — only marketing mention of **"conductor,
+  dielectric, and adhesive layers"**, with both named example materials being conductors
   (Creative Materials EXP 2613-40 gold; Celanese Micromax Intexar PE874 stretchable silver).
+  **This is a gap in the product page, NOT a gap in what is known** — see the correction below.
 
 **One spec worth carrying forward:** **"≥ 10⁷ S/m Conductivity (single pass)"**. Copper is
 5.8 × 10⁷ S/m, so a single pass reaches within about 6× of copper in bulk conductivity — and per
 RUNNING-LISTS correction 4, at RF the penalty goes as `1/√σ`, so **≈ 2.4× in surface
 resistance**, not 6×. Relevant to the reflector layer, where a good conductor is wanted.
+
+### 3.4 Correction to §3.3, and two blog reads that add little
+
+**Correcting §3.3's dielectric bullet.** An earlier pass read the product page alone and
+reported that a printed dielectric spacer was "unconfirmed on this machine." **That was a
+failure to read this document's own §1**, which had already settled it — and settled it more
+usefully. The ink exists, is named, is sold by Voltera and appears in Voltera's own multi-layer
+white paper (**ACI SI3104**, $99.99/2 mL). What §1 establishes is that it **cannot serve as the
+spacer**: 9–14 µm per layer × 3 layers = **27–42 µm**, against a 0.85–2.0 mm requirement —
+about **62 layers** to reach 0.87 mm on a machine validated to four, and electrically **0.87°
+of phase** at 10 GHz. *"The substrate is the spacer. There is no third option."*
+
+**The lesson is the repo's own standing rule, inverted.** The rule guards against recording an
+absence the world does not have. This was the mirror image: recording an absence **this
+document had already closed**, by consulting one source instead of the file being edited.
+Check the repo before checking the web.
+
+**Two sources read 2026-09-05, both adding little:**
+
+**[Voltera's multilayer flexible/stretchable blog](https://www.voltera.io/blog/print-multilayer-flexible-stretchable-circuits-nova)** — already
+within §3's stated search scope ("no registration figure of any kind appears in Voltera's
+documentation, white papers, blog or spec sheet"), and confirms it: **zero registration
+numbers**. Four small additions:
+
+- **Corroborates the 4-layer footnote from a second first-party source**, verbatim: *"Designs
+  with more than 4 stack-up layers are achievable but depend on a number of factors."*
+- **A distinction worth not conflating.** `Plan` generates *"smart probe points, taking into
+  account subtle height changes each subsequent layer creates."* That is **Z compensation** —
+  the machine re-probes height as the stack grows. It is **not XY registration**, and the
+  marketing framing invites reading it as though it were.
+- **Three named materials not previously recorded here:** `ACI FS0142` semi-sintering ink,
+  `Voltera Conductor 3`, and `T4 solder paste` (the machine dispenses solder paste too).
+- **Every demonstrated multilayer stack is on PET or paper** — flexible membrane keyboard
+  (3 layers, PET), electroluminescent circuit (4 layers, paper/PET), LED roulette (3 layers,
+  PET). **No TPU or silicone multilayer example exists in Voltera's own demonstrations**,
+  despite TPU being on the substrate list. A relevant negative for the conformal-skin case,
+  and it compounds §3.2's dimensional-stability carve-out: the substrates Voltera has actually
+  proven multilayer on are the dimensionally stable ones.
+
+**[Wevolver, "Electronics that bend the rules"](https://www.wevolver.com/article/electronics-that-bend-the-rules-the-benefit-of-flexible-multilayer-designs)** —
+**a dead end, recorded so nobody reads it twice.** Checked specifically for bend-radius rules,
+IPC-2223 multipliers, neutral-axis treatment, registration tolerances and multilayer failure
+modes under bending. It contains **none of them** — no `R = 3T`, no 6× rule, no IPC reference,
+no strain distribution, no fatigue or delamination data. Editorial content built around
+Voltera's four-layer capability. **#115's bend-rule question gets nothing from it**, and that
+question still needs IPC-2223 itself or a fabricator DFM guide quoting its multipliers.
 
 ## 4. Double-sided printing: undocumented on NOVA
 
