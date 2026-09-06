@@ -353,6 +353,12 @@ code {
           along the electric field versus how wide it is across — sets the resistance.</p>
       </div>
 
+      <div class="ctl">
+        <label for="rngBend">Bend radius <span class="val" id="valBend"></span></label>
+        <input type="range" id="rngBend" min="3" max="120" step="1">
+        <p class="hint" id="bendHint"></p>
+      </div>
+
       <div class="ctl" id="ctlSlot">
         <label for="rngSlotT">Slot width <span class="val" id="valSlotT"></span></label>
         <input type="range" id="rngSlotT" min="0.15" max="1.60" step="0.01">
@@ -527,14 +533,18 @@ const SUBSTRATES = {
 
 const INKS = {
   carbon: { name: "ACI SC1502 carbon", rho: 0.006, perPass: [6, 12], dsMaxPasses: 2,
-            prov: "MANUFACTURER-SPECIFIED", cure: 120, cureNote: "≥120 °C — needs an oven",
-            note: "Resistivity < 0.6 Ω·cm. Skin depth 390 µm at 10 GHz, so a printed film is electrically transparent and sheet resistance is exactly resistivity ÷ thickness." },
+            prov: "MANUFACTURER-SPECIFIED", cure: 80,
+            cureNote: "80 °C possible, 120 °C recommended — still needs an oven",
+            strainKnown: false,
+            note: "Resistivity < 0.6 Ω·cm. Skin depth 390 µm at 10 GHz, so a printed film is electrically transparent and sheet resistance is exactly resistivity ÷ thickness. Datasheet: elongation >200% on TPU and \u201Crapid return after strain\u201D — but no resistance-vs-strain curve and no cycle count, and here resistance IS the design parameter." },
   mxene:  { name: "Printed MXene", sigma: 6.9e5, perPass: [10, 10], dsMaxPasses: 4,
             prov: "LITERATURE-SUPPORTED", cure: 20, cureNote: "room temperature — no oven needed",
-            note: "σ = 6.9×10⁵ S/m. Skin depth 6.1 µm, so the thinnest printable film is already opaque — thickness is a dead knob." },
+            strainKnown: false,
+            note: "σ = 6.9×10⁵ S/m. Skin depth 6.1 µm, so the thinnest printable film is already opaque — thickness is a dead knob. Printed on PDMS and on curved surfaces in the literature, but no strain data." },
   silver: { name: "ACI SS1109 silver", sigma: 2.22e6, perPass: [10, 20], dsMaxPasses: 2,
-            prov: "MANUFACTURER-SPECIFIED", cure: 135, cureNote: "135 °C / 5 min — needs an oven",
-            note: "σ = 2.22×10⁶ S/m. Skin depth 3.4 µm. A mirror at any printable thickness; contributes essentially no loss." }
+            prov: "MANUFACTURER-SPECIFIED", cure: 135, cureNote: "135 °C / 15 min — needs an oven",
+            strainKnown: true,
+            note: "σ = 2.22×10⁶ S/m. Skin depth 3.4 µm. A mirror at any printable thickness; contributes essentially no loss. Datasheet: elongation >200% on TPU — and because it works as a mirror rather than a resistor, drift in its resistance does not matter here." }
 };
 
 const FEATURE_FLOOR = 0.2;      // mm — NOVA demonstrated feature size
@@ -546,6 +556,14 @@ const MIRROR_SKIN_DEPTHS = 3;   // below this a film leaks instead of reflecting
 const REFLECTORS = ["silver", "mxene"];
 
 function skinDepth(sigma, f) { return 1 / Math.sqrt(Math.PI * f * MU0 * sigma); }
+
+/**
+ * Bending a sheet stretches its outer face. For thickness T bent to radius R the
+ * outer-fibre strain is T/(2R). The patent's own rule of thumb is R ≥ 3T.
+ */
+function bendStrain(total_mm, R_mm) {
+  return { strain: total_mm / (2 * R_mm), ratio: R_mm / total_mm };
+}
 
 /** Sheet resistance of a printed film at f, in Ω/sq. */
 function sheetR(ink, t_um, f) {
@@ -834,12 +852,23 @@ function solve(s) {
        : "No oven needed; printable in place on a host that cannot be removed."
   });
 
+
+  const bend = bendStrain(total, s.bendR);
+  checks.push({
+    k: "Strain at the printed face", slug: "a bend tighter than the sheet can take",
+    v: (100 * bend.strain).toFixed(1) + "%",
+    ok: bend.ratio >= 3, marg: bend.ratio >= 2,
+    n: "Bent to R = " + s.bendR + " mm, i.e. R = " + bend.ratio.toFixed(1)
+       + "T against the patent's R ≥ 3T. Geometry barely cares — 10% strain still absorbs 98% "
+       + "— but the ink's resistance-vs-strain is unpublished, and here resistance is the design."
+  });
+
   const hard = checks.filter(c => !c.neutral);
   const nFail = hard.filter(c => !c.ok && !c.marg).length;
   const nMarg = hard.filter(c => !c.ok && c.marg).length;
 
   return {
-    sub, ink, Rs, nsq, Rarr, ideal, gap, p, geom, passes, total,
+    sub, ink, Rs, nsq, Rarr, ideal, gap, p, geom, passes, total, bend,
     refl, reflDelta, reflDepths, reflRs, reflPasses, ovenNeeded,
     A10: best.A, peak, lo90, hi90, sweep, checks, bridgeIdeal,
     subShareActual, subShareIdeal: ideal.subShare,
@@ -999,12 +1028,23 @@ function solveTransmissive(s) {
                   : "No oven needed; printable in place."
   });
 
+
+  const bend = bendStrain(total, s.bendR);
+  checks.push({
+    k: "Strain at the printed face", slug: "a bend tighter than the sheet can take",
+    v: (100 * bend.strain).toFixed(1) + "%",
+    ok: bend.ratio >= 3, marg: bend.ratio >= 2,
+    n: "Bent to R = " + s.bendR + " mm, i.e. R = " + bend.ratio.toFixed(1)
+       + "T against the patent's R ≥ 3T. Geometry barely cares — 10% strain still absorbs 98% "
+       + "— but the ink's resistance-vs-strain is unpublished, and here resistance is the design."
+  });
+
   const hard = checks.filter(c => !c.neutral);
   const nFail = hard.filter(c => !c.ok && !c.marg).length;
   const nMarg = hard.filter(c => !c.ok && c.marg).length;
 
   return {
-    sub, ink, Rs, nsq, Rarr, ideal, gap, p, geom: null, passes, total,
+    sub, ink, Rs, nsq, Rarr, ideal, gap, p, geom: null, passes, total, bend,
     refl, reflDelta, reflDepths, reflRs, reflPasses, ovenNeeded,
     transmissive: true, isRas, sLoop, web, patterned, slotTdraw: s.slotT,
     passLo, passHi, passBW, insLoss, rejection, atPass, at10, fPass,
@@ -1022,7 +1062,7 @@ const state = {
   design: "B", substrate: "silicone", d: 1.50, p: 6.0,
   ink: "carbon", inkT: 12, bridgeB: 4.0, bridgeL: 0.314,
   reflector: "silver", reflT: 15,
-  slotT: 0.30, passF: 10.0
+  slotT: 0.30, passF: 10.0, bendR: 25
 };
 
 const SCENARIOS = [
@@ -1098,6 +1138,7 @@ $("selRefl").addEventListener("change", e => {
   activeScen = -1; render();
 });
 $("rngRT").addEventListener("input", e => { state.reflT = +e.target.value; activeScen = -1; render(); });
+$("rngBend").addEventListener("input", e => { state.bendR = +e.target.value; activeScen = -1; render(); });
 $("rngSlotT").addEventListener("input", e => { state.slotT = +e.target.value; activeScen = -1; render(); });
 $("rngPassF").addEventListener("input", e => { state.passF = +e.target.value; activeScen = -1; render(); });
 
@@ -1579,6 +1620,11 @@ function render() {
   $("ctlBridge").classList.toggle("off", state.design !== "B" && state.design !== "E");
   $("lblRefl").textContent = tx ? "Slot layer — the metal it is cut from"
                                 : "Reflector — the mirror underneath";
+  $("rngBend").value = state.bendR;
+  $("valBend").textContent = state.bendR + " mm · R=" + r.bend.ratio.toFixed(1) + "T";
+  $("bendHint").textContent = "Outer face stretches " + (100 * r.bend.strain).toFixed(1)
+    + "%. The patent's minimum is R = 3T = " + (3 * r.total).toFixed(1)
+    + " mm; silicone has been bent to R = 59 mm at X-band with a 3.6% bandwidth penalty.";
   $("rngSlotT").value = state.slotT;
   $("valSlotT").textContent = state.slotT.toFixed(2) + " mm";
   $("rngPassF").value = state.passF;
