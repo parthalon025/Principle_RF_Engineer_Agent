@@ -1,0 +1,1139 @@
+<title>Lossy Cell Fit Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+:root {
+  /* graphite with a green-teal bias — the colour of a cured carbon film */
+  --ground:      #EDF1F0;
+  --panel:       #F7F9F8;
+  --panel-2:     #E3E9E8;
+  --rule:        #C9D3D1;
+  --rule-soft:   #DCE3E2;
+  --ink:         #131A19;
+  --ink-2:       #47554F;
+  --ink-3:       #6E7C77;
+  --accent:      #0B6F73;   /* instrument teal — the trace colour on a VNA screen */
+  --accent-soft: #D3E6E6;
+  --pass:        #2C6E49;
+  --pass-soft:   #D6E8DC;
+  --warn:        #9A6512;
+  --warn-soft:   #F1E4C8;
+  --fail:        #A33527;
+  --fail-soft:   #F2DAD5;
+  /* literal material colours, used only inside the drawing */
+  --mat-silver:  #AEB6BB;
+  --mat-silver-e:#7E8890;
+  --mat-carbon:  #33393B;
+  --mat-carbon-e:#1B1F20;
+  --mat-sub:     #C9A961;
+  --mat-sub-e:   #A0842F;
+  --shadow: 0 1px 2px rgba(19,26,25,.06), 0 6px 18px rgba(19,26,25,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #0E1413;
+    --panel:       #161D1C;
+    --panel-2:     #1E2726;
+    --rule:        #2E3A38;
+    --rule-soft:   #232D2C;
+    --ink:         #E2EAE8;
+    --ink-2:       #A5B4B0;
+    --ink-3:       #788783;
+    --accent:      #4FBFBC;
+    --accent-soft: #16302F;
+    --pass:        #63BE8B;
+    --pass-soft:   #162C20;
+    --warn:        #D9A448;
+    --warn-soft:   #2E2716;
+    --fail:        #E0776A;
+    --fail-soft:   #331915;
+    --mat-silver:  #98A2A8;
+    --mat-silver-e:#C6CFD4;
+    --mat-carbon:  #4A5254;
+    --mat-carbon-e:#828C8E;
+    --mat-sub:     #8A7434;
+    --mat-sub-e:   #C9A961;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:#0E1413; --panel:#161D1C; --panel-2:#1E2726; --rule:#2E3A38; --rule-soft:#232D2C;
+  --ink:#E2EAE8; --ink-2:#A5B4B0; --ink-3:#788783;
+  --accent:#4FBFBC; --accent-soft:#16302F;
+  --pass:#63BE8B; --pass-soft:#162C20; --warn:#D9A448; --warn-soft:#2E2716;
+  --fail:#E0776A; --fail-soft:#331915;
+  --mat-silver:#98A2A8; --mat-silver-e:#C6CFD4; --mat-carbon:#4A5254; --mat-carbon-e:#828C8E;
+  --mat-sub:#8A7434; --mat-sub-e:#C9A961;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1280px; margin: 0 auto; padding: 28px 22px 72px; }
+
+/* ── masthead ─────────────────────────────────────────────── */
+.mast { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 22px; }
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--accent); font-weight: 600;
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+}
+.eyebrow span.dim { color: var(--ink-3); font-weight: 400; }
+h1 {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: clamp(26px, 3.4vw, 38px); font-weight: 600; letter-spacing: -.02em;
+  margin: 8px 0 0; text-wrap: balance;
+}
+.standfirst {
+  font-family: "IBM Plex Serif", Georgia, serif;
+  font-size: 16.5px; line-height: 1.62; color: var(--ink-2);
+  max-width: 66ch; margin: 10px 0 0;
+}
+.standfirst strong { color: var(--ink); font-weight: 500; }
+
+/* ── scenario strip ───────────────────────────────────────── */
+.scenarios { margin: 20px 0 0; }
+.scen-label {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px;
+}
+.scen-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.scen {
+  font-family: "IBM Plex Sans", sans-serif; font-size: 13px; font-weight: 500;
+  background: var(--panel); color: var(--ink-2);
+  border: 1px solid var(--rule); border-radius: 2px;
+  padding: 7px 12px; cursor: pointer; text-align: left;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.scen:hover { border-color: var(--accent); color: var(--ink); }
+.scen[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--ground); }
+.scen .num {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 600;
+  color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.scen[aria-pressed="true"] .num { color: var(--ground); opacity: .7; }
+.scen-note {
+  font-family: "IBM Plex Serif", Georgia, serif; font-style: italic;
+  font-size: 15px; line-height: 1.55; color: var(--ink-2);
+  margin: 12px 0 0; max-width: 78ch; min-height: 2.4em;
+  border-left: 2px solid var(--accent); padding-left: 12px;
+}
+
+/* ── main grid ────────────────────────────────────────────── */
+.bench { display: grid; grid-template-columns: 302px minmax(0, 1fr); gap: 22px; margin-top: 26px; align-items: start; }
+@media (max-width: 940px) { .bench { grid-template-columns: 1fr; } }
+
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; }
+.panel > h2 {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+  margin: 0; padding: 11px 14px; border-bottom: 1px solid var(--rule-soft);
+}
+.panel-body { padding: 14px; display: flex; flex-direction: column; gap: 15px; }
+
+/* ── controls ─────────────────────────────────────────────── */
+.ctl { display: flex; flex-direction: column; gap: 6px; }
+.ctl > label {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-3); font-weight: 500;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+}
+.ctl > label .val {
+  font-size: 13px; letter-spacing: 0; text-transform: none;
+  color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.seg { display: flex; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+.seg button {
+  flex: 1; font-family: "IBM Plex Sans", sans-serif; font-size: 12.5px; font-weight: 500;
+  background: transparent; color: var(--ink-2); border: 0; border-right: 1px solid var(--rule);
+  padding: 7px 4px; cursor: pointer; line-height: 1.25;
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--ground); }
+.seg.stack { flex-direction: column; }
+.seg.stack button { border-right: 0; border-bottom: 1px solid var(--rule); text-align: left; padding: 8px 10px; }
+.seg.stack button:last-child { border-bottom: 0; }
+.seg.stack .sub {
+  display: block; font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+  color: var(--ink-3); font-weight: 400; margin-top: 1px;
+}
+.seg.stack button[aria-pressed="true"] .sub { color: var(--ground); opacity: .75; }
+select {
+  font-family: "IBM Plex Sans", sans-serif; font-size: 13.5px;
+  background: var(--ground); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 2px; padding: 7px 9px; width: 100%;
+}
+input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.ctl.off { opacity: .38; pointer-events: none; }
+.hint {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px; line-height: 1.45;
+  color: var(--ink-3); margin: 0;
+}
+
+/* ── verdict ──────────────────────────────────────────────── */
+.verdict { display: flex; flex-direction: column; gap: 0; }
+.verdict-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 13px 16px; border-bottom: 1px solid var(--rule-soft);
+}
+.stamp {
+  font-family: "IBM Plex Mono", monospace; font-size: 15px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 13px; border-radius: 2px; border: 1.5px solid;
+}
+.stamp.pass { color: var(--pass); background: var(--pass-soft); border-color: var(--pass); }
+.stamp.fail { color: var(--fail); background: var(--fail-soft); border-color: var(--fail); }
+.stamp.warn { color: var(--warn); background: var(--warn-soft); border-color: var(--warn); }
+.verdict-head .why { font-size: 14px; color: var(--ink-2); flex: 1; min-width: 220px; }
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); }
+.check {
+  padding: 11px 14px; border-right: 1px solid var(--rule-soft); border-bottom: 1px solid var(--rule-soft);
+  display: flex; flex-direction: column; gap: 2px; position: relative;
+}
+.check::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.check.ok::before   { background: var(--pass); }
+.check.bad::before  { background: var(--fail); }
+.check.marg::before { background: var(--warn); }
+.check .k {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.check .v {
+  font-family: "IBM Plex Mono", monospace; font-size: 16px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.check.ok .v { color: var(--pass); } .check.bad .v { color: var(--fail); } .check.marg .v { color: var(--warn); }
+.check .n { font-size: 11.5px; color: var(--ink-3); line-height: 1.4; }
+
+/* ── drawing ──────────────────────────────────────────────── */
+.draw-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+@media (max-width: 760px) { .draw-grid { grid-template-columns: 1fr; } }
+.draw-cell { padding: 14px; border-right: 1px solid var(--rule-soft); }
+.draw-cell:last-child { border-right: 0; }
+.draw-cap {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-3); margin: 0 0 8px;
+  display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+}
+.draw-cap em { font-style: normal; color: var(--ink-2); text-transform: none; letter-spacing: 0; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+.dimtext { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; fill: var(--ink-2); }
+.dimtext.tight { fill: var(--fail); font-weight: 600; }
+.matlabel { font-family: "IBM Plex Mono", monospace; font-size: 10px; fill: var(--ink-2); }
+.matlabel.strong { fill: var(--ink); font-weight: 600; }
+.axtext { font-family: "IBM Plex Mono", monospace; font-size: 10px; fill: var(--ink-3); }
+.dimline { stroke: var(--ink-3); stroke-width: .7; }
+.extline { stroke: var(--ink-3); stroke-width: .5; stroke-dasharray: 2 2; }
+
+/* ── ledger ───────────────────────────────────────────────── */
+.ledger { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ledger th, .ledger td { padding: 8px 14px; text-align: left; border-bottom: 1px solid var(--rule-soft); }
+.ledger th {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+}
+.ledger td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; }
+.ledger tr:last-child td { border-bottom: 0; }
+.ledger .layer { display: flex; align-items: center; gap: 8px; }
+.swatch { width: 11px; height: 11px; border-radius: 1px; border: 1px solid var(--rule); flex: none; }
+.prov {
+  font-family: "IBM Plex Mono", monospace; font-size: 9.5px; letter-spacing: .06em;
+  color: var(--ink-3); border: 1px solid var(--rule); border-radius: 2px;
+  padding: 1px 5px; white-space: nowrap;
+}
+.scroll-x { overflow-x: auto; }
+
+/* ── footnotes ────────────────────────────────────────────── */
+.notes { margin-top: 26px; border-top: 1px solid var(--rule); padding-top: 18px; }
+.notes h3 {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-3); font-weight: 600; margin: 0 0 10px;
+}
+.notes-cols { columns: 2 300px; column-gap: 34px; }
+.notes p {
+  font-size: 13px; line-height: 1.6; color: var(--ink-2); margin: 0 0 11px;
+  break-inside: avoid;
+}
+.notes p b { color: var(--ink); font-weight: 600; }
+code {
+  font-family: "IBM Plex Mono", monospace; font-size: .92em;
+  background: var(--panel-2); padding: 1px 4px; border-radius: 2px;
+}
+.throwaway {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .06em;
+  color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn);
+  border-radius: 2px; padding: 6px 10px; display: inline-block; margin-top: 18px;
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">
+    <span>Prototype · issue #128</span>
+    <span class="dim">throwaway · answers one question · not a simulation</span>
+  </div>
+  <h1>Does a lossy resonant cell fit inside a 2 mm printed skin?</h1>
+  <p class="standfirst">
+    Issue #128 argues the absorber's <strong>dissipation belongs in the printed pattern, not in the
+    substrate</strong> — because a pattern is geometry, and geometry is what the design loop can search.
+    This bench draws the resulting cell to scale at 10 GHz and checks it against four hard limits: the
+    Voltera NOVA's 0.2 mm feature floor, the patent's 0.87–2.0 mm thickness budget, the sheet resistance
+    the available inks can actually reach, and whether the surface absorbs 90% of the power that hits it.
+    Every dimension below is a real millimetre. Drive it and see which cells survive.
+  </p>
+</header>
+
+<section class="scenarios">
+  <div class="scen-label">Guided walkthroughs — press one, then read the drawing</div>
+  <div class="scen-row" id="scenRow"></div>
+  <p class="scen-note" id="scenNote"></p>
+</section>
+
+<div class="bench">
+
+  <!-- ─── controls ─────────────────────────────────────── -->
+  <aside class="panel">
+    <h2>Free play</h2>
+    <div class="panel-body">
+
+      <div class="ctl">
+        <label>Cell design</label>
+        <div class="seg stack" id="segVariant"></div>
+      </div>
+
+      <div class="ctl">
+        <label for="selSub">Spacer — the substrate sheet</label>
+        <select id="selSub"></select>
+        <p class="hint" id="subHint"></p>
+      </div>
+
+      <div class="ctl">
+        <label for="rngD">Spacer thickness <span class="val" id="valD"></span></label>
+        <input type="range" id="rngD" min="0.40" max="3.60" step="0.01">
+      </div>
+
+      <div class="ctl">
+        <label for="rngP">Cell period <span class="val" id="valP"></span></label>
+        <input type="range" id="rngP" min="3" max="12" step="0.1">
+      </div>
+
+      <div class="ctl">
+        <label for="selInk">Lossy ink</label>
+        <select id="selInk"></select>
+        <p class="hint" id="inkHint"></p>
+      </div>
+
+      <div class="ctl">
+        <label for="rngT">Ink thickness <span class="val" id="valT"></span></label>
+        <input type="range" id="rngT" min="4" max="60" step="1">
+      </div>
+
+      <div class="ctl" id="ctlBridge">
+        <label for="rngB">Carbon bridge width <span class="val" id="valB"></span></label>
+        <input type="range" id="rngB" min="0.4" max="9.0" step="0.05">
+        <p class="hint">The bridge is the only lossy metal in the cell. Its shape — how long it is
+          along the electric field versus how wide it is across — sets the resistance.</p>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- ─── readout ──────────────────────────────────────── -->
+  <div style="display:flex; flex-direction:column; gap:22px; min-width:0;">
+
+    <section class="panel verdict">
+      <div class="verdict-head">
+        <span class="stamp" id="stamp"></span>
+        <span class="why" id="why"></span>
+      </div>
+      <div class="checks" id="checks"></div>
+    </section>
+
+    <section class="panel">
+      <h2>The cell, drawn to scale</h2>
+      <div class="draw-grid">
+        <div class="draw-cell">
+          <p class="draw-cap"><span>Plan view · 2 × 2 cells</span><em id="planScale"></em></p>
+          <svg id="svgPlan" viewBox="0 0 470 348" role="img" aria-labelledby="planTitle"></svg>
+        </div>
+        <div class="draw-cell">
+          <p class="draw-cap"><span>Section through the stack</span><em id="sectScale"></em></p>
+          <svg id="svgSect" viewBox="0 0 520 348" role="img" aria-labelledby="sectTitle"></svg>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>How much power the surface swallows</h2>
+      <div style="padding:14px;">
+        <svg id="svgChart" viewBox="0 0 640 260" role="img" aria-labelledby="chartTitle"></svg>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Stack-up</h2>
+      <div class="scroll-x">
+        <table class="ledger">
+          <thead><tr>
+            <th>Layer</th><th>Material</th><th class="num">Thickness</th>
+            <th class="num">Passes</th><th class="num">Sheet resistance</th><th>Evidence</th>
+          </tr></thead>
+          <tbody id="stackBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Where the loss actually goes</h2>
+      <div class="scroll-x">
+        <table class="ledger"><tbody id="lossBody"></tbody></table>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<section class="notes">
+  <h3>What this model is, and what it is not</h3>
+  <div class="notes-cols">
+    <p><b>It is a circuit model, not a solve.</b> The printed layer is treated as one lumped
+      resistance in series with one capacitance; the substrate-plus-mirror underneath is a shorted
+      transmission line. Everything is <code>CALCULATED</code> from that. It gets resonant frequency
+      and match right to within the tens of percent, which is all a fit question needs. It does not
+      capture the coupling between neighbouring cells, and it does not describe a two-resonator cell
+      (design C) properly at all — the caveat is flagged on that design.</p>
+    <p><b>Sheet resistance</b> — ohms per square — is the one number that decides whether a printed
+      film absorbs or reflects. It is the film's resistivity divided by its thickness, and it does not
+      depend on how big the square is, which is why it is quoted "per square". Free space is 377 Ω/sq;
+      a film near that value is the classic radar-absorbing sheet.</p>
+    <p><b>Squares in the current path</b> is the idea this prototype turns on. A resistive film's
+      contribution to the cell is not its sheet resistance — it is its sheet resistance multiplied by
+      how many square tiles long the current path is. A thin ring 10 squares long multiplies the ink's
+      resistance tenfold; a short wide bridge divides it. That factor is pure geometry, and it is the
+      knob the design loop can search. Computed here from the uniform-current approximation, so treat
+      the factor as order-of-magnitude, not three significant figures.</p>
+    <p><b>Skin depth</b> is how far a radio wave gets into a conductor before fading to about a third.
+      At 10 GHz it is 3.4 µm in printed silver and 390 µm in printed carbon — which is why a 10 µm
+      silver film is already a perfect mirror, and a 10 µm carbon film is essentially transparent and
+      behaves like a pure resistor.</p>
+    <p><b>Grid capacitance</b> follows Luukkonen's standard analytical patch-array form, with the
+      effective permittivity taken as the average of air and substrate. <b>Free-space impedance</b>
+      377 Ω, <b>wavelength</b> 29.979 mm at 10 GHz. Ink figures come from the ACI SC1502 and SS1109
+      datasheets and from <code>docs/voltera-multilayer-capability.md</code>; substrate figures from
+      <code>docs/xband-absorber-substrate-shortlist.md</code>; the I-shape dimensions from Landy
+      et al. 2008 via <code>docs/ishape-interior-tuning.md</code>.</p>
+    <p><b>Normal incidence only.</b> No oblique-angle behaviour, no polarisation sweep, no bending.
+      Those are real questions and this bench does not touch them.</p>
+  </div>
+  <span class="throwaway">Throwaway prototype — branch only, never main</span>
+</section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════
+   THE MODEL — pure, no DOM. Lift this into the real code if it earns it.
+   ══════════════════════════════════════════════════════════════════ */
+
+const C0   = 299792458;
+const MU0  = 4e-7 * Math.PI;
+const EPS0 = 1 / (MU0 * C0 * C0);
+const ETA0 = Math.sqrt(MU0 / EPS0);
+const F0   = 10e9;
+const LAM0 = C0 / F0 * 1e3;              // 29.979 mm
+
+/* minimal complex helpers */
+const cx  = (re, im) => ({ re, im });
+const add = (a, b) => cx(a.re + b.re, a.im + b.im);
+const mul = (a, b) => cx(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
+const div = (a, b) => { const d = b.re * b.re + b.im * b.im;
+  return cx((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d); };
+const csqrt = a => { const m = Math.hypot(a.re, a.im), th = Math.atan2(a.im, a.re) / 2;
+  return cx(Math.sqrt(m) * Math.cos(th), Math.sqrt(m) * Math.sin(th)); };
+const ctanh = a => {
+  const d = Math.cosh(2 * a.re) + Math.cos(2 * a.im);
+  return cx(Math.sinh(2 * a.re) / d, Math.sin(2 * a.im) / d);
+};
+
+/* ── materials ─────────────────────────────────────────────────── */
+const SUBSTRATES = {
+  silicone: { name: "Silicone sheet, 60 ShA", er: 2.9,  tand: 0.10,   stock: "0.5–6 mm stock",
+              prov: "MEASURED", note: "Lossiest flexible sheet on the shortlist — tanδ 0.10, about 6× FR4." },
+  kapton:   { name: "Polyimide (Kapton 500HN)", er: 3.2, tand: 0.012, stock: "25–127 µm plies",
+              prov: "MEASURED", note: "Needs 8–16 plies to reach a millimetre. tanδ 0.012 measured at X-band, not the 0.002 on the datasheet." },
+  ro4350b:  { name: "Rogers RO4350B", er: 3.48, tand: 0.0037, stock: "0.17–1.52 mm, one ply",
+              prov: "MANUFACTURER-SPECIFIED", note: "Rigid, low loss, single ply in the budget. Back in contention once loss stops coming from the substrate." },
+  lcp:      { name: "LCP (Rogers ULTRALAM 3850)", er: 2.9, tand: 0.0025, stock: "25/50/100 µm plies",
+              prov: "MANUFACTURER-SPECIFIED", note: "Lowest loss surveyed. Reaching 1 mm takes a 10–40 ply laminate." },
+  fr4:      { name: "FR4 — the patent's own substrate", er: 4.8, tand: 0.017, stock: "0.8 / 1.6 mm",
+              prov: "LITERATURE-SUPPORTED", note: "Rigid. What Example 3 was actually built on." }
+};
+
+const INKS = {
+  carbon: { name: "ACI SC1502 carbon", rho: 0.006, perPass: [6, 12], dsMaxPasses: 2,
+            prov: "MANUFACTURER-SPECIFIED",
+            note: "Resistivity < 0.6 Ω·cm. Skin depth 390 µm at 10 GHz, so a printed film is electrically transparent and sheet resistance is exactly resistivity ÷ thickness." },
+  mxene:  { name: "Printed MXene", sigma: 6.9e5, perPass: [10, 10], dsMaxPasses: 4,
+            prov: "LITERATURE-SUPPORTED",
+            note: "σ = 6.9×10⁵ S/m. Skin depth 6.1 µm, so the thinnest printable film is already opaque — thickness is a dead knob." },
+  silver: { name: "ACI SS1109 silver", sigma: 2.22e6, perPass: [10, 20], dsMaxPasses: 2,
+            prov: "MANUFACTURER-SPECIFIED",
+            note: "σ = 2.22×10⁶ S/m. Skin depth 3.4 µm. A mirror at any printable thickness; contributes essentially no loss." }
+};
+
+const FEATURE_FLOOR = 0.2;      // mm — NOVA demonstrated feature size
+const SKIN_MIN = 0.87, SKIN_MAX = 2.00;   // mm — the patent's skin budget
+const REFLECTOR_UM = 15;        // silver mirror, 1–2 passes
+
+function skinDepth(sigma, f) { return 1 / Math.sqrt(Math.PI * f * MU0 * sigma); }
+
+/** Sheet resistance of a printed film at f, in Ω/sq. */
+function sheetR(ink, t_um, f) {
+  const t = t_um * 1e-6;
+  if (ink.rho !== undefined) return ink.rho / t;              // thin-film regime, exact
+  const d = skinDepth(ink.sigma, f);
+  const teff = d * (1 - Math.exp(-t / d));                    // finite-thickness correction
+  return 1 / (ink.sigma * teff);
+}
+
+/** Luukkonen capacitive patch grid: C per square, farads. */
+function gridC(p_mm, g_mm, er) {
+  const eeff = (er + 1) / 2, p = p_mm * 1e-3, g = g_mm * 1e-3;
+  const s = Math.sin(Math.PI * g / (2 * p));
+  return EPS0 * eeff * (2 * p / Math.PI) * Math.log(1 / s);
+}
+
+/** Grounded lossy slab seen from above: a shorted transmission line. */
+function slabZ(f, d_mm, er, tand) {
+  const epsc = cx(er, -er * tand);
+  const rt = csqrt(epsc);
+  const k0 = 2 * Math.PI * f / C0;
+  const gamma = mul(cx(0, k0), rt);                 // j·k0·√εc
+  const etas = div(cx(ETA0, 0), rt);
+  return mul(etas, ctanh(mul(gamma, cx(d_mm * 1e-3, 0))));
+}
+
+/** Fraction of incident power absorbed, normal incidence. */
+function absorbedAt(f, p, g, d, er, tand, Rarr) {
+  const C = gridC(p, g, er);
+  const Zg = cx(Rarr, -1 / (2 * Math.PI * f * C));
+  const Zd = slabZ(f, d, er, tand);
+  const Zin = div(mul(Zg, Zd), add(Zg, Zd));
+  const G = div(cx(Zin.re - ETA0, Zin.im), cx(Zin.re + ETA0, Zin.im));
+  return { A: 1 - (G.re * G.re + G.im * G.im), Zin };
+}
+
+/** The array resistance a perfect match would want, and what the substrate gives free. */
+function idealSplit(f, d, er, tand) {
+  const Z = slabZ(f, d, er, tand);
+  const XL = Z.im;
+  const Rtotal = ETA0 * XL * XL / (ETA0 * ETA0 + XL * XL);
+  return { XL, Rsub: Z.re, Rtotal, Rpattern: Rtotal - Z.re,
+           subShare: Z.re / Rtotal };
+}
+
+/* ── the three cell designs ────────────────────────────────────── */
+
+const DESIGNS = {
+  A: {
+    key: "A", label: "Carbon patch",
+    sub: "One ink. A plain lossy square.",
+    blurb: "The obvious cell: a square of carbon ink covering most of the cell, over the spacer, over the mirror. The carbon's own sheet resistance is what the wave sees.",
+    /* current crosses one square of patch → array resistance = sheet resistance */
+    squares: () => 1,
+    inkDefault: "carbon"
+  },
+  B: {
+    key: "B", label: "Silver patch + carbon bridge",
+    sub: "Two inks, side by side, one layer.",
+    blurb: "Silver plates make the capacitance and carry no loss; a short, wide carbon bridge across the gap carries the resonant current and supplies all the damping. Its length-to-width ratio is the loss knob.",
+    squares: (s) => s.bridgeL / s.bridgeB,
+    inkDefault: "carbon"
+  },
+  C: {
+    key: "C", label: "The anchor's I-shape",
+    sub: "Example 3's ring resonator, in carbon.",
+    blurb: "The patent's Example 3 element — Landy et al.'s I-shaped ring resonator — rescaled to this substrate and printed in the lossy ink instead of copper. Its narrow traces are the point of interest.",
+    squares: (s) => s.nsqRing,
+    inkDefault: "carbon"
+  }
+};
+
+/**
+ * The whole answer, from the control state.
+ * Geometry is chosen the way the loop would choose it: the gap is swept and the
+ * value that absorbs best at 10 GHz wins. So the cell always resonates; the only
+ * question left is whether the resistance lands.
+ */
+function solve(s) {
+  const sub = SUBSTRATES[s.substrate];
+  const ink = INKS[s.ink];
+  const Rs = sheetR(ink, s.inkT, F0);
+  const ideal = idealSplit(F0, s.d, sub.er, sub.tand);
+
+  /* design C carries its own fixed geometry, rescaled from Landy's fabricated device */
+  let geom;
+  if (s.design === "C") {
+    const scale = Math.sqrt(((4.8 + 1) / 2) / ((sub.er + 1) / 2)) * (11.5 / 10.0);
+    geom = { scale, a1: 4.2 * scale, a2: 12 * scale, W: 4 * scale,
+             G: 0.6 * scale, t: 0.6 * scale, H: 11.8 * scale, L: 1.7 * scale };
+    /* central post in series with two half-loops in parallel */
+    geom.nsq = geom.W / geom.t + 0.5 * (2 * geom.W / geom.t);
+    geom.gap = geom.a1 - geom.W;
+    geom.p = geom.a1;
+  }
+
+  const nsq = s.design === "A" ? 1
+            : s.design === "B" ? s.bridgeL / s.bridgeB
+            : geom.nsq;
+  const Rarr = Rs * nsq;
+
+  /* sweep the gap for the best match at 10 GHz */
+  const p = s.design === "C" ? geom.p : s.p;
+  let best = { A: -1, g: FEATURE_FLOOR };
+  if (s.design === "C") {
+    best = { A: absorbedAt(F0, p, geom.gap, s.d, sub.er, sub.tand, Rarr).A, g: geom.gap };
+  } else {
+    for (let i = 1; i <= 600; i++) {
+      const g = 0.02 + (0.94 * p - 0.02) * i / 600;
+      const A = absorbedAt(F0, p, g, s.d, sub.er, sub.tand, Rarr).A;
+      if (A > best.A) best = { A, g };
+    }
+  }
+  const gap = best.g;
+
+  /* for design B: what bridge length would land the match exactly? */
+  let bridgeIdeal = null;
+  if (s.design === "B") {
+    bridgeIdeal = ideal.Rpattern / Rs * s.bridgeB;
+  }
+
+  /* frequency sweep */
+  const sweep = [];
+  let peak = { A: 0, f: F0 }, lo90 = null, hi90 = null;
+  for (let i = 0; i <= 480; i++) {
+    const f = 5e9 + 15e9 * i / 480;
+    const A = absorbedAt(f, p, gap, s.d, sub.er, sub.tand, Rarr).A;
+    sweep.push([f, A]);
+    if (A > peak.A) peak = { A, f };
+    if (A >= 0.90) { if (lo90 === null) lo90 = f; hi90 = f; }
+  }
+
+  /* how the dissipation splits between substrate and pattern */
+  const subShareActual = ideal.Rsub / (ideal.Rsub + Rarr);
+
+  /* thicknesses */
+  const passes = Math.max(1, Math.ceil(s.inkT / ink.perPass[1]));
+  const total = s.d + s.inkT / 1000 + REFLECTOR_UM / 1000;
+
+  /* ── the checks ─────────────────────────────────────────────── */
+  const checks = [];
+
+  checks.push({
+    k: "Smallest printed feature", slug: "features finer than the printer can lay down",
+    v: (s.design === "B" ? Math.min(gap, s.bridgeL) : gap).toFixed(3) + " mm",
+    ok: (s.design === "B" ? Math.min(gap, s.bridgeL) : gap) >= FEATURE_FLOOR,
+    n: "Floor is 0.20 mm on the NOVA. " +
+       (s.design === "B" ? "Gap " + gap.toFixed(3) + " mm, bridge " + s.bridgeL.toFixed(3) + " mm."
+                         : "This is the gap between neighbouring elements.")
+  });
+
+  checks.push({
+    k: "Total skin thickness", slug: "a stack thicker than the patent's skin budget",
+    v: total.toFixed(3) + " mm",
+    ok: total >= SKIN_MIN && total <= SKIN_MAX,
+    marg: total > SKIN_MAX && total <= SKIN_MAX * 1.15,
+    n: "Patent budget is 0.87–2.00 mm. " +
+       (total > SKIN_MAX ? (100 * (total / SKIN_MAX - 1)).toFixed(0) + "% over the ceiling."
+        : total < SKIN_MIN ? "Under the floor — thinner than the patent's thinnest skin."
+        : "Inside the budget.")
+  });
+
+  checks.push({
+    k: "Resistance the cell needs",
+    v: ideal.Rpattern.toFixed(0) + " Ω/sq",
+    ok: true, neutral: true,
+    n: "What the printed pattern must supply for a perfect match at this spacer thickness."
+  });
+
+  const ratio = Rarr / ideal.Rpattern;
+  checks.push({
+    k: "Resistance it actually has", slug: "a pattern resistance nowhere near what the cell wants",
+    v: Rarr >= 1000 ? (Rarr / 1000).toFixed(1) + "k Ω/sq" : Rarr.toFixed(0) + " Ω/sq",
+    ok: ratio > 0.6 && ratio < 1.7,
+    marg: (ratio >= 0.35 && ratio <= 0.6) || (ratio >= 1.7 && ratio < 3),
+    n: (ratio > 1.08 ? ratio.toFixed(1) + "× too resistive — over-damped, the cell reflects."
+        : ratio < 0.93 ? (1 / ratio).toFixed(1) + "× too conductive — under-damped."
+        : "On target.")
+        + " " + nsq.toFixed(2) + " squares × " + Rs.toFixed(0) + " Ω/sq ink."
+  });
+
+  checks.push({
+    k: "Power absorbed at 10 GHz", slug: "missing the 90% absorption target",
+    v: (100 * best.A).toFixed(1) + "%",
+    ok: best.A >= 0.90, marg: best.A >= 0.75 && best.A < 0.90,
+    n: best.A >= 0.90 ? "Meets the −10 dB target." : "Misses the −10 dB (90%) target."
+  });
+
+  checks.push({
+    k: "Print passes, lossy layer", slug: "more print passes than the machine is validated for",
+    v: passes + " × " + (s.inkT / passes).toFixed(0) + " µm",
+    ok: passes <= ink.dsMaxPasses, marg: passes > ink.dsMaxPasses && passes <= 4,
+    n: passes <= ink.dsMaxPasses ? "Within the datasheet's own print schedule."
+       : passes <= 4 ? "Beyond the datasheet, inside Voltera's 4-layer stack. Unverified."
+       : "Beyond the 4-layer stack Voltera validates."
+  });
+
+  const hard = checks.filter(c => !c.neutral);
+  const nFail = hard.filter(c => !c.ok && !c.marg).length;
+  const nMarg = hard.filter(c => !c.ok && c.marg).length;
+
+  return {
+    sub, ink, Rs, nsq, Rarr, ideal, gap, p, geom, passes, total,
+    A10: best.A, peak, lo90, hi90, sweep, checks, bridgeIdeal,
+    subShareActual, subShareIdeal: ideal.subShare,
+    verdict: nFail > 0 ? "fail" : nMarg > 0 ? "warn" : "pass",
+    nFail, nMarg
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   THE PAGE — throwaway from here down.
+   ══════════════════════════════════════════════════════════════════ */
+
+const state = {
+  design: "B", substrate: "silicone", d: 1.50, p: 6.0,
+  ink: "carbon", inkT: 12, bridgeB: 4.0, bridgeL: 0.314
+};
+
+const SCENARIOS = [
+  { n: "01", label: "Can the substrate do it alone?",
+    set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "silver", inkT: 15 },
+    note: "Silicone has the highest loss tangent of any flexible sheet on the shortlist — 0.10, about six times FR4's. Print the pattern in silver so the pattern itself dissipates nothing, and watch what the substrate manages on its own. Look at the last table: the substrate supplies roughly 3% of the dissipation the cell needs. Issue #128's premise is not a preference — at a millimetre and a half, substrate loss is a rounding error." },
+  { n: "02", label: "The obvious carbon patch",
+    set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 24 },
+    note: "Swap the silver for two passes of carbon — the ink Voltera already sells, at the thickness its datasheet allows. The cell now has far too much resistance rather than too little: about six times what a 1.5 mm spacer wants. Drag the spacer thicker and the match comes good — but only past 3 mm, which is half again the patent's ceiling. A plain carbon square is too lossy for a thin skin." },
+  { n: "03", label: "The anchor's I-shape, in carbon",
+    set: { design: "C", substrate: "silicone", d: 1.50, ink: "carbon", inkT: 24 },
+    note: "Example 3's own element, rescaled to silicone and printed in carbon. Its features clear the 0.2 mm floor comfortably — but its current runs around a narrow ring roughly thirteen squares long, so it multiplies the ink's resistance thirteenfold — landing at 3.3 kΩ/sq where the cell wants 39. That is eighty-five times too resistive, and only 6% of the power gets absorbed. A narrow-trace resonator is the worst possible host for a lossy ink." },
+  { n: "04", label: "The cell that fits",
+    set: { design: "B", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 12, bridgeB: 4.0 },
+    note: "Split the job. Silver plates make the capacitance and lose nothing; one short, wide carbon bridge carries the current and does all the damping. Because the bridge is wider than it is long it divides the ink's resistance instead of multiplying it — 0.31 mm long by 4 mm wide is 0.08 squares, turning 500 Ω/sq of carbon into the 39 Ω/sq the cell wants. Everything clears: features, thickness, match, print passes." },
+  { n: "05", label: "Where the 0.2 mm floor bites",
+    set: { design: "B", substrate: "silicone", d: 1.50, p: 4.0, ink: "carbon", inkT: 12, bridgeB: 4.0 },
+    note: "Same design, smaller cell. Shrinking the period means the elements must sit closer together to hold the same capacitance, and at 4 mm the gap the physics wants is 0.115 mm — below what the printer can lay down. The feature floor sets a minimum cell size, which in turn sets a minimum spacer thickness. On silicone that floor is about 1.04 mm; there is no thinner cell to be had." }
+];
+
+let activeScen = 3;
+
+/* ── build controls ────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+
+$("segVariant").innerHTML = Object.values(DESIGNS).map(d =>
+  `<button data-d="${d.key}" aria-pressed="false">${d.key} · ${d.label}<span class="sub">${d.sub}</span></button>`
+).join("");
+$("selSub").innerHTML = Object.entries(SUBSTRATES).map(([k, v]) =>
+  `<option value="${k}">${v.name}</option>`).join("");
+$("selInk").innerHTML = Object.entries(INKS).map(([k, v]) =>
+  `<option value="${k}">${v.name}</option>`).join("");
+$("scenRow").innerHTML = SCENARIOS.map((s, i) =>
+  `<button class="scen" data-s="${i}" aria-pressed="false"><span class="num">${s.n}</span>${s.label}</button>`).join("");
+
+$("segVariant").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.design = b.dataset.d;
+  state.ink = DESIGNS[state.design].inkDefault;
+  activeScen = -1; render();
+});
+$("scenRow").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  activeScen = +b.dataset.s;
+  Object.assign(state, SCENARIOS[activeScen].set);
+  if (state.design === "B") state.bridgeL = null;   // recomputed to the ideal below
+  render();
+});
+$("selSub").addEventListener("change", e => { state.substrate = e.target.value; activeScen = -1; render(); });
+$("selInk").addEventListener("change", e => { state.ink = e.target.value; activeScen = -1; render(); });
+$("rngD").addEventListener("input", e => { state.d = +e.target.value; activeScen = -1; render(); });
+$("rngP").addEventListener("input", e => { state.p = +e.target.value; activeScen = -1; render(); });
+$("rngT").addEventListener("input", e => { state.inkT = +e.target.value; activeScen = -1; render(); });
+$("rngB").addEventListener("input", e => { state.bridgeB = +e.target.value; state.bridgeL = null; activeScen = -1; render(); });
+
+/* ── drawing helpers (SVG, drafting conventions) ───────────────── */
+function el(tag, attrs, txt) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (txt !== undefined) n.textContent = txt;
+  return n;
+}
+/** horizontal dimension line with ticks and a mono label */
+function dimH(g, x1, x2, y, label, tight) {
+  g.appendChild(el("line", { x1, y1: y, x2, y2: y, class: "dimline",
+    "marker-start": "url(#ar)", "marker-end": "url(#ar)" }));
+  const t = el("text", { x: (x1 + x2) / 2, y: y - 4, class: "dimtext" + (tight ? " tight" : ""),
+    "text-anchor": "middle" }, label);
+  g.appendChild(t);
+}
+function dimV(g, x, y1, y2, label, tight, side) {
+  g.appendChild(el("line", { x1: x, y1, x2: x, y2, class: "dimline",
+    "marker-start": "url(#ar)", "marker-end": "url(#ar)" }));
+  const right = side === "right";
+  g.appendChild(el("text", { x: x + (right ? 5 : -5), y: (y1 + y2) / 2 + 3,
+    class: "dimtext" + (tight ? " tight" : ""), "text-anchor": right ? "start" : "end" }, label));
+}
+function defs(svg) {
+  const d = el("defs");
+  const m = el("marker", { id: "ar", markerWidth: 6, markerHeight: 6, refX: 3, refY: 3, orient: "auto" });
+  m.appendChild(el("path", { d: "M0,3 L6,1 L6,5 Z", fill: "var(--ink-3)" }));
+  d.appendChild(m);
+  const h = el("pattern", { id: "hatch", width: 5, height: 5, patternUnits: "userSpaceOnUse",
+    patternTransform: "rotate(45)" });
+  h.appendChild(el("rect", { width: 5, height: 5, fill: "var(--mat-sub)", "fill-opacity": ".22" }));
+  h.appendChild(el("line", { x1: 0, y1: 0, x2: 0, y2: 5, stroke: "var(--mat-sub-e)", "stroke-width": 1, "stroke-opacity": ".5" }));
+  d.appendChild(h);
+  svg.appendChild(d);
+}
+
+/* ── plan view ─────────────────────────────────────────────────── */
+function drawPlan(r) {
+  const svg = $("svgPlan"); svg.innerHTML = ""; defs(svg);
+  svg.appendChild(el("title", { id: "planTitle" }, "Plan view of the printed cell, to scale"));
+  const g = el("g"); svg.appendChild(g);
+
+  const isC = state.design === "C";
+  const px = isC ? r.geom.a1 : r.p;          // period across the page (H-plane)
+  const py = isC ? r.geom.a2 : r.p;          // period down the page (E-plane, field direction)
+  const box = { x: 64, y: 34, w: 310, h: 246 };
+  const k = Math.min(box.w / (2 * px), box.h / (2 * py));
+  const W = 2 * px * k, H = 2 * py * k;
+  const ox = box.x + (box.w - W) / 2, oy = box.y + (box.h - H) / 2;
+
+  /* substrate ground behind everything */
+  g.appendChild(el("rect", { x: ox, y: oy, width: W, height: H, fill: "url(#hatch)",
+    stroke: "var(--rule)", "stroke-width": 1 }));
+
+  const tightGap = r.gap < FEATURE_FLOOR;
+
+  for (let iy = 0; iy < 2; iy++) for (let ix = 0; ix < 2; ix++) {
+    const cx0 = ox + ix * px * k, cy0 = oy + iy * py * k;
+    g.appendChild(el("rect", { x: cx0, y: cy0, width: px * k, height: py * k,
+      fill: "none", stroke: "var(--rule)", "stroke-width": .6, "stroke-dasharray": "3 3" }));
+
+    if (state.design === "A") {
+      const w = (px - r.gap) * k, h = (py - r.gap) * k;
+      g.appendChild(el("rect", { x: cx0 + r.gap * k / 2, y: cy0 + r.gap * k / 2, width: w, height: h,
+        fill: "var(--mat-carbon)", stroke: "var(--mat-carbon-e)", "stroke-width": 1, rx: 1 }));
+
+    } else if (state.design === "B") {
+      /* two silver plates split across the E-plane gap, carbon bridge between them */
+      const w = (px - r.gap) * k;
+      const plateH = (py - r.gap - state.bridgeL) * k / 2;
+      const px0 = cx0 + r.gap * k / 2;
+      [0, 1].forEach(j => {
+        const yy = cy0 + r.gap * k / 2 + j * (plateH + state.bridgeL * k);
+        g.appendChild(el("rect", { x: px0, y: yy, width: w, height: plateH,
+          fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)", "stroke-width": 1, rx: 1 }));
+      });
+      const bw = Math.min(state.bridgeB, px - r.gap) * k;
+      g.appendChild(el("rect", { x: cx0 + px * k / 2 - bw / 2,
+        y: cy0 + r.gap * k / 2 + plateH, width: bw, height: state.bridgeL * k,
+        fill: "var(--mat-carbon)", stroke: "var(--mat-carbon-e)", "stroke-width": 1 }));
+
+    } else {
+      /* Landy I-shape: frame with a central post and a gap cut in each side arm */
+      const G = r.geom, t = G.t * k, w = G.W * k;
+      const x0 = cx0 + (G.a1 - G.W) * k / 2, y0 = cy0 + (G.a2 - G.W) * k / 2;
+      const F = { fill: "var(--mat-carbon)", stroke: "var(--mat-carbon-e)", "stroke-width": .8 };
+      g.appendChild(el("rect", Object.assign({ x: x0, y: y0, width: w, height: t }, F)));           // top bar
+      g.appendChild(el("rect", Object.assign({ x: x0, y: y0 + w - t, width: w, height: t }, F)));   // bottom bar
+      g.appendChild(el("rect", Object.assign({ x: x0 + w / 2 - t / 2, y: y0, width: t, height: w }, F))); // post
+      const arm = (w - G.G * k) / 2;
+      [0, 1].forEach(j => {                                                                          // side arms, gapped
+        const xx = j ? x0 + w - t : x0;
+        g.appendChild(el("rect", Object.assign({ x: xx, y: y0, width: t, height: arm }, F)));
+        g.appendChild(el("rect", Object.assign({ x: xx, y: y0 + w - arm, width: t, height: arm }, F)));
+      });
+    }
+  }
+
+  /* dimension lines */
+  dimH(g, ox, ox + px * k, oy - 12, "p = " + px.toFixed(2) + " mm");
+  dimV(g, ox - 12, oy, oy + py * k, (isC ? "a₂ " : "p ") + py.toFixed(2));
+  if (state.design !== "C") {
+    const gy = oy + H + 17;
+    dimH(g, ox + (2 * px - r.gap) * k, ox + 2 * px * k, gy, "gap " + r.gap.toFixed(3), tightGap);
+    g.appendChild(el("line", { x1: ox + (2 * px - r.gap) * k, y1: oy + H, x2: ox + (2 * px - r.gap) * k,
+      y2: gy, class: "extline" }));
+  }
+  if (state.design === "B") {
+    const bx = ox + W + 13;
+    dimV(g, bx, oy + (r.gap / 2 + (py - r.gap - state.bridgeL) / 2) * k,
+             oy + (r.gap / 2 + (py - r.gap - state.bridgeL) / 2 + state.bridgeL) * k,
+             "ℓ " + state.bridgeL.toFixed(3), state.bridgeL < FEATURE_FLOOR, "right");
+  }
+
+  /* field direction — the reason the E-plane axis matters */
+  g.appendChild(el("line", { x1: 30, y1: oy + H - 30, x2: 30, y2: oy + H,
+    stroke: "var(--accent)", "stroke-width": 1.4, "marker-end": "url(#ar)" }));
+  g.appendChild(el("text", { x: 30, y: oy + H - 36, class: "axtext", "text-anchor": "middle",
+    fill: "var(--accent)" }, "E"));
+
+  /* key — one row per material, so nothing collides at any cell size */
+  const keyY = 312;
+  const key = state.design === "B"
+    ? [["var(--mat-silver)", "silver — makes the capacitance, loses nothing"],
+       ["var(--mat-carbon)", "carbon — carries the current, does all the damping"]]
+    : [["var(--mat-carbon)", INKS[state.ink].name.replace("ACI ", "") + " — the whole element"]];
+  key.forEach(([c, t], i) => {
+    g.appendChild(el("rect", { x: 64, y: keyY + i * 15 - 8, width: 9, height: 9, fill: c,
+      stroke: "var(--rule)" }));
+    g.appendChild(el("text", { x: 78, y: keyY + i * 15, class: "matlabel" }, t));
+  });
+}
+
+/* ── cross-section ─────────────────────────────────────────────── */
+function drawSection(r) {
+  const svg = $("svgSect"); svg.innerHTML = ""; defs(svg);
+  svg.appendChild(el("title", { id: "sectTitle" }, "Cross-section of the printed stack"));
+  const g = el("g"); svg.appendChild(g);
+
+  const x0 = 40, w = 178, top = 46;
+  /* films are microns against a millimetre spacer — draw them at a fixed readable height
+     and say so, rather than pretending one scale covers both */
+  const filmH = 15, subH = Math.max(34, Math.min(150, state.d * 62));
+  const yLossy = top, ySub = top + filmH, yRefl = ySub + subH;
+
+  const lossyFill = state.design === "B" ? "var(--mat-silver)" : "var(--mat-carbon)";
+  if (state.design === "B") {
+    /* silver | carbon bridge | silver, seen edge-on along the E-plane */
+    const bw = Math.max(10, w * 0.16);
+    g.appendChild(el("rect", { x: x0, y: yLossy, width: (w - bw) / 2, height: filmH,
+      fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)" }));
+    g.appendChild(el("rect", { x: x0 + (w + bw) / 2, y: yLossy, width: (w - bw) / 2, height: filmH,
+      fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)" }));
+    g.appendChild(el("rect", { x: x0 + (w - bw) / 2, y: yLossy, width: bw, height: filmH,
+      fill: "var(--mat-carbon)", stroke: "var(--mat-carbon-e)" }));
+  } else {
+    const gapw = w * Math.min(0.5, r.gap / r.p);
+    g.appendChild(el("rect", { x: x0, y: yLossy, width: (w - gapw) / 2, height: filmH,
+      fill: lossyFill, stroke: "var(--mat-carbon-e)" }));
+    g.appendChild(el("rect", { x: x0 + (w + gapw) / 2, y: yLossy, width: (w - gapw) / 2, height: filmH,
+      fill: lossyFill, stroke: "var(--mat-carbon-e)" }));
+  }
+  g.appendChild(el("rect", { x: x0, y: ySub, width: w, height: subH, fill: "url(#hatch)",
+    stroke: "var(--mat-sub-e)", "stroke-width": 1 }));
+  g.appendChild(el("rect", { x: x0, y: yRefl, width: w, height: filmH,
+    fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)", "stroke-width": 1 }));
+
+  const rows = [
+    [yLossy, filmH, state.design === "B" ? "Silver plates + carbon bridge" : INKS[state.ink].name,
+     state.inkT.toFixed(0) + " µm · " + r.passes + (r.passes === 1 ? " pass" : " passes")],
+    [ySub, subH, r.sub.name, state.d.toFixed(2) + " mm · stock sheet, not printed"],
+    [yRefl, filmH, "ACI SS1109 silver, unpatterned", REFLECTOR_UM + " µm · " +
+      (REFLECTOR_UM / skinDepth(INKS.silver.sigma, F0) / 1e6).toFixed(1) + " skin depths"]
+  ];
+  rows.forEach(([y, h, name, detail]) => {
+    g.appendChild(el("line", { x1: x0 + w, y1: y + h / 2, x2: x0 + w + 8, y2: y + h / 2, class: "dimline" }));
+    g.appendChild(el("text", { x: x0 + w + 12, y: y + h / 2 - 1, class: "matlabel strong" }, name));
+    g.appendChild(el("text", { x: x0 + w + 12, y: y + h / 2 + 11, class: "matlabel" }, detail));
+  });
+
+  /* incoming wave */
+  g.appendChild(el("line", { x1: x0 + 26, y1: 14, x2: x0 + 26, y2: yLossy - 4,
+    stroke: "var(--accent)", "stroke-width": 1.4, "marker-end": "url(#ar)" }));
+  g.appendChild(el("text", { x: x0 + 32, y: 24, class: "axtext", fill: "var(--accent)" }, "10 GHz in"));
+
+  /* total-thickness gauge against the patent budget */
+  const gy = yRefl + filmH + 44, gw = 300;
+  const lo = 0.6, hi = 3.6;
+  const fx = v => x0 + gw * (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo);
+  g.appendChild(el("rect", { x: fx(SKIN_MIN), y: gy - 7, width: fx(SKIN_MAX) - fx(SKIN_MIN), height: 14,
+    fill: "var(--pass-soft)", stroke: "var(--pass)", "stroke-width": .8 }));
+  g.appendChild(el("line", { x1: x0, y1: gy, x2: x0 + gw, y2: gy, class: "dimline" }));
+  const inBudget = r.total >= SKIN_MIN && r.total <= SKIN_MAX;
+  g.appendChild(el("line", { x1: fx(r.total), y1: gy - 13, x2: fx(r.total), y2: gy + 13,
+    stroke: inBudget ? "var(--pass)" : "var(--fail)", "stroke-width": 2.4 }));
+  g.appendChild(el("text", { x: fx(r.total), y: gy - 18, class: "dimtext" + (inBudget ? "" : " tight"),
+    "text-anchor": "middle" }, r.total.toFixed(2) + " mm"));
+  g.appendChild(el("text", { x: fx(SKIN_MIN), y: gy + 26, class: "axtext", "text-anchor": "middle" }, "0.87"));
+  g.appendChild(el("text", { x: fx(SKIN_MAX), y: gy + 26, class: "axtext", "text-anchor": "middle" }, "2.00"));
+  g.appendChild(el("text", { x: x0 + gw, y: gy + 26, class: "axtext", "text-anchor": "end" }, "3.6 mm"));
+  g.appendChild(el("text", { x: x0 + gw / 2, y: gy + 40, class: "axtext", "text-anchor": "middle" },
+    "patent skin budget"));
+}
+
+/* ── absorption chart ──────────────────────────────────────────── */
+function drawChart(r) {
+  const svg = $("svgChart"); svg.innerHTML = "";
+  svg.appendChild(el("title", { id: "chartTitle" }, "Absorbed power against frequency"));
+  const g = el("g"); svg.appendChild(g);
+  const L = 46, R = 620, T = 16, B = 208;
+  const fx = f => L + (R - L) * (f / 1e9 - 5) / 15;
+  const fy = a => B - (B - T) * a;
+
+  /* X-band shading — the band this whole effort targets */
+  g.appendChild(el("rect", { x: fx(8e9), y: T, width: fx(12e9) - fx(8e9), height: B - T,
+    fill: "var(--accent)", "fill-opacity": ".07" }));
+  g.appendChild(el("text", { x: (fx(8e9) + fx(12e9)) / 2, y: T + 13, class: "axtext",
+    "text-anchor": "middle", fill: "var(--accent)" }, "X-band"));
+
+  /* grid + axes */
+  [0, .25, .5, .75, 1].forEach(a => {
+    g.appendChild(el("line", { x1: L, y1: fy(a), x2: R, y2: fy(a),
+      stroke: "var(--rule-soft)", "stroke-width": 1 }));
+    g.appendChild(el("text", { x: L - 8, y: fy(a) + 4, class: "axtext", "text-anchor": "end" },
+      (a * 100).toFixed(0) + "%"));
+  });
+  for (let f = 6; f <= 20; f += 2) {
+    if (f > 20) break;
+    g.appendChild(el("line", { x1: fx(f * 1e9), y1: B, x2: fx(f * 1e9), y2: B + 4, class: "dimline" }));
+    g.appendChild(el("text", { x: fx(f * 1e9), y: B + 17, class: "axtext", "text-anchor": "middle" }, f));
+  }
+  g.appendChild(el("text", { x: (L + R) / 2, y: B + 34, class: "axtext", "text-anchor": "middle" },
+    "frequency, GHz"));
+
+  /* the 90% target */
+  g.appendChild(el("line", { x1: L, y1: fy(.9), x2: R, y2: fy(.9),
+    stroke: "var(--pass)", "stroke-width": 1, "stroke-dasharray": "5 4" }));
+  g.appendChild(el("text", { x: R - 2, y: fy(.9) - 5, class: "axtext", "text-anchor": "end",
+    fill: "var(--pass)" }, "90% target (−10 dB)"));
+
+  /* the trace */
+  const pts = r.sweep.map(([f, a]) => fx(f) + "," + fy(Math.max(0, Math.min(1, a)))).join(" ");
+  g.appendChild(el("polyline", { points: pts, fill: "none", stroke: "var(--accent)", "stroke-width": 2,
+    "stroke-linejoin": "round" }));
+
+  /* the peak */
+  g.appendChild(el("circle", { cx: fx(r.peak.f), cy: fy(r.peak.A), r: 3.5,
+    fill: "var(--accent)", stroke: "var(--panel)", "stroke-width": 1.5 }));
+  const px = fx(r.peak.f), anch = px > (L + R) / 2 ? "end" : "start";
+  g.appendChild(el("text", { x: px + (anch === "end" ? -8 : 8), y: fy(r.peak.A) - 8,
+    class: "dimtext", "text-anchor": anch },
+    (100 * r.peak.A).toFixed(0) + "% at " + (r.peak.f / 1e9).toFixed(2) + " GHz"));
+
+  /* the useful band, if there is one */
+  if (r.lo90 !== null) {
+    g.appendChild(el("line", { x1: fx(r.lo90), y1: fy(.9), x2: fx(r.hi90), y2: fy(.9),
+      stroke: "var(--pass)", "stroke-width": 3.5 }));
+    const bw = 100 * (r.hi90 - r.lo90) / ((r.hi90 + r.lo90) / 2);
+    g.appendChild(el("text", { x: (fx(r.lo90) + fx(r.hi90)) / 2, y: fy(.9) + 16,
+      class: "dimtext", "text-anchor": "middle", fill: "var(--pass)" },
+      (r.lo90 / 1e9).toFixed(1) + "–" + (r.hi90 / 1e9).toFixed(1) + " GHz · " + bw.toFixed(0) + "% wide"));
+  }
+  g.appendChild(el("line", { x1: L, y1: T, x2: L, y2: B, class: "dimline" }));
+  g.appendChild(el("line", { x1: L, y1: B, x2: R, y2: B, class: "dimline" }));
+}
+
+/* ── tables ────────────────────────────────────────────────────── */
+function drawTables(r) {
+  const dAg = skinDepth(INKS.silver.sigma, F0) * 1e6;
+  const lossyName = state.design === "B"
+    ? "ACI SS1109 silver plates + ACI SC1502 carbon bridge" : r.ink.name;
+  const rows = [
+    ["var(--mat-carbon)", state.design === "B" ? "Resonant + lossy" : "Resonant / lossy", lossyName,
+     state.inkT.toFixed(0) + " µm", r.passes, r.Rs.toFixed(0) + " Ω/sq", r.ink.prov],
+    ["var(--mat-sub)", "Spacer", r.sub.name + " — stock sheet, not printed",
+     state.d.toFixed(2) + " mm", "—", "εr " + r.sub.er + " · tanδ " + r.sub.tand, r.sub.prov],
+    ["var(--mat-silver)", "Reflector", "ACI SS1109 silver, unpatterned",
+     REFLECTOR_UM + " µm", "1–2", (REFLECTOR_UM / dAg).toFixed(1) + " skin depths", "MANUFACTURER-SPECIFIED"]
+  ];
+  $("stackBody").innerHTML = rows.map(([c, role, mat, th, ps, rs, prov]) => `
+    <tr>
+      <td><span class="layer"><span class="swatch" style="background:${c}"></span>${role}</span></td>
+      <td>${mat}</td><td class="num">${th}</td><td class="num">${ps}</td>
+      <td class="num">${rs}</td><td><span class="prov">${prov}</span></td>
+    </tr>`).join("") + `
+    <tr><td><span class="layer"><span class="swatch" style="background:transparent;border-style:dashed"></span>Total</span></td>
+      <td>against the patent's 0.87–2.00 mm skin</td>
+      <td class="num" style="color:${r.total >= SKIN_MIN && r.total <= SKIN_MAX ? 'var(--pass)' : 'var(--fail)'};font-weight:600">
+        ${r.total.toFixed(3)} mm</td>
+      <td class="num">—</td><td class="num">—</td><td><span class="prov">CALCULATED</span></td></tr>`;
+
+  const pct = x => (100 * x).toFixed(1) + "%";
+  $("lossBody").innerHTML = `
+    <tr><td>The substrate's own loss, at tanδ ${r.sub.tand}</td>
+        <td class="num">${r.ideal.Rsub.toFixed(2)} Ω/sq</td>
+        <td class="num" style="color:var(--ink-3)">${pct(r.subShareActual)} of the cell's dissipation</td></tr>
+    <tr><td>The printed pattern</td>
+        <td class="num">${r.Rarr < 10000 ? r.Rarr.toFixed(1) : r.Rarr.toExponential(1)} Ω/sq</td>
+        <td class="num" style="color:var(--ink-3)">${pct(1 - r.subShareActual)} of the cell's dissipation</td></tr>
+    <tr><td>What a perfect match would want from the pattern</td>
+        <td class="num" style="color:var(--accent);font-weight:600">${r.ideal.Rpattern.toFixed(1)} Ω/sq</td>
+        <td class="num" style="color:var(--ink-3)">set by the ${state.d.toFixed(2)} mm spacer alone</td></tr>
+    <tr><td>Squares of ink in the current path</td>
+        <td class="num">${r.nsq.toFixed(2)}</td>
+        <td class="num" style="color:var(--ink-3)">${r.nsq > 1.2 ? "multiplies" : r.nsq < 0.85 ? "divides" : "passes through"} the ink's ${r.Rs.toFixed(0)} Ω/sq</td></tr>`;
+}
+
+/* ── render ────────────────────────────────────────────────────── */
+function render() {
+  /* design B: if no bridge length is pinned, take the one that matches */
+  if (state.design === "B" && (state.bridgeL === null || state.bridgeL === undefined)) {
+    const probe = solve(Object.assign({}, state, { bridgeL: 0.3 }));
+    state.bridgeL = Math.max(0.02, probe.ideal.Rpattern / probe.Rs * state.bridgeB);
+  }
+  const r = solve(state);
+
+  /* controls reflect state */
+  [...$("segVariant").children].forEach(b => b.setAttribute("aria-pressed", b.dataset.d === state.design));
+  [...$("scenRow").children].forEach(b => b.setAttribute("aria-pressed", +b.dataset.s === activeScen));
+  $("scenNote").textContent = activeScen >= 0 ? SCENARIOS[activeScen].note : DESIGNS[state.design].blurb;
+  $("selSub").value = state.substrate;
+  $("selInk").value = state.ink;
+  $("rngD").value = state.d;   $("valD").textContent = state.d.toFixed(2) + " mm";
+  $("rngP").value = state.p;   $("valP").textContent = state.design === "C"
+      ? r.geom.a1.toFixed(2) + " × " + r.geom.a2.toFixed(2) + " mm"
+      : state.p.toFixed(1) + " mm · " + (state.p / LAM0).toFixed(2) + " λ₀";
+  $("rngT").value = state.inkT; $("valT").textContent = state.inkT + " µm · " + r.Rs.toFixed(0) + " Ω/sq";
+  $("rngB").value = state.bridgeB; $("valB").textContent = state.bridgeB.toFixed(2) + " mm";
+  $("subHint").textContent = r.sub.note;
+  $("inkHint").textContent = r.ink.note;
+  $("ctlBridge").classList.toggle("off", state.design !== "B");
+  document.querySelector('[for="rngP"]').parentElement.classList.toggle("off", state.design === "C");
+
+  /* verdict */
+  const stamp = $("stamp");
+  stamp.className = "stamp " + r.verdict;
+  stamp.textContent = r.verdict === "pass" ? "It fits" : r.verdict === "warn" ? "Marginal" : "It does not fit";
+  const failed = r.checks.filter(c => !c.neutral && !c.ok && !c.marg).map(c => c.slug);
+  $("why").textContent = r.verdict === "pass"
+    ? "Every limit clears: the printer can lay this down, it sits inside the patent's skin budget, and it swallows " +
+      (100 * r.A10).toFixed(0) + "% of the power at 10 GHz."
+    : "Blocked by " + failed.join(", ") + "." +
+      (state.design === "C" ? " The circuit model only approximates a two-resonator cell — but the resistance is out by orders of magnitude, so the sign of the answer is safe." : "");
+
+  $("checks").innerHTML = r.checks.map(c => `
+    <div class="check ${c.neutral ? '' : c.ok ? 'ok' : c.marg ? 'marg' : 'bad'}">
+      <span class="k">${c.k}</span><span class="v">${c.v}</span><span class="n">${c.n}</span>
+    </div>`).join("");
+
+  $("planScale").textContent = "1 mm ≈ " +
+    (Math.min(322 / (2 * (state.design === "C" ? r.geom.a1 : r.p)),
+              250 / (2 * (state.design === "C" ? r.geom.a2 : r.p)))).toFixed(0) + " px";
+  $("sectScale").textContent = "films drawn oversize — see the µm figures";
+
+  drawPlan(r); drawSection(r); drawChart(r); drawTables(r);
+}
+
+/* open on the scenario that answers the ticket */
+Object.assign(state, SCENARIOS[3].set);
+state.bridgeL = null;
+render();
+</script>
