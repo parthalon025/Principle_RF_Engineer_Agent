@@ -164,6 +164,45 @@ tries. Scenario 05 in the prototype walks into this wall.
 
 ---
 
+## A framing correction: band, thickness and cell size are customer specs
+
+**Added 2026-09-06.** The first versions of this bench stamped "IT DOES NOT FIT" whenever a
+design left the patent's 0.87–2.00 mm skin or missed 90% absorption at 10 GHz. That conflated
+two very different things, and it made several buildable designs look impossible.
+
+The bench now keeps them apart, and labels every check:
+
+| | What it is | Can a customer move it? |
+|---|---|---|
+| **LIMIT** | 0.2 mm feature floor, the four-layer print stack, skin depth ≥ 3δ for a mirror, Rozanov's thickness-versus-bandwidth bound | **No.** Machine or physics. |
+| **SPEC** | Band centre, thickness allowed, absorption wanted, bandwidth wanted, bend radius | **Yes.** It is a requirement. |
+| **DESIGN** | Whether the film's resistance lands where the cell wants it | Neither — it is the design's own outcome |
+
+This matches the programme's own rule. #108's resolution: *"band arrives as a per-requirement
+input, never a fixed assumption, the same way host surface already does."* The patent's numbers
+are Example 3's requirement, not the physics of the problem.
+
+**The verdict now has three states** — *It fits* / *Misses this spec* / *Breaks a limit* — and
+the difference matters. Scenario 09 makes the point: the plain carbon square from scenario 02,
+byte-for-byte unchanged, goes from failing to **100% absorption and "It fits"** the moment the
+customer allows 3.6 mm instead of 2.0. Nothing about the cell changed. What I had reported as a
+finding about carbon was partly a finding about the patent's thickness budget.
+
+**Rozanov replaces the patent as the honest thickness limit.** Implemented from
+`docs/absorber-thickness-bandwidth-bound.md` §5 and checked against its worked example
+(9.5 GHz, 0.87 mm, −10 dB → 44.89% bandwidth, reproduced exactly). It answers the question the
+patent's budget was standing in for: *what is the thinnest skin that can do this at all?* At
+10 GHz for 21% bandwidth at −10 dB that is **0.371 mm** — so the patent's 0.87 mm floor is a
+choice with room under it, and the 2.0 mm ceiling is nowhere near any physical wall.
+
+**What did not change.** The genuinely hard findings survive untouched, because they were never
+about the requirement: the I-shape is 107× over-damped in carbon at any thickness; no Voltera
+ink lands in the resistance window; the feature floor still sets a minimum cell size and hence
+a minimum spacer; and retuning the winning cell to 6 GHz on the same 6 mm period drives the gap
+to 0.029 mm, which is a **LIMIT** failure no customer can negotiate away.
+
+---
+
 ## Added after the first pass
 
 **Reflector as a control (silver / MXene).** Both are mirrors — MXene at 27 µm is 4.5 skin
