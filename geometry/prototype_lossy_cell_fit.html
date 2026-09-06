@@ -413,7 +413,7 @@ code {
     <section class="panel">
       <h2>How much power the surface swallows</h2>
       <div style="padding:14px;">
-        <svg id="svgChart" viewBox="0 0 640 260" role="img" aria-labelledby="chartTitle"></svg>
+        <svg id="svgChart" viewBox="0 0 640 284" role="img" aria-labelledby="chartTitle"></svg>
       </div>
     </section>
 
@@ -443,12 +443,34 @@ code {
 <section class="notes">
   <h3>What this model is, and what it is not</h3>
   <div class="notes-cols">
-    <p><b>It is a circuit model, not a solve.</b> The printed layer is treated as one lumped
-      resistance in series with one capacitance; the substrate-plus-mirror underneath is a shorted
-      transmission line. Everything is <code>CALCULATED</code> from that. It gets resonant frequency
-      and match right to within the tens of percent, which is all a fit question needs. It does not
-      capture the coupling between neighbouring cells, and it does not describe a two-resonator cell
-      (design C) properly at all — the caveat is flagged on that design.</p>
+    <p><b>It is a circuit model, not a solve.</b> The printed layer is a resistance in series
+      with a lossy capacitance; the substrate-plus-mirror underneath is a shorted transmission
+      line. This is the formulation issue #111 adopted for the fast tier — Luukkonen's grid
+      capacitance inside <b>Costa, Genovesi, Monorchio &amp; Manara's absorber-stack model</b>
+      (<code>arXiv:1211.1902</code>). Everything is <code>CALCULATED</code> from it. It does not
+      capture coupling between neighbouring cells, and it does not describe a two-resonator cell
+      (design C) properly — flagged on that design.</p>
+    <p><b>Loss arrives in three places, not one.</b> Costa's point is that the real part of the
+      input impedance has three terms: ohmic loss in the printed film, dielectric loss in the
+      substrate <em>loading the gap between elements</em>, and bulk dielectric loss in the slab
+      on the round trip. The middle one is easy to miss — a lossless capacitance cannot show it —
+      and on a high-loss substrate it is the larger of the two dielectric terms. The last table
+      breaks all three out.</p>
+    <p><b>Costa's sentence that decides this ticket.</b> "Ohmic losses can be neglected in
+      microwave range since the resistor in (8) is generally one or two orders of magnitude lower
+      than the dielectric resistor (7). <em>Conversely, if the metal is replaced by a resistive
+      paint, the resistor assumes considerably higher values than the dielectric resistor.</em>"
+      Carbon ink is that resistive paint. The adopted reference says in as many words that
+      swapping metal for a resistive print moves the loss from the substrate into the pattern —
+      which is what #128 proposed.</p>
+    <p><b>One term of Costa's model is NOT implemented here.</b> As the spacer thins below about
+      0.3 × the cell period, evanescent Floquet modes bouncing off the ground plane raise the
+      gap capacitance, and his equation (10) corrects for it. This bench sits at
+      <span id="dpRatio">d/p ≈ 0.25</span> — inside that regime — but the equation's exact form
+      could not be recovered from the paper's PDF (its maths is in a subset font that defeats
+      text extraction). The direction is known: capacitance rises, so the true resonance sits
+      <em>below</em> what is drawn here, and the gap needed to reach 10 GHz is <em>wider</em>
+      than shown. The magnitude is not known. Treat the frequency axis as carrying that bias.</p>
     <p><b>Sheet resistance</b> — ohms per square — is the one number that decides whether a printed
       film absorbs or reflects. It is the film's resistivity divided by its thickness, and it does not
       depend on how big the square is, which is why it is quoted "per square". Free space is 377 Ω/sq;
@@ -574,11 +596,30 @@ function sheetR(ink, t_um, f) {
   return 1 / (ink.sigma * teff);
 }
 
-/** Luukkonen capacitive patch grid: C per square, farads. */
-function gridC(p_mm, g_mm, er) {
-  const eeff = (er + 1) / 2, p = p_mm * 1e-3, g = g_mm * 1e-3;
+/**
+ * Luukkonen capacitive patch grid, per square — but complex, following Costa et al.
+ * (arXiv:1211.1902), the absorber-stack model #111 adopted.
+ *
+ * The gap's fields sit half in air and half in the substrate, so the permittivity it
+ * sees is the average of the two. Making that average COMPLEX carries the substrate's
+ * loss tangent into the capacitor, and the series resistance that falls out is Costa's
+ * dielectric resistor R_D — a loss term a lossless capacitance simply cannot show.
+ */
+function gridC(p_mm, g_mm, er, tand) {
+  const p = p_mm * 1e-3, g = g_mm * 1e-3;
   const s = Math.sin(Math.PI * g / (2 * p));
-  return EPS0 * eeff * (2 * p / Math.PI) * Math.log(1 / s);
+  const A = EPS0 * (2 * p / Math.PI) * Math.log(1 / s);
+  return cx(A * (er + 1) / 2, -A * er * (tand || 0) / 2);
+}
+
+/** The loss tangent the gap actually sees — diluted by the air above it. */
+function gapTand(er, tand) { return (er * tand) / (er + 1); }
+
+/** Grid branch impedance: ohmic resistance of the printed film, in series with the
+    lossy capacitance. Costa eq (9): Z_FSS = R_ohmic + R_D + jX. */
+function gridZ(f, p_mm, g_mm, er, tand, Rohmic) {
+  const C = gridC(p_mm, g_mm, er, tand);
+  return add(cx(Rohmic, 0), div(cx(1, 0), mul(cx(0, 2 * Math.PI * f), C)));
 }
 
 /** Grounded lossy slab seen from above: a shorted transmission line. */
@@ -593,8 +634,7 @@ function slabZ(f, d_mm, er, tand) {
 
 /** Fraction of incident power absorbed, normal incidence. */
 function absorbedAt(f, p, g, d, er, tand, Rarr) {
-  const C = gridC(p, g, er);
-  const Zg = cx(Rarr, -1 / (2 * Math.PI * f * C));
+  const Zg = gridZ(f, p, g, er, tand, Rarr);
   const Zd = slabZ(f, d, er, tand);
   const Zin = div(mul(Zg, Zd), add(Zg, Zd));
   const G = div(cx(Zin.re - ETA0, Zin.im), cx(Zin.re + ETA0, Zin.im));
@@ -650,13 +690,21 @@ function solveSlotLoop(fTarget, p, t, er) {
   return best ? best.sL : (p - t) * 0.7;
 }
 
-/** The array resistance a perfect match would want, and what the substrate gives free. */
+/**
+ * What a perfect match needs, split into Costa's three loss terms.
+ * Total series resistance the tank wants is set by the spacer alone; the substrate
+ * then supplies two of the three terms for free, and the printed film supplies the rest.
+ */
 function idealSplit(f, d, er, tand) {
   const Z = slabZ(f, d, er, tand);
   const XL = Z.im;
   const Rtotal = ETA0 * XL * XL / (ETA0 * ETA0 + XL * XL);
-  return { XL, Rsub: Z.re, Rtotal, Rpattern: Rtotal - Z.re,
-           subShare: Z.re / Rtotal };
+  const XC = Math.sqrt(Math.max(0, Rtotal * (ETA0 - Rtotal)));
+  const RD = gapTand(er, tand) * XC;          /* dielectric loading the FSS gap */
+  const Rslab = Z.re;                          /* bulk loss in the spacer itself  */
+  return { XL, XC, Rsub: Rslab + RD, Rslab, RD, Rtotal,
+           Rpattern: Math.max(0, Rtotal - Rslab - RD),
+           subShare: (Rslab + RD) / Rtotal };
 }
 
 /* ── the three cell designs ────────────────────────────────────── */
@@ -799,15 +847,16 @@ function solve(s) {
   });
 
   checks.push({
-    k: "Resistance the cell needs",
+    k: "Ohmic resistance needed",
     v: ideal.Rpattern.toFixed(0) + " Ω/sq",
     ok: true, neutral: true,
-    n: "What the printed pattern must supply for a perfect match at this spacer thickness."
+    n: "The tank wants " + ideal.Rtotal.toFixed(0) + " Ω/sq in total; the substrate supplies "
+       + (ideal.Rslab + ideal.RD).toFixed(1) + " of it for free, so this is what the printed film must add."
   });
 
   const ratio = Rarr / ideal.Rpattern;
   checks.push({
-    k: "Resistance it actually has", slug: "a pattern resistance nowhere near what the cell wants",
+    k: "Ohmic resistance it has", slug: "a film resistance nowhere near what the cell wants",
     v: Rarr >= 1000 ? (Rarr / 1000).toFixed(1) + "k Ω/sq" : Rarr.toFixed(0) + " Ω/sq",
     ok: ratio > 0.6 && ratio < 1.7,
     marg: (ratio >= 0.35 && ratio <= 0.6) || (ratio >= 1.7 && ratio < 3),
@@ -912,8 +961,7 @@ function solveTransmissive(s) {
     if (y === null) return null;
     let M = abcdShunt(cx(0, y / ETA0));
     if (isRas) {
-      const Cg = gridC(p, gapLossy, sub.er);
-      const Zg = cx(Rarr, -1 / (2 * Math.PI * f * Cg));
+      const Zg = gridZ(f, p, gapLossy, sub.er, sub.tand, Rarr);
       M = abcdMul(abcdMul(abcdShunt(div(cx(1, 0), Zg)),
                           abcdLine(f, s.d, sub.er, sub.tand)), M);
     }
@@ -1068,23 +1116,23 @@ const state = {
 const SCENARIOS = [
   { n: "01", label: "Can the substrate do it alone?",
     set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "silver", inkT: 15, reflector: "silver", reflT: 15 },
-    note: "Silicone has the highest loss tangent of any flexible sheet on the shortlist — 0.10, about six times FR4's. Print the pattern in silver so the pattern itself dissipates nothing, and watch what the substrate manages on its own. Look at the last table: the substrate supplies roughly 3% of the dissipation the cell needs. Issue #128's premise is not a preference — at a millimetre and a half, substrate loss is a rounding error." },
+    note: "Silicone has the highest loss tangent of any flexible sheet on the shortlist — 0.10, about six times FR4's. Print the pattern in silver so the pattern itself dissipates nothing, and see how far the substrate gets on its own. It reaches 64.5% — short of the 90% target, but not nothing. Read the last table for where that comes from: the substrate supplies about a quarter of the loss budget, and four fifths of that quarter is the dielectric loading the gap between elements rather than bulk loss in the slab. So #128's premise holds — the pattern still has to supply three quarters — but on this substrate the loss is genuinely shared, not a rounding error. Switch the spacer to Kapton or RO4350B and the substrate's share collapses to 3% and 1%." },
   { n: "02", label: "The obvious carbon patch",
     set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 24, reflector: "silver", reflT: 15 },
-    note: "Swap the silver for two passes of carbon — the ink Voltera already sells, at the thickness its datasheet allows. The cell now has far too much resistance rather than too little: about six times what a 1.5 mm spacer wants. Drag the spacer thicker and the match comes good — but only past 3 mm, which is half again the patent's ceiling. A plain carbon square is too lossy for a thin skin." },
+    note: "Swap the silver for two passes of carbon — the ink Voltera already sells, at the thickness its datasheet allows. Now the cell has far too much resistance rather than too little: 250 Ω/sq against the 31 the film should be adding, eight times over, and absorption falls to 48%. Drag the spacer thicker and the match comes good, but only past 3 mm, which is half again the patent's ceiling. A plain carbon square is too lossy for a thin skin." },
   { n: "03", label: "The anchor's I-shape, in carbon",
     set: { design: "C", substrate: "silicone", d: 1.50, ink: "carbon", inkT: 24, reflector: "silver", reflT: 15 },
     note: "Example 3's own element, rescaled to silicone and printed in carbon. Its features clear the 0.2 mm floor comfortably — but its current runs around a narrow ring roughly thirteen squares long, so it multiplies the ink's resistance thirteenfold — landing at 3.3 kΩ/sq where the cell wants 39. That is eighty-five times too resistive, and only 6% of the power gets absorbed. A narrow-trace resonator is the worst possible host for a lossy ink." },
   { n: "04", label: "The cell that fits",
     set: { design: "B", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 12, bridgeB: 4.0, reflector: "silver", reflT: 15 },
-    note: "Split the job. Silver plates make the capacitance and lose nothing; one short, wide carbon bridge carries the current and does all the damping. Because the bridge is wider than it is long it divides the ink's resistance instead of multiplying it — 0.31 mm long by 4 mm wide is 0.08 squares, turning 500 Ω/sq of carbon into the 39 Ω/sq the cell wants. Everything clears: features, thickness, match, print passes." },
+    note: "Split the job. Silver plates make the capacitance and lose nothing; one short, wide carbon bridge carries the current and supplies the ohmic loss. Because the bridge is wider than it is long it divides the ink's resistance instead of multiplying it — 0.245 mm long by 4 mm wide is 0.06 squares, turning 500 Ω/sq of carbon into the 31 Ω/sq the film needs to add on top of what the substrate already gives. Everything clears: features, thickness, match, print passes. Note the margin, though — at 0.245 mm the bridge is only a quarter above the printer's floor, so this design point has less room than it looks." },
   { n: "05", label: "Where the 0.2 mm floor bites",
     set: { design: "B", substrate: "silicone", d: 1.50, p: 4.0, ink: "carbon", inkT: 12, bridgeB: 4.0, reflector: "silver", reflT: 15 },
-    note: "Same design, smaller cell. Shrinking the period means the elements must sit closer together to hold the same capacitance, and at 4 mm the gap the physics wants is 0.115 mm — below what the printer can lay down. The feature floor sets a minimum cell size, which in turn sets a minimum spacer thickness. On silicone that floor is about 1.04 mm; there is no thinner cell to be had." },
+    note: "Same design, smaller cell. Shrinking the period means the elements must sit closer together to hold the same capacitance, and at 4 mm the gap the physics wants is 0.120 mm — below what the printer can lay down. The feature floor sets a minimum cell size, which in turn sets a minimum spacer thickness: on silicone about 1.04 mm. There is no thinner cell to be had, whatever the optimiser tries." },
   { n: "06", label: "Swap the mirror to MXene",
     set: { design: "B", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 12, bridgeB: 4.0,
            reflector: "mxene", reflT: 27 },
-    note: "MXene is far too conductive to be the lossy layer — 0.25 Ω/sq against the 39 the cell wants — but it makes a perfectly good mirror, and unlike silver it cures at room temperature. At 27 µm it is 4.5 skin depths, and its 0.25 Ω/sq against silver's 0.13 is invisible next to the 39 Ω/sq the carbon supplies. The stack grows by 12 µm and nothing else moves. Watch the cure-path tile, though: the carbon bridge still needs 120 °C, so this is not yet a no-oven build — that is the gap." },
+    note: "MXene is far too conductive to be the lossy layer — 0.25 Ω/sq against the 31 the film should add — but it makes a perfectly good mirror, and unlike silver it cures at room temperature. At 27 µm it is 4.5 skin depths, and its 0.25 Ω/sq against silver's 0.13 is invisible next to the 39 Ω/sq the carbon supplies. The stack grows by 12 µm and nothing else moves. Watch the cure-path tile, though: the carbon bridge still needs 120 °C, so this is not yet a no-oven build — that is the gap." },
   { n: "07", label: "A bandpass, in one layer",
     set: { design: "D", substrate: "silicone", p: 8.0, slotT: 0.30, passF: 10.0,
            reflector: "silver", reflT: 15 },
@@ -1428,7 +1476,7 @@ function drawChart(r) {
   const svg = $("svgChart"); svg.innerHTML = "";
   svg.appendChild(el("title", { id: "chartTitle" }, "Absorbed power against frequency"));
   const g = el("g"); svg.appendChild(g);
-  const L = 46, R = 620, T = 16, B = 208;
+  const L = 46, R = 620, T = 40, B = 226;
   const fx = f => L + (R - L) * (f / 1e9 - 5) / 15;
   const fy = a => B - (B - T) * a;
 
@@ -1474,13 +1522,13 @@ function drawChart(r) {
     g.appendChild(el("polyline", a));
   });
   /* legend */
-  let lx = L + 6;
+  let lx = L;
   traces.forEach(t => {
     if (t.i === 3 && !anyT) return;
-    g.appendChild(el("line", { x1: lx, y1: T + 30, x2: lx + 14, y2: T + 30, stroke: t.c,
+    g.appendChild(el("line", { x1: lx, y1: 16, x2: lx + 16, y2: 16, stroke: t.c,
       "stroke-width": t.w, "stroke-dasharray": t.dash || "none" }));
-    g.appendChild(el("text", { x: lx + 18, y: T + 33.5, class: "axtext" }, t.name));
-    lx += 30 + t.name.length * 6.1;
+    g.appendChild(el("text", { x: lx + 21, y: 19.5, class: "axtext" }, t.name));
+    lx += 34 + t.name.length * 6.1;
   });
 
   if (r.transmissive && r.passLo) {
@@ -1577,17 +1625,21 @@ function drawTables(r) {
         ${r.total.toFixed(3)} mm</td>
       <td class="num">—</td><td class="num">—</td><td><span class="prov">CALCULATED</span></td></tr>`;
 
-  const pct = x => (100 * x).toFixed(1) + "%";
+  const tot = r.ideal.Rtotal;
+  const pc = x => (100 * x / tot).toFixed(1) + "%";
   $("lossBody").innerHTML = `
-    <tr><td>The substrate's own loss, at tanδ ${r.sub.tand}</td>
-        <td class="num">${r.ideal.Rsub.toFixed(2)} Ω/sq</td>
-        <td class="num" style="color:var(--ink-3)">${pct(r.subShareActual)} of the cell's dissipation</td></tr>
-    <tr><td>The printed pattern</td>
-        <td class="num">${r.Rarr < 10000 ? r.Rarr.toFixed(1) : r.Rarr.toExponential(1)} Ω/sq</td>
-        <td class="num" style="color:var(--ink-3)">${pct(1 - r.subShareActual)} of the cell's dissipation</td></tr>
-    <tr><td>What a perfect match would want from the pattern</td>
-        <td class="num" style="color:var(--accent);font-weight:600">${r.ideal.Rpattern.toFixed(1)} Ω/sq</td>
-        <td class="num" style="color:var(--ink-3)">set by the ${state.d.toFixed(2)} mm spacer alone</td></tr>
+    <tr><td><b>Ohmic</b> — currents in the printed film</td>
+        <td class="num">${r.Rarr < 10000 ? r.Rarr.toFixed(2) : r.Rarr.toExponential(1)} Ω/sq</td>
+        <td class="num" style="color:var(--ink-3)">${pc(r.ideal.Rpattern)} of the budget is what it should supply</td></tr>
+    <tr><td><b>Dielectric, in the gap</b> — the substrate loading the capacitance</td>
+        <td class="num">${r.ideal.RD.toFixed(2)} Ω/sq</td>
+        <td class="num" style="color:var(--ink-3)">${pc(r.ideal.RD)} · gap sees tanδ ${gapTand(r.sub.er, r.sub.tand).toFixed(4)}</td></tr>
+    <tr><td><b>Dielectric, in the slab</b> — bulk loss on the round trip</td>
+        <td class="num">${r.ideal.Rslab.toFixed(2)} Ω/sq</td>
+        <td class="num" style="color:var(--ink-3)">${pc(r.ideal.Rslab)}</td></tr>
+    <tr><td>Substrate total, free of charge</td>
+        <td class="num" style="font-weight:600">${(r.ideal.Rslab + r.ideal.RD).toFixed(2)} Ω/sq</td>
+        <td class="num" style="color:var(--ink-3)">${pc(r.ideal.Rslab + r.ideal.RD)} — the printed film supplies the rest</td></tr>
     <tr><td>Squares of ink in the current path</td>
         <td class="num">${r.nsq.toFixed(2)}</td>
         <td class="num" style="color:var(--ink-3)">${r.nsq > 1.2 ? "multiplies" : r.nsq < 0.85 ? "divides" : "passes through"} the ink's ${r.Rs.toFixed(0)} Ω/sq</td></tr>`;
@@ -1625,6 +1677,9 @@ function render() {
   $("bendHint").textContent = "Outer face stretches " + (100 * r.bend.strain).toFixed(1)
     + "%. The patent's minimum is R = 3T = " + (3 * r.total).toFixed(1)
     + " mm; silicone has been bent to R = 59 mm at X-band with a 3.6% bandwidth penalty.";
+  const dp = state.d / r.p;
+  $("dpRatio").textContent = "d/p = " + dp.toFixed(2)
+    + (dp < 0.3 ? " — inside that regime" : " — outside that regime, so the term is small here");
   $("rngSlotT").value = state.slotT;
   $("valSlotT").textContent = state.slotT.toFixed(2) + " mm";
   $("rngPassF").value = state.passF;
