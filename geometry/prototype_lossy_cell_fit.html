@@ -350,8 +350,20 @@ code {
           along the electric field versus how wide it is across — sets the resistance.</p>
       </div>
 
+      <div class="ctl" id="ctlSlot">
+        <label for="rngSlotT">Slot width <span class="val" id="valSlotT"></span></label>
+        <input type="range" id="rngSlotT" min="0.15" max="1.60" step="0.01">
+        <p class="hint">Cutting the slots wider opens the passband wider. The loop size is
+          solved for you so the band lands where you put it.</p>
+      </div>
+
+      <div class="ctl" id="ctlPassF">
+        <label for="rngPassF">Passband centre <span class="val" id="valPassF"></span></label>
+        <input type="range" id="rngPassF" min="4" max="17" step="0.1">
+      </div>
+
       <div class="ctl" style="border-top:1px solid var(--rule-soft); padding-top:14px;">
-        <label for="selRefl">Reflector — the mirror underneath</label>
+        <label for="selRefl" id="lblRefl">Reflector — the mirror underneath</label>
         <select id="selRefl"></select>
         <p class="hint" id="reflHint"></p>
       </div>
@@ -448,6 +460,19 @@ code {
       datasheets and from <code>docs/voltera-multilayer-capability.md</code>; substrate figures from
       <code>docs/xband-absorber-substrate-shortlist.md</code>; the I-shape dimensions from Landy
       et al. 2008 via <code>docs/ishape-interior-tuning.md</code>.</p>
+    <p><b>The bandpass layer</b> is a square-loop slot array — a metal sheet with resonant
+      slots cut in it — modelled through Langley and Parker's equivalent circuit for the
+      complementary metal loop array, flipped by Babinet's principle. The higher-order
+      correction term is dropped, which most likely makes the predicted passband
+      <em>wider</em> than the real one. So read the bandwidth as indicative, and treat the
+      rasorber's failure (design E) as provisional rather than settled — a sharper filter
+      than this model predicts would improve it.</p>
+    <p><b>The printed insulator cannot separate two patterned layers.</b> A patch layer over
+      a wire mesh at 30 µm overlaps by roughly 73 mm² per cell, which at εr 3 is about 64 pF
+      against a 0.38 pF design value — a hundred and seventy times over. The layers are
+      capacitively shorted together. That is why the bandpass here is cut from a
+      <em>single</em> layer instead: the substrate is the only real spacer this process has,
+      for a filter exactly as much as for an absorber.</p>
     <p><b>Normal incidence only.</b> No oblique-angle behaviour, no polarisation sweep, no bending.
       Those are real questions and this bench does not touch them.</p>
   </div>
@@ -555,6 +580,55 @@ function absorbedAt(f, p, g, d, er, tand, Rarr) {
   return { A: 1 - (G.re * G.re + G.im * G.im), Zin };
 }
 
+/* ── ABCD two-port cascade, for surfaces that transmit ───────────── */
+const abcdMul = (M, N) => [
+  add(mul(M[0], N[0]), mul(M[1], N[2])), add(mul(M[0], N[1]), mul(M[1], N[3])),
+  add(mul(M[2], N[0]), mul(M[3], N[2])), add(mul(M[2], N[1]), mul(M[3], N[3]))];
+const abcdShunt = Y => [cx(1, 0), cx(0, 0), Y, cx(1, 0)];
+function abcdLine(f, d_mm, er, tand) {
+  const n = csqrt(cx(er, -er * tand));
+  const Z0 = div(cx(ETA0, 0), n);
+  const th = mul(cx(0, 2 * Math.PI * f / C0 * d_mm * 1e-3), n);   // j·β·d
+  const ch = cx(Math.cosh(th.re) * Math.cos(th.im), Math.sinh(th.re) * Math.sin(th.im));
+  const sh = cx(Math.sinh(th.re) * Math.cos(th.im), Math.cosh(th.re) * Math.sin(th.im));
+  return [ch, mul(Z0, sh), div(sh, Z0), ch];
+}
+/** S-parameters of an ABCD network between two free-space half-spaces. */
+function sparams(M) {
+  const den = add(add(M[0], div(M[1], cx(ETA0, 0))), add(mul(M[2], cx(ETA0, 0)), M[3]));
+  const S21 = div(cx(2, 0), den);
+  const num = add(sub2(M[0], div(M[1], cx(ETA0, 0))), sub2(mul(M[2], cx(ETA0, 0)), M[3]));
+  return { S11: div(num, den), S21 };
+}
+const sub2 = (a, b) => cx(a.re - b.re, a.im - b.im);
+
+/* ── single-layer square-loop SLOT array = a bandpass, one patterned layer ──
+   Langley & Parker's equivalent circuit for the complementary metal loop array,
+   flipped through Babinet's principle. Approximate: the higher-order correction
+   term is dropped, so read the bandwidth as indicative, not designed. */
+function Fpar(p, u, lam) {
+  return (p / lam) * Math.log(1 / Math.sin(Math.PI * u / (2 * p)));
+}
+/** Normalised shunt admittance (Y·η₀) of a slot-loop array. Purely reactive. */
+function slotYnorm(f, p, sLoop, t, er) {
+  const lam = C0 / f * 1e3, eeff = (er + 1) / 2, gc = p - sLoop - t;
+  if (gc <= 0.01 || sLoop <= 0.01 || t <= 0.01) return null;
+  const X = (sLoop / p) * Fpar(p, t, lam);            // metal loop: inductive
+  const B = 4 * (sLoop / p) * Fpar(p, gc, lam) * eeff; // metal loop: capacitive
+  return 4 * (X - 1 / B);                             // Babinet
+}
+/** Loop size that puts the passband centre on fTarget. */
+function solveSlotLoop(fTarget, p, t, er) {
+  let best = null;
+  for (let i = 1; i < 1200; i++) {
+    const sL = (p - t) * i / 1200;
+    const y = slotYnorm(fTarget, p, sL, t, er);
+    if (y === null) continue;
+    if (best === null || Math.abs(y) < Math.abs(best.y)) best = { sL, y };
+  }
+  return best ? best.sL : (p - t) * 0.7;
+}
+
 /** The array resistance a perfect match would want, and what the substrate gives free. */
 function idealSplit(f, d, er, tand) {
   const Z = slabZ(f, d, er, tand);
@@ -588,6 +662,18 @@ const DESIGNS = {
     blurb: "The patent's Example 3 element — Landy et al.'s I-shaped ring resonator — rescaled to this substrate and printed in the lossy ink instead of copper. Its narrow traces are the point of interest.",
     squares: (s) => s.nsqRing,
     inkDefault: "carbon"
+  },
+  D: {
+    key: "D", label: "Slot-loop bandpass",
+    sub: "One patterned layer. Transmits.",
+    blurb: "A metal layer with square-loop slots cut in it. At the slots' resonance the surface goes electrically invisible and the wave passes straight through; away from it the metal reflects. One patterned layer, no mirror, so nothing needs aligning to anything.",
+    transmissive: true, inkDefault: "silver"
+  },
+  E: {
+    key: "E", label: "Rasorber",
+    sub: "Absorb one band, pass another.",
+    blurb: "Design B's lossy cell on top, but the solid mirror underneath swapped for design D's slot layer. Absorbs the band it is tuned to and lets a second band through — a radome invisible to your own radio and black to someone else's. Two patterned layers, so registration matters again.",
+    transmissive: true, inkDefault: "carbon"
   }
 };
 
@@ -598,6 +684,7 @@ const DESIGNS = {
  * question left is whether the resistance lands.
  */
 function solve(s) {
+  if (DESIGNS[s.design].transmissive) return solveTransmissive(s);
   const sub = SUBSTRATES[s.substrate];
   const ink = INKS[s.ink];
   const Rs = sheetR(ink, s.inkT, F0);
@@ -646,7 +733,7 @@ function solve(s) {
   for (let i = 0; i <= 480; i++) {
     const f = 5e9 + 15e9 * i / 480;
     const A = absorbedAt(f, p, gap, s.d, sub.er, sub.tand, Rarr).A;
-    sweep.push([f, A]);
+    sweep.push([f, A, 1 - A, 0]);   /* a solid mirror transmits nothing */
     if (A > peak.A) peak = { A, f };
     if (A >= 0.90) { if (lo90 === null) lo90 = f; hi90 = f; }
   }
@@ -758,6 +845,172 @@ function solve(s) {
   };
 }
 
+/**
+ * Surfaces that transmit: the slot-loop bandpass (D) and the rasorber (E).
+ * Same result shape as solve(), so the page renders both without branching.
+ */
+function solveTransmissive(s) {
+  const sub = SUBSTRATES[s.substrate];
+  const ink = INKS[s.ink];
+  const Rs = sheetR(ink, s.inkT, F0);
+  const isRas = s.design === "E";
+  const p = s.p;
+  const fPass = s.passF * 1e9;
+
+  /* the slot layer, sized so its passband lands on the requested frequency */
+  const sLoop = solveSlotLoop(fPass, p, s.slotT, sub.er);
+  const web = p - sLoop - s.slotT;             /* metal left between neighbouring loops */
+
+  /* the slot layer is printed in the reflector material — it IS the former mirror */
+  const refl = INKS[s.reflector];
+  const reflDelta = skinDepth(refl.sigma, F0) * 1e6;
+  const reflDepths = s.reflT / reflDelta;
+  const reflRs = sheetR(refl, s.reflT, F0);
+  const reflPasses = Math.max(1, Math.ceil(s.reflT / refl.perPass[1]));
+
+  /* the lossy layer above it, only on the rasorber */
+  const ideal = idealSplit(F0, s.d, sub.er, sub.tand);
+  const nsq = isRas ? s.bridgeL / s.bridgeB : 0;
+  const Rarr = isRas ? Rs * nsq : 0;
+  const passes = Math.max(1, Math.ceil(s.inkT / ink.perPass[1]));
+
+  /** The whole stack as one two-port. */
+  function stack(f, gapLossy) {
+    const y = slotYnorm(f, p, sLoop, s.slotT, sub.er);
+    if (y === null) return null;
+    let M = abcdShunt(cx(0, y / ETA0));
+    if (isRas) {
+      const Cg = gridC(p, gapLossy, sub.er);
+      const Zg = cx(Rarr, -1 / (2 * Math.PI * f * Cg));
+      M = abcdMul(abcdMul(abcdShunt(div(cx(1, 0), Zg)),
+                          abcdLine(f, s.d, sub.er, sub.tand)), M);
+    }
+    return sparams(M);
+  }
+  function rta(f, gapLossy) {
+    const S = stack(f, gapLossy);
+    if (!S) return { A: 0, R: 1, T: 0 };
+    const R = S.S11.re * S.S11.re + S.S11.im * S.S11.im;
+    const T = S.S21.re * S.S21.re + S.S21.im * S.S21.im;
+    return { R, T, A: Math.max(0, 1 - R - T) };
+  }
+
+  /* the rasorber picks its lossy gap the way the loop would: best absorption at 10 GHz */
+  let gap = FEATURE_FLOOR;
+  if (isRas) {
+    let best = { A: -1, g: FEATURE_FLOOR };
+    for (let i = 1; i <= 400; i++) {
+      const g = FEATURE_FLOOR + (0.9 * p - FEATURE_FLOOR) * i / 400;
+      const A = rta(F0, g).A;
+      if (A > best.A) best = { A, g };
+    }
+    gap = best.g;
+  }
+
+  /* sweep */
+  const sweep = [];
+  let peak = { A: 0, f: F0 }, lo90 = null, hi90 = null;
+  let passLo = null, passHi = null, passPeak = 0;
+  for (let i = 0; i <= 480; i++) {
+    const f = 5e9 + 15e9 * i / 480;
+    const v = rta(f, gap);
+    sweep.push([f, v.A, v.R, v.T]);
+    if (v.A > peak.A) peak = { A: v.A, f };
+    if (v.A >= 0.90) { if (lo90 === null) lo90 = f; hi90 = f; }
+    if (v.T >= 0.50) { if (passLo === null) passLo = f; passHi = f; }
+    if (v.T > passPeak) passPeak = v.T;
+  }
+  const atPass = rta(fPass, gap), at10 = rta(F0, gap);
+  const passBW = passLo ? 100 * (passHi - passLo) / ((passHi + passLo) / 2) : 0;
+  const insLoss = -10 * Math.log10(Math.max(atPass.T, 1e-12));
+  const rejection = -10 * Math.log10(Math.max(rta(fPass * 0.5, gap).T, 1e-12));
+
+  const total = (isRas ? s.d + s.inkT / 1000 : 0) + s.reflT / 1000;
+  const ovenNeeded = Math.max(isRas ? ink.cure : 0, refl.cure) > 40;
+  const patterned = isRas ? 2 : 1;
+  const minFeature = Math.min(s.slotT, web, isRas ? Math.min(gap, s.bridgeL) : Infinity);
+
+  /* ── checks ─────────────────────────────────────────────────── */
+  const checks = [];
+
+  checks.push({
+    k: "Smallest printed feature", slug: "features finer than the printer can lay down",
+    v: minFeature.toFixed(3) + " mm", ok: minFeature >= FEATURE_FLOOR,
+    n: "Slot " + s.slotT.toFixed(2) + " mm, metal web " + web.toFixed(2) + " mm"
+       + (isRas ? ", bridge " + s.bridgeL.toFixed(3) + " mm" : "") + ". Floor is 0.20 mm."
+       + (web < FEATURE_FLOOR
+          ? " The loop has run out of cell — this passband needs a bigger period." : "")
+  });
+
+  checks.push({
+    k: "Total skin thickness", slug: "a stack thicker than the patent's skin budget",
+    v: total.toFixed(3) + " mm",
+    ok: total >= SKIN_MIN && total <= SKIN_MAX,
+    marg: total < SKIN_MIN,
+    n: isRas ? "Patent budget 0.87–2.00 mm."
+             : "No spacer and no mirror — a bandpass needs neither, so it comes out "
+               + (SKIN_MIN / total).toFixed(0) + "× thinner than the patent's thinnest skin."
+  });
+
+  checks.push({
+    k: "Passband", v: passLo ? (passLo / 1e9).toFixed(1) + "–" + (passHi / 1e9).toFixed(1) + " GHz" : "none",
+    ok: passLo !== null && passBW > 5, slug: "no usable passband",
+    n: passLo ? passBW.toFixed(0) + "% wide at the −3 dB points, centred by the loop size."
+              : "The slot layer never opens up."
+  });
+
+  checks.push({
+    k: "Insertion loss in band", v: insLoss.toFixed(2) + " dB",
+    ok: insLoss < 1.0, marg: insLoss < 3.0, slug: "too much loss in the passband",
+    n: "How much of your own signal the surface eats at " + s.passF.toFixed(1) + " GHz."
+  });
+
+  if (isRas) {
+    checks.push({
+      k: "Absorbed at 10 GHz", slug: "missing the 90% absorption target",
+      v: (100 * at10.A).toFixed(1) + "%", ok: at10.A >= 0.90, marg: at10.A >= 0.75,
+      n: "With the mirror replaced by a slot layer, " + (100 * at10.T).toFixed(0)
+         + "% leaks through instead of being absorbed."
+    });
+  } else {
+    checks.push({
+      k: "Out-of-band rejection", v: rejection.toFixed(1) + " dB",
+      ok: rejection > 10, marg: rejection > 6, slug: "not enough out-of-band rejection",
+      n: "Blocking an octave below the passband. One resonant layer is a single pole, so the skirts are gentle."
+    });
+  }
+
+  checks.push({
+    k: "Patterned layers to align", v: patterned + (patterned === 1 ? " layer" : " layers"),
+    ok: patterned === 1, marg: patterned === 2,
+    slug: "two patterned layers with no published registration figure",
+    n: patterned === 1
+       ? "Nothing to align — the whole surface is one printed layer."
+       : "Voltera publishes no layer-to-layer registration figure, and these sit on opposite faces. #106 has to measure it."
+  });
+
+  checks.push({
+    k: "Cure path", v: ovenNeeded ? Math.max(isRas ? ink.cure : 0, refl.cure) + " °C" : "room temp",
+    ok: true, neutral: true,
+    n: ovenNeeded ? "The part must leave the host for an oven."
+                  : "No oven needed; printable in place."
+  });
+
+  const hard = checks.filter(c => !c.neutral);
+  const nFail = hard.filter(c => !c.ok && !c.marg).length;
+  const nMarg = hard.filter(c => !c.ok && c.marg).length;
+
+  return {
+    sub, ink, Rs, nsq, Rarr, ideal, gap, p, geom: null, passes, total,
+    refl, reflDelta, reflDepths, reflRs, reflPasses, ovenNeeded,
+    transmissive: true, isRas, sLoop, web, patterned, slotTdraw: s.slotT,
+    passLo, passHi, passBW, insLoss, rejection, atPass, at10, fPass,
+    A10: at10.A, peak, lo90, hi90, sweep, checks, bridgeIdeal: null,
+    subShareActual: 0, subShareIdeal: 0,
+    verdict: nFail > 0 ? "fail" : nMarg > 0 ? "warn" : "pass", nFail, nMarg
+  };
+}
+
 /* ══════════════════════════════════════════════════════════════════
    THE PAGE — throwaway from here down.
    ══════════════════════════════════════════════════════════════════ */
@@ -765,7 +1018,8 @@ function solve(s) {
 const state = {
   design: "B", substrate: "silicone", d: 1.50, p: 6.0,
   ink: "carbon", inkT: 12, bridgeB: 4.0, bridgeL: 0.314,
-  reflector: "silver", reflT: 15
+  reflector: "silver", reflT: 15,
+  slotT: 0.30, passF: 10.0
 };
 
 const SCENARIOS = [
@@ -787,7 +1041,15 @@ const SCENARIOS = [
   { n: "06", label: "Swap the mirror to MXene",
     set: { design: "B", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 12, bridgeB: 4.0,
            reflector: "mxene", reflT: 27 },
-    note: "MXene is far too conductive to be the lossy layer — 0.25 Ω/sq against the 39 the cell wants — but it makes a perfectly good mirror, and unlike silver it cures at room temperature. At 27 µm it is 4.5 skin depths, and its 0.25 Ω/sq against silver's 0.13 is invisible next to the 39 Ω/sq the carbon supplies. The stack grows by 12 µm and nothing else moves. Watch the cure-path tile, though: the carbon bridge still needs 120 °C, so this is not yet a no-oven build — that is the gap." }
+    note: "MXene is far too conductive to be the lossy layer — 0.25 Ω/sq against the 39 the cell wants — but it makes a perfectly good mirror, and unlike silver it cures at room temperature. At 27 µm it is 4.5 skin depths, and its 0.25 Ω/sq against silver's 0.13 is invisible next to the 39 Ω/sq the carbon supplies. The stack grows by 12 µm and nothing else moves. Watch the cure-path tile, though: the carbon bridge still needs 120 °C, so this is not yet a no-oven build — that is the gap." },
+  { n: "07", label: "A bandpass, in one layer",
+    set: { design: "D", substrate: "silicone", p: 8.0, slotT: 0.30, passF: 10.0,
+           reflector: "silver", reflT: 15 },
+    note: "Cut square-loop slots in the silver instead of leaving it solid, and the mirror becomes a window: at the slots' resonance the surface goes electrically invisible and the wave walks straight through. The important thing is the layer count — this is ONE patterned layer, so there is nothing to align to anything, and the registration risk that #106 has to measure simply does not arise. It is also about twenty-five times thinner than the patent's thinnest skin, because a bandpass needs neither a spacer nor a mirror. What you give up is selectivity: one resonant layer is a single pole, so the skirts are gentle." },
+  { n: "08", label: "Rasorber — and why it fails",
+    set: { design: "E", substrate: "silicone", d: 1.90, p: 10.0, ink: "carbon", inkT: 12,
+           bridgeB: 4.0, bridgeL: 1.20, slotT: 0.30, passF: 15.0, reflector: "silver", reflT: 15 },
+    note: "Now put the lossy cell back on top and let the slot layer be its ground plane — absorb the threat band, pass your own. This is the best operating point a search over period, spacer, bridge and passband could find, and it still misses both targets: about 75% absorbed where 90% is wanted, about 26% through where you want nearly all of it. The reason is that one resonant layer is a single pole, so its skirts are gentle: it is never a clean window in band nor a clean mirror out of it, and the absorber above it detunes against a backing that keeps changing. Selectivity would need a second resonant layer — which needs a real spacer, which means two patterned layers on opposite faces, which is exactly the registration figure Voltera does not publish. Treat this verdict as provisional: the bandpass model drops a correction term and probably over-states the bandwidth, which would make the surface look less selective than it is." }
 ];
 
 let activeScen = 3;
@@ -833,6 +1095,8 @@ $("selRefl").addEventListener("change", e => {
   activeScen = -1; render();
 });
 $("rngRT").addEventListener("input", e => { state.reflT = +e.target.value; activeScen = -1; render(); });
+$("rngSlotT").addEventListener("input", e => { state.slotT = +e.target.value; activeScen = -1; render(); });
+$("rngPassF").addEventListener("input", e => { state.passF = +e.target.value; activeScen = -1; render(); });
 
 /* ── drawing helpers (SVG, drafting conventions) ───────────────── */
 function el(tag, attrs, txt) {
@@ -894,7 +1158,29 @@ function drawPlan(r) {
     g.appendChild(el("rect", { x: cx0, y: cy0, width: px * k, height: py * k,
       fill: "none", stroke: "var(--rule)", "stroke-width": .6, "stroke-dasharray": "3 3" }));
 
-    if (state.design === "A") {
+    if (r.transmissive) {
+      /* metal sheet with a square-loop slot cut in it: draw metal, then the slot ring */
+      const metal = { fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)", "stroke-width": .6 };
+      g.appendChild(el("rect", Object.assign({ x: cx0, y: cy0, width: px * k, height: py * k }, metal)));
+      const outer = (r.sLoop + r.slotTdraw) * k, inner = (r.sLoop - r.slotTdraw) * k;
+      const ox0 = cx0 + (px * k - outer) / 2, oy0 = cy0 + (py * k - outer) / 2;
+      /* the slot ring = outer square minus inner square, drawn as four bars */
+      const tw = (outer - inner) / 2;
+      const slot = { fill: "var(--ground)", stroke: "var(--rule)", "stroke-width": .4 };
+      g.appendChild(el("rect", Object.assign({ x: ox0, y: oy0, width: outer, height: tw }, slot)));
+      g.appendChild(el("rect", Object.assign({ x: ox0, y: oy0 + outer - tw, width: outer, height: tw }, slot)));
+      g.appendChild(el("rect", Object.assign({ x: ox0, y: oy0 + tw, width: tw, height: outer - 2 * tw }, slot)));
+      g.appendChild(el("rect", Object.assign({ x: ox0 + outer - tw, y: oy0 + tw, width: tw, height: outer - 2 * tw }, slot)));
+      if (r.isRas) {
+        /* the lossy bridge above, shown ghosted so both layers read at once */
+        const bw = Math.min(state.bridgeB, px - r.gap) * k;
+        g.appendChild(el("rect", { x: cx0 + px * k / 2 - bw / 2,
+          y: cy0 + py * k / 2 - Math.max(2, state.bridgeL * k) / 2,
+          width: bw, height: Math.max(2, state.bridgeL * k),
+          fill: "var(--mat-carbon)", "fill-opacity": ".85" }));
+      }
+
+    } else if (state.design === "A") {
       const w = (px - r.gap) * k, h = (py - r.gap) * k;
       g.appendChild(el("rect", { x: cx0 + r.gap * k / 2, y: cy0 + r.gap * k / 2, width: w, height: h,
         fill: "var(--mat-carbon)", stroke: "var(--mat-carbon-e)", "stroke-width": 1, rx: 1 }));
@@ -934,7 +1220,12 @@ function drawPlan(r) {
   /* dimension lines */
   dimH(g, ox, ox + px * k, oy - 12, "p = " + px.toFixed(2) + " mm");
   dimV(g, ox - 12, oy, oy + py * k, (isC ? "a₂ " : "p ") + py.toFixed(2));
-  if (state.design !== "C") {
+  if (r.transmissive) {
+    const gy = oy + H + 17;
+    dimH(g, ox + (px - r.sLoop) * k / 2, ox + (px + r.sLoop) * k / 2, gy,
+         "loop " + r.sLoop.toFixed(2), false);
+    dimH(g, ox, ox + r.web * k, oy - 26, "web " + r.web.toFixed(2), r.web < FEATURE_FLOOR);
+  } else if (state.design !== "C") {
     const gy = oy + H + 17;
     dimH(g, ox + (2 * px - r.gap) * k, ox + 2 * px * k, gy, "gap " + r.gap.toFixed(3), tightGap);
     g.appendChild(el("line", { x1: ox + (2 * px - r.gap) * k, y1: oy + H, x2: ox + (2 * px - r.gap) * k,
@@ -958,6 +1249,11 @@ function drawPlan(r) {
   const key = state.design === "B"
     ? [["var(--mat-silver)", "silver — makes the capacitance, loses nothing"],
        ["var(--mat-carbon)", "carbon — carries the current, does all the damping"]]
+    : r.transmissive
+    ? (r.isRas
+        ? [["var(--mat-silver)", "slot layer — the wave passes through the loop"],
+           ["var(--mat-carbon)", "carbon bridge on the far face — the absorbing layer"]]
+        : [["var(--mat-silver)", r.refl.name.replace("ACI ", "") + " — the sheet the slots are cut from"]])
     : [["var(--mat-carbon)", INKS[state.ink].name.replace("ACI ", "") + " — the whole element"]];
   key.forEach(([c, t], i) => {
     g.appendChild(el("rect", { x: 64, y: keyY + i * 15 - 8, width: 9, height: 9, fill: c,
@@ -977,6 +1273,52 @@ function drawSection(r) {
      and say so, rather than pretending one scale covers both */
   const filmH = 15, subH = Math.max(34, Math.min(150, state.d * 62));
   const yLossy = top, ySub = top + filmH, yRefl = ySub + subH;
+
+  if (r.transmissive) {
+    /* no mirror: the bottom layer is the slot sheet, and the wave carries on through */
+    const rows = [];
+    let y = top;
+    if (r.isRas) {
+      const bw = Math.max(10, w * 0.16);
+      g.appendChild(el("rect", { x: x0, y, width: (w - bw) / 2, height: filmH,
+        fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)" }));
+      g.appendChild(el("rect", { x: x0 + (w + bw) / 2, y, width: (w - bw) / 2, height: filmH,
+        fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)" }));
+      g.appendChild(el("rect", { x: x0 + (w - bw) / 2, y, width: bw, height: filmH,
+        fill: "var(--mat-carbon)", stroke: "var(--mat-carbon-e)" }));
+      rows.push([y, filmH, "Silver plates + carbon bridge",
+                 state.inkT + " µm · absorbs at 10 GHz"]);
+      y += filmH;
+      const sh = Math.max(34, Math.min(150, state.d * 62));
+      g.appendChild(el("rect", { x: x0, y, width: w, height: sh, fill: "url(#hatch)",
+        stroke: "var(--mat-sub-e)", "stroke-width": 1 }));
+      rows.push([y, sh, r.sub.name, state.d.toFixed(2) + " mm · stock sheet"]);
+      y += sh;
+    }
+    /* the slot sheet, drawn with its aperture */
+    const ap = w * 0.22;
+    g.appendChild(el("rect", { x: x0, y, width: (w - ap) / 2, height: filmH,
+      fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)" }));
+    g.appendChild(el("rect", { x: x0 + (w + ap) / 2, y, width: (w - ap) / 2, height: filmH,
+      fill: "var(--mat-silver)", stroke: "var(--mat-silver-e)" }));
+    rows.push([y, filmH, r.refl.name + ", slotted", state.reflT + " µm · "
+               + r.passBW.toFixed(0) + "% passband"]);
+    rows.forEach(([yy, h, name, detail]) => {
+      g.appendChild(el("line", { x1: x0 + w, y1: yy + h / 2, x2: x0 + w + 8, y2: yy + h / 2, class: "dimline" }));
+      g.appendChild(el("text", { x: x0 + w + 12, y: yy + h / 2 - 1, class: "matlabel strong" }, name));
+      g.appendChild(el("text", { x: x0 + w + 12, y: yy + h / 2 + 11, class: "matlabel" }, detail));
+    });
+    /* wave in, and the part that keeps going */
+    g.appendChild(el("line", { x1: x0 + 26, y1: 14, x2: x0 + 26, y2: top - 4,
+      stroke: "var(--accent)", "stroke-width": 1.4, "marker-end": "url(#ar)" }));
+    g.appendChild(el("text", { x: x0 + 32, y: 24, class: "axtext", fill: "var(--accent)" }, "in"));
+    g.appendChild(el("line", { x1: x0 + w / 2, y1: y + filmH + 6, x2: x0 + w / 2, y2: y + filmH + 34,
+      stroke: "var(--pass)", "stroke-width": 1.4, "marker-end": "url(#ar)" }));
+    g.appendChild(el("text", { x: x0 + w / 2 + 6, y: y + filmH + 26, class: "axtext",
+      fill: "var(--pass)" }, (100 * r.atPass.T).toFixed(0) + "% through at "
+      + state.passF.toFixed(1) + " GHz"));
+    return;
+  }
 
   const lossyFill = state.design === "B" ? "var(--mat-silver)" : "var(--mat-carbon)";
   if (state.design === "B") {
@@ -1073,10 +1415,38 @@ function drawChart(r) {
   g.appendChild(el("text", { x: R - 2, y: fy(.9) - 5, class: "axtext", "text-anchor": "end",
     fill: "var(--pass)" }, "90% target (−10 dB)"));
 
-  /* the trace */
-  const pts = r.sweep.map(([f, a]) => fx(f) + "," + fy(Math.max(0, Math.min(1, a)))).join(" ");
-  g.appendChild(el("polyline", { points: pts, fill: "none", stroke: "var(--accent)", "stroke-width": 2,
-    "stroke-linejoin": "round" }));
+  /* three traces: what the surface absorbs, reflects and passes */
+  const traces = [
+    { i: 1, c: "var(--accent)", w: 2.2, name: "absorbed", dash: null },
+    { i: 2, c: "var(--ink-3)",  w: 1.3, name: "reflected", dash: "4 3" },
+    { i: 3, c: "var(--pass)",   w: 2.0, name: "transmitted", dash: null }
+  ];
+  const anyT = r.sweep.some(row => row[3] > 0.01);
+  traces.forEach(t => {
+    if (t.i === 3 && !anyT) return;
+    const pts = r.sweep.map(row => fx(row[0]) + "," + fy(Math.max(0, Math.min(1, row[t.i])))).join(" ");
+    const a = { points: pts, fill: "none", stroke: t.c, "stroke-width": t.w, "stroke-linejoin": "round" };
+    if (t.dash) a["stroke-dasharray"] = t.dash;
+    g.appendChild(el("polyline", a));
+  });
+  /* legend */
+  let lx = L + 6;
+  traces.forEach(t => {
+    if (t.i === 3 && !anyT) return;
+    g.appendChild(el("line", { x1: lx, y1: T + 30, x2: lx + 14, y2: T + 30, stroke: t.c,
+      "stroke-width": t.w, "stroke-dasharray": t.dash || "none" }));
+    g.appendChild(el("text", { x: lx + 18, y: T + 33.5, class: "axtext" }, t.name));
+    lx += 22 + t.name.length * 5.6;
+  });
+
+  if (r.transmissive && r.passLo) {
+    g.appendChild(el("rect", { x: fx(r.passLo), y: T, width: fx(r.passHi) - fx(r.passLo),
+      height: B - T, fill: "var(--pass)", "fill-opacity": ".07" }));
+    g.appendChild(el("text", { x: (fx(r.passLo) + fx(r.passHi)) / 2, y: B - 8, class: "dimtext",
+      "text-anchor": "middle", fill: "var(--pass)" },
+      "passband " + (r.passLo / 1e9).toFixed(1) + "–" + (r.passHi / 1e9).toFixed(1)
+      + " GHz · " + r.passBW.toFixed(0) + "%"));
+  }
 
   /* the peak */
   g.appendChild(el("circle", { cx: fx(r.peak.f), cy: fy(r.peak.A), r: 3.5,
@@ -1087,7 +1457,7 @@ function drawChart(r) {
     (100 * r.peak.A).toFixed(0) + "% at " + (r.peak.f / 1e9).toFixed(2) + " GHz"));
 
   /* the useful band, if there is one */
-  if (r.lo90 !== null) {
+  if (r.lo90 !== null && !r.transmissive) {
     g.appendChild(el("line", { x1: fx(r.lo90), y1: fy(.9), x2: fx(r.hi90), y2: fy(.9),
       stroke: "var(--pass)", "stroke-width": 3.5 }));
     const bw = 100 * (r.hi90 - r.lo90) / ((r.hi90 + r.lo90) / 2);
@@ -1101,6 +1471,45 @@ function drawChart(r) {
 
 /* ── tables ────────────────────────────────────────────────────── */
 function drawTables(r) {
+  if (r.transmissive) {
+    const rows = [];
+    if (r.isRas) {
+      rows.push(["var(--mat-carbon)", "Resonant + lossy",
+        "ACI SS1109 silver plates + ACI SC1502 carbon bridge, coplanar",
+        state.inkT + " µm", r.passes, r.Rarr.toFixed(0) + " Ω/sq", r.ink.prov]);
+      rows.push(["var(--mat-sub)", "Spacer", r.sub.name + " — stock sheet, not printed",
+        state.d.toFixed(2) + " mm", "—", "εr " + r.sub.er + " · tanδ " + r.sub.tand, r.sub.prov]);
+    }
+    rows.push(["var(--mat-silver)", r.isRas ? "Bandpass ground" : "Slot layer",
+      r.refl.name + ", square-loop slots — " + r.refl.cureNote,
+      state.reflT + " µm", r.reflPasses,
+      "loop " + r.sLoop.toFixed(2) + " mm · slot " + state.slotT.toFixed(2) + " mm", r.refl.prov]);
+    $("stackBody").innerHTML = rows.map(([c, role, mat, th, ps, rs, prov]) => `
+      <tr><td><span class="layer"><span class="swatch" style="background:${c}"></span>${role}</span></td>
+        <td>${mat}</td><td class="num">${th}</td><td class="num">${ps}</td>
+        <td class="num">${rs}</td><td><span class="prov">${prov}</span></td></tr>`).join("") + `
+      <tr><td><span class="layer"><span class="swatch" style="background:transparent;border-style:dashed"></span>Total</span></td>
+        <td>against the patent's 0.87–2.00 mm skin</td>
+        <td class="num" style="color:${r.total >= SKIN_MIN && r.total <= SKIN_MAX ? 'var(--pass)' : 'var(--warn)'};font-weight:600">
+          ${r.total.toFixed(3)} mm</td>
+        <td class="num">—</td><td class="num">—</td><td><span class="prov">CALCULATED</span></td></tr>`;
+
+    const pc = x => (100 * x).toFixed(1) + "%";
+    $("lossBody").innerHTML = `
+      <tr><td>Through the surface at ${state.passF.toFixed(1)} GHz — your own signal</td>
+          <td class="num" style="color:var(--pass);font-weight:600">${pc(r.atPass.T)}</td>
+          <td class="num" style="color:var(--ink-3)">${r.insLoss.toFixed(2)} dB insertion loss</td></tr>
+      <tr><td>${r.isRas ? "Absorbed at 10 GHz — the threat band" : "Reflected at 10 GHz"}</td>
+          <td class="num">${pc(r.isRas ? r.at10.A : r.at10.R)}</td>
+          <td class="num" style="color:var(--ink-3)">${r.isRas ? pc(r.at10.T) + " still leaks through" : "one resonant layer, gentle skirts"}</td></tr>
+      <tr><td>Patterned layers needing mutual alignment</td>
+          <td class="num" style="color:${r.patterned === 1 ? 'var(--pass)' : 'var(--warn)'};font-weight:600">${r.patterned}</td>
+          <td class="num" style="color:var(--ink-3)">${r.patterned === 1 ? "registration is not a risk here" : "no published NOVA figure — #106"}</td></tr>
+      <tr><td>Printed insulator as the layer separator</td>
+          <td class="num" style="color:var(--fail);font-weight:600">unusable</td>
+          <td class="num" style="color:var(--ink-3)">at 30 µm, overlap shorts the layers — see the notes</td></tr>`;
+    return;
+  }
   const lossyName = state.design === "B"
     ? "ACI SS1109 silver plates + ACI SC1502 carbon bridge" : r.ink.name;
   const rows = [
@@ -1161,6 +1570,16 @@ function render() {
       : state.p.toFixed(1) + " mm · " + (state.p / LAM0).toFixed(2) + " λ₀";
   $("rngT").value = state.inkT; $("valT").textContent = state.inkT + " µm · " + r.Rs.toFixed(0) + " Ω/sq";
   $("rngB").value = state.bridgeB; $("valB").textContent = state.bridgeB.toFixed(2) + " mm";
+  const tx = !!DESIGNS[state.design].transmissive;
+  $("ctlSlot").classList.toggle("off", !tx);
+  $("ctlPassF").classList.toggle("off", !tx);
+  $("ctlBridge").classList.toggle("off", state.design !== "B" && state.design !== "E");
+  $("lblRefl").textContent = tx ? "Slot layer — the metal it is cut from"
+                                : "Reflector — the mirror underneath";
+  $("rngSlotT").value = state.slotT;
+  $("valSlotT").textContent = state.slotT.toFixed(2) + " mm";
+  $("rngPassF").value = state.passF;
+  $("valPassF").textContent = state.passF.toFixed(1) + " GHz";
   $("selRefl").value = state.reflector;
   $("rngRT").value = state.reflT;
   $("valRT").textContent = state.reflT + " µm · " + r.reflDepths.toFixed(1) + " δ";
@@ -1171,7 +1590,6 @@ function render() {
     + "% of what the lossy layer supplies — invisible either way.";
   $("subHint").textContent = r.sub.note;
   $("inkHint").textContent = r.ink.note;
-  $("ctlBridge").classList.toggle("off", state.design !== "B");
   document.querySelector('[for="rngP"]').parentElement.classList.toggle("off", state.design === "C");
 
   /* verdict */
