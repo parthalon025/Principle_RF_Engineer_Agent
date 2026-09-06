@@ -350,6 +350,17 @@ code {
           along the electric field versus how wide it is across — sets the resistance.</p>
       </div>
 
+      <div class="ctl" style="border-top:1px solid var(--rule-soft); padding-top:14px;">
+        <label for="selRefl">Reflector — the mirror underneath</label>
+        <select id="selRefl"></select>
+        <p class="hint" id="reflHint"></p>
+      </div>
+
+      <div class="ctl">
+        <label for="rngRT">Reflector thickness <span class="val" id="valRT"></span></label>
+        <input type="range" id="rngRT" min="5" max="45" step="1">
+      </div>
+
     </div>
   </aside>
 
@@ -488,19 +499,23 @@ const SUBSTRATES = {
 
 const INKS = {
   carbon: { name: "ACI SC1502 carbon", rho: 0.006, perPass: [6, 12], dsMaxPasses: 2,
-            prov: "MANUFACTURER-SPECIFIED",
+            prov: "MANUFACTURER-SPECIFIED", cure: 120, cureNote: "≥120 °C — needs an oven",
             note: "Resistivity < 0.6 Ω·cm. Skin depth 390 µm at 10 GHz, so a printed film is electrically transparent and sheet resistance is exactly resistivity ÷ thickness." },
   mxene:  { name: "Printed MXene", sigma: 6.9e5, perPass: [10, 10], dsMaxPasses: 4,
-            prov: "LITERATURE-SUPPORTED",
+            prov: "LITERATURE-SUPPORTED", cure: 20, cureNote: "room temperature — no oven needed",
             note: "σ = 6.9×10⁵ S/m. Skin depth 6.1 µm, so the thinnest printable film is already opaque — thickness is a dead knob." },
   silver: { name: "ACI SS1109 silver", sigma: 2.22e6, perPass: [10, 20], dsMaxPasses: 2,
-            prov: "MANUFACTURER-SPECIFIED",
+            prov: "MANUFACTURER-SPECIFIED", cure: 135, cureNote: "135 °C / 5 min — needs an oven",
             note: "σ = 2.22×10⁶ S/m. Skin depth 3.4 µm. A mirror at any printable thickness; contributes essentially no loss." }
 };
 
 const FEATURE_FLOOR = 0.2;      // mm — NOVA demonstrated feature size
 const SKIN_MIN = 0.87, SKIN_MAX = 2.00;   // mm — the patent's skin budget
-const REFLECTOR_UM = 15;        // silver mirror, 1–2 passes
+const MIRROR_SKIN_DEPTHS = 3;   // below this a film leaks instead of reflecting
+
+/** Inks that can serve as the unpatterned mirror. Carbon never can — its skin
+    depth is 390 µm, so no printable film is even a fraction of one. */
+const REFLECTORS = ["silver", "mxene"];
 
 function skinDepth(sigma, f) { return 1 / Math.sqrt(Math.PI * f * MU0 * sigma); }
 
@@ -641,7 +656,16 @@ function solve(s) {
 
   /* thicknesses */
   const passes = Math.max(1, Math.ceil(s.inkT / ink.perPass[1]));
-  const total = s.d + s.inkT / 1000 + REFLECTOR_UM / 1000;
+
+  /* the mirror */
+  const refl = INKS[s.reflector];
+  const reflDelta = skinDepth(refl.sigma, F0) * 1e6;          // µm
+  const reflDepths = s.reflT / reflDelta;
+  const reflRs = sheetR(refl, s.reflT, F0);
+  const reflPasses = Math.max(1, Math.ceil(s.reflT / refl.perPass[1]));
+  const total = s.d + s.inkT / 1000 + s.reflT / 1000;
+  /* the mirror's own resistance sits in series with the pattern's */
+  const ovenNeeded = Math.max(ink.cure, refl.cure) > 40;
 
   /* ── the checks ─────────────────────────────────────────────── */
   const checks = [];
@@ -701,12 +725,32 @@ function solve(s) {
        : "Beyond the 4-layer stack Voltera validates."
   });
 
+  checks.push({
+    k: "Mirror opacity",
+    v: reflDepths.toFixed(1) + " skin depths",
+    ok: reflDepths >= MIRROR_SKIN_DEPTHS,
+    marg: reflDepths >= 2 && reflDepths < MIRROR_SKIN_DEPTHS,
+    slug: "a reflector too thin to be a mirror",
+    n: refl.name + " at " + s.reflT + " µm, " + reflRs.toFixed(2) + " Ω/sq. Below "
+       + MIRROR_SKIN_DEPTHS + " the film leaks instead of reflecting."
+  });
+
+  checks.push({
+    k: "Cure path",
+    v: ovenNeeded ? Math.max(ink.cure, refl.cure) + " °C" : "room temp",
+    ok: true, neutral: true,
+    n: ovenNeeded
+       ? "The part must leave the host for an oven — fine on a large-radius host, not on a no-oven one."
+       : "No oven needed; printable in place on a host that cannot be removed."
+  });
+
   const hard = checks.filter(c => !c.neutral);
   const nFail = hard.filter(c => !c.ok && !c.marg).length;
   const nMarg = hard.filter(c => !c.ok && c.marg).length;
 
   return {
     sub, ink, Rs, nsq, Rarr, ideal, gap, p, geom, passes, total,
+    refl, reflDelta, reflDepths, reflRs, reflPasses, ovenNeeded,
     A10: best.A, peak, lo90, hi90, sweep, checks, bridgeIdeal,
     subShareActual, subShareIdeal: ideal.subShare,
     verdict: nFail > 0 ? "fail" : nMarg > 0 ? "warn" : "pass",
@@ -720,25 +764,30 @@ function solve(s) {
 
 const state = {
   design: "B", substrate: "silicone", d: 1.50, p: 6.0,
-  ink: "carbon", inkT: 12, bridgeB: 4.0, bridgeL: 0.314
+  ink: "carbon", inkT: 12, bridgeB: 4.0, bridgeL: 0.314,
+  reflector: "silver", reflT: 15
 };
 
 const SCENARIOS = [
   { n: "01", label: "Can the substrate do it alone?",
-    set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "silver", inkT: 15 },
+    set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "silver", inkT: 15, reflector: "silver", reflT: 15 },
     note: "Silicone has the highest loss tangent of any flexible sheet on the shortlist — 0.10, about six times FR4's. Print the pattern in silver so the pattern itself dissipates nothing, and watch what the substrate manages on its own. Look at the last table: the substrate supplies roughly 3% of the dissipation the cell needs. Issue #128's premise is not a preference — at a millimetre and a half, substrate loss is a rounding error." },
   { n: "02", label: "The obvious carbon patch",
-    set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 24 },
+    set: { design: "A", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 24, reflector: "silver", reflT: 15 },
     note: "Swap the silver for two passes of carbon — the ink Voltera already sells, at the thickness its datasheet allows. The cell now has far too much resistance rather than too little: about six times what a 1.5 mm spacer wants. Drag the spacer thicker and the match comes good — but only past 3 mm, which is half again the patent's ceiling. A plain carbon square is too lossy for a thin skin." },
   { n: "03", label: "The anchor's I-shape, in carbon",
-    set: { design: "C", substrate: "silicone", d: 1.50, ink: "carbon", inkT: 24 },
+    set: { design: "C", substrate: "silicone", d: 1.50, ink: "carbon", inkT: 24, reflector: "silver", reflT: 15 },
     note: "Example 3's own element, rescaled to silicone and printed in carbon. Its features clear the 0.2 mm floor comfortably — but its current runs around a narrow ring roughly thirteen squares long, so it multiplies the ink's resistance thirteenfold — landing at 3.3 kΩ/sq where the cell wants 39. That is eighty-five times too resistive, and only 6% of the power gets absorbed. A narrow-trace resonator is the worst possible host for a lossy ink." },
   { n: "04", label: "The cell that fits",
-    set: { design: "B", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 12, bridgeB: 4.0 },
+    set: { design: "B", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 12, bridgeB: 4.0, reflector: "silver", reflT: 15 },
     note: "Split the job. Silver plates make the capacitance and lose nothing; one short, wide carbon bridge carries the current and does all the damping. Because the bridge is wider than it is long it divides the ink's resistance instead of multiplying it — 0.31 mm long by 4 mm wide is 0.08 squares, turning 500 Ω/sq of carbon into the 39 Ω/sq the cell wants. Everything clears: features, thickness, match, print passes." },
   { n: "05", label: "Where the 0.2 mm floor bites",
-    set: { design: "B", substrate: "silicone", d: 1.50, p: 4.0, ink: "carbon", inkT: 12, bridgeB: 4.0 },
-    note: "Same design, smaller cell. Shrinking the period means the elements must sit closer together to hold the same capacitance, and at 4 mm the gap the physics wants is 0.115 mm — below what the printer can lay down. The feature floor sets a minimum cell size, which in turn sets a minimum spacer thickness. On silicone that floor is about 1.04 mm; there is no thinner cell to be had." }
+    set: { design: "B", substrate: "silicone", d: 1.50, p: 4.0, ink: "carbon", inkT: 12, bridgeB: 4.0, reflector: "silver", reflT: 15 },
+    note: "Same design, smaller cell. Shrinking the period means the elements must sit closer together to hold the same capacitance, and at 4 mm the gap the physics wants is 0.115 mm — below what the printer can lay down. The feature floor sets a minimum cell size, which in turn sets a minimum spacer thickness. On silicone that floor is about 1.04 mm; there is no thinner cell to be had." },
+  { n: "06", label: "Swap the mirror to MXene",
+    set: { design: "B", substrate: "silicone", d: 1.50, p: 6.0, ink: "carbon", inkT: 12, bridgeB: 4.0,
+           reflector: "mxene", reflT: 27 },
+    note: "MXene is far too conductive to be the lossy layer — 0.25 Ω/sq against the 39 the cell wants — but it makes a perfectly good mirror, and unlike silver it cures at room temperature. At 27 µm it is 4.5 skin depths, and its 0.25 Ω/sq against silver's 0.13 is invisible next to the 39 Ω/sq the carbon supplies. The stack grows by 12 µm and nothing else moves. Watch the cure-path tile, though: the carbon bridge still needs 120 °C, so this is not yet a no-oven build — that is the gap." }
 ];
 
 let activeScen = 3;
@@ -753,6 +802,8 @@ $("selSub").innerHTML = Object.entries(SUBSTRATES).map(([k, v]) =>
   `<option value="${k}">${v.name}</option>`).join("");
 $("selInk").innerHTML = Object.entries(INKS).map(([k, v]) =>
   `<option value="${k}">${v.name}</option>`).join("");
+$("selRefl").innerHTML = REFLECTORS.map(k =>
+  `<option value="${k}">${INKS[k].name}</option>`).join("");
 $("scenRow").innerHTML = SCENARIOS.map((s, i) =>
   `<button class="scen" data-s="${i}" aria-pressed="false"><span class="num">${s.n}</span>${s.label}</button>`).join("");
 
@@ -775,6 +826,13 @@ $("rngD").addEventListener("input", e => { state.d = +e.target.value; activeScen
 $("rngP").addEventListener("input", e => { state.p = +e.target.value; activeScen = -1; render(); });
 $("rngT").addEventListener("input", e => { state.inkT = +e.target.value; activeScen = -1; render(); });
 $("rngB").addEventListener("input", e => { state.bridgeB = +e.target.value; state.bridgeL = null; activeScen = -1; render(); });
+$("selRefl").addEventListener("change", e => {
+  state.reflector = e.target.value;
+  /* jump to a thickness that is actually a mirror in the new material */
+  state.reflT = Math.round(skinDepth(INKS[state.reflector].sigma, F0) * 1e6 * 4.4);
+  activeScen = -1; render();
+});
+$("rngRT").addEventListener("input", e => { state.reflT = +e.target.value; activeScen = -1; render(); });
 
 /* ── drawing helpers (SVG, drafting conventions) ───────────────── */
 function el(tag, attrs, txt) {
@@ -946,8 +1004,8 @@ function drawSection(r) {
     [yLossy, filmH, state.design === "B" ? "Silver plates + carbon bridge" : INKS[state.ink].name,
      state.inkT.toFixed(0) + " µm · " + r.passes + (r.passes === 1 ? " pass" : " passes")],
     [ySub, subH, r.sub.name, state.d.toFixed(2) + " mm · stock sheet, not printed"],
-    [yRefl, filmH, "ACI SS1109 silver, unpatterned", REFLECTOR_UM + " µm · " +
-      (REFLECTOR_UM / skinDepth(INKS.silver.sigma, F0) / 1e6).toFixed(1) + " skin depths"]
+    [yRefl, filmH, r.refl.name + ", unpatterned", state.reflT + " µm · " +
+      r.reflDepths.toFixed(1) + " skin depths"]
   ];
   rows.forEach(([y, h, name, detail]) => {
     g.appendChild(el("line", { x1: x0 + w, y1: y + h / 2, x2: x0 + w + 8, y2: y + h / 2, class: "dimline" }));
@@ -1043,7 +1101,6 @@ function drawChart(r) {
 
 /* ── tables ────────────────────────────────────────────────────── */
 function drawTables(r) {
-  const dAg = skinDepth(INKS.silver.sigma, F0) * 1e6;
   const lossyName = state.design === "B"
     ? "ACI SS1109 silver plates + ACI SC1502 carbon bridge" : r.ink.name;
   const rows = [
@@ -1051,8 +1108,9 @@ function drawTables(r) {
      state.inkT.toFixed(0) + " µm", r.passes, r.Rs.toFixed(0) + " Ω/sq", r.ink.prov],
     ["var(--mat-sub)", "Spacer", r.sub.name + " — stock sheet, not printed",
      state.d.toFixed(2) + " mm", "—", "εr " + r.sub.er + " · tanδ " + r.sub.tand, r.sub.prov],
-    ["var(--mat-silver)", "Reflector", "ACI SS1109 silver, unpatterned",
-     REFLECTOR_UM + " µm", "1–2", (REFLECTOR_UM / dAg).toFixed(1) + " skin depths", "MANUFACTURER-SPECIFIED"]
+    ["var(--mat-silver)", "Reflector", r.refl.name + ", unpatterned — " + r.refl.cureNote,
+     state.reflT + " µm", r.reflPasses, r.reflDepths.toFixed(1) + " skin depths · "
+     + r.reflRs.toFixed(2) + " Ω/sq", r.refl.prov]
   ];
   $("stackBody").innerHTML = rows.map(([c, role, mat, th, ps, rs, prov]) => `
     <tr>
@@ -1103,6 +1161,14 @@ function render() {
       : state.p.toFixed(1) + " mm · " + (state.p / LAM0).toFixed(2) + " λ₀";
   $("rngT").value = state.inkT; $("valT").textContent = state.inkT + " µm · " + r.Rs.toFixed(0) + " Ω/sq";
   $("rngB").value = state.bridgeB; $("valB").textContent = state.bridgeB.toFixed(2) + " mm";
+  $("selRefl").value = state.reflector;
+  $("rngRT").value = state.reflT;
+  $("valRT").textContent = state.reflT + " µm · " + r.reflDepths.toFixed(1) + " δ";
+  $("reflHint").textContent = r.refl.cureNote + ". Skin depth " + r.reflDelta.toFixed(2)
+    + " µm at 10 GHz, so it needs " + (MIRROR_SKIN_DEPTHS * r.reflDelta).toFixed(0)
+    + " µm to behave as a mirror. Its own " + r.reflRs.toFixed(2)
+    + " Ω/sq is " + (100 * r.reflRs / r.ideal.Rpattern).toFixed(1)
+    + "% of what the lossy layer supplies — invisible either way.";
   $("subHint").textContent = r.sub.note;
   $("inkHint").textContent = r.ink.note;
   $("ctlBridge").classList.toggle("off", state.design !== "B");
