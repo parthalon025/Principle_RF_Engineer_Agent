@@ -471,6 +471,81 @@ it rots exactly the way `CLAUDE.md`'s preamble warns.
     knob that reaches the target — so this is a live discrepancy about MXene,
     not a threat to that conclusion.
 
+### Found by reading every comment on every ticket (2026-09-06)
+
+Six more, from a sweep of the comment threads on all thirty-seven tickets
+rather than their bodies. Most were already written down *somewhere* — on
+the ticket that found them — and had never reached the map, a document, or
+this list.
+
+34. **The patent names neither MXene, nor silver, nor "ink."** Full-text
+    checks of US12089385B2 from two independent sources return **NOT
+    PRESENT** for `MXene`, `silver`, `ink` and `conductive material`; the
+    only conductors named are **copper and gold**. So any argument of the
+    form "the patent allows silver, copper, or MXene" is unsupported. #105's
+    decision is untouched — MXene is a candidate scored on merit, which
+    never needed the patent's endorsement — but the justification must not
+    lean on the patent. Confirmed present and verbatim in the same checks:
+    1–2 mm thickness, 8.0–12.0 GHz, `R = T(50/r − 1)`, `R = 3T`. Found on
+    #113.
+
+35. **`docs/mxene-voltera-nova-printability.md` attributes its central
+    printability figures to the wrong paper, about six times.** The 120 µm
+    line width and the 6,260 → 6,900 S/cm conductivity are **Shao et al.
+    2022**, cited throughout as "Song et al." Worse in the same document:
+    MXene's widely-quoted **"3 µm" figure is a line *gap*, not a line
+    *width*** — the achievable width is 120 µm, forty times larger. *In
+    plain terms: one number says how finely two printed lines can be
+    separated, the other how thin a single line can be, and they were being
+    used interchangeably.* They are enforced at different points in a
+    design rule, so the conflation is not cosmetic. Found on #115.
+
+36. **Rejected alternatives are destroyed, not merely unindexed.**
+    `orchestration/tooling.py:223` hardcodes `"alternatives": []` into every
+    decision record regardless of step input, so what a design considered
+    and rejected never reaches the database at all. #125's own earlier
+    comment claimed the field "already stores rejected options today but is
+    write-only" and then falsified itself. Three tickets (#125, #150, #151)
+    assume that data survives. Related and separately filed as **#167**:
+    `design_family` is *required* by the state machine
+    (`design_loop.py:434`) and then **dropped before the database** —
+    `_flush_target_for` (`tooling.py:216–227`) does not carry it and
+    `decision_records` has no such column (`db/schema.sql:101–112`).
+
+37. **Landy's real build is a five-part laminate, not a single slab.** The
+    fabricated device is **FR4 / adhesive / FR4 / adhesive / FR4**, with
+    ~0.06 mm adhesive layers — not the one 0.72 mm sheet of εr 4.8 FR4 that
+    a reproduction modelled from the patent's own stated simulation inputs
+    would build. Anyone reproducing Example 3 from the patent therefore
+    models a different physical object from the one that was measured.
+    Bears directly on #142's ~20% frequency discrepancy and on #168's
+    curve-comparison spec. Found on #116.
+
+38. **"At a 10 dB requirement every element family surveyed is feasible" is
+    contradicted by #138 and was being carried as settled.** #130's
+    corrected super-cell rule produced that headline. #138 then found that a
+    0.4 λ square patch has **no feasible N on a 6 λ coupon even at 10 dB** —
+    it becomes feasible only on a panel around 30 λ. The map recorded the
+    *cause* of the correction ("no feasible N is a statement about part
+    size, not about the alphabet") while still stating the conflicting
+    headline as fact. The panel-fit constraint `2·N·p ≤ L` binds first on a
+    coupon, so feasibility is a claim about a **part size**, and quoting it
+    without one is the same "measurement without its box" failure this list
+    records elsewhere.
+
+39. **Six ticket resolutions were written into comment threads and never
+    recorded as decisions.** #124 (material commitment is not gated at
+    ARCHITECTURE — *"the premise does not survive contact with the
+    schema"*), #152 (defer: **zero** named consumers exist in code, and two
+    of the four it named are positively misidentified), #129 (dead as
+    posed; the surviving question has a worked recommendation), #113 (a
+    glossary edit, nothing to decide), #98 (investigated, correctly
+    blocked), and #128 (a full proposed resolution awaiting acceptance).
+    *In plain terms: the answers existed; nothing had promoted them from a
+    comment into anything a later session would read.* This is the failure
+    the map's "a decision is an ADR, or a correction to one" rule exists to
+    close, and it is why the frontier looked far wider than it was.
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
