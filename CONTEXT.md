@@ -86,11 +86,21 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: Flexible antenna — describes the substrate, not the
   mounting requirement; a flexible antenna mounted flat isn't
   exercising the conformal property.
-- **Metamaterial unit cell**: the repeating element (e.g. an elongated,
-  passive-magnetic-property element with tailored geometry) whose
-  geometry — not material composition — produces an antenna's effective
-  permittivity/permeability. The base building block a metamaterial
-  antenna design starts from.
+- **Metamaterial unit cell**: the repeating element whose **sub-wavelength
+  structure** produces an effective permittivity/permeability the bulk
+  material does not have on its own. The base building block a
+  metamaterial design starts from.
+  The structure is usually a **patterned conductor** (US12089385B2's
+  Example 3 is an I-shaped ring resonator over a cut wire), but it need not
+  be: **Example 1 gets its magnetic response from Mie resonance in
+  strontium titanate**, at a permittivity FIG. 5C gives as
+  **ε₁ = 250 − 1.25j** (Example 2 is 294 − 0.5j), and **Example 5 uses a
+  tunable BST film**. *In plain terms: most of these work by the shape you
+  print, but some work by what the material itself is made of.* An earlier
+  version of this entry said the effect came from geometry "not material
+  composition," which three of the patent's own seven examples contradict
+  (#113). Cite the drawings, not the prose: the prose figure of εr = 310
+  is not what Example 1 was simulated with (#107).
   _Avoid_: Meta-atom — an optics-context term, not this project's.
 - **Customer requirement**: a stated design target for one antenna/EM-skin
   design — frequency band, gain or VSWR/bandwidth target, form factor,
