@@ -294,7 +294,10 @@ code {
     This bench draws the resulting cell to scale at 10 GHz and checks it against four hard limits: the
     Voltera NOVA's 0.2 mm feature floor, the patent's 0.87–2.0 mm thickness budget, the sheet resistance
     the available inks can actually reach, and whether the surface absorbs 90% of the power that hits it.
-    Every dimension below is a real millimetre. Drive it and see which cells survive.
+    Three of the five cell designs absorb; two <strong>transmit</strong> — a bandpass filter
+    and a rasorber — because that is where the layer count, and with it the registration
+    risk, actually bites. Every dimension below is a real millimetre. Drive it and see
+    which cells survive.
   </p>
 </header>
 
@@ -1436,7 +1439,7 @@ function drawChart(r) {
     g.appendChild(el("line", { x1: lx, y1: T + 30, x2: lx + 14, y2: T + 30, stroke: t.c,
       "stroke-width": t.w, "stroke-dasharray": t.dash || "none" }));
     g.appendChild(el("text", { x: lx + 18, y: T + 33.5, class: "axtext" }, t.name));
-    lx += 22 + t.name.length * 5.6;
+    lx += 30 + t.name.length * 6.1;
   });
 
   if (r.transmissive && r.passLo) {
