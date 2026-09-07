@@ -382,14 +382,14 @@ through a library lookup.
 
 ---
 
-## 9. The fourth thing, and it is the one that is missing: the host surface
+## 9. The fourth thing: the host surface
 
 Printer, dryer and laminator are covered above — they are the three `process_stage` values of
 one **Fabrication capability**, and the concept already exists at `CONTEXT.md:181`. The
-**host surface** is not covered, and it is not a defined term: `CONTEXT.md` carries 41
-vocabulary entries and none of them is the host.
+**host surface** was the fourth, and until this change it was not a defined term at all.
 
-It is nonetheless referenced by six places, each taking a different slice of it:
+**`CONTEXT.md` now defines it** (entry: *Host surface*), because the gap was real: it was
+referenced by six places, each taking a different slice, with no definition anywhere:
 
 | Where | Which slice |
 |---|---|
@@ -433,17 +433,26 @@ no-inheritance rule:
 
 Those are two different objects and the tree currently has neither.
 
-### 9.3 What this spec does *not* do about it
+### 9.3 What is settled, and what is not
 
-It does not settle the host. Introducing a fourth library and a new `CONTEXT.md` term is a
-domain-model decision, not a schema detail, and the repo's convention is that such a decision
-is recorded — plausibly as the ADR #108's configured-fabrication decision still lacks (§11).
+**Settled: the term.** `CONTEXT.md` now carries *Host surface*, defined by the properties it
+carries rather than by what it is — because the range is unbounded. A sticker, a PET film, a
+wing, a hull, an sUAS body, or something living: `docs/mxene-voltera-nova-printability.md:71`
+records printing demonstrated *"on curved substrates and even on leaves and fruit."* **No
+closed list of host types is possible, so no design decision may key on one** — which is the
+same discipline #105 applies to material, one level out.
 
-What this spec *does* claim is narrower and, I think, hard to argue with: **a
-`(machine, ink, material)` triple is not sufficient.** The cure stage cannot be evaluated
-without the host, because its gate is defined in terms of the host. So the enumerated
-candidate is at least a **`(host, machine, ink, material)` quadruple**, and any implementation
-that stops at the triple will have to be reopened.
+**Settled: the candidate is a quadruple, not a triple.** The cure stage cannot be evaluated
+without the host, because its gate is *defined* in terms of the host. So the enumerated
+candidate is at least **`(host, machine, ink, material)`**, and an implementation stopping at
+the triple will have to be reopened.
+
+**Not settled: whether the host gets its own library.** Host-*class* properties accumulate
+like material properties and are library-shaped; the *specific* host in a requirement is a
+per-requirement input that is never inherited. Whether that first half becomes a fourth table
+is a design decision this spec does not take. No ADR is proposed for the glossary term itself
+— defining a term is cheap to reverse and involved no real trade-off. The library question
+may warrant one when it is taken.
 
 ---
 
