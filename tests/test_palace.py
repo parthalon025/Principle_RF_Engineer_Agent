@@ -27,12 +27,11 @@ import io
 import json
 import math
 import os
-import stat
-import sys
 from pathlib import Path
 
 import pytest
 
+from conftest import make_fake_executable
 from simulation.base import SimulatorError
 from simulation.palace import (
     BOUND_X_MAX,
@@ -67,11 +66,9 @@ GRATING_GEOMETRY = {
 
 
 def _make_fake_palace(tmp_path: Path, body: str) -> Path:
-    """Write a small fake 'palace' shell script and make it executable."""
-    script = tmp_path / "fake_palace.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake 'palace' executable (a Python script body,
+    launched cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_palace")
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +409,7 @@ def test_parse_palace_output_no_matching_header_returns_computed_false():
 def test_palace_simulator_invokes_dash_np_and_positional_config(tmp_path: Path):
     """Confirm the real palace CLI contract (-np <N> config.json, see
     module docstring citation) is what actually gets shelled out."""
-    script = _make_fake_palace(tmp_path, 'echo "$@"\n')
+    script = _make_fake_palace(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     config_file = tmp_path / "config.json"
     config_file.write_text("{}")
 
@@ -426,7 +423,9 @@ def test_palace_simulator_invokes_dash_np_and_positional_config(tmp_path: Path):
 
 
 def test_palace_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_palace(tmp_path, 'echo "boom: bad config" >&2\nexit 1\n')
+    script = _make_fake_palace(
+        tmp_path, 'import sys\nsys.stderr.write("boom: bad config\\n")\nsys.exit(1)\n'
+    )
     config_file = tmp_path / "config.json"
     config_file.write_text("{}")
 
@@ -436,7 +435,7 @@ def test_palace_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_palace_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_palace(tmp_path, "sleep 5\n")
+    script = _make_fake_palace(tmp_path, "import time\ntime.sleep(5)\n")
     config_file = tmp_path / "config.json"
     config_file.write_text("{}")
 
@@ -452,7 +451,7 @@ def test_palace_simulator_missing_config_file_raises(tmp_path: Path):
 
 
 def test_palace_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_palace(tmp_path, "exit 0\n")
+    script = _make_fake_palace(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("PALACE_BIN", str(script))
     simulator = PalaceSimulator()
     assert simulator.executable == str(script)
@@ -463,7 +462,7 @@ def test_palace_simulator_picks_up_executable_from_env_var(tmp_path: Path, monke
 # realistic port-floquet-S.csv into the configured Output directory.
 # ---------------------------------------------------------------------------
 
-_FAKE_PALACE_PY = '''#!{python}
+_FAKE_PALACE_PY = '''
 import json
 import sys
 from pathlib import Path
@@ -482,10 +481,8 @@ sys.exit(0)
 
 
 def _make_fake_palace_py(tmp_path: Path, sample_csv: str) -> Path:
-    script = tmp_path / "fake_palace_realistic.py"
-    script.write_text(_FAKE_PALACE_PY.format(python=sys.executable, csv=sample_csv))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_PALACE_PY.format(csv=sample_csv)
+    return make_fake_executable(tmp_path, body, name="fake_palace_realistic")
 
 
 def test_run_palace_simulation_end_to_end_with_fake_executable(tmp_path: Path):
@@ -515,7 +512,9 @@ def test_run_palace_simulation_end_to_end_with_fake_executable(tmp_path: Path):
 
 
 def test_run_palace_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_palace(tmp_path, 'echo "mesh error" >&2\nexit 1\n')
+    script = _make_fake_palace(
+        tmp_path, 'import sys\nsys.stderr.write("mesh error\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_palace_simulation(
             geometry=GRATING_GEOMETRY,
@@ -530,7 +529,7 @@ def test_run_palace_simulation_missing_output_csv_is_honestly_computed_false(tmp
     """A run that 'succeeds' (exit 0) but never writes port-floquet-S.csv
     (e.g. no ports actually propagated, or a real-tool behavior this
     module's fake script doesn't model) must not fabricate S-parameters."""
-    script = _make_fake_palace(tmp_path, "exit 0\n")
+    script = _make_fake_palace(tmp_path, "import sys\nsys.exit(0)\n")
     result = run_palace_simulation(
         geometry=GRATING_GEOMETRY,
         frequency_hz=10e9,
