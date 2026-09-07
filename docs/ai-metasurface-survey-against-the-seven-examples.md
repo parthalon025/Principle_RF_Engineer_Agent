@@ -1,7 +1,7 @@
 # An AI-metasurface survey, read against all seven patent examples
 
 **Date:** 2026-09-07
-**Ticket:** part of [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104); bears on [#184](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/184), [#191](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/191), [#132](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/132), [#168](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/168).
+**Ticket:** part of [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104). Opened [#202](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/202) (§4's comparison, as a decision to take); commented onto [#184](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/184) (§5) and [#191](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/191) (§3, §7). Also bears on [#132](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/132) and [#168](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/168).
 **Source:** M. H. Boulaich, S. Ohamouddou, M. A. Ennasar & A. El Afia, *"AI-Assisted Metasurface Antennas Design/Optimization and Performance Enhancement Techniques: A Comprehensive Survey,"* IEEE Access **14**, 29803–29836 (2026), [doi 10.1109/ACCESS.2026.3667812](https://doi.org/10.1109/ACCESS.2026.3667812). Open access, CC-BY. ENSIAS, Mohammed V University in Rabat.
 
 **Provenance ceiling.** This is a **survey**. Almost every number below is a result the survey reports from someone else's paper, so it is `LITERATURE-SUPPORTED` *at one remove* — weaker than a first-hand reading, and no figure here should be relied on for a design decision without opening the cited paper. Where this document does arithmetic of its own it says so.
@@ -124,3 +124,18 @@ That describes #130's symbol alphabet. **The critique does not transfer, and the
 - **It says nothing about Example 1.** The magnetic-mirror / high-impedance-surface family is effectively absent, so "AI has been applied across the metasurface field" is not true uniformly across our seven.
 - **It does not make inverse design available to us.** §3 is a price list, not a purchase. We have no full-wave tier wired in and therefore no way to generate the corpus any of these results assumes.
 - **Its own contributions are `PATCH`-family.** CSRR-loaded microstrip patch antennas at 2.4/3.6/5.2 GHz — a different family with a different bound from our skin.
+
+---
+
+## 9. Where this went
+
+| Finding | Landed on |
+|---|---|
+| §4 — an ML phase surrogate's error sits inside Example 7's phase budget, but its corpus costs 80,000 solves | **[#202](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/202)**, opened as a decision ticket: is it admissible, and at which reduction levels? |
+| §5 — Bayesian optimization driving an EM solver, with no corpus, plus the survey's own statement of its cost | commented onto [#184](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/184) |
+| §3 — the data-cost ladder, and its match to #107's Tier A/B split | commented onto [#191](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/191) |
+| §7 — non-uniqueness makes inverse design ill-posed, not merely expensive | commented onto [#191](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/191) |
+| §7 — the metric critique (a scalar score hides *where* two curves disagree) | corroborates [#168](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/168)'s premise for FSV; no ticket opened, the premise was already settled |
+| §7 — our answer to the library-restriction critique | recorded here, so it exists before the critique is quoted at us |
+
+**No ADR.** Per #104's standing preference, a *finding about the world* goes to `docs/`, `CONTEXT.md` and `RUNNING-LISTS.md`; an ADR is for a choice that constrains future work. Nothing here decides anything — #202 is where the deciding happens.
