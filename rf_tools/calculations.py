@@ -538,7 +538,10 @@ def patch_effective_permittivity(eps_r: float, w_m: float, h_m: float) -> float:
     here.
     """
     if eps_r <= 1:
-        raise ValueError("Substrate dielectric constant eps_r must be > 1.")
+        raise ValueError(
+            "patch_effective_permittivity's fringing-field fit is only "
+            "valid for eps_r > 1 (it interpolates between eps_r and 1)."
+        )
     if h_m <= 0:
         raise ValueError("Substrate thickness h_m must be positive.")
     if w_m <= 0:

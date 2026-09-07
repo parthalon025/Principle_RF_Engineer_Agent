@@ -19,7 +19,12 @@ one part-exception, no object discussed here has ever been put in front of a rea
 
 **Arithmetic below is `CALCULATED` by the analysis and has not been independently re-derived by
 hand**, except where this document says otherwise. Confidence is stated per finding rather than
-implied by tone.
+implied by tone — via a `CONFIDENCE: HIGH/MEDIUM-HIGH/LOW` tag distinct from, and never a
+substitute for, `CONTEXT.md`'s provenance ladder. Provenance tags one *data point*'s evidence tier
+(`MEASURED`, `CALCULATED`, `LITERATURE-SUPPORTED`, …); `CONFIDENCE` tags this *research
+synthesis*'s own certainty in a conclusion drawn across all five papers (e.g. "high confidence the
+literature is silent on X," a claim about the search, not about any one number) — a question the
+provenance ladder has no rung for and was never meant to answer.
 
 | | Paper | Band | Evidence basis |
 |---|---|---|---|

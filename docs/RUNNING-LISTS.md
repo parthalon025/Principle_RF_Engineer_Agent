@@ -545,6 +545,21 @@ this list.
     comment into anything a later session would read.* This is the failure
     the map's "a decision is an ADR, or a correction to one" rule exists to
     close, and it is why the frontier looked far wider than it was.
+40. **`rf_tools/calculations.py`'s `patch_effective_permittivity` guard named
+    the material, not the formula.** Its `eps_r <= 1` check raised *"Substrate
+    dielectric constant eps_r must be > 1"* — stated as a physical law about
+    substrates, when the real constraint is that Hammerstad's fringing-field
+    fit (the formula this function evaluates) is only defined for `eps_r > 1`,
+    the same file naming its own W/h validity limit correctly eight lines
+    below. Fixed in PR #196: the message now names the formula. Found by
+    PR #196's own analysis of `docs/fabrication-capability-and-ink-library-spec.md`.
+41. **`docs/requirement-derived-thresholds.md` claimed the Python hardcodes
+    no thresholds — false.** The tree hardcodes roughly 25 bounds, in the one
+    document whose purpose is stopping exactly that. `success_score.py`
+    itself doesn't (it takes `target_value`/`tolerance` from its caller), but
+    that's a narrower claim than the document made. Corrected in PR #196; a
+    full enumeration of the ~25 bounds is not yet done and is fog, not a
+    ticket, until someone has reason to need the list.
 
 ---
 

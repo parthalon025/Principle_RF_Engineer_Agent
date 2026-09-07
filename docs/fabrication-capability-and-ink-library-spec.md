@@ -176,16 +176,21 @@ qualifier is genuinely empty should say so explicitly rather than leaving `NULL`
 Every figure below is transcribed, not derived. Sources are already in
 `docs/voltera-multilayer-capability.md`.
 
-| capability | value | qualifier | provenance |
-|---|---|---|---|
-| `min_tracewidth_m` | 100 µm | "dependent on material and nozzle" | `MANUFACTURER-SPECIFIED` |
-| `nozzle_diameters_m` | 100, 150, 225 µm | supplied; Nordson EFD / Subrex to 50 µm available | `MANUFACTURER-SPECIFIED` |
-| `positioning_accuracy_m` | ±20 µm | **single-layer, in-plane** — see §5.2 | `MANUFACTURER-SPECIFIED` |
-| `max_dispense_pressure_psi` | 70 | — | `MANUFACTURER-SPECIFIED` |
-| `material_temperature_max_c` | 40 | material temperature, not substrate | `MANUFACTURER-SPECIFIED` |
-| `ink_viscosity_range_cp` | 1,000–1,000,000 | — | `MANUFACTURER-SPECIFIED` |
-| `print_area_m` | 220 × 300 mm | — | `MANUFACTURER-SPECIFIED` |
-| `min_cured_film_m` | 10 µm | **low end of a 60 µm print-height example; Voltera publishes no guaranteed minimum** | `INFERRED` |
+| process_stage | capability | value | qualifier | provenance |
+|---|---|---|---|---|
+| `print` | `min_tracewidth_m` | 100 µm | "dependent on material and nozzle" | `MANUFACTURER-SPECIFIED` |
+| `print` | `nozzle_diameters_m` | 100, 150, 225 µm | supplied; Nordson EFD / Subrex to 50 µm available | `MANUFACTURER-SPECIFIED` |
+| `print` | `positioning_accuracy_m` | ±20 µm | **single-layer, in-plane** — see §5.2 | `MANUFACTURER-SPECIFIED` |
+| `print` | `max_dispense_pressure_psi` | 70 | — | `MANUFACTURER-SPECIFIED` |
+| `print` | `material_temperature_max_c` | 40 | material temperature (the dispensing warmer), not substrate or an external cure oven | `MANUFACTURER-SPECIFIED` |
+| `print` | `ink_viscosity_range_cp` | 1,000–1,000,000 | — | `MANUFACTURER-SPECIFIED` |
+| `print` | `print_area_m` | 220 × 300 mm | — | `MANUFACTURER-SPECIFIED` |
+| `print` | `min_cured_film_m` | 10 µm | **low end of a 60 µm print-height example; Voltera publishes no guaranteed minimum** | `INFERRED` |
+
+All eight rows are `print`-stage: the Voltera NOVA's own dispensing hardware. No `cure` or
+`laminate` rows are seeded yet — the external-oven cure ceiling and lamination bond limits are
+tracked qualitatively in `CONTEXT.md`'s Host surface entry and #108, not yet as
+`fabrication_capabilities` rows.
 
 That last row is the one this library most needs to exist for. It has been used across this
 programme as "the machine's ~10 µm floor," and it is the low end of one worked example. In the
@@ -218,6 +223,16 @@ CREATE TABLE IF NOT EXISTS ink_properties (
 CREATE INDEX IF NOT EXISTS ink_properties_ink_property_idx
 ON ink_properties (ink, property);
 ```
+
+**Implementation note, for whoever writes this table's `add_entry`.** `designs/material_properties.py`'s
+existing `add_entry` already takes 11 parameters that always travel together (material,
+property_name, frequency_low_hz, frequency_high_hz, value, unit, provenance, citation, note,
+uncertainty, method) — a Data Clump. This table's own `add_entry` would repeat nearly the same
+shape (ink, process_state, property, value, unit, qualifier, provenance, citation, note), and the
+Fabrication-capability library's `add_entry` (§3) would be a third copy. Before writing either,
+factor the shared shape (value + unit + provenance + citation + note, at minimum) into one small
+value object the three libraries' `add_entry` functions share, rather than each re-declaring the
+same eight-to-eleven positional parameters independently.
 
 ### 4.2 Seed rows
 
@@ -418,10 +433,11 @@ This is the part that makes it belong in *this* spec rather than a purely electr
   it. A wing cannot go in an oven.
 - **laminate** — `CONTEXT.md:194` says bonding *"onto the final host."*
 
-So the host gates every stage, and #104's causal chain runs through it entirely: *"Its radius
-of curvature drives bend radius, which drives substrate class, which drives which conductors
-survive the cure ceiling."* Radius of curvature is a geometric fact that ends up selecting a
-**conductor**.
+So the host gates every stage, but not through one single chain: radius of curvature drives
+bend radius, which drives substrate class — a geometric fact that ends up selecting a
+**substrate**. Which *conductors* survive curing is a separate question, gated by the cure
+stage above (can the part leave the host and reach an external oven — not by substrate class
+at all, a claim `CONTEXT.md`'s own Host surface entry carried until corrected here, per #105).
 
 ### 9.2 The split mirrors material exactly
 

@@ -96,9 +96,10 @@ and a glossary that churns with it stops being trustworthy (see
   may key on one.
   Five properties gate a design, and each is supplied, not assumed: its
   **radius of curvature**, which drives bend radius, which drives substrate
-  class, which drives which conductors survive the cure ceiling; **whether
-  the finished part can leave it and reach an external oven**, which is the
-  cure stage's gate (see Fabrication capability); **whether it is a reliable
+  class; **whether the finished part can leave it and reach an external
+  oven**, which is what actually decides which conductors survive the cure
+  ceiling — not substrate class, a claim corrected on #105 — and is the
+  cure stage's own gate (see Fabrication capability); **whether it is a reliable
   conductive backing**, which a requirement asserts and the loop never
   infers (ADR-0017); its **own εr/tanδ and thickness**, where it
   participates electromagnetically; and its **extent**, which bounds how
