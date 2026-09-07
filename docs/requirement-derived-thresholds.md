@@ -125,7 +125,7 @@ The **provenance ladder** and the **threshold/objective** structure are methodol
 
 ## Honest limits
 
-- **This is an audit of what is written down, not proof there is nothing else.** It covers the documents and decisions on the map as of 2026-09-04. The Python does not currently hardcode thresholds — `success_score.py` takes `target_value` and `tolerance` from its caller, which is the right shape — so the exposure is in the decisions, not the code. That will change once the spec is implemented.
+- **This is an audit of what is written down, not proof there is nothing else.** It covers the documents and decisions on the map as of 2026-09-04. `success_score.py` itself takes `target_value` and `tolerance` from its caller, which is the right shape — but that is not the same claim as "the tree hardcodes no thresholds": it does, roughly 25 of them, elsewhere in the code (logged as `RUNNING-LISTS.md` §3 item 40, corrected 2026-09-06 after PR #196's own analysis found the blanket claim false). The exposure is in the decisions *and* in those existing hardcoded bounds, not only in code yet to be written.
 - **The classification of a few entries is arguable.** Cell pitch in particular sits across B and C, and reasonable people could put the −10 dB convention in a fourth category of "industry expectation the customer will assume without stating." If they do, that is an argument for *asking*, not for adopting.
 - **Nothing here is measured, and nothing here needs to be.** This is a bookkeeping discipline, not a physical claim.
 
