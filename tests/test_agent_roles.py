@@ -99,6 +99,7 @@ def test_principal_role_is_scoped_not_broad():
     # Specialist-domain tools are reachable only via handoff now, not directly.
     assert "calculate_wavelength" not in names
     assert "ingest_document" not in names
+    assert "ingest_arxiv_paper" not in names
     assert "extract_components" not in names
     assert "analyze_touchstone_file" not in names
     # Design-record/lifecycle tools: still principal-exclusive, still direct.
@@ -146,6 +147,7 @@ def test_systems_role_gets_calculations_and_knowledge_authoring():
     names = _tool_names(ROLES["systems"])
     assert "calculate_cascade_gain" in names
     assert "ingest_document" in names
+    assert "ingest_arxiv_paper" in names
     # network-level (not systems-level) tool
     assert "analyze_touchstone_file" not in names
     # knowledge-auditing tool belongs to verification, not systems
@@ -177,6 +179,7 @@ def test_microwave_role_gets_network_and_component_analysis():
     assert "calculate_cascade_gain" not in names
     # knowledge authoring is out of the microwave domain
     assert "ingest_document" not in names
+    assert "ingest_arxiv_paper" not in names
 
 
 def test_antenna_role_gets_antenna_relevant_tools():
@@ -186,6 +189,7 @@ def test_antenna_role_gets_antenna_relevant_tools():
     # receiver-chain concerns, not the antenna element itself
     assert "calculate_noise_figure" not in names
     assert "ingest_document" not in names
+    assert "ingest_arxiv_paper" not in names
 
 
 def test_test_role_gets_verification_and_measurement_tools():
@@ -196,6 +200,7 @@ def test_test_role_gets_verification_and_measurement_tools():
     assert "correlate_simulated_and_measured" in names
     # test role validates hardware, it doesn't author the knowledge base
     assert "ingest_document" not in names
+    assert "ingest_arxiv_paper" not in names
     assert "extract_components" not in names
 
 

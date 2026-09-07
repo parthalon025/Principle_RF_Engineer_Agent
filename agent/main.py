@@ -47,6 +47,7 @@ from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1412,6 +1413,35 @@ def ingest_document(
 
 
 @function_tool
+def ingest_arxiv_paper(
+    arxiv_id: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch and convert an arXiv preprint (e.g. "2401.01234", or the older
+    "cond-mat/0207270" form) into the knowledge base as source_type='paper'.
+    Uses the arxiv-doc-builder skill to fetch LaTeX source (preferred) + PDF and
+    convert to Markdown via pandoc -- preserving math/structure far better than
+    feeding a raw PDF to docling -- falling back to naive PDF text extraction
+    when no LaTeX source exists. Automatically pulls title/authors/publication
+    date/DOI/journal/categories/abstract from arXiv's own record into the
+    stored document. license must be the reuse terms that actually apply to
+    this specific paper (arXiv's default license does not itself grant
+    downstream reuse beyond citation/summary; check for an author-chosen CC0/
+    CC-BY license). authority_rank is always overridden below the peer-
+    reviewed 'paper' default, since arXiv preprints are not peer-reviewed --
+    only a "superficial" moderator check. Pass supersedes_document_id to
+    declare this upload a newer revision of that document (never inferred)."""
+    return _ingest_arxiv_paper(
+        arxiv_id,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@function_tool
 def index_document(document_id: int, requested_backend: str | None = None) -> dict:
     """Embed a stored document's chunks and write the vectors to the knowledge base.
     SENSITIVE/RESTRICTED documents always use the self-hosted backend, with no
@@ -2015,12 +2045,17 @@ def run_candidate_search(
 #                   wavelength/electrical-size bookkeeping, the dB<->linear
 #                   unit converters those calculations lean on, plus the
 #                   knowledge-base *authoring* tools (ingest_document,
-#                   index_document, and (ticket #67) lookup_digikey_component/
+#                   index_document, (ticket #67) lookup_digikey_component/
 #                   lookup_mouser_component/lookup_nexar_component/
 #                   reconcile_component_sources -- sourcing a datasheet
 #                   straight from a distributor and reconciling it into one
 #                   components row is the same authoring concern as manually
-#                   ingesting one), since standing up the knowledge base for
+#                   ingesting one -- and ingest_arxiv_paper, the arxiv-doc-
+#                   builder-backed arXiv preprint fetcher, same authoring
+#                   bucket as ingest_document since it's the same "bring an
+#                   external document into the knowledge base" action, just
+#                   with its own fetch+convert step ahead of it), since
+#                   standing up the knowledge base for
 #                   the team is systems-level work. Shares the cascaded-IP3/
 #                   IM3 tools with microwave -- linearity budgeting is both a
 #                   chain-level (systems) and single-stage (microwave)
@@ -2186,6 +2221,7 @@ _ALL_TOOLS = [
     run_meep_simulation,
     generate_freecad_curved_geometry,
     ingest_document,
+    ingest_arxiv_paper,
     index_document,
     read_document,
     search_knowledge,
@@ -2278,8 +2314,9 @@ ROLE_SPECS: list[RoleSpec] = [
             "You focus on link-level and systems-engineering concerns: cascaded "
             "gain/noise-figure budgets, wavelength/electrical-size bookkeeping, "
             "and standing up the knowledge base (ingesting and indexing "
-            "documents, and sourcing component datasheets directly from "
-            "Digi-Key/Mouser/Nexar) other roles rely on. Defer network-level "
+            "documents, sourcing component datasheets directly from Digi-Key/"
+            "Mouser/Nexar, and fetching/converting arXiv preprints via "
+            "ingest_arxiv_paper) other roles rely on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -2299,6 +2336,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_third_order_intermod_output,
             calculate_third_order_intermod_dbc,
             ingest_document,
+            ingest_arxiv_paper,
             index_document,
             search_knowledge,
             lookup_digikey_component,
