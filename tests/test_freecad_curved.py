@@ -24,12 +24,11 @@ environment.
 
 import json
 import math
-import stat
-import sys
 from pathlib import Path
 
 import pytest
 
+from conftest import make_fake_executable
 from geometry.freecad_curved import (
     FreecadGeometryError,
     _nearest_cardinal_axis,
@@ -43,12 +42,10 @@ CYLINDER_Z = {"kind": "cylinder", "radius_m": 1.0, "axis": "z"}
 
 
 def _make_fake_py(tmp_path: Path, name: str, body: str) -> Path:
-    """Write a small fake Python-shebang executable, chmod'd executable --
-    mirrors tests/test_elmer.py's own `_make_fake_py`."""
-    script = tmp_path / name
-    script.write_text(f"#!{sys.executable}\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake FreeCADCmd executable (cross-platform -- see
+    conftest.make_fake_executable), mirroring tests/test_elmer.py's own
+    `_make_fake_py`."""
+    return make_fake_executable(tmp_path, body, name=name.removesuffix(".py"))
 
 
 # ---------------------------------------------------------------------------
