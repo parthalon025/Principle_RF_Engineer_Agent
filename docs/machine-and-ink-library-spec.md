@@ -208,9 +208,23 @@ ON ink_properties (ink, property);
 | ACI SC1502 carbon | cured (datasheet) | `recommended_cured_thickness_m` | 6–12 µm | `MANUFACTURER-SPECIFIED` | SC1502 Rev 4 |
 | ACI SC1502 carbon | cured (datasheet) | `cure_temperature_min_c` | 120 | `MANUFACTURER-SPECIFIED` | SC1502 Rev 4 |
 | ACI SI3104 insulator | cured (datasheet) | `recommended_cured_thickness_m` | 9–14 µm/layer, 3 layers | `MANUFACTURER-SPECIFIED` | SI3104 datasheet |
-| Printed MXene (Song) | as-printed, no anneal | `conductivity_s_per_m` | 6.26–6.9×10⁵ | `LITERATURE-SUPPORTED` | Song et al., *Nat. Commun.* **13**, 3223 (2022) |
+| Printed MXene (Shao) | as-printed, no anneal | `conductivity_s_per_m` | 6.26–6.9×10⁵ | `LITERATURE-SUPPORTED` | **Shao et al. 2022**, DOI 10.1038/s41467-022-30648-2 — *not* Song et al.; see below |
 
-**The MXene row exposes a real gap and the library should say so.** Song et al. give a
+**The attribution on that row is itself a correction.** `RUNNING-LISTS.md` §3 item 35 records
+that `docs/mxene-voltera-nova-printability.md` *"attributes its central printability figures
+to the wrong paper, about six times"* — the 120 µm line width and the 6,260 → 6,900 S/cm
+conductivity are **Shao et al. 2022**, cited throughout that document as "Song et al." A
+library row with a `citation` field makes the miscitation a single correctable value rather
+than six occurrences in prose, which is one of the concrete arguments for having the library
+at all.
+
+The same item carries a second trap the library must not re-import: **MXene's widely-quoted
+"3 µm" figure is a line *gap*, not a line *width*.** The achievable width is 120 µm, forty
+times larger. They are enforced at different points in a design rule, so
+`min_tracewidth_m` and `min_gap_m` must be distinct capabilities and must never be
+substituted for one another.
+
+**The MXene row exposes a real gap and the library should say so.** The source gives a
 conductivity with **no thickness at all**. So every sheet resistance computed for printed
 MXene on this programme has paired a literature conductivity with a machine-spec thickness
 from a *different* document — a cross-source pairing, not a measurement. In library terms:
@@ -246,13 +260,25 @@ frequency)`. Storing it bakes in a formula choice, and the formula has a validit
 
 This is not hypothetical. Analysis on this programme computed printed MXene at
 **0.145 Ω/sq** using `R_s = 1/(σt)` at 10 GHz. That is a **thin-film** relation, valid only
-well below one skin depth, and at 10 µm the film is **1.65 skin depths** thick. The correct
-finite-thickness surface impedance gives **0.2198–0.3145 Ω/sq**. The error was 1.65×, it
-propagated into a headline ratio, and `docs/voltera-multilayer-capability.md:463` **already
-published the right value (0.239 Ω/sq)**.
+well below one skin depth. It is the same error class `docs/RUNNING-LISTS.md` §3 correction 4
+exists to stop: *"'MXene behaves as a copper ~85× lossier' is a DC ratio applied at 10 GHz."*
 
-Worse, it is the same error class `docs/RUNNING-LISTS.md` §3 correction 4 exists to stop:
-*"'MXene behaves as a copper ~85× lossier' is a DC ratio applied at 10 GHz."*
+**And the size of the error is itself unresolved, which strengthens rather than weakens the
+rule.** §3 item 33 records a live ~1.8× disagreement about MXene's own skin depth: correction
+7 puts a 10 µm film at **1.65 δ** (δ ≈ 6.06 µm), where the DC formula is invalid and the
+finite-thickness surface impedance gives **0.2198–0.3145 Ω/sq**; map #104's conductor-thickness
+correction puts 3δ at ≈33 µm, i.e. δ ≈ 11 µm, which puts the same film at **~0.9 δ**, where
+the DC formula is roughly right and thickness is a *linear* lever. Item 33 is explicitly
+*"recorded, not resolved"* — it *"needs one stated conductivity at one stated frequency."*
+
+So the right answer for printed MXene at 10 µm is **0.145 Ω/sq or 0.22–0.31 Ω/sq depending on
+a conductivity nobody here has measured.** A stored `R_s` would have to silently pick one. A
+derivation carrying its `t/δ` gate reports the gate as unsatisfied and names the missing input
+— which is the correct behaviour, and it is exactly the row #106 can supply.
+
+*In plain terms: nobody can say what this film's sheet resistance is until someone measures
+how well the ink actually conducts. Writing down a single number would hide that; writing down
+the recipe makes the missing ingredient obvious.*
 
 So:
 
@@ -375,29 +401,48 @@ through a library lookup.
 
 ## 11. Corrections this spec records
 
-Findings from the analysis that produced it, belonging in `docs/RUNNING-LISTS.md` §3 as items
-30 onward (§3 currently ends at item 29):
+Candidates for `docs/RUNNING-LISTS.md` §3 (which on current `main` runs to item 39). Two are
+new to the repo; the rest are cautions about analysis done *for* this spec, kept because the
+erroneous versions reached a committed document before being caught.
 
-1. **The resistive-ink window is not empty.** ACI SC1502 carbon reaches 377 Ω/sq at 15.9 µm —
-   about two passes — and Voltera sells the ink. A prior analysis concluded the programme owned
-   no ink in the 377–435 Ω/sq window; `docs/voltera-multilayer-capability.md:490-501` and
-   `docs/RUNNING-LISTS.md:119-121` already said otherwise. The Salisbury screen is still ruled
-   out at X-band, but by the **quarter-wave spacer** (4.553 mm in TPU at 10 GHz, 2.28× the
-   0.87–2.0 mm budget), never by the ink.
-2. **`R_s = 1/(σt)` was applied at 1.65 skin depths.** Printed MXene at 10 µm is
-   **0.2198–0.3145 Ω/sq**, not 0.145 Ω/sq (§5.1).
-3. **A DC conductivity ratio was used for an RF comparison, again.** MXene is **1.79×** closer
-   to a free-space match than ACI SS1109 silver, not 3× — above ~3 skin depths surface
-   resistance goes as 1/√σ, and 1.794 = √(2.22×10⁶ / 6.9×10⁵) exactly.
-4. **There is no `RUNNING-LISTS.md` §3 item 33 and no MXene skin-depth disagreement.** §3 is
-   numbered 1–29 and stops. Recomputing gives δ = 5.441–7.025 µm across 8.2–12.4 GHz, and the
-   repo's two figures agree.
-5. **Nanometre thicknesses computed from bulk conductivity are lower bounds, not predictions.**
+**New to the repo:**
+
+1. **`rf_tools/calculations.py:540-541`** raises *"Substrate dielectric constant eps_r must be
+   > 1"* — a false physical claim stated as one, on a live path from the Material-property
+   library (`orchestration/design_loop.py:485-494` → `patch_effective_permittivity`). The
+   guard is correct: Hammerstad's fit at `:551` interpolates between `eps_r` and 1 and is
+   meaningless below it. Only the message is wrong, and the same file names a formula's
+   validity correctly eight lines below (*"only valid for W/h > 1"*). **Name the formula, not
+   the material.**
+2. **`docs/requirement-derived-thresholds.md:128`** claims *"The Python does not currently
+   hardcode thresholds."* The tree hardcodes roughly 25 bounds — in the one document whose
+   purpose is stopping an unexamined constant from doing a requirement's work.
+
+**Cautions from this spec's own analysis, and one outright error:**
+
+3. **A verification pass reported that §3 ended at item 29 and that item 33 did not exist.
+   Both were false, and the cause is instructive.** The working clone was cut from `e626857`,
+   before PR #192 merged; on `main` §3 runs to 39 and **item 33 is precisely the ~1.8 × MXene
+   skin-depth disagreement the pass reported as non-existent.** Issue #104's body had been
+   right all along, and was overruled on the strength of a stale checkout.
+   **Five agents independently "verified" the absence against the same stale tree.**
+   Independent verification is worth nothing when every verifier reads the same stale
+   artifact — so a claim of the form *"X is not in the repo"* must state the commit it was
+   checked at, and be re-checked against `origin/main` before it is recorded.
+   *In plain terms: five people checking the same out-of-date copy is one check, not five.*
+4. **A prior analysis concluded the programme owned no ink in the 377–435 Ω/sq window.** It
+   does: §3 item 7 already records ACI SC1502 carbon reaching 377 Ω/sq at 15.9 µm, about two
+   passes. Not a new correction — a caution that an analysis re-derived, and then contradicted,
+   a fact already written down. The Salisbury screen is still ruled out at X-band, but by the
+   **quarter-wave spacer** (4.553 mm in TPU at 10 GHz, 2.28× the 0.87–2.0 mm budget), never by
+   the ink.
+5. **`R_s = 1/(σt)` was applied to printed MXene at 10 GHz without checking `t/δ`** (§5.1). The
+   corrected value depends on which side of item 33's unresolved disagreement is right, so the
+   honest answer is a range across two regimes, not a replacement number.
+6. **A DC conductivity ratio was used for an RF comparison, the same error class as item 4.**
+   MXene is **1.79×** closer to a free-space match than ACI SS1109 silver, not 3× — above ~3
+   skin depths surface resistance goes as 1/√σ, and 1.794 = √(2.22×10⁶ / 6.9×10⁵) exactly.
+   Carries item 33's caveat: it assumes the 6.9×10⁵ S/m figure.
+7. **Nanometre thicknesses computed from bulk conductivity are lower bounds, not predictions.**
    Fuchs–Sondheimer surface scattering plus grain-boundary scattering drop σ_film 1.7–3.0×
    below bulk at 5–10 nm, and further for a 2-D-flake film.
-6. **`rf_tools/calculations.py:540-541`** raises *"Substrate dielectric constant eps_r must be
-   > 1"* — a false physical claim stated as one, on a live path from the Material-property
-   library. The guard is correct (Hammerstad's fit is meaningless below 1); only the message
-   is wrong, and the same file names a formula's validity correctly twice within thirty lines.
-7. **`docs/requirement-derived-thresholds.md:128`** claims *"The Python does not currently
-   hardcode thresholds."* The tree hardcodes roughly 25 bounds.
