@@ -64,6 +64,33 @@ where the number came from, even if that explanation is "no source".
 Neither is optional for its tier: an uncited "spec" entry or an unexplained
 guess would defeat the entire point of a provenance-tagged library.
 
+WHY AN ENTRY STORES ITS OWN UNCERTAINTY AND ITS MEASUREMENT METHOD. Both
+were added when the twelve substrates of
+`docs/xband-absorber-substrate-shortlist.md` were migrated in, because the
+schema could not hold what the sources actually report.
+
+`uncertainty` is the source's OWN stated error bar on that one value --
+Kapton 500HN is published as `tan_delta = 0.012 +/- 0.004`, and dropping
+the `+/- 0.004` loses the only statement the source makes about how well it
+knows its own number. It is a DIFFERENT quantity from the spread across
+disagreeing citations, which `resolve_material_property` already derives
+from the entries themselves: the spread says how much two labs disagree,
+the uncertainty says how much one lab doubts itself. A caller needs both,
+and neither substitutes for the other.
+
+`method` is how the value was obtained -- a coaxial dielectric probe, a
+microstrip ring resonator, a CPW de-embedding. Different methods carry
+different systematic biases (a probe pressed on a soft elastomer has an
+air-gap error a ring resonator does not), so two values that disagree may
+not really disagree; they may have been measured differently. Without the
+method a caller cannot tell a genuine conflict from a systematic offset,
+which is exactly the judgment the "never collapse citations" rule above
+hands to the caller. Storing "not stated" is itself informative: it says
+the disagreement CANNOT be adjudicated.
+
+Both are optional and default to `None`, so every caller written before
+they existed is unaffected.
+
 FAMILY FALLBACK BRACKET, NEVER A BORROWED POINT VALUE. When no entry exists
 for the exact material asked for, ADR-0015 requires a cited MIN/MAX range
 for the material's broad family (e.g. "generic polymer"), not a single
@@ -181,6 +208,8 @@ def add_entry(
     provenance: str,
     citation: str | None = None,
     note: str | None = None,
+    uncertainty: float | None = None,
+    method: str | None = None,
 ) -> dict[str, Any]:
     """Validate and tag one Material-property library entry (ADR-0015).
 
@@ -215,6 +244,14 @@ def add_entry(
 
     resolved_value = _require_finite_number("value", value)
 
+    resolved_uncertainty: float | None = None
+    if uncertainty is not None:
+        resolved_uncertainty = _require_nonnegative_finite_number("uncertainty", uncertainty)
+
+    resolved_method: str | None = None
+    if method is not None:
+        resolved_method = _require_nonempty_string("method", method)
+
     if provenance not in ENTRY_PROVENANCE_VALUES:
         raise InvalidMaterialPropertyError(
             f"provenance must be one of {sorted(ENTRY_PROVENANCE_VALUES)}, got {provenance!r}"
@@ -245,6 +282,8 @@ def add_entry(
         "provenance": provenance,
         "citation": citation,
         "note": note,
+        "uncertainty": resolved_uncertainty,
+        "method": resolved_method,
     }
 
 
@@ -506,6 +545,8 @@ def insert_material_property_entry(
     provenance: str,
     citation: str | None = None,
     note: str | None = None,
+    uncertainty: float | None = None,
+    method: str | None = None,
 ) -> dict[str, Any]:
     """Validate (`add_entry`) and insert one Material-property library entry.
     Every citation is stored as its own row -- there is no update/upsert
@@ -522,14 +563,16 @@ def insert_material_property_entry(
         provenance=provenance,
         citation=citation,
         note=note,
+        uncertainty=uncertainty,
+        method=method,
     )
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
             INSERT INTO material_properties
                 (material, property, frequency_low_hz, frequency_high_hz, value, unit,
-                 provenance, citation, note)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 provenance, citation, note, uncertainty, method)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -542,6 +585,8 @@ def insert_material_property_entry(
                 entry["provenance"],
                 entry["citation"],
                 entry["note"],
+                entry["uncertainty"],
+                entry["method"],
             ),
         )
         row = cur.fetchone()
@@ -653,3 +698,241 @@ def resolve_material_property_from_db(
         family=family,
         family_bracket=family_bracket,
     )
+
+
+# ---------------------------------------------------------------------------
+# SUBSTRATE_SEED_ENTRIES -- the twelve substrates catalogued in
+# docs/xband-absorber-substrate-shortlist.md section 1, migrated out of that
+# markdown table. Transcribed, never re-derived: no value here was computed,
+# converted, or interpolated, and nothing was auto-extracted from a cited
+# document (ADR-0015: "the library never parses a document itself, only
+# cites it").
+#
+# THREE THINGS THE MIGRATION HAD TO DECIDE, recorded here because a later
+# reader will otherwise assume the shortlist and the library disagree.
+#
+# 1. PROVENANCE WAS DOWNGRADED, and the shortlist is the one that is wrong.
+#    Its rows for silicone, Kapton and PDMS are tagged `MEASURED`, meaning
+#    "somebody measured this." CONTEXT.md's ladder reserves `MEASURED` for
+#    what THIS programme measured, and maps a `paper` source type to
+#    `LITERATURE-SUPPORTED`. ENTRY_PROVENANCE_VALUES does not admit
+#    `MEASURED` at all, so the library's own type system catches it. These
+#    entries are therefore `LITERATURE-SUPPORTED`; the measurement method
+#    that earned the shortlist's tag is preserved in `method`.
+#
+# 2. FOUR SUBSTRATES ARE DELIBERATELY ABSENT, because the shortlist does not
+#    state a value the library can hold honestly:
+#      - Eccosorb BSR/MFS -- eps'/eps''/mu'/mu'' are not published at all;
+#        the datasheet gives dB/cm attenuation only.
+#      - PDMS -- reported as a dispersion curve, "2.9 -> 2.55 over
+#        1-220 GHz", with no single X-band point stated. Entering either
+#        endpoint as an X-band value would invent a number.
+#      - Textile felt and denim -- ranges (eps_r 1.13-1.34, 1.63-1.81) with
+#        no per-source attribution, and measured mostly at 2.45/5.8 GHz
+#        rather than X-band. A range needs either the underlying citations
+#        as separate entries or a Family fallback bracket with both ends
+#        independently cited; the shortlist supplies neither.
+#    Their absence is the correct `status="no_data"` outcome, not an
+#    oversight. Same for the fused-silica loss tangent (~0.0002-0.001, a
+#    range) and the PET loss tangent (UNKNOWN at X-band).
+#
+# 3. THE SHORTLIST'S TPU ROW IS STALE. It records eps_r and tan_delta as
+#    UNKNOWN at X-band; issue #114 has since resolved them from Vong et al.
+#    The resolved values are entered here and the shortlist row wants
+#    updating to match.
+#
+# FR4 APPEARS HERE AS WELL AS IN FR4_SEED_ENTRIES, deliberately. The patent's
+# own 4.8 / 0.017 is a fourth, disagreeing citation alongside the three that
+# seeded this library (4.3, 4.4, 4.4 / 0.025, 0.02, 0.024) -- and the widest
+# disagreement of the set. Keeping it beside them, rather than reconciling
+# it, is the whole reason this library stores a value per citation.
+# ---------------------------------------------------------------------------
+
+_SHORTLIST = "docs/xband-absorber-substrate-shortlist.md section 1"
+
+SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
+    # 1. Silicone sheet, 60 Shore A (Polymax SILONA GP/FDA)
+    add_entry(
+        material="Silicone sheet 60 ShA (Polymax SILONA GP/FDA)",
+        property_name="eps_r",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=12.0e9,
+        value=2.9,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="Agilent 85070E coaxial dielectric probe",
+        citation=f"Huang et al. 2016, via {_SHORTLIST} (shortlist tags this MEASURED; "
+        "downgraded per CONTEXT.md, which reserves MEASURED for this programme's own "
+        "measurements and maps a paper to LITERATURE-SUPPORTED)",
+    ),
+    add_entry(
+        material="Silicone sheet 60 ShA (Polymax SILONA GP/FDA)",
+        property_name="tan_delta",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=12.0e9,
+        value=0.10,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="Agilent 85070E coaxial dielectric probe",
+        citation=f"Huang et al. 2016, via {_SHORTLIST}",
+    ),
+    # 2. Polyimide (DuPont Kapton 500HN) -- the one row carrying stated
+    #    uncertainties, and the reason `uncertainty` exists as a column.
+    add_entry(
+        material="Polyimide (DuPont Kapton 500HN)",
+        property_name="eps_r",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=65.0e9,
+        value=3.2,
+        uncertainty=0.03,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="microstrip ring resonator, 10-65 GHz",
+        citation=f"Yang et al., via {_SHORTLIST} (shortlist tags this MEASURED; downgraded)",
+    ),
+    add_entry(
+        material="Polyimide (DuPont Kapton 500HN)",
+        property_name="tan_delta",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=65.0e9,
+        value=0.012,
+        uncertainty=0.004,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="microstrip ring resonator, 10-65 GHz",
+        citation=f"Yang et al., via {_SHORTLIST}. The datasheet figure is ~0.002 at kHz -- "
+        "a 6x gap against this at-frequency measurement",
+    ),
+    # 3. LCP (Rogers ULTRALAM 3850) -- at-frequency datasheet, not kHz
+    add_entry(
+        material="LCP (Rogers ULTRALAM 3850)",
+        property_name="eps_r",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=10.0e9,
+        value=2.9,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="IPC-TM-650 2.5.5.5.1, 23 degrees C",
+        citation=f"Rogers ULTRALAM 3850 datasheet, via {_SHORTLIST}",
+    ),
+    add_entry(
+        material="LCP (Rogers ULTRALAM 3850)",
+        property_name="tan_delta",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=10.0e9,
+        value=0.0025,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="IPC-TM-650 2.5.5.5.1, 23 degrees C",
+        citation=f"Rogers ULTRALAM 3850 datasheet, via {_SHORTLIST}",
+    ),
+    # 4. PET, heat-stabilised (DuPont Melinex ST505). Entered at the band the
+    #    datasheet actually reports -- kHz to MHz -- precisely so a later
+    #    lookup at X-band MISSES rather than silently returning a
+    #    low-frequency number. No X-band measurement exists for this film.
+    add_entry(
+        material="PET heat-stabilised (DuPont Melinex ST505)",
+        property_name="eps_r",
+        frequency_low_hz=1.0e3,
+        frequency_high_hz=1.0e6,
+        value=3.0,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet electrical test, kHz-MHz",
+        citation=f"DuPont Melinex ST505 datasheet, via {_SHORTLIST}. Shortlist records the "
+        "value as approximate and notes no X-band measurement was found; the band here is "
+        "the datasheet's, so an X-band query correctly misses",
+    ),
+    # 5. TPU -- resolved by #114 after the shortlist recorded it UNKNOWN
+    add_entry(
+        material="TPU (solid ester-based)",
+        property_name="eps_r",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=10.0e9,
+        value=2.71,
+        uncertainty=0.3,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="not stated in the accessible text",
+        citation="Vong et al., Materials 15(9):3320, doi:10.3390/ma15093320, via issue #114. "
+        "Honest uncertainty stated there as eps_r 2.7 +/- 0.3; the point value is 2.71",
+    ),
+    add_entry(
+        material="TPU (solid ester-based)",
+        property_name="tan_delta",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=10.0e9,
+        value=0.099,
+        uncertainty=0.01,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="not stated in the accessible text",
+        citation="Vong et al., Materials 15(9):3320, doi:10.3390/ma15093320, via issue #114. "
+        "Honest uncertainty stated there as tan_delta 0.10 +/- 0.01",
+    ),
+    # 6. FR4, the patent's own figures -- a fourth citation disagreeing with
+    #    the three in FR4_SEED_ENTRIES, and third-hand into the bargain
+    add_entry(
+        material="FR4",
+        property_name="eps_r",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=12.0e9,
+        value=4.8,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="not stated -- the patent reports the value without a method",
+        citation=f"US12089385B2 Example 3, via the handoff document, via {_SHORTLIST}. "
+        "Third-hand: neither this library nor the shortlist read the value off the patent "
+        "directly. Disagrees with the three citations in FR4_SEED_ENTRIES (4.3, 4.4, 4.4)",
+    ),
+    add_entry(
+        material="FR4",
+        property_name="tan_delta",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=12.0e9,
+        value=0.017,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="not stated -- the patent reports the value without a method",
+        citation=f"US12089385B2 Example 3, via the handoff document, via {_SHORTLIST}. "
+        "Disagrees with FR4_SEED_ENTRIES (0.025, 0.02, 0.024) by up to 47%",
+    ),
+    # 7. Rogers RO4350B
+    add_entry(
+        material="Rogers RO4350B",
+        property_name="eps_r",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=10.0e9,
+        value=3.48,
+        uncertainty=0.05,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 10 GHz / 23 degrees C",
+        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+    ),
+    add_entry(
+        material="Rogers RO4350B",
+        property_name="tan_delta",
+        frequency_low_hz=10.0e9,
+        frequency_high_hz=10.0e9,
+        value=0.0037,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 10 GHz / 23 degrees C",
+        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+    ),
+    # 8. Glass / fused silica -- eps_r only; the loss tangent is a range
+    add_entry(
+        material="Borosilicate glass / fused silica",
+        property_name="eps_r",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=12.0e9,
+        value=3.8,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="not stated",
+        citation=f"{_SHORTLIST}, which records the value as approximate and notes that no "
+        "first-party X-band measurement was retrieved. The loss tangent is reported only as "
+        "a range (~0.0002-0.001) and is therefore not entered",
+    ),
+]
