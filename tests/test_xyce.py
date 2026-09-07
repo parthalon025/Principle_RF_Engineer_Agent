@@ -21,13 +21,12 @@ format, not transcribed from a real Xyce run.
 """
 
 import os
-import stat
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from conftest import make_fake_executable
 from simulation.base import SimulatorError
 from simulation.xyce import (
     XyceSimulator,
@@ -71,11 +70,9 @@ PRINT_ONLY_JOB = {
 
 
 def _make_fake_xyce(tmp_path: Path, body: str) -> Path:
-    """Write a small fake 'Xyce' shell script and make it executable."""
-    script = tmp_path / "fake_xyce.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake 'Xyce' executable (a Python script body,
+    launched cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_xyce")
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +203,7 @@ def test_parse_xyce_csv_empty_text_returns_empty():
 
 
 def test_xyce_simulator_invokes_bare_netlist_path(tmp_path: Path):
-    script = _make_fake_xyce(tmp_path, 'echo "$@"\n')
+    script = _make_fake_xyce(tmp_path, 'import sys\nsys.stdout.write(" ".join(sys.argv[1:]))\n')
     netlist_file = tmp_path / "model.cir"
     netlist_file.write_text("* test\n.END\n")
 
@@ -220,7 +217,9 @@ def test_xyce_simulator_invokes_bare_netlist_path(tmp_path: Path):
 
 
 def test_xyce_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_xyce(tmp_path, 'echo "netlist parsing error" >&2\nexit 1\n')
+    script = _make_fake_xyce(
+        tmp_path, 'import sys\nsys.stderr.write("netlist parsing error\\n")\nsys.exit(1)\n'
+    )
     netlist_file = tmp_path / "model.cir"
     netlist_file.write_text("* test\n.END\n")
 
@@ -230,7 +229,7 @@ def test_xyce_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_xyce_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_xyce(tmp_path, "sleep 5\n")
+    script = _make_fake_xyce(tmp_path, "import time\ntime.sleep(5)\n")
     netlist_file = tmp_path / "model.cir"
     netlist_file.write_text("* test\n.END\n")
 
@@ -246,7 +245,7 @@ def test_xyce_simulator_missing_netlist_file_raises(tmp_path: Path):
 
 
 def test_xyce_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_xyce(tmp_path, "exit 0\n")
+    script = _make_fake_xyce(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("XYCE_BIN", str(script))
     simulator = XyceSimulator()
     assert simulator.executable == str(script)
@@ -259,7 +258,7 @@ def test_xyce_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeyp
 # caveat, and its extra caveat specifically on the .LIN path).
 # ---------------------------------------------------------------------------
 
-_FAKE_XYCE_PY = """#!{python}
+_FAKE_XYCE_PY = """
 import sys
 
 netlist_path = sys.argv[1]
@@ -275,10 +274,8 @@ sys.exit(0)
 
 
 def _make_fake_xyce_py(tmp_path: Path, output_files: dict[str, str]) -> Path:
-    script = tmp_path / "fake_xyce_realistic.py"
-    script.write_text(_FAKE_XYCE_PY.format(python=sys.executable, output_files=output_files))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_XYCE_PY.format(output_files=output_files)
+    return make_fake_executable(tmp_path, body, name="fake_xyce_realistic")
 
 
 def test_run_xyce_simulation_end_to_end_print_only(tmp_path: Path):
@@ -364,7 +361,9 @@ def test_run_xyce_simulation_op_analysis_has_no_print_values(tmp_path: Path):
 
 
 def test_run_xyce_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_xyce(tmp_path, 'echo "netlist error" >&2\nexit 1\n')
+    script = _make_fake_xyce(
+        tmp_path, 'import sys\nsys.stderr.write("netlist error\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_xyce_simulation(
             job=PRINT_ONLY_JOB,

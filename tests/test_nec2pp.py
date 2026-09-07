@@ -25,12 +25,11 @@ against, a real nec2++ run.
 """
 
 import os
-import stat
-import sys
 from pathlib import Path
 
 import pytest
 
+from conftest import make_fake_executable
 from simulation.base import SimulatorError
 from simulation.nec2pp import (
     Nec2ppSimulator,
@@ -61,11 +60,9 @@ GUIDE_SAMPLE_OUTPUT = """
 
 
 def _make_fake_nec2pp(tmp_path: Path, body: str) -> Path:
-    """Write a small fake 'nec2++' shell script and make it executable."""
-    script = tmp_path / "fake_nec2pp.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake 'nec2++' executable (a Python script body,
+    launched cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 
 
 DIPOLE_GEOMETRY = {
@@ -287,7 +284,9 @@ def test_nec2pp_simulator_invokes_dash_i_and_dash_o_dash(tmp_path: Path):
     docstring citation) is what actually gets shelled out -- the previous
     invocation shape (a bare positional filename) is rejected by real
     nec2++ with 'nec2++: -i input_filename is required'."""
-    script = _make_fake_nec2pp(tmp_path, 'echo "$@"\n')
+    script = _make_fake_nec2pp(
+        tmp_path, 'import sys\nsys.stdout.write(" ".join(sys.argv[1:]))\n'
+    )
     input_file = tmp_path / "model.nec"
     input_file.write_text("CM test\nCE\nEN\n")
 
@@ -301,7 +300,9 @@ def test_nec2pp_simulator_invokes_dash_i_and_dash_o_dash(tmp_path: Path):
 
 
 def test_nec2pp_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_nec2pp(tmp_path, 'echo "boom: bad geometry card" >&2\nexit 1\n')
+    script = _make_fake_nec2pp(
+        tmp_path, 'import sys\nsys.stderr.write("boom: bad geometry card\\n")\nsys.exit(1)\n'
+    )
     input_file = tmp_path / "model.nec"
     input_file.write_text("CM test\nCE\nEN\n")
 
@@ -311,7 +312,7 @@ def test_nec2pp_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_nec2pp_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_nec2pp(tmp_path, "sleep 5\n")
+    script = _make_fake_nec2pp(tmp_path, "import time\ntime.sleep(5)\n")
     input_file = tmp_path / "model.nec"
     input_file.write_text("CM test\nCE\nEN\n")
 
@@ -327,7 +328,7 @@ def test_nec2pp_simulator_missing_input_file_raises(tmp_path: Path):
 
 
 def test_nec2pp_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_nec2pp(tmp_path, "exit 0\n")
+    script = _make_fake_nec2pp(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("NEC2PP_BIN", str(script))
     simulator = Nec2ppSimulator()
     assert simulator.executable == str(script)
@@ -340,7 +341,7 @@ def test_nec2pp_simulator_picks_up_executable_from_env_var(tmp_path: Path, monke
 # docstring for the not-verified-against-a-real-binary caveat.
 # ---------------------------------------------------------------------------
 
-_FAKE_NEC2PP_PY = '''#!{python}
+_FAKE_NEC2PP_PY = '''
 import sys
 
 OUTPUT = """{sample}"""
@@ -354,10 +355,8 @@ sys.exit(0)
 
 
 def _make_fake_nec2pp_py(tmp_path: Path, sample_output: str) -> Path:
-    script = tmp_path / "fake_nec2pp_realistic.py"
-    script.write_text(_FAKE_NEC2PP_PY.format(python=sys.executable, sample=sample_output))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_NEC2PP_PY.format(sample=sample_output)
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp_realistic")
 
 
 def test_run_nec2_simulation_end_to_end_with_fake_executable(tmp_path: Path):
@@ -385,7 +384,9 @@ def test_run_nec2_simulation_end_to_end_with_fake_executable(tmp_path: Path):
 
 
 def test_run_nec2_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_nec2pp(tmp_path, 'echo "geometry error" >&2\nexit 1\n')
+    script = _make_fake_nec2pp(
+        tmp_path, 'import sys\nsys.stderr.write("geometry error\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_nec2_simulation(
             geometry=DIPOLE_GEOMETRY,
