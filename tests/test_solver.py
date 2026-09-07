@@ -34,13 +34,12 @@ section, so `gain_dbi` parses to `None` there.
 from __future__ import annotations
 
 import logging
-import stat
-import sys
 from pathlib import Path
 
 import pytest
 
 import orchestration.solver as solver_module
+from conftest import make_fake_executable
 from designs.requirement_targets import mark_unscoreable, propose_target
 from orchestration.approval import request_loop_step_approval
 from orchestration.design_loop import DesignStep, start_design_loop
@@ -97,7 +96,7 @@ _GUIDE_SAMPLE_OUTPUT_WITH_PATTERN = """
    AVERAGE POWER GAIN= 2.02793E+00       SOLID ANGLE USED IN AVERAGING=(  .5000)*PI STERADIANS.
 """
 
-_FAKE_NEC2PP_PY = '''#!{python}
+_FAKE_NEC2PP_PY = '''
 import sys
 
 OUTPUT = """{sample}"""
@@ -110,12 +109,8 @@ sys.exit(0)
 
 
 def _make_fake_nec2pp(tmp_path: Path) -> Path:
-    script = tmp_path / "fake_nec2pp.py"
-    script.write_text(
-        _FAKE_NEC2PP_PY.format(python=sys.executable, sample=_GUIDE_SAMPLE_OUTPUT_WITH_PATTERN)
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_NEC2PP_PY.format(sample=_GUIDE_SAMPLE_OUTPUT_WITH_PATTERN)
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 
 
 def _fingerprint(state: dict, step: DesignStep, step_input: dict) -> dict:
