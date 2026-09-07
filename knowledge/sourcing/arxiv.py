@@ -172,8 +172,7 @@ def _run_convert_paper(arxiv_id: str, output_dir: Path) -> Path:
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
-            f"convert-paper timed out after {_CONVERT_PAPER_TIMEOUT_S}s for "
-            f"arXiv:{arxiv_id}: {exc}"
+            f"convert-paper timed out after {_CONVERT_PAPER_TIMEOUT_S}s for arXiv:{arxiv_id}: {exc}"
         ) from exc
     if result.returncode != 0:
         raise RuntimeError(
@@ -185,8 +184,7 @@ def _run_convert_paper(arxiv_id: str, output_dir: Path) -> Path:
     md_path = output_dir / safe_id / f"{safe_id}.md"
     if not md_path.exists():
         raise RuntimeError(
-            f"convert-paper reported success for arXiv:{arxiv_id} but "
-            f"{md_path} does not exist"
+            f"convert-paper reported success for arXiv:{arxiv_id} but {md_path} does not exist"
         )
     return md_path
 
