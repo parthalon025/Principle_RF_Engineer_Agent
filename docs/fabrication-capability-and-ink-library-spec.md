@@ -30,6 +30,11 @@ Neither is true of the tree today.
 | **Fabrication capability** | `CONTEXT.md:181` vocabulary only, **no code** |
 | **Ink-property** | **Does not exist** — not in code, not in `CONTEXT.md` |
 
+The Material-property library is also the thinnest of the three in practice: it is built, but
+seeded only with FR4. `docs/xband-absorber-substrate-shortlist.md` §1 already catalogues
+twelve substrates with εr, tan δ and provenance — starting with silicone — and none of it has
+been migrated out of the markdown table. See §9.4.
+
 #108's configured-fabrication decision has **no ADR**; ADR-0017 covers the printed-reflector
 default, not this.
 
@@ -447,12 +452,49 @@ without the host, because its gate is *defined* in terms of the host. So the enu
 candidate is at least **`(host, machine, ink, material)`**, and an implementation stopping at
 the triple will have to be reopened.
 
-**Not settled: whether the host gets its own library.** Host-*class* properties accumulate
-like material properties and are library-shaped; the *specific* host in a requirement is a
-per-requirement input that is never inherited. Whether that first half becomes a fourth table
-is a design decision this spec does not take. No ADR is proposed for the glossary term itself
-— defining a term is cheap to reverse and involved no real trade-off. The library question
-may warrant one when it is taken.
+**Settled: the host does NOT get a fourth library.** A host's material properties *are*
+material properties, so they belong in the Material-property library that already exists —
+and that catalogue is already begun. `docs/xband-absorber-substrate-shortlist.md` §1 holds
+twelve entries with εr, tan δ and provenance, starting with **Silicone sheet 60 ShA at
+εr 2.9 / tan δ 0.10, `MEASURED`**, and running through polyimide, LCP, PDMS, PET, TPU, two
+textiles, FR4, RO4350B and fused silica. It already carries a **Host regime** column — A for
+large-radius hosts (wing, hull, sUAS body), B for *"anything that cannot leave the airframe
+for an oven"* — which is `CONTEXT.md`'s cure gate under another name.
+
+So the split is clean and needs no new table:
+
+- **Host material properties** → the existing Material-property library. A CFRP skin, a PET
+  film, a silicone sheet and animal tissue are all just materials with properties.
+- **Host instance facts** — this host's radius of curvature, its extent, whether *this* part
+  can leave it for an oven, whether the requirement asserts it as a conductive backing →
+  **per-requirement input**, re-derived each pass and never inherited, per #104.
+
+### 9.4 Three wrinkles the migration will hit
+
+The shortlist is library-shaped data living in a markdown table, so migrating it is the
+obvious first population of the Material-property library beyond its FR4 seeds. Three things
+will not fit cleanly, and it is cheaper to know now:
+
+1. **Not every column is frequency-keyed.** εr and tan δ are. **Cure-temperature ceiling,
+   minimum bend radius and thickness range are not** — they are mechanical and process facts
+   that do not vary with frequency. The library's `(material, property, frequency band)` key
+   can carry them only by convention (a band spanning everything), which is a modelling
+   decision someone should take deliberately rather than by accident.
+2. **Adhesion is a property of a PAIR, and nothing can hold it.** §5 of the shortlist
+   tabulates adhesion as *silver-on-X* and *MXene-on-X* — two columns, because adhesion is a
+   fact about an `(ink, substrate)` pair, not about either alone. The Material-property
+   library is keyed by one material; the Ink-property library proposed above is keyed by
+   `(ink, process_state, property)` with no substrate axis. **Neither shape holds a pair
+   property**, and adhesion is decisive: the shortlist records MXene-on-TPU adhesion as
+   `UNKNOWN` and textile adhesion as a *"literature's finding is negative."*
+3. **A host class is not a material.** "Textile" and "glass/ceramic" are families, not
+   substances, and the shortlist lists denim and felt separately for exactly that reason. That
+   is what the **Family fallback bracket** already exists for, so the mechanism is in place —
+   but the migration must decide per row whether it is entering a material or a family.
+
+No ADR is proposed for the glossary term — defining a term is cheap to reverse and involved no
+real trade-off. The pair-property gap in wrinkle 2 may warrant one, since it changes a table's
+shape.
 
 ---
 
