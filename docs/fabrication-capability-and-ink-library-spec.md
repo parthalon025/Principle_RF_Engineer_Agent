@@ -480,21 +480,23 @@ will not fit cleanly, and it is cheaper to know now:
    that do not vary with frequency. The library's `(material, property, frequency band)` key
    can carry them only by convention (a band spanning everything), which is a modelling
    decision someone should take deliberately rather than by accident.
-2. **Adhesion is a property of a PAIR, and nothing can hold it.** §5 of the shortlist
-   tabulates adhesion as *silver-on-X* and *MXene-on-X* — two columns, because adhesion is a
-   fact about an `(ink, substrate)` pair, not about either alone. The Material-property
-   library is keyed by one material; the Ink-property library proposed above is keyed by
-   `(ink, process_state, property)` with no substrate axis. **Neither shape holds a pair
-   property**, and adhesion is decisive: the shortlist records MXene-on-TPU adhesion as
-   `UNKNOWN` and textile adhesion as a *"literature's finding is negative."*
+2. **Adhesion is a property of a PAIR, and nothing here can hold it — now settled by
+   ADR-0023.** §5 of the shortlist tabulates adhesion as *silver-on-X* and *MXene-on-X* — two
+   columns, because adhesion is a fact about two materials meeting, not about either alone.
+   The Material-property library is keyed by one material; the Ink-property library proposed
+   above is keyed by `(ink, process_state, property)` with no substrate axis. Neither holds
+   it. **ADR-0023 gives it its own library**, keyed by an *ordered* material pair plus the
+   surface preparation — `(deposited_material, onto_material, surface_preparation, property)`
+   — because silver-on-PDMS is simultaneously "will not print at all" untreated and "survives
+   stringent adhesion tests" after plasma or UV-ozone, and a pair-only key would have to pick
+   one. Nothing in this spec's two tables changes as a result; the third library is separate.
 3. **A host class is not a material.** "Textile" and "glass/ceramic" are families, not
    substances, and the shortlist lists denim and felt separately for exactly that reason. That
    is what the **Family fallback bracket** already exists for, so the mechanism is in place —
    but the migration must decide per row whether it is entering a material or a family.
 
 No ADR is proposed for the glossary term — defining a term is cheap to reverse and involved no
-real trade-off. The pair-property gap in wrinkle 2 may warrant one, since it changes a table's
-shape.
+real trade-off. The pair-property gap in wrinkle 2 did warrant one and has it: **ADR-0023**.
 
 ---
 
