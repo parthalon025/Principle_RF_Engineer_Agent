@@ -334,21 +334,28 @@ def _grant_and_advance(state: dict[str, Any], step: DesignStep, step_input: dict
 
 
 def _drive_to_redesign_decision(
-    state: dict[str, Any], tmp_path: Path, verification_status: str = "PASS"
+    state: dict[str, Any],
+    tmp_path: Path,
+    verification_status: str = "PASS",
+    design_family: str = "patch_antenna",
 ) -> dict[str, Any]:
     """Real ARCHITECTURE -> ... -> CORRELATION, leaving `state` positioned
     at REDESIGN_DECISION -- callers advance the final gated step themselves
     with whatever next_action they're testing. `verification_status` lets
     callers exercise design_loop.py's wider VERIFICATION_STATUSES
     vocabulary (CONDITIONAL PASS/BLOCKED, not just designs.models.
-    VerificationStatus's own PASS/FAIL/MARGINAL/NOT VERIFIED)."""
+    VerificationStatus's own PASS/FAIL/MARGINAL/NOT VERIFIED). `design_family`
+    (issue #167) lets a caller drive two iterations with two DIFFERENT
+    families, to prove the ADR-0011 flush's design_family carry-forward is
+    scoped to each iteration's own flush batch, not a stale value left over
+    from a previous one."""
     state = _grant_and_advance(
         state,
         DesignStep.ARCHITECTURE,
         {
             "decision": "rectangular microstrip patch on FR4",
             "rationale": "meets band/gain target with a simple, low-cost fabrication",
-            "design_family": "patch_antenna",
+            "design_family": design_family,
         },
     )
     state = advance_design_loop_step(
@@ -436,6 +443,14 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path)
     assert set(decision_records) == {"architecture", "redesign_decision"}
     assert decision_records["architecture"]["decision"] == "rectangular microstrip patch on FR4"
     assert decision_records["redesign_decision"]["decision"] == "accept the design as-is"
+    # Issue #167: design_family survives the flush on BOTH rows. The
+    # REDESIGN_DECISION step_input above never states a design_family of
+    # its own (design_loop.py's _handle_redesign_decision doesn't ask for
+    # one) -- its persisted row carries forward this iteration's own
+    # ARCHITECTURE decision's family rather than persisting NULL (this
+    # module's own "DESIGN_FAMILY CARRY-FORWARD" decision).
+    assert decision_records["architecture"]["design_family"] == "patch_antenna"
+    assert decision_records["redesign_decision"]["design_family"] == "patch_antenna"
 
     results_by_tool = {r["tool_name"]: r for r in stored["engineering_results"]}
     assert set(results_by_tool) == {
@@ -534,6 +549,65 @@ def test_flush_at_iterate_persists_that_iteration_and_moves_status_to_analysis(
     assert any("iter2-architecture" in k for k in all_keys)
     assert len([k for k in all_keys if "architecture" in k]) == 2  # iter1 + iter2, not merged
     assert len(stored["engineering_results"]) == 10  # 5 per iteration x 2 iterations
+
+
+def test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration(
+    cleanup_designs, tmp_path
+):
+    """Issue #167. A REDESIGN_DECISION's step_input never states its own
+    design_family (design_loop.py's _handle_redesign_decision doesn't ask
+    for one) -- orchestration/tooling.py's _flush_decisions carries forward
+    the MOST RECENT design_family stated within the batch being flushed, so
+    a redesign_decision row is recorded against the family its own
+    iteration's ARCHITECTURE decision actually declared, not left NULL.
+
+    This drives TWO iterations that each declare a DIFFERENT design_family
+    (an engineer abandoning one family for another between iterations) to
+    prove that carry-forward is scoped to each flush's own batch of
+    decisions -- iteration 2's redesign_decision row must show iteration
+    2's family, never iteration 1's stale one left over from the previous,
+    already-committed flush."""
+    state = start_new_design_loop(
+        "TOOL-FAMILY-ITER", "Design Family Carry-Forward Test", "A", REQUIREMENTS
+    )
+    cleanup_designs.append(state["design_id"])
+    design_id = state["design_id"]
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="patch_antenna")
+    iterate_input = {
+        "decision": "abandon the patch, try a reflection-phase surface instead",
+        "rationale": "patch antenna cannot meet the beam-steering requirement",
+        "next_action": "iterate",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, iterate_input)
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="reflection_phase_surface")
+    accept_input = {
+        "decision": "accept the reflection-phase surface design",
+        "rationale": "meets the beam-steering requirement with margin",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, accept_input)
+
+    stored = read_design(design_id)
+    by_record_key = {d["record_key"]: d for d in stored["decision_records"]}
+
+    def _row(iteration_marker: str, kind_marker: str) -> dict[str, Any]:
+        matches = [
+            row
+            for key, row in by_record_key.items()
+            if iteration_marker in key and kind_marker in key
+        ]
+        assert len(matches) == 1, f"expected exactly one {iteration_marker}-{kind_marker} row"
+        return matches[0]
+
+    assert _row("iter1", "architecture")["design_family"] == "patch_antenna"
+    assert _row("iter1", "redesign_decision")["design_family"] == "patch_antenna"
+    assert _row("iter2", "architecture")["design_family"] == "reflection_phase_surface"
+    # The real regression this test guards: iteration 2's redesign_decision
+    # must show iteration 2's OWN family, not iteration 1's already-flushed
+    # "patch_antenna" leaking forward across a flush boundary.
+    assert _row("iter2", "redesign_decision")["design_family"] == "reflection_phase_surface"
 
 
 # ---------------------------------------------------------------------------

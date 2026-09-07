@@ -506,11 +506,18 @@ this list.
     and rejected never reaches the database at all. #125's own earlier
     comment claimed the field "already stores rejected options today but is
     write-only" and then falsified itself. Three tickets (#125, #150, #151)
-    assume that data survives. Related and separately filed as **#167**:
+    assume that data survives. Related and separately filed as ~~**#167**:
     `design_family` is *required* by the state machine
     (`design_loop.py:434`) and then **dropped before the database** —
     `_flush_target_for` (`tooling.py:216–227`) does not carry it and
-    `decision_records` has no such column (`db/schema.sql:101–112`).
+    `decision_records` has no such column (`db/schema.sql:101–112`).~~ —
+    **resolved 2026-09-07**: `decision_records.design_family` (a nullable
+    column, `db/schema.sql`) plus `_flush_target_for`/`_flush_decisions`
+    (`orchestration/tooling.py`) now persist it for every
+    architecture_decision/redesign_decision row, carrying the value
+    forward onto a REDESIGN_DECISION row that states no design_family of
+    its own. The **rejected-alternatives-destroyed** finding above this one
+    is untouched by this fix.
 
 37. **Landy's real build is a five-part laminate, not a single slab.** The
     fabricated device is **FR4 / adhesive / FR4 / adhesive / FR4**, with

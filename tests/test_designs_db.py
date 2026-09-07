@@ -467,6 +467,32 @@ def test_record_decision_writes_row_with_pending_approval_status(db_conn):
     assert row["decision"] == "Used a pi-network instead of an L-network."
     assert row["approval_required"] is True
     assert row["approval_status"] == "PENDING"
+    assert row["design_family"] is None  # not given -- most decisions aren't about one
+
+
+def test_record_decision_persists_and_round_trips_design_family(db_conn):
+    """Issue #167: design_family (CONTEXT.md's "Design family", docs/adr/0018)
+    is optional/nullable on record_decision, but when a caller states one
+    (orchestration/tooling.py's ADR-0011 flush, for an ARCHITECTURE or
+    REDESIGN_DECISION design-loop decision) it must actually land in the
+    decision_records row and be readable back out via read_design -- not
+    silently dropped, which is exactly the bug this issue closes."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-FAMILY")
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-FAMILY-architecture",
+        decision="rectangular microstrip patch on FR4",
+        alternatives=[],
+        rationale="meets band/gain target with a simple, low-cost fabrication",
+        evidence=[],
+        design_family="patch_antenna",
+    )
+    assert row["design_family"] == "patch_antenna"
+
+    result = read_design(db_conn, design_id)
+    (dr,) = result["decision_records"]
+    assert dr["design_family"] == "patch_antenna"
 
 
 def test_record_decision_round_trips_alternatives_and_evidence_as_jsonb(db_conn):

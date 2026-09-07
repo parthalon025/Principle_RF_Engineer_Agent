@@ -1494,6 +1494,7 @@ def record_decision(
     alternatives: list,
     rationale: str,
     evidence: list,
+    design_family: str | None = None,
     approval_required: bool = True,
 ) -> dict:
     """Log a judgment-laden design choice -- a decision between real
@@ -1504,7 +1505,10 @@ def record_decision(
     rejected with a structured error pointing at the existing record,
     never silently overwritten. Every new decision starts
     approval_status='PENDING' -- this does not yet block anything (no
-    manufacturing_release tool or review UI exists)."""
+    manufacturing_release tool or review UI exists). design_family (issue
+    #167) is optional -- which design family (absorber, reflection-phase
+    steering surface, patch antenna, ...) this decision was made about;
+    leave unset for a decision that isn't about a design family at all."""
     return _record_decision(
         design_id=design_id,
         record_key=record_key,
@@ -1512,6 +1516,7 @@ def record_decision(
         alternatives=alternatives,
         rationale=rationale,
         evidence=evidence,
+        design_family=design_family,
         approval_required=approval_required,
     )
 

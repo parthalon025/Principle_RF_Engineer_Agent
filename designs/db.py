@@ -124,6 +124,7 @@ def record_decision(
     alternatives: list[Any],
     rationale: str,
     evidence: list[Any],
+    design_family: str | None = None,
     approval_required: bool = True,
 ) -> dict[str, Any]:
     """Insert a new `decision_records` row, always starting
@@ -136,6 +137,16 @@ def record_decision(
     `RecordKeyCollisionError` carrying the existing row -- never silently
     overwritten -- mirroring `knowledge.db.insert_document`'s
     checksum-based dedup-and-point-back.
+
+    `design_family` (issue #167; CONTEXT.md's "Design family",
+    docs/adr/0018) is optional/nullable -- only a caller recording an
+    ARCHITECTURE or REDESIGN_DECISION design-loop decision
+    (`orchestration/tooling.py`'s `_flush_target_for`) passes one; every
+    other `record_decision` call (a plain design-record entry with no
+    design-loop behind it) leaves it `None`, same as today. This function
+    does not validate the value against a known-family list -- that
+    belongs to the still-open design family registry (docs/adr/0018), not
+    this write path.
     """
     existing = find_decision_by_record_key(conn, record_key)
     if existing is not None:
@@ -146,8 +157,8 @@ def record_decision(
             """
             INSERT INTO decision_records
                 (design_id, record_key, decision, alternatives, rationale,
-                 evidence, approval_required, approval_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 evidence, design_family, approval_required, approval_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -157,6 +168,7 @@ def record_decision(
                 Json(alternatives),
                 rationale,
                 Json(evidence),
+                design_family,
                 approval_required,
                 "PENDING",
             ),
@@ -291,7 +303,7 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
 
         cur.execute(
             "SELECT id, record_key, decision, alternatives, rationale, evidence, "
-            "approval_required, approval_status, created_at "
+            "design_family, approval_required, approval_status, created_at "
             "FROM decision_records WHERE design_id = %s ORDER BY id",
             (design_id,),
         )
