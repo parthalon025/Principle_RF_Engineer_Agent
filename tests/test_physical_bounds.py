@@ -275,3 +275,59 @@ def test_no_bound_returns_infinity_nowhere_and_never_silently_zero():
     'anything is achievable', the most dangerous possible failure."""
     assert math.isfinite(rozanov_min_thickness_m(8e9, 12e9, -10.0))
     assert rozanov_min_thickness_m(8e9, 12e9, -10.0) > 0
+
+
+# ---------------------------------------------------------------------------
+# The alias table guards itself against the tree
+# ---------------------------------------------------------------------------
+
+
+def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
+    """`get_design_family` REJECTS what it does not recognise, so every family
+    spelling already written in this repo is something the registry can newly
+    break -- and one did break: an earlier revision guessed at plausible
+    aliases instead of harvesting real ones, and missed
+    "reflection_phase_surface" in tests/test_tooling.py.
+
+    This test replaces that guess with a scan. It walks the tree for every
+    `design_family = "..."` / `"design_family": "..."` literal and asserts the
+    registry resolves it, so adding a new spelling anywhere fails HERE rather
+    than in whichever suite happens to use it.
+
+    The one deliberate exception is a string a test uses precisely BECAUSE it
+    is invalid, which is listed rather than pattern-matched so a genuine typo
+    cannot hide behind the exemption.
+    """
+    import re
+    from pathlib import Path
+
+    deliberately_invalid = {"absorbre"}
+    pattern = re.compile(r"""design_family["']?\s*[=:]\s*["']([A-Za-z0-9_ -]+)["']""")
+    repo_root = Path(__file__).resolve().parent.parent
+
+    found: dict[str, list[str]] = {}
+    for path in repo_root.rglob("*.py"):
+        if ".venv" in path.parts or "site-packages" in path.parts:
+            continue
+        for name in pattern.findall(path.read_text(encoding="utf-8", errors="ignore")):
+            found.setdefault(name, []).append(str(path.relative_to(repo_root)))
+
+    assert found, "the scan found no design_family literals at all -- it has stopped working"
+    # The two spellings this scan is known to protect. If either disappears
+    # the scan has silently narrowed, which is the failure mode that let the
+    # first miss through.
+    assert "patch_antenna" in found
+    assert "reflection_phase_surface" in found
+
+    unresolvable = {
+        name: sites
+        for name, sites in found.items()
+        if name not in deliberately_invalid and not is_known_design_family(name)
+    }
+    assert not unresolvable, (
+        "these design_family strings are written in the tree but the registry "
+        f"rejects them: {unresolvable}. Either register the spelling in "
+        "designs/design_families.py's _ALIASES or fix the call site -- do not "
+        "add it to this test's exemption list unless the string is meant to be "
+        "invalid."
+    )

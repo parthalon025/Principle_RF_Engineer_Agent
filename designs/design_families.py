@@ -343,12 +343,35 @@ _REGISTRY: dict[str, DesignFamily] = {
 # canonical key for the patch family as `PATCH` and made retrofitting the
 # existing patch code the registry's own validation test -- "if the existing
 # patch code doesn't fit, the shape is wrong." It fits; what it needed was
-# this alias, because `patch_antenna` is the string seven existing call
-# sites and tests already use. Aliases are recorded here rather than
-# silently accepted by fuzzy matching, so every accepted spelling is one a
-# human can see and audit.
+# these aliases. Aliases are recorded here rather than silently accepted by
+# fuzzy matching, so every accepted spelling is one a human can see and
+# audit.
+#
+# HOW THIS LIST WAS DERIVED, AND WHY THAT IS RECORDED. Because
+# `get_design_family` REJECTS what it does not recognise, every family
+# spelling already in the tree is something this registry can newly break.
+# The list below is therefore not a guess at plausible spellings -- an
+# earlier revision was exactly that, and it broke
+# tests/test_tooling.py::test_flush_design_family_carry_forward_is_scoped_to
+# _its_own_iteration, which uses "reflection_phase_surface". It is harvested
+# from the tree:
+#
+#   grep -rhoE 'design_family[[:space:]]*[=:][[:space:]]*"[^"]+"' \
+#       --include=*.py --include=*.md --include=*.json . | ...
+#
+# run at commit d0a38fe (merge of origin/main 03cf1fd), which yields exactly
+# `patch_antenna` and `reflection_phase_surface` as pre-existing spellings.
+# ANY future addition to this file should re-run that harvest against a
+# NAMED commit rather than reasoning about what names probably exist -- a
+# stale checkout is what produced the earlier miss, and a "that string isn't
+# in the repo" claim is only as good as the commit it was checked at.
 _ALIASES: dict[str, str] = {
+    # Harvested from the tree (see above).
     "PATCH_ANTENNA": PATCH.name,
+    "REFLECTION_PHASE_SURFACE": REFLECTION_PHASE.name,
+    # Near-spellings of the harvested and canonical names. These are
+    # convenience only -- nothing in the tree uses them -- and they are the
+    # part of this table that may be dropped without breaking anything.
     "MICROSTRIP_PATCH": PATCH.name,
     "REFLECTION_PHASE_STEERING_SURFACE": REFLECTION_PHASE.name,
     "STEERING_SURFACE": REFLECTION_PHASE.name,

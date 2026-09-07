@@ -386,13 +386,14 @@ and a glossary that churns with it stops being trustworthy (see
   `design_family` string field on the ARCHITECTURE decision, alongside the
   existing free-form `decision`/`rationale` prose, not left implicit in
   which hardwired function the loop happened to call (`_handle_architecture`,
-  #161). This is the minimal-slice implementation only: a bare string, with
-  no enum/registry validation that it names a real, known family — that
-  belongs to the still-open design family registry (`docs/adr/0018`), which
-  also covers the per-family `optimizer_class`/`simulation_adapter`/
-  `physical_bound` fields this one does not yet declare. #150 and #151 key
-  off this field. Selection stays human-authored: the loop does not attempt
-  to infer a family from a requirement's prose.
+  #161). The name is validated against the Design family registry
+  (`designs/design_families.py`, #109/ADR-0018): an unrecognised family is
+  rejected at the ARCHITECTURE step rather than persisted as a grouping key
+  nothing downstream recognises. The caller's own spelling is kept verbatim
+  and the registry's canonical name recorded alongside it, so a run written
+  as `patch_antenna` and one written as `PATCH` still group together. #150
+  and #151 key off this field. Selection stays human-authored: the loop does
+  not attempt to infer a family from a requirement's prose.
   Persists through the ADR-0011 flush (#167): `db/schema.sql`'s
   `decision_records` table has a nullable `design_family` column, and
   `orchestration/tooling.py`'s `_flush_target_for`/`_flush_decisions` write
@@ -414,6 +415,13 @@ and a glossary that churns with it stops being trustworthy (see
   variables, analysis function, optimizer class, simulation adapter, and
   physical bound. See `docs/adr/0018` for why this is an open interface
   rather than one fixed schema with optional fields.
+  Implemented in `designs/design_families.py`. It resolves the ambiguity
+  ADR-0018 named as its reason for rejecting a fixed schema — a bare `None`
+  could not distinguish "this family has no bound" from "we have not read
+  the bound this family has" — by giving those two states distinct types.
+  `DIFFUSIVE` genuinely has none; `REFLECTION_PHASE`'s Gustafsson & Sjöberg
+  bound is named in #109 but unread, so calling it raises with the citation
+  rather than returning a plausible number.
   _Avoid_: family schema — implies a single shape every family fills in;
   the per-family parts are genuinely heterogeneous objects, not optional
   slots in a common shape.
