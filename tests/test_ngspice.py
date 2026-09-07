@@ -21,13 +21,12 @@ transcribed from a real ngspice run -- see that module's honest caveat.
 
 import os
 import shutil
-import stat
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from conftest import make_fake_executable
 from simulation.base import SimulatorError
 from simulation.ngspice import (
     NgspiceSimulator,
@@ -64,11 +63,9 @@ MATCHING_NETWORK_JOB = {
 
 
 def _make_fake_ngspice(tmp_path: Path, body: str) -> Path:
-    """Write a small fake 'ngspice' shell script and make it executable."""
-    script = tmp_path / "fake_ngspice.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake 'ngspice' executable (a Python script body,
+    launched cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_ngspice")
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +214,10 @@ def test_parse_ngspice_wrdata_empty_text_returns_empty():
 
 
 def test_ngspice_simulator_invokes_dash_b_dash_o_and_netlist(tmp_path: Path):
-    script = _make_fake_ngspice(tmp_path, 'echo "$@" > "$3"\n')
+    script = _make_fake_ngspice(
+        tmp_path,
+        'import sys\nwith open(sys.argv[3], "w") as f:\n    f.write(" ".join(sys.argv[1:]))\n',
+    )
     netlist_file = tmp_path / "model.cir"
     netlist_file.write_text("* test\n.end\n")
 
@@ -234,7 +234,11 @@ def test_ngspice_simulator_invokes_dash_b_dash_o_and_netlist(tmp_path: Path):
 
 
 def test_ngspice_simulator_nonzero_exit_raises_simulator_error_with_log_content(tmp_path: Path):
-    script = _make_fake_ngspice(tmp_path, 'echo "Error: bad netlist card" > "$3"\nexit 1\n')
+    script = _make_fake_ngspice(
+        tmp_path,
+        'import sys\nwith open(sys.argv[3], "w") as f:\n    f.write("Error: bad netlist card\\n")\n'
+        "sys.exit(1)\n",
+    )
     netlist_file = tmp_path / "model.cir"
     netlist_file.write_text("* test\n.end\n")
 
@@ -244,7 +248,7 @@ def test_ngspice_simulator_nonzero_exit_raises_simulator_error_with_log_content(
 
 
 def test_ngspice_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_ngspice(tmp_path, "sleep 5\n")
+    script = _make_fake_ngspice(tmp_path, "import time\ntime.sleep(5)\n")
     netlist_file = tmp_path / "model.cir"
     netlist_file.write_text("* test\n.end\n")
 
@@ -260,7 +264,7 @@ def test_ngspice_simulator_missing_netlist_file_raises(tmp_path: Path):
 
 
 def test_ngspice_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_ngspice(tmp_path, "exit 0\n")
+    script = _make_fake_ngspice(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("NGSPICE_BIN", str(script))
     simulator = NgspiceSimulator()
     assert simulator.executable == str(script)
@@ -272,7 +276,7 @@ def test_ngspice_simulator_picks_up_executable_from_env_var(tmp_path: Path, monk
 # docstring for the not-verified-against-a-real-binary caveat).
 # ---------------------------------------------------------------------------
 
-_FAKE_NGSPICE_PY = """#!{python}
+_FAKE_NGSPICE_PY = """
 import sys
 
 args = sys.argv[1:]
@@ -293,14 +297,8 @@ sys.exit(0)
 
 
 def _make_fake_ngspice_py(tmp_path: Path, output_name: str, output_content: str) -> Path:
-    script = tmp_path / "fake_ngspice_realistic.py"
-    script.write_text(
-        _FAKE_NGSPICE_PY.format(
-            python=sys.executable, output_name=output_name, output_content=output_content
-        )
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_NGSPICE_PY.format(output_name=output_name, output_content=output_content)
+    return make_fake_executable(tmp_path, body, name="fake_ngspice_realistic")
 
 
 def test_run_ngspice_simulation_end_to_end_ac(tmp_path: Path):
@@ -327,7 +325,11 @@ def test_run_ngspice_simulation_end_to_end_ac(tmp_path: Path):
 
 
 def test_run_ngspice_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_ngspice(tmp_path, 'echo "netlist error" > "$3"\nexit 1\n')
+    script = _make_fake_ngspice(
+        tmp_path,
+        'import sys\nwith open(sys.argv[3], "w") as f:\n    f.write("netlist error\\n")\n'
+        "sys.exit(1)\n",
+    )
     with pytest.raises(SimulatorError):
         run_ngspice_simulation(
             job=MATCHING_NETWORK_JOB,
