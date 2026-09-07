@@ -1,4 +1,4 @@
-from knowledge.extraction import sections_to_chunks
+from knowledge.extraction import parse_document, sections_to_chunks
 from knowledge.models import ParsedBlock, ParsedDocument, SourceType
 
 
@@ -105,3 +105,48 @@ def test_chunk_indices_are_sequential():
 def test_empty_document_yields_no_chunks():
     parsed = ParsedDocument(title="Empty", blocks=[])
     assert sections_to_chunks(parsed, SourceType.DATASHEET) == []
+
+
+def test_parse_document_defaults_to_ocr_enabled(tmp_path, monkeypatch):
+    """Issue #141: `knowledge.ingest.ingest_document` never overrides
+    `do_ocr`, so a caller relying on OCR (reading text out of a scanned or
+    image-only page, as opposed to a page that already has real, selectable
+    text) for a document with no text layer must still get it by default.
+
+    This proves the *wiring*, not real OCR behavior: it fakes out docling's
+    `DocumentConverter` so no actual parsing (and no OCR-model download)
+    happens, and just inspects the `PdfPipelineOptions` that `parse_document`
+    builds when a caller doesn't pass `do_ocr` at all -- confirming it comes
+    out `True`, matching docling's own default. `knowledge/test_ingest.py`
+    and `knowledge/test_read.py` are the only callers that ever pass
+    `do_ocr=False`, and they do it by monkeypatching the `parse_document`
+    reference in `knowledge.ingest`, not by changing this default."""
+    from docling.datamodel.base_models import InputFormat
+
+    pdf_path = tmp_path / "fake.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF")  # never actually parsed -- converter is faked below
+
+    captured: dict[str, object] = {}
+
+    class _FakeDocument:
+        name = "Fake"
+
+        def iterate_items(self, included_content_layers=None):
+            return iter(())
+
+    class _FakeResult:
+        document = _FakeDocument()
+
+    class _FakeConverter:
+        def __init__(self, *, format_options=None, **kwargs):
+            captured["format_options"] = format_options
+
+        def convert(self, path):
+            return _FakeResult()
+
+    monkeypatch.setattr("docling.document_converter.DocumentConverter", _FakeConverter)
+
+    parse_document(str(pdf_path))
+
+    pdf_option = captured["format_options"][InputFormat.PDF]
+    assert pdf_option.pipeline_options.do_ocr is True

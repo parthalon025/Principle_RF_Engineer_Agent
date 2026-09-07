@@ -18,21 +18,36 @@ _TABLE_LABELS = {"table"}
 _CAPTION_LABELS = {"caption"}
 
 
-def parse_document(path: str) -> ParsedDocument:
+def parse_document(path: str, *, do_ocr: bool = True) -> ParsedDocument:
     """Parse a PDF file into a `ParsedDocument` via docling.
+
+    `do_ocr` controls whether docling's OCR (optical character recognition
+    -- reading text out of a scanned/image page) stage runs, and defaults to
+    `True` so real ingestion of a scanned/image-only document still gets OCR
+    with no behavior change for any existing caller. `knowledge.ingest.
+    ingest_document` never overrides it (issue #141): only tests that
+    already know their fixture PDF has a real, selectable text layer pass
+    `do_ocr=False` (by monkeypatching the `parse_document` reference in
+    `knowledge.ingest`), so their outcome doesn't depend on whether an
+    OCR-model download happens to succeed at test time.
 
     Raises whatever docling raises on an unparseable/corrupt file — callers
     (see `knowledge.ingest.ingest_document`) are responsible for turning
     that into a stored "extraction failed" document rather than crashing.
     """
-    from docling.document_converter import DocumentConverter
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling_core.types.doc import ContentLayer
 
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(path)
 
-    converter = DocumentConverter()
+    pipeline_options = PdfPipelineOptions(do_ocr=do_ocr)
+    converter = DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+    )
     result = converter.convert(str(p))
     doc = result.document
 
