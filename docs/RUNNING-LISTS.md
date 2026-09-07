@@ -32,6 +32,9 @@ matters**, so a browsing session can be prioritised rather than exhaustive.
 | **2021 JCIDS Manual, DoDI 5000.85, CRS IF12817** | HTTP 403 | Current editions. Threshold/objective is quoted from the **2009 and 2012** editions instead | #122 |
 | **Rozanov (2000)**, "Ultimate thickness to bandwidth ratio of radar absorbers" | Behind IEEE | The original statement of the thickness/bandwidth bound. Its result is verified through two independent open-access restatements that agree with each other, but **the original was never read** | #129, #110 |
 | **A 2025 Wiley paper on absorber quality criteria** | HTTP 403 | Explicitly on this subject. The critique of `RL_min` as a scoring metric currently rests on **secondary summaries** of it | #110 |
+| **IEEE Std 1597.1-2008/2022 & IEEE Std 1597.2-2010** (Feature Selective Validation) | Behind IEEE | The actual standard #110/#168 chose for judging Example 3's reproduction against Landy's curve — read only through consistent secondary-source description, never the primary text. #168's exact ADM/FDM/GDM implementation waits on this | #110, #168 |
+| **Weile, D. S., Michielssen, E. & Goldberg, D. E. (1996)**, "Genetic algorithm design of Pareto optimal broadband microwave absorbers," IEEE Trans. EMC 38(3):518–525 | Behind IEEE | The foundational GA-minimax absorber paper backing #110's worst-in-band objective; read only via secondary-source description | #110 |
+| **Michielssen, E., Sajer, J.-M., Ranjithan, S. & Mittra, R. (1993)**, "Design of lightweight, broad-band microwave absorbers using genetic algorithms," IEEE Trans. MTT 41(6):1024–1031 | Behind IEEE | A second, independent minimax-absorber-optimization precedent for #110; read only via secondary-source description | #110 |
 
 **Environment note.** A headless browser was set up and reaches sites through
 the agent proxy with `--disable-quic --ssl-version-max=tls1.2`. It does **not**
