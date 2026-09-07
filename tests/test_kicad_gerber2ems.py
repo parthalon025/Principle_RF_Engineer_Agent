@@ -20,23 +20,21 @@ here" premise). This file therefore splits into:
   2. KicadGerber2emsSimulator.run() subprocess-plumbing tests against a
      small fake "gerber2ems" script (argument shape, nonzero exit ->
      SimulatorError, timeout -> SimulatorError) -- following
-     tests/test_nec2pp.py's exact fake-executable pattern. Per this
-     ticket's own instructions, Windows-only fake-executable subprocess
-     limitations already documented as pre-existing/expected for
-     tests/test_nec2pp.py and tests/test_openems.py on this platform apply
-     identically here -- not a defect in this module.
+     tests/test_nec2pp.py's exact fake-executable pattern. The fake
+     executable is built via conftest.make_fake_executable, so it launches
+     correctly on native Windows as well as POSIX (issue #159) -- not a
+     platform limitation of this module.
 """
 
 import json
 import math
 import os
-import stat
-import sys
 from pathlib import Path
 
 import pytest
 
 import simulation.kicad_gerber2ems as kicad_gerber2ems
+from conftest import make_fake_executable
 from simulation.base import SimulatorError
 from simulation.kicad_gerber2ems import (
     KicadGerber2emsSimulator,
@@ -458,10 +456,7 @@ def test_kicad_gerber2ems_simulator_picks_up_executable_from_env_var(monkeypatch
 
 
 def _make_fake_gerber2ems(tmp_path: Path, body: str) -> Path:
-    script = tmp_path / "fake_gerber2ems.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_gerber2ems")
 
 
 def _make_workdir(tmp_path: Path) -> Path:
@@ -472,7 +467,7 @@ def _make_workdir(tmp_path: Path) -> Path:
 
 
 def test_kicad_gerber2ems_simulator_invokes_dash_a(tmp_path: Path):
-    script = _make_fake_gerber2ems(tmp_path, 'echo "$@"\n')
+    script = _make_fake_gerber2ems(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     workdir = _make_workdir(tmp_path)
 
     simulator = KicadGerber2emsSimulator(executable=str(script))
@@ -484,7 +479,9 @@ def test_kicad_gerber2ems_simulator_invokes_dash_a(tmp_path: Path):
 
 
 def test_kicad_gerber2ems_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_gerber2ems(tmp_path, 'echo "boom: bad fab fileset" >&2\nexit 1\n')
+    script = _make_fake_gerber2ems(
+        tmp_path, 'import sys\nsys.stderr.write("boom: bad fab fileset\\n")\nsys.exit(1)\n'
+    )
     workdir = _make_workdir(tmp_path)
 
     simulator = KicadGerber2emsSimulator(executable=str(script))
@@ -493,7 +490,7 @@ def test_kicad_gerber2ems_simulator_nonzero_exit_raises_simulator_error(tmp_path
 
 
 def test_kicad_gerber2ems_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_gerber2ems(tmp_path, "sleep 5\n")
+    script = _make_fake_gerber2ems(tmp_path, "import time\ntime.sleep(5)\n")
     workdir = _make_workdir(tmp_path)
 
     simulator = KicadGerber2emsSimulator(executable=str(script))
@@ -507,7 +504,7 @@ def test_kicad_gerber2ems_simulator_timeout_raises_simulator_error(tmp_path: Pat
 # executable that mimics gerber2ems's own postprocessing output shape.
 # ---------------------------------------------------------------------------
 
-_FAKE_GERBER2EMS_PY = '''#!{python}
+_FAKE_GERBER2EMS_PY = '''
 import sys
 import os
 
@@ -524,10 +521,8 @@ sys.exit(0)
 
 
 def _make_fake_gerber2ems_py(tmp_path: Path) -> Path:
-    script = tmp_path / "fake_gerber2ems_realistic.py"
-    script.write_text(_FAKE_GERBER2EMS_PY.format(python=sys.executable, sample=_PORT0_CSV))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_GERBER2EMS_PY.format(sample=_PORT0_CSV)
+    return make_fake_executable(tmp_path, body, name="fake_gerber2ems_realistic")
 
 
 class FakeKicadConnection:
