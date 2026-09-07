@@ -86,6 +86,31 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: Flexible antenna — describes the substrate, not the
   mounting requirement; a flexible antenna mounted flat isn't
   exercising the conformal property.
+- **Host surface**: the surface an Adaptive EM skin is applied to, supplied
+  by each Customer requirement and never a project constant. **Described by
+  the properties it carries, never by what it is**: the range is unbounded —
+  a sticker, a PET film, an aircraft wing, a hull, an sUAS body, or
+  something living (`docs/mxene-voltera-nova-printability.md` records
+  printing demonstrated "on curved substrates and even on leaves and
+  fruit"). No closed list of host types is possible, so no design decision
+  may key on one.
+  Five properties gate a design, and each is supplied, not assumed: its
+  **radius of curvature**, which drives bend radius, which drives substrate
+  class; **whether the finished part can leave it and reach an external
+  oven**, which is what actually decides which conductors survive the cure
+  ceiling — not substrate class, a claim corrected on #105 — and is the
+  cure stage's own gate (see Fabrication capability); **whether it is a reliable
+  conductive backing**, which a requirement asserts and the loop never
+  infers (ADR-0017); its **own εr/tanδ and thickness**, where it
+  participates electromagnetically; and its **extent**, which bounds how
+  much of a pattern fits.
+  *In plain terms: the loop never asks whether it is looking at a wing or an
+  animal. It asks how sharply the thing curves, how hot it may get, whether
+  it conducts, and whether the part can come off to be baked.*
+  _Avoid_: Substrate — the printed or laminated dielectric the elements sit
+  on, which is a different layer; a skin has both a substrate and a host.
+  Platform — names a vehicle class rather than a surface, and a host need
+  not belong to one.
 - **Metamaterial unit cell**: the repeating element whose **sub-wavelength
   structure** produces an effective permittivity/permeability the bulk
   material does not have on its own. The base building block a
