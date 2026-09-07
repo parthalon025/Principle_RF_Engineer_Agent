@@ -20,8 +20,6 @@ imported, matching this test suite's existing per-file convention.
 from __future__ import annotations
 
 import os
-import stat
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +27,7 @@ import numpy as np
 import psycopg
 import pytest
 import skrf as rf
+from conftest import make_fake_executable
 from dotenv import load_dotenv
 
 from designs.requirement_targets import (
@@ -281,7 +280,7 @@ _DIPOLE_GEOMETRY = {
     ]
 }
 
-_FAKE_NEC2PP_PY = '''#!{python}
+_FAKE_NEC2PP_PY = '''
 import sys
 
 OUTPUT = """{sample}"""
@@ -294,10 +293,8 @@ sys.exit(0)
 
 
 def _make_fake_nec2pp(tmp_path: Path) -> Path:
-    script = tmp_path / "fake_nec2pp.py"
-    script.write_text(_FAKE_NEC2PP_PY.format(python=sys.executable, sample=_GUIDE_SAMPLE_OUTPUT))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_NEC2PP_PY.format(sample=_GUIDE_SAMPLE_OUTPUT)
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 
 
 def _write_measured_touchstone(tmp_path: Path, name: str = "measured") -> Path:
