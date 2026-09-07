@@ -959,8 +959,7 @@ def inductive_grid_sheet_inductance_h(period_m: float, strip_width_m: float) -> 
     w = _require_positive_length("strip_width_m", strip_width_m)
     if w >= p:
         raise ValueError(
-            f"strip_width_m must be smaller than period_m; got strip_width_m={w!r}, "
-            f"period_m={p!r}."
+            f"strip_width_m must be smaller than period_m; got strip_width_m={w!r}, period_m={p!r}."
         )
     s = math.sin(math.pi * w / (2 * p))
     return MU0 * (p / (2 * math.pi)) * math.log(1 / s)

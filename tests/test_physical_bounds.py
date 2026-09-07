@@ -70,9 +70,7 @@ def test_lowest_feasible_center_reproduces_the_hand_derived_thickness_budget_wal
     assert rozanov_lowest_feasible_center_hz(0.87e-3, 0.40, -10.0) == pytest.approx(
         8.37e9, rel=1e-3
     )
-    assert rozanov_lowest_feasible_center_hz(2.0e-3, 0.40, -10.0) == pytest.approx(
-        3.64e9, rel=1e-3
-    )
+    assert rozanov_lowest_feasible_center_hz(2.0e-3, 0.40, -10.0) == pytest.approx(3.64e9, rel=1e-3)
 
 
 def test_electrically_thin_ceiling_reproduces_the_hand_derived_upper_walls():
@@ -182,9 +180,7 @@ def test_the_two_bounds_are_structurally_different_functions():
     """ADR-0018's deciding argument, asserted rather than assumed: the two
     families' bounds do not share a signature, so no single schema with a
     swapped constant could hold both."""
-    absorber_metres = ABSORBER.physical_bound(
-        f_low_hz=8e9, f_high_hz=12e9, reflectivity_db=-10.0
-    )
+    absorber_metres = ABSORBER.physical_bound(f_low_hz=8e9, f_high_hz=12e9, reflectivity_db=-10.0)
     patch_q = PATCH.physical_bound(
         frequency_hz=2.45e9,
         half_wave_reference_frequency_hz=3.665e9,

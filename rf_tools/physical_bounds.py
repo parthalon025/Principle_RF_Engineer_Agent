@@ -320,9 +320,7 @@ def thin_skin_absorber_window(
         lowest_feasible_center_hz=rozanov_lowest_feasible_center_hz(
             thickness_m, fractional_bandwidth, reflectivity_db, mu_s
         ),
-        electrically_thin_ceiling_hz=electrically_thin_ceiling_hz(
-            thickness_m, wavelength_fraction
-        ),
+        electrically_thin_ceiling_hz=electrically_thin_ceiling_hz(thickness_m, wavelength_fraction),
     )
 
 

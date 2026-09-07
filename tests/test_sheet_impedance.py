@@ -94,9 +94,9 @@ def test_the_published_ring_transfer_reproduces():
     assert path_resistance_from_squares(8.681, 449.2) == pytest.approx(3900, rel=1e-3)
     squares_at_10ghz = squares_count(7.203e-3, 0.2e-3)
     assert squares_at_10ghz == pytest.approx(36.0, rel=1e-2)
-    assert sheet_resistance_for_target_path_resistance(
-        3900, squares_at_10ghz
-    ) == pytest.approx(108, rel=1e-2)
+    assert sheet_resistance_for_target_path_resistance(3900, squares_at_10ghz) == pytest.approx(
+        108, rel=1e-2
+    )
 
 
 def test_the_programmes_own_carbon_bridge_is_a_fraction_of_a_square():

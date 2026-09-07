@@ -133,9 +133,7 @@ class _NoPhysicalBound:
     reason: str
 
     def __call__(self, **kwargs: Any) -> Any:
-        raise TypeError(
-            "This design family has no physical bound to evaluate: " + self.reason
-        )
+        raise TypeError("This design family has no physical bound to evaluate: " + self.reason)
 
 
 NO_PHYSICAL_BOUND = _NoPhysicalBound(
@@ -336,8 +334,7 @@ POLARIZATION_CONVERTER = DesignFamily(
 
 
 _REGISTRY: dict[str, DesignFamily] = {
-    fam.name: fam
-    for fam in (ABSORBER, PATCH, REFLECTION_PHASE, DIFFUSIVE, POLARIZATION_CONVERTER)
+    fam.name: fam for fam in (ABSORBER, PATCH, REFLECTION_PHASE, DIFFUSIVE, POLARIZATION_CONVERTER)
 }
 
 
