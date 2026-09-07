@@ -1271,3 +1271,76 @@ def _advance_to(
 
 def _run_full_cycle_up_to_redesign(state: DesignLoopState) -> DesignLoopState:
     return _advance_to(state, DesignStep.REDESIGN_DECISION)
+
+
+# ---------------------------------------------------------------------------
+# Group 2c (issue #109, ADR-0018): ARCHITECTURE validates `design_family`
+# against the Design family registry. #161 landed the field as a bare,
+# unvalidated string because the registry did not exist; it does now.
+# ---------------------------------------------------------------------------
+
+
+def test_architecture_rejects_a_design_family_the_registry_does_not_know():
+    """A misspelled family previously survived into `decision_records` as a
+    grouping key nothing downstream recognises (#150, #151). It now fails at
+    the step that named it."""
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target",
+        "design_family": "absorbre",
+    }
+    with pytest.raises(DesignLoopValidationError, match="Unknown design_family"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_architecture_records_the_registry_entry_for_the_named_family():
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target",
+        "design_family": "patch_antenna",
+    }
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+    registry = state.decisions[-1].result["design_family_registry"]
+
+    # The caller's own string survives verbatim; the canonical name is added
+    # alongside it so runs spelling it differently still group together.
+    assert state.decisions[-1].result["design_family"] == "patch_antenna"
+    assert registry["canonical_name"] == "PATCH"
+    assert registry["simulation_tier"] == "TIER_A"
+    assert registry["physical_bound"]["status"] == "available"
+    assert "Nel" in registry["physical_bound"]["citation"]
+    assert registry["physical_bound"]["primary_source_doc"].startswith("docs/")
+
+
+def test_architecture_distinguishes_an_unread_bound_from_a_family_with_none():
+    """ADR-0018 rejected a fixed schema because a bare `None` would be
+    ambiguous between 'not yet computed' and 'doesn't exist for this family'.
+    That distinction must survive into the decision record, not collapse on
+    the way in."""
+    unread = _grant_and_advance(
+        start_design_loop(REQUIREMENTS),
+        DesignStep.ARCHITECTURE,
+        step_input_override={
+            "decision": "reflectarray on a grounded silicone spacer",
+            "rationale": "beam steering is the requirement",
+            "design_family": "reflection_phase",
+        },
+    )
+    none_exists = _grant_and_advance(
+        start_design_loop(REQUIREMENTS),
+        DesignStep.ARCHITECTURE,
+        step_input_override={
+            "decision": "1-bit coding surface",
+            "rationale": "backscatter redistribution, not absorption",
+            "design_family": "diffusive",
+        },
+    )
+    unread_bound = unread.decisions[-1].result["design_family_registry"]["physical_bound"]
+    none_bound = none_exists.decisions[-1].result["design_family_registry"]["physical_bound"]
+
+    assert unread_bound["status"] == "unread_primary_source"
+    assert "Gustafsson" in unread_bound["citation"]
+    assert none_bound["status"] == "none_exists"
+    assert none_bound != unread_bound
