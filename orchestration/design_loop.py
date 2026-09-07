@@ -109,6 +109,10 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
+from designs.design_families import (
+    UnknownDesignFamilyError as _UnknownDesignFamilyError,
+)
+from designs.design_families import get_design_family as _get_design_family
 from measurement.external import record_external_measurement as _record_external_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
@@ -426,13 +430,70 @@ def _handle_architecture(
     # patch antenna, ...) this decision targets -- alongside the existing
     # free-form decision/rationale prose, not replacing it. #150 (cross-run
     # simulator-trust ledger) and #151 (DesignHistoryIndex/geometry-result
-    # cache) both need this as a grouping key. A bare string is accepted
-    # with no enum/registry validation -- docs/adr/0018's design family
-    # registry (which family declares which analysis/optimizer/simulation-
-    # adapter/physical-bound) is a separate, not-yet-landed ticket; this
-    # field only names the family, it doesn't validate the name against one.
+    # cache) both need this as a grouping key.
+    #
+    # The name is now validated against the Design family registry
+    # (`designs/design_families.py`, ADR-0018), which #161 could not do
+    # because the registry did not exist. A misspelled or invented family
+    # fails HERE, at the step that named it, rather than surviving into
+    # `decision_records` as a grouping key nothing else recognises.
+    #
+    # Validation is deliberately all this step does with the registry. The
+    # loop does not evaluate the family's physical bound: that needs inputs
+    # (a thickness budget and band for an absorber; a reference half-wave
+    # simulation for a patch) that the ARCHITECTURE step does not have and
+    # which differ per family by design. The registry entry is echoed into
+    # the recorded decision so the ANALYSIS step and any downstream consumer
+    # can reach the bound without re-deriving which one applies -- and, for a
+    # family whose bound is unread or non-existent, can say WHICH of those
+    # two it is rather than seeing an undifferentiated absence.
     _require_fields(step_input, {"decision", "rationale", "design_family"}, "architecture")
-    return "architecture_decision", dict(step_input), None
+    try:
+        family = _get_design_family(step_input["design_family"])
+    except _UnknownDesignFamilyError as exc:
+        raise DesignLoopValidationError(str(exc)) from exc
+
+    recorded = dict(step_input)
+    # `design_family` keeps the caller's own string verbatim -- a human wrote
+    # it, and a decision record that quietly rewrites what they wrote is worse
+    # than one that carries a second field. The canonical registry name goes
+    # alongside it instead, so a run recording "patch_antenna" and one
+    # recording "PATCH" still group together for #150/#151.
+    recorded["design_family_registry"] = {
+        "canonical_name": family.name,
+        "simulation_tier": str(family.simulation_tier),
+        "requires_ground_plane": family.requires_ground_plane,
+        "has_physical_bound": family.has_physical_bound,
+        "physical_bound": _describe_physical_bound(family),
+    }
+    return "architecture_decision", recorded, None
+
+
+def _describe_physical_bound(family: Any) -> dict[str, Any]:
+    """Flatten one family's `physical_bound` slot into a JSON-safe record.
+
+    ADR-0018 rejected a fixed schema partly because a bare `None` would be
+    "ambiguous between 'not yet computed' and 'doesn't exist for this
+    family'". That distinction is worth nothing if it collapses on the way
+    into the decision record, so `status` carries it explicitly:
+    `available` / `unread_primary_source` / `none_exists`.
+    """
+    bound = family.physical_bound
+    if family.has_physical_bound:
+        return {
+            "status": "available",
+            "name": bound.name,
+            "citation": bound.citation,
+            "primary_source_doc": bound.primary_source_doc,
+            "validity": bound.validity,
+        }
+    if hasattr(bound, "citation"):
+        return {
+            "status": "unread_primary_source",
+            "name": bound.name,
+            "citation": bound.citation,
+        }
+    return {"status": "none_exists", "reason": bound.reason}
 
 
 def _resolve_eps_r_bounds(
