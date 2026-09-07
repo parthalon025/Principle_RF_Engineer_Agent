@@ -48,16 +48,33 @@ from rf_tools.physical_bounds import (
 # ---------------------------------------------------------------------------
 
 
-def test_broadband_floor_reproduces_the_papers_derivation_value_not_its_abstract():
-    """Rozanov Eq. (10) gives lambda_max/17.2; the ABSTRACT rounds it to 17.
+def test_broadband_floor_matches_the_repos_designated_regression_constant():
+    """`docs/absorber-thickness-bandwidth-bound.md` already derives this bound
+    and names TWO constants as "the real regression tests ... which is what
+    lets this document claim the bound is verified rather than recalled":
 
-    Asserting 17.2 rather than 17 is the point: the round number is what
-    reaches most secondary sources, and the repo's rule is that a bound is
-    read from its derivation.
+        d / lambda_max  >=  1.151293 / 19.739209  =  0.058325  =  1 / 17.15
+        f_L = c * |Gamma_0| / (171.45 * d),   where 171.45 = 2*pi^2*20/ln(10)
+
+    Those are the repo's anchors, so this test asserts against them rather
+    than against a restatement of them. Both are tighter than the round
+    numbers in circulation: Rozanov's own abstract says 1/17, and Sci Rep
+    9:16359 writes 172 for the second.
     """
     lambda_max = 0.03
     floor = rozanov_broadband_thickness_floor_m(SPEED_OF_LIGHT_M_S / lambda_max, -10.0)
-    assert lambda_max / floor == pytest.approx(17.2, abs=0.06)
+
+    # Constant 1: the thickness ratio, to the doc's own six decimal places.
+    assert floor / lambda_max == pytest.approx(0.058325, abs=5e-7)
+    assert lambda_max / floor == pytest.approx(17.15, abs=0.01)
+
+    # Constant 2: the same inequality rearranged. The doc writes the lowest
+    # usable frequency as f_L = c*|Gamma_0|/(171.45*d). Substituting
+    # f_L = c/lambda_max and |Gamma_0| = 10 dB collapses that to
+    # 171.45 = 10*lambda_max/d, so recovering it from the returned thickness
+    # checks the arithmetic end to end rather than restating the constant.
+    assert 10.0 * lambda_max / floor == pytest.approx(171.45, abs=0.01)
+    assert 40 * math.pi**2 / math.log(10) == pytest.approx(171.45, abs=0.01)
 
 
 def test_lowest_feasible_center_reproduces_the_hand_derived_thickness_budget_walls():
@@ -331,3 +348,58 @@ def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
         "add it to this test's exemption list unless the string is meant to be "
         "invalid."
     )
+
+
+# ---------------------------------------------------------------------------
+# RUNNING-LISTS.md section 3 item 33: the MXene skin-depth disagreement
+# ---------------------------------------------------------------------------
+
+
+def test_skin_depth_converts_the_mxene_disagreement_into_a_stated_conductivity():
+    """`docs/RUNNING-LISTS.md` section 3 item 33 records a live, unresolved
+    ~1.8x disagreement about MXene's skin depth at 10 GHz, and says exactly
+    what it needs to settle: *"it needs one stated conductivity at one stated
+    frequency."*
+
+    Neither side states one -- they state skin depths. But skin depth and
+    conductivity are the same fact in two dresses, so `skin_depth_m` inverts
+    each claim into the conductivity it implies, which is the form item 33
+    asks for:
+
+      * Correction 7: a 10 um film is "already ~1.65 skin depths at 10 GHz"
+        -> delta = 6.06 um -> sigma ~ 6.90e5 S/m
+      * Map #104:     "MXene's 3*delta is ~33 um"
+        -> delta = 11.0 um -> sigma ~ 2.09e5 S/m
+
+    This does NOT resolve the disagreement -- deciding which conductivity is
+    right needs a measurement, and item 33 notes printed MXene genuinely
+    spans that range between grades and ages. What it does is check item 33's
+    own reasoning about the size of the discrepancy, and put both claims in
+    comparable units so a single four-point-probe reading can settle them.
+    """
+    from rf_tools.calculations import skin_depth_m
+
+    def implied_sigma(delta_m: float) -> float:
+        # delta = 1/sqrt(pi*f*mu*sigma)  =>  sigma = 1/(pi*f*mu*delta^2)
+        return 1.0 / (math.pi * 10e9 * 4e-7 * math.pi * delta_m**2)
+
+    delta_correction_7 = 10e-6 / 1.65
+    delta_map_104 = 33e-6 / 3
+
+    assert delta_correction_7 == pytest.approx(6.06e-6, rel=1e-2)
+    assert delta_map_104 == pytest.approx(11.0e-6, rel=1e-2)
+
+    sigma_correction_7 = implied_sigma(delta_correction_7)
+    sigma_map_104 = implied_sigma(delta_map_104)
+    assert sigma_correction_7 == pytest.approx(6.90e5, rel=1e-2)
+    assert sigma_map_104 == pytest.approx(2.09e5, rel=1e-2)
+
+    # Item 33's own arithmetic, checked: "a 1.8x disagreement in delta is a
+    # ~3.3x disagreement in the assumed conductivity" -- because delta goes
+    # as 1/sqrt(sigma), so the conductivity ratio is the delta ratio squared.
+    assert delta_map_104 / delta_correction_7 == pytest.approx(1.8, abs=0.05)
+    assert sigma_correction_7 / sigma_map_104 == pytest.approx(3.3, abs=0.05)
+
+    # And the round trip: each implied conductivity reproduces its own claim.
+    assert skin_depth_m(10e9, sigma_correction_7) == pytest.approx(delta_correction_7, rel=1e-9)
+    assert skin_depth_m(10e9, sigma_map_104) == pytest.approx(delta_map_104, rel=1e-9)
