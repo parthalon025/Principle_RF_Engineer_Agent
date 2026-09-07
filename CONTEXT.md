@@ -239,6 +239,45 @@ and a glossary that churns with it stops being trustworthy (see
   one for context a formula can't capture, but never replaces it (ADR-0014).
   _Avoid_: confidence, probability — both suggest a subjective estimate,
   which this explicitly is not.
+- **Prediction**: a stated expected value for the quantity a Success score
+  will later measure, recorded *before* the evaluation that produces it —
+  the fast tier's counterpart to the expected values the loop already
+  compiles before a bench trip. Provenance is always
+  `INFERRED`: it is an LLM's reading of the physics made before any
+  evidence exists, and it never becomes `CALCULATED` because the solver
+  later computed a matching number. Carries its own tolerance, which must
+  be narrower than the decision it informs — a prediction whose band
+  cannot separate a pass from a fail against the requirement's own
+  Threshold is `UNSCOREABLE` by construction, never `CONFIRMED` (#194).
+  *In plain terms: the machine writes down its guess before it looks, and
+  a guess loose enough to be right either way does not count.*
+  _Avoid_: estimate, guess, expectation — all three suggest something that
+  may be revised once the answer is known, and a Prediction's entire value
+  is that it was frozen first.
+- **Prediction status**: whether a Prediction has been tested against the
+  result it predicted — `PREDICTED` → `CONFIRMED`/`REFUTED`, plus
+  `UNSCOREABLE` for a candidate that failed at an earlier step and never
+  produced the number its prediction was about. A separate axis from
+  Provenance, on the same reasoning as a Requirement target's
+  `target_status`: Provenance says what kind of evidence a value is,
+  status says whether anything has checked it. Display-only — it never
+  affects ranking or `score_percent` (#112) — and it may steer which
+  candidates get proposed next, never how any candidate is scored (#194).
+  _Avoid_: a `REFUTED` provenance tier, or a "validated"/"unvalidated"
+  confidence tag — Provenance's eight-value set is fixed and is the only
+  confidence scale in the project.
+- **Mechanism claim**: the single statement of *why this batch* that
+  accompanies a batch of LLM-proposed candidates, written as a testable
+  ordering over them ("the shortest candidate scores worst") rather than
+  as prose. Carries its own Prediction status, tested against the ranking
+  the batch actually produced rather than against any one value — so a
+  batch whose every Prediction lands inside tolerance can still be
+  `REFUTED` on its mechanism. *In plain terms: predicting the answer and
+  being right about why are different things, and only the second one
+  teaches you anything.* (#194)
+  _Avoid_: hypothesis — too broad; a Mechanism claim is specifically about
+  the ordering one batch expects, not about the design or the physics at
+  large.
 - **Design**: a `designs` row — a named, revisioned unit of engineering work
   (`design_key`, `name`, `revision`, `status`) that `requirements`,
   `architecture`, engineering results, decisions, and verification all hang
