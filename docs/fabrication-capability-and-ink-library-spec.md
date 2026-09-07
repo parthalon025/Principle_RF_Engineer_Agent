@@ -1,4 +1,4 @@
-# Machine-capability and Ink-property libraries — specification
+# Fabrication-capability and Ink-property libraries — specification
 
 **Status:** plan-only specification. No code accompanies it, per issue
 [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104)'s standing
@@ -27,11 +27,27 @@ Neither is true of the tree today.
 |---|---|
 | Material-property | Built — `designs/material_properties.py`, ADR-0015 |
 | Element/Coding-Alphabet | `CONTEXT.md:382` vocabulary only, **no code** |
-| **Machine-capability** | **Does not exist** — not in code, not in `CONTEXT.md` |
+| **Fabrication capability** | `CONTEXT.md:181` vocabulary only, **no code** |
 | **Ink-property** | **Does not exist** — not in code, not in `CONTEXT.md` |
 
 #108's configured-fabrication decision has **no ADR**; ADR-0017 covers the printed-reflector
 default, not this.
+
+**This spec adopts `CONTEXT.md`'s existing term rather than coining one.** An earlier draft
+called the first table `machine_capabilities`, which was a second name for a concept the
+domain model already had — and one the entry's own *Avoid* list warns against:
+
+> *Avoid*: **fabrication route** — describes one chosen path through a capability, not the
+> configured set a path gets chosen from; **printer capability** — too narrow, since cure and
+> lamination are not properties of the printer alone.
+
+`CONTEXT.md:181` already defines **Fabrication capability** as *"the configured, cross-run set
+of what a specific piece of equipment can currently build … checked per candidate design, the
+same way a Material-property library entry is checked per material: not re-derived per
+requirement, and never hardcoded into the loop's own logic,"* with the three stages named and
+the never-silently-dropped disposition already attached. So the design work here is **not**
+the concept — it is the schema, the seed rows, and the seam to the ink library. Only
+**Ink-property** is a genuinely new term.
 
 **The test this spec must pass is a row count, not an abstraction.** A library holding one
 member is a constant wearing a library's clothes —
@@ -80,7 +96,7 @@ Nothing new is invented here; the shape is ADR-0015's, applied twice more.
 | Library | Key | Holds | Frequency-keyed? |
 |---|---|---|---|
 | Material-property (built) | `(material, frequency, property)` | facts about a **substance** — TPU's εr, FR4's tan δ | yes |
-| **Machine-capability** (new) | `(machine, process_stage, capability)` | facts about a **machine** — feature floor, thickness per pass, temperature ceiling | no |
+| **Fabrication capability** (`CONTEXT.md:181`, unbuilt) | `(machine, process_stage, capability)` | facts about **one piece of equipment at one stage** — feature floor, thickness per pass, cure ceiling | no |
 | **Ink-property** (new) | `(ink, process_state, property)` | facts about a **purchasable product** and what it becomes when printed | no |
 
 ### 2.1 Why ink cannot just be a material
@@ -95,7 +111,7 @@ So the seam is:
 
 - **Ink-property library** — what you buy and what the datasheet says it becomes when printed
   a stated way (volume resistivity, recommended cured thickness, cure schedule, viscosity).
-- **Machine-capability library** — what a given machine can actually lay down (line width,
+- **Fabrication-capability library** — what a given machine can actually lay down (line width,
   thickness per pass, positioning, temperature ceiling, build area).
 - **Material-property library** — what the *cured film* then is, electromagnetically, at
   frequency.
@@ -113,7 +129,7 @@ in Python**.
 
 ---
 
-## 3. Machine-capability library
+## 3. Fabrication-capability library
 
 ### 3.1 Schema
 
@@ -122,7 +138,7 @@ in Python**.
 -- (machine, process_stage, capability): two sources disagreeing about the
 -- same machine's minimum tracewidth is the case this table exists to keep,
 -- exactly as material_properties keeps three FR4 papers that disagree.
-CREATE TABLE IF NOT EXISTS machine_capabilities (
+CREATE TABLE IF NOT EXISTS fabrication_capabilities (
     id BIGSERIAL PRIMARY KEY,
     machine TEXT NOT NULL,              -- 'Voltera NOVA'
     process_stage TEXT NOT NULL,        -- 'print' | 'cure' | 'laminate'  (#108)
@@ -137,8 +153,8 @@ CREATE TABLE IF NOT EXISTS machine_capabilities (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS machine_capabilities_machine_stage_idx
-ON machine_capabilities (machine, process_stage);
+CREATE INDEX IF NOT EXISTS fabrication_capabilities_machine_stage_idx
+ON fabrication_capabilities (machine, process_stage);
 ```
 
 **`process_stage` is #108's decision made structural.** A machine gets a row per stage it can
@@ -366,7 +382,72 @@ through a library lookup.
 
 ---
 
-## 9. What this spec deliberately does not do
+## 9. The fourth thing, and it is the one that is missing: the host surface
+
+Printer, dryer and laminator are covered above — they are the three `process_stage` values of
+one **Fabrication capability**, and the concept already exists at `CONTEXT.md:181`. The
+**host surface** is not covered, and it is not a defined term: `CONTEXT.md` carries 41
+vocabulary entries and none of them is the host.
+
+It is nonetheless referenced by six places, each taking a different slice of it:
+
+| Where | Which slice |
+|---|---|
+| `CONTEXT.md:107-108` | curvature, platform, and *"whether the host surface is asserted to be a reliable conductive backing"* |
+| `CONTEXT.md:190` | the cure gate — *"whether the finished part can leave its host and reach an external oven"* |
+| `CONTEXT.md:383-384` | design-family spine fields — *"host thickness, host εr/tanδ"* |
+| ADR-0017 | whether the host is a ground plane — asserted, never assumed |
+| `rf_tools/calculations.py:706` | `curvature_length_correction_factor(l_m, radius_of_curvature_m)` |
+| `geometry/freecad_curved.py` | exists, and #104 records it as unwired |
+
+**Six slices and no definition is the signature of a missing domain object.**
+
+### 9.1 It is an input to all three fabrication stages, not just to geometry
+
+This is the part that makes it belong in *this* spec rather than a purely electromagnetic one:
+
+- **print** — can the equipment reach the host *in situ*? #105 settled that MXene's decisive
+  advantage is *"in-situ printing on a host that cannot be oven-baked"* — a statement about
+  the host, deciding a material.
+- **cure** — `CONTEXT.md:190`'s gate is the host's, in its own words: can the part *leave*
+  it. A wing cannot go in an oven.
+- **laminate** — `CONTEXT.md:194` says bonding *"onto the final host."*
+
+So the host gates every stage, and #104's causal chain runs through it entirely: *"Its radius
+of curvature drives bend radius, which drives substrate class, which drives which conductors
+survive the cure ceiling."* Radius of curvature is a geometric fact that ends up selecting a
+**conductor**.
+
+### 9.2 The split mirrors material exactly
+
+#105 settled that **material is a variable; material properties are the constant.** The same
+split applies here and resolves what would otherwise be a contradiction with #104's
+no-inheritance rule:
+
+- **The specific host in a requirement** — *this* customer's wing — is a **per-requirement
+  input**, re-derived every pass, never inherited. #104: *"The host surface is a
+  per-requirement input, never a project constant."*
+- **Host-class properties** — a CFRP skin's temperature limit, a steel hull's conductivity, a
+  polymer sUAS body's stiffness — are **facts that accumulate**, library-shaped, exactly like
+  material properties.
+
+Those are two different objects and the tree currently has neither.
+
+### 9.3 What this spec does *not* do about it
+
+It does not settle the host. Introducing a fourth library and a new `CONTEXT.md` term is a
+domain-model decision, not a schema detail, and the repo's convention is that such a decision
+is recorded — plausibly as the ADR #108's configured-fabrication decision still lacks (§11).
+
+What this spec *does* claim is narrower and, I think, hard to argue with: **a
+`(machine, ink, material)` triple is not sufficient.** The cure stage cannot be evaluated
+without the host, because its gate is defined in terms of the host. So the enumerated
+candidate is at least a **`(host, machine, ink, material)` quadruple**, and any implementation
+that stops at the triple will have to be reopened.
+
+---
+
+## 10. What this spec deliberately does not do
 
 - **It does not build the Element/Coding-Alphabet library.** That is #109's, already specified
   in `CONTEXT.md:382` and equally unbuilt, and it has a different key
@@ -383,7 +464,7 @@ through a library lookup.
 
 ---
 
-## 10. Open questions for a human
+## 11. Open questions for a human
 
 1. **Does a cured film get an automatic Material-property row?** When SC1502 is printed at
    15.9 µm and cured, is "SC1502 cured film" a material in its own right with its own
@@ -399,7 +480,7 @@ through a library lookup.
 
 ---
 
-## 11. Corrections this spec records
+## 12. Corrections this spec records
 
 Candidates for `docs/RUNNING-LISTS.md` §3 (which on current `main` runs to item 39). Two are
 new to the repo; the rest are cautions about analysis done *for* this spec, kept because the
