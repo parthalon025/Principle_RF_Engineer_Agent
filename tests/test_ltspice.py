@@ -21,13 +21,19 @@ ticket cares about ("format/invocation tested against ... LTspice's own
 documented batch-mode behavior") -- against a fake/stub Python script
 standing in only for the LTSPICE EXECUTABLE itself, exactly mirroring
 tests/test_nec2pp.py's/tests/test_openems.py's own fake-executable pattern.
-This is possible, and portable to this repo's own Windows dev/CI platform
-(unlike those two files' POSIX-shebang-only `.sh` fakes, which are among
-this repo's known, accepted "Windows-only fake-executable subprocess
-limitations"), because spicelib's own `Simulator.create_from()` natively
-supports a space-separated "<interpreter> <script>" executable string (the
-same mechanism it uses for wrapping LTspice with a `wine` loader on Linux/
-macOS) -- see `_bind_fake_ltspice()` below.
+This is possible, and was already portable to native Windows before
+issue #159 fixed the same underlying problem for every other solver
+adapter's fake executable, because spicelib's own `Simulator.create_from()`
+natively supports a space-separated "<interpreter> <script>" executable
+string (the same mechanism it uses for wrapping LTspice with a `wine`
+loader on Linux/macOS) -- see `_bind_fake_ltspice()` below. This file's
+own `chmod(... S_IEXEC ...)` calls are therefore a POSIX-only no-op
+convenience, not load-bearing on Windows: every fake here is launched via
+an explicit `[sys.executable, script_path]` argv, never via shebang
+resolution, so it never depended on Windows honoring a `#!` line the way
+tests/test_nec2pp.py's/tests/test_openems.py's fakes used to (see
+tests/conftest.py's `make_fake_executable()` for how those now do the
+same "launch through the interpreter explicitly" thing on Windows).
 
 FINDING (spicelib itself, not this module): spicelib 1.6.3's `RawWrite`
 default (`fastacces=True`) writes a corrupted/transposed binary layout when
