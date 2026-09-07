@@ -14,11 +14,10 @@ module docstring, which is the source of truth for every citation.
 """
 
 import os
-import stat
-import sys
 from pathlib import Path
 
 import pytest
+from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.elmer import (
@@ -47,21 +46,17 @@ EXCITED_GEOMETRY = {
 
 
 def _make_fake_sh(tmp_path: Path, name: str, body: str) -> Path:
-    """Write a small fake POSIX-shell executable and make it executable
-    (mirrors tests/test_nec2pp.py's `_make_fake_nec2pp`)."""
-    script = tmp_path / name
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake executable from a Python `body` (cross-platform --
+    see conftest.make_fake_executable). `name` may carry a `.sh`/`.py`
+    suffix from its caller's own naming convention; that suffix is
+    cosmetic here, so it's stripped before delegating."""
+    return make_fake_executable(tmp_path, body, name=Path(name).stem)
 
 
 def _make_fake_py(tmp_path: Path, name: str, body: str) -> Path:
-    """Write a small fake Python-shebang executable (mirrors
-    tests/test_nec2pp.py's `_make_fake_nec2pp_py`)."""
-    script = tmp_path / name
-    script.write_text(f"#!{sys.executable}\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake executable from a Python `body` (cross-platform --
+    see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name=Path(name).stem)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +195,11 @@ def test_generate_elmer_sif_excitation_missing_current_density_raises():
 
 
 def test_run_gmsh_meshing_invokes_dash_3_format_msh2(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_gmsh.sh", 'echo "$@" > argv.txt\n')
+    script = _make_fake_sh(
+        tmp_path,
+        "fake_gmsh.sh",
+        'import sys\nwith open("argv.txt", "w") as f:\n    f.write(" ".join(sys.argv[1:]))\n',
+    )
     geo_file = tmp_path / "model.geo"
     geo_file.write_text('SetFactory("OpenCASCADE");\n')
     msh_file = tmp_path / "model.msh"
@@ -217,7 +216,9 @@ def test_run_gmsh_meshing_invokes_dash_3_format_msh2(tmp_path: Path):
 
 
 def test_run_gmsh_meshing_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_gmsh.sh", 'echo "bad geo script" >&2\nexit 1\n')
+    script = _make_fake_sh(
+        tmp_path, "fake_gmsh.sh", 'import sys\nsys.stderr.write("bad geo script\\n")\nsys.exit(1)\n'
+    )
     geo_file = tmp_path / "model.geo"
     geo_file.write_text("bad")
     with pytest.raises(SimulatorError, match="bad geo script"):
@@ -232,7 +233,7 @@ def test_run_gmsh_meshing_missing_geo_file_raises(tmp_path: Path):
 
 
 def test_run_gmsh_meshing_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_gmsh.sh", "sleep 5\n")
+    script = _make_fake_sh(tmp_path, "fake_gmsh.sh", "import time\ntime.sleep(5)\n")
     geo_file = tmp_path / "model.geo"
     geo_file.write_text("x")
     with pytest.raises(SimulatorError, match="timed out"):
@@ -247,7 +248,11 @@ def test_run_gmsh_meshing_timeout_raises_simulator_error(tmp_path: Path):
 
 
 def test_run_elmergrid_conversion_invokes_14_2_stem_out(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_elmergrid.sh", 'echo "$@" > argv.txt\n')
+    script = _make_fake_sh(
+        tmp_path,
+        "fake_elmergrid.sh",
+        'import sys\nwith open("argv.txt", "w") as f:\n    f.write(" ".join(sys.argv[1:]))\n',
+    )
     msh_file = tmp_path / "model.msh"
     msh_file.write_text("$MeshFormat\n2.2 0 8\n$EndMeshFormat\n")
 
@@ -263,7 +268,9 @@ def test_run_elmergrid_conversion_invokes_14_2_stem_out(tmp_path: Path):
 
 
 def test_run_elmergrid_conversion_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_elmergrid.sh", 'echo "bad mesh" >&2\nexit 1\n')
+    script = _make_fake_sh(
+        tmp_path, "fake_elmergrid.sh", 'import sys\nsys.stderr.write("bad mesh\\n")\nsys.exit(1)\n'
+    )
     msh_file = tmp_path / "model.msh"
     msh_file.write_text("junk")
     with pytest.raises(SimulatorError, match="bad mesh"):
@@ -278,7 +285,7 @@ def test_run_elmergrid_conversion_missing_msh_file_raises(tmp_path: Path):
 
 
 def test_run_elmergrid_conversion_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_elmergrid.sh", "sleep 5\n")
+    script = _make_fake_sh(tmp_path, "fake_elmergrid.sh", "import time\ntime.sleep(5)\n")
     msh_file = tmp_path / "model.msh"
     msh_file.write_text("junk")
     with pytest.raises(SimulatorError, match="timed out"):
@@ -293,7 +300,9 @@ def test_run_elmergrid_conversion_timeout_raises_simulator_error(tmp_path: Path)
 
 
 def test_elmer_simulator_invokes_sif_path_directly(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_elmersolver.sh", 'echo "$@"\n')
+    script = _make_fake_sh(
+        tmp_path, "fake_elmersolver.sh", "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n"
+    )
     sif_file = tmp_path / "case.sif"
     sif_file.write_text("Header\nEnd\n")
 
@@ -306,7 +315,11 @@ def test_elmer_simulator_invokes_sif_path_directly(tmp_path: Path):
 
 
 def test_elmer_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_elmersolver.sh", 'echo "ERROR: bad sif" >&2\nexit 1\n')
+    script = _make_fake_sh(
+        tmp_path,
+        "fake_elmersolver.sh",
+        'import sys\nsys.stderr.write("ERROR: bad sif\\n")\nsys.exit(1)\n',
+    )
     sif_file = tmp_path / "case.sif"
     sif_file.write_text("Header\nEnd\n")
     simulator = ElmerSimulator(executable=str(script))
@@ -315,7 +328,7 @@ def test_elmer_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_elmer_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_sh(tmp_path, "fake_elmersolver.sh", "sleep 5\n")
+    script = _make_fake_sh(tmp_path, "fake_elmersolver.sh", "import time\ntime.sleep(5)\n")
     sif_file = tmp_path / "case.sif"
     sif_file.write_text("Header\nEnd\n")
     simulator = ElmerSimulator(executable=str(script))
@@ -330,7 +343,7 @@ def test_elmer_simulator_missing_sif_file_raises(tmp_path: Path):
 
 
 def test_elmer_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_sh(tmp_path, "fake_elmersolver.sh", "exit 0\n")
+    script = _make_fake_sh(tmp_path, "fake_elmersolver.sh", "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("ELMERSOLVER_BIN", str(script))
     simulator = ElmerSimulator()
     assert simulator.executable == str(script)
@@ -472,7 +485,9 @@ def test_run_elmer_simulation_propagates_simulator_error_on_solver_failure(tmp_p
     gmsh = _make_fake_py(tmp_path, "fake_gmsh.py", _FAKE_GMSH_PY)
     elmergrid = _make_fake_py(tmp_path, "fake_elmergrid.py", _FAKE_ELMERGRID_PY)
     failing_solver = _make_fake_sh(
-        tmp_path, "fake_elmersolver_fail.sh", 'echo "ERROR: divergence" >&2\nexit 1\n'
+        tmp_path,
+        "fake_elmersolver_fail.sh",
+        'import sys\nsys.stderr.write("ERROR: divergence\\n")\nsys.exit(1)\n',
     )
 
     with pytest.raises(SimulatorError, match="divergence"):

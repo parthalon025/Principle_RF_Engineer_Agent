@@ -134,15 +134,16 @@ def record_decision(
     alternatives: list[Any],
     rationale: str,
     evidence: list[Any],
+    design_family: str | None = None,
     approval_required: bool = True,
 ) -> dict[str, Any]:
     """Log a judgment-laden design decision. See `designs.db.record_decision`
     for the full write-path contract (`record_key` collision handling,
-    always-`PENDING` `approval_status`). Reusing an existing `record_key`
-    returns a structured `status`-tagged result pointing at the existing
-    row instead of raising, so the caller can look up what was already
-    recorded rather than getting a stack trace; a write that fails for any
-    other reason still raises.
+    always-`PENDING` `approval_status`, `design_family`). Reusing an
+    existing `record_key` returns a structured `status`-tagged result
+    pointing at the existing row instead of raising, so the caller can
+    look up what was already recorded rather than getting a stack trace;
+    a write that fails for any other reason still raises.
     """
     conn = db.get_connection()
     try:
@@ -155,6 +156,7 @@ def record_decision(
                 alternatives=alternatives,
                 rationale=rationale,
                 evidence=evidence,
+                design_family=design_family,
                 approval_required=approval_required,
             )
         except db.RecordKeyCollisionError as exc:

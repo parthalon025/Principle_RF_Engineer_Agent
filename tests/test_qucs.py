@@ -26,11 +26,10 @@ or checked against, a real qucsator_rf run.
 """
 
 import os
-import stat
-import sys
 from pathlib import Path
 
 import pytest
+from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.qucs import (
@@ -69,11 +68,9 @@ TWO_PORT_DATASET = """<Qucs Dataset 0.0.19>
 
 
 def _make_fake_qucsator(tmp_path: Path, body: str) -> Path:
-    """Write a small fake 'qucsator_rf' shell script and make it executable."""
-    script = tmp_path / "fake_qucsator_rf.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake 'qucsator_rf' executable (a Python script body,
+    launched cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_qucsator_rf")
 
 
 ONE_PORT_CIRCUIT = {
@@ -250,13 +247,16 @@ def test_qucs_simulator_invokes_dash_i_and_dash_o_with_real_paths(tmp_path: Path
     output_marker = "<Qucs Dataset fake>\n"
     script = _make_fake_qucsator(
         tmp_path,
-        f'echo "$@" >&2\n'
-        f'out=""\n'
-        f'while [ "$#" -gt 0 ]; do\n'
-        f'  if [ "$1" = "-o" ]; then shift; out="$1"; fi\n'
-        f"  shift\n"
-        f"done\n"
-        f"printf %s '{output_marker}' > \"$out\"\n",
+        "import sys\n"
+        "args = sys.argv[1:]\n"
+        'sys.stderr.write(" ".join(args) + "\\n")\n'
+        "out = None\n"
+        "i = 0\n"
+        "while i < len(args):\n"
+        '    if args[i] == "-o" and i + 1 < len(args):\n'
+        "        out = args[i + 1]\n"
+        "    i += 1\n"
+        f'with open(out, "w") as f:\n    f.write({output_marker!r})\n',
     )
     input_file = tmp_path / "model.net"
     input_file.write_text('# test\n.SP:SP1 Type="lin" Start="1e9" Stop="2e9" Points="2"\n')
@@ -272,7 +272,9 @@ def test_qucs_simulator_invokes_dash_i_and_dash_o_with_real_paths(tmp_path: Path
 
 
 def test_qucs_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_qucsator(tmp_path, 'echo "line 3: syntax error" >&2\nexit 1\n')
+    script = _make_fake_qucsator(
+        tmp_path, 'import sys\nsys.stderr.write("line 3: syntax error\\n")\nsys.exit(1)\n'
+    )
     input_file = tmp_path / "model.net"
     input_file.write_text("# test\n")
 
@@ -282,7 +284,7 @@ def test_qucs_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_qucs_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_qucsator(tmp_path, "sleep 5\n")
+    script = _make_fake_qucsator(tmp_path, "import time\ntime.sleep(5)\n")
     input_file = tmp_path / "model.net"
     input_file.write_text("# test\n")
 
@@ -300,7 +302,7 @@ def test_qucs_simulator_missing_input_file_raises(tmp_path: Path):
 def test_qucs_simulator_zero_exit_but_no_output_file_raises(tmp_path: Path):
     """A 0 exit with no dataset on disk must not be silently treated as a
     successful, empty run."""
-    script = _make_fake_qucsator(tmp_path, "exit 0\n")
+    script = _make_fake_qucsator(tmp_path, "import sys\nsys.exit(0)\n")
     input_file = tmp_path / "model.net"
     input_file.write_text("# test\n")
 
@@ -310,7 +312,7 @@ def test_qucs_simulator_zero_exit_but_no_output_file_raises(tmp_path: Path):
 
 
 def test_qucs_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_qucsator(tmp_path, "exit 0\n")
+    script = _make_fake_qucsator(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("QUCSATOR_BIN", str(script))
     simulator = QucsSimulator()
     assert simulator.executable == str(script)
@@ -329,7 +331,7 @@ def test_qucs_simulator_default_executable_name_is_qucsator_rf(monkeypatch):
 # docstring for the not-verified-against-a-real-binary caveat.
 # ---------------------------------------------------------------------------
 
-_FAKE_QUCSATOR_PY = '''#!{python}
+_FAKE_QUCSATOR_PY = '''
 import sys
 
 DATASET = """{dataset}"""
@@ -347,10 +349,8 @@ sys.exit(0)
 
 
 def _make_fake_qucsator_py(tmp_path: Path, dataset_text: str) -> Path:
-    script = tmp_path / "fake_qucsator_rf_realistic.py"
-    script.write_text(_FAKE_QUCSATOR_PY.format(python=sys.executable, dataset=dataset_text))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_QUCSATOR_PY.format(dataset=dataset_text)
+    return make_fake_executable(tmp_path, body, name="fake_qucsator_rf_realistic")
 
 
 def test_run_qucs_simulation_end_to_end_with_fake_executable(tmp_path: Path):
@@ -405,7 +405,9 @@ def test_run_qucs_simulation_writes_full_nport_touchstone_file(tmp_path: Path):
 
 
 def test_run_qucs_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_qucsator(tmp_path, 'echo "netlist error" >&2\nexit 1\n')
+    script = _make_fake_qucsator(
+        tmp_path, 'import sys\nsys.stderr.write("netlist error\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_qucs_simulation(
             circuit=ONE_PORT_CIRCUIT,

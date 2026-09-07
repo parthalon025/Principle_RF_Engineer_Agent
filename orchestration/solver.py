@@ -144,6 +144,22 @@ batch is mostly failures will exhaust `evaluation_budget` long before a
 meaningful plateau window accumulates; that is the honest outcome, not
 patched over here.
 
+WHAT A PLATEAU MEANS FOR THE CALLING AGENT'S NEXT MOVE: this module only
+detects and reports a plateau (`stop_reason="score_plateau"`) -- it never
+decides what happens next, and never re-enters itself between batches
+(that would need a mechanism this module deliberately does not have; see
+docs/design-loop-convergence-sequencing.md Sec.5a's SGDR/warm-restart
+comparison). That operating convention lives in the prompt layer instead,
+per ADR-0010: `prompts/principal_engineer.md`'s "Candidate-search
+plateaus" section, and both tool-wrapper docstrings (`agent/main.py`,
+`mcp_server/server.py`) for `run_candidate_search`, tell the calling agent
+to treat a plateau stop as a cue to submit one more, deliberately
+different batch before concluding this architecture's OPTIMIZATION is
+exhausted -- not to read it the same way as `target_satisfaction` or
+`evaluation_budget`. This module's own return value is unchanged by that
+convention: `stop_reason`/`stop_detail` report the plateau exactly as
+before, and nothing here gates, refuses, or automates the next batch.
+
 ------------------------------------------------------------------------
 DESIGN QUESTION 3 -- WHICH SCORE DRIVES CONVERGENCE: THE WORST SCORED
 STEP, PER CANDIDATE ("worst_of_scored_steps", named in every result dict's

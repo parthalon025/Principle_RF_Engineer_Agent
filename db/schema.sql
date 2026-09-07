@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS decision_records (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Issue #167: which design family (absorber, reflection-phase steering
+-- surface, patch antenna, ...) an ARCHITECTURE/REDESIGN_DECISION row's
+-- decision was made about (CONTEXT.md's "Design family", docs/adr/0018).
+-- Nullable -- only architecture_decision/redesign_decision rows carry a
+-- value; every other decision_records row (there are none yet from any
+-- other source) has none. Added via ALTER TABLE ADD COLUMN IF NOT EXISTS,
+-- not folded into the CREATE TABLE above, matching this file's own
+-- already-established convention for extending a table that predates the
+-- column (see `documents.status`/`documents.supersedes_document_id`
+-- above) -- schema.sql is re-applied against a live database
+-- (db/apply_schema.py), where CREATE TABLE IF NOT EXISTS is a no-op.
+ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family TEXT;
+
 -- Issue #154 (ADR-0015, CONTEXT.md: Material-property library). Every
 -- citation is its own row, keyed by (material, property, frequency band) --
 -- deliberately no UNIQUE constraint on that triple, since two independent,

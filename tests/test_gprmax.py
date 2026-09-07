@@ -18,13 +18,13 @@ github.com/gprMax/gprMax's `master` branch) -- see simulation/gprmax.py's
 module docstring for the full per-fact citation list.
 """
 
-import stat
 import sys
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
+from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.gprmax import (
@@ -458,14 +458,13 @@ def test_parse_gprmax_output_receiver_group_missing_is_skipped(tmp_path: Path):
 
 
 def _make_fake_python(tmp_path: Path, body: str) -> Path:
-    script = tmp_path / "fake_python.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake "python -m gprMax" executable from a Python
+    `body` (cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_python")
 
 
 def test_gprmax_simulator_invokes_dash_m_gprmax(tmp_path: Path):
-    script = _make_fake_python(tmp_path, 'echo "$@"\n')
+    script = _make_fake_python(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     input_file = tmp_path / "model.in"
     input_file.write_text("#title: test\n")
 
@@ -479,7 +478,9 @@ def test_gprmax_simulator_invokes_dash_m_gprmax(tmp_path: Path):
 
 
 def test_gprmax_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_python(tmp_path, 'echo "boom: bad command" >&2\nexit 1\n')
+    script = _make_fake_python(
+        tmp_path, 'import sys\nsys.stderr.write("boom: bad command\\n")\nsys.exit(1)\n'
+    )
     input_file = tmp_path / "model.in"
     input_file.write_text("#title: test\n")
 
@@ -489,7 +490,7 @@ def test_gprmax_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_gprmax_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_python(tmp_path, "sleep 5\n")
+    script = _make_fake_python(tmp_path, "import time\ntime.sleep(5)\n")
     input_file = tmp_path / "model.in"
     input_file.write_text("#title: test\n")
 
@@ -505,7 +506,7 @@ def test_gprmax_simulator_missing_input_file_raises(tmp_path: Path):
 
 
 def test_gprmax_simulator_picks_up_python_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_python(tmp_path, "exit 0\n")
+    script = _make_fake_python(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("GPRMAX_PYTHON", str(script))
     simulator = GprmaxSimulator()
     assert simulator.python_executable == str(script)
@@ -523,7 +524,7 @@ def test_gprmax_simulator_defaults_to_sys_executable(monkeypatch):
 # convention and HDF5 structure.
 # ---------------------------------------------------------------------------
 
-_FAKE_GPRMAX_PY = """#!{python}
+_FAKE_GPRMAX_PY = """
 import sys
 from pathlib import Path
 import h5py
@@ -551,18 +552,13 @@ sys.exit(0)
 def _make_fake_gprmax_python(
     tmp_path: Path, vinc: np.ndarray, vtotal: np.ndarray, itotal: np.ndarray, dt: float
 ) -> Path:
-    script = tmp_path / "fake_gprmax_python.py"
-    script.write_text(
-        _FAKE_GPRMAX_PY.format(
-            python=sys.executable,
-            vinc=list(float(v) for v in vinc),
-            vtotal=list(float(v) for v in vtotal),
-            itotal=list(float(v) for v in itotal),
-            dt=float(dt),
-        )
+    body = _FAKE_GPRMAX_PY.format(
+        vinc=list(float(v) for v in vinc),
+        vtotal=list(float(v) for v in vtotal),
+        itotal=list(float(v) for v in itotal),
+        dt=float(dt),
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_gprmax_python")
 
 
 def test_run_gprmax_simulation_end_to_end_with_fake_executable(tmp_path: Path):
@@ -602,7 +598,9 @@ def test_run_gprmax_simulation_end_to_end_with_fake_executable(tmp_path: Path):
 
 
 def test_run_gprmax_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_python(tmp_path, 'echo "geometry error" >&2\nexit 1\n')
+    script = _make_fake_python(
+        tmp_path, 'import sys\nsys.stderr.write("geometry error\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_gprmax_simulation(
             geometry=BASIC_GEOMETRY,

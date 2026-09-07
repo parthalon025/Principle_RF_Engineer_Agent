@@ -23,11 +23,10 @@ binary was available to produce one) -- see that module's HONEST CAVEAT.
 """
 
 import os
-import stat
-import sys
 from pathlib import Path
 
 import pytest
+from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.openparem import (
@@ -395,18 +394,17 @@ def test_parse_openparem_output_no_touchstone_file_when_absent(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_openparem(tmp_path: Path, body: str, name: str = "fake_openparem.sh") -> Path:
-    script = tmp_path / name
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+def _make_fake_openparem(tmp_path: Path, body: str, name: str = "fake_openparem") -> Path:
+    return make_fake_executable(tmp_path, body, name=name)
 
 
 def test_openparem_simulator_invokes_project_file_positionally_serial(tmp_path: Path):
     """Confirm the real OpenParEM3D CLI contract (a single positional .proj filename,
     no other required flags -- see module docstring citation) when mpi_processes is
     not given."""
-    script = _make_fake_openparem(tmp_path, 'echo "$@"\n')
+    script = _make_fake_openparem(
+        tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n"
+    )
     project_file = tmp_path / "model.proj"
     project_file.write_text("#OpenParEM3Dproject 1.0\n")
 
@@ -457,7 +455,9 @@ def test_openparem_simulator_uses_mpirun_when_mpi_processes_given(tmp_path: Path
 
 
 def test_openparem_simulator_mpi_processes_of_1_uses_serial_form(tmp_path: Path):
-    script = _make_fake_openparem(tmp_path, 'echo "$@"\n')
+    script = _make_fake_openparem(
+        tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n"
+    )
     project_file = tmp_path / "model.proj"
     project_file.write_text("#OpenParEM3Dproject 1.0\n")
 
@@ -467,7 +467,9 @@ def test_openparem_simulator_mpi_processes_of_1_uses_serial_form(tmp_path: Path)
 
 
 def test_openparem_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_openparem(tmp_path, 'echo "ERROR3143: bad mesh" >&2\nexit 1\n')
+    script = _make_fake_openparem(
+        tmp_path, 'import sys\nsys.stderr.write("ERROR3143: bad mesh\\n")\nsys.exit(1)\n'
+    )
     project_file = tmp_path / "model.proj"
     project_file.write_text("#OpenParEM3Dproject 1.0\n")
 
@@ -477,7 +479,7 @@ def test_openparem_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path)
 
 
 def test_openparem_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_openparem(tmp_path, "sleep 5\n")
+    script = _make_fake_openparem(tmp_path, "import time\ntime.sleep(5)\n")
     project_file = tmp_path / "model.proj"
     project_file.write_text("#OpenParEM3Dproject 1.0\n")
 
@@ -493,7 +495,7 @@ def test_openparem_simulator_missing_project_file_raises(tmp_path: Path):
 
 
 def test_openparem_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_openparem(tmp_path, "exit 0\n")
+    script = _make_fake_openparem(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("OPENPAREM3D_BIN", str(script))
     simulator = OpenParemSimulator()
     assert simulator.executable == str(script)
@@ -506,7 +508,7 @@ def test_openparem_simulator_picks_up_executable_from_env_var(tmp_path: Path, mo
 # not-verified-against-a-real-binary caveat.
 # ---------------------------------------------------------------------------
 
-_FAKE_OPENPAREM3D_PY = '''#!{python}
+_FAKE_OPENPAREM3D_PY = '''
 import sys
 
 RESULTS_CSV = """{results_csv}"""
@@ -525,17 +527,12 @@ sys.exit(0)
 
 
 def _make_fake_openparem3d_py(tmp_path: Path, project_name: str) -> Path:
-    script = tmp_path / "fake_openparem3d_realistic.py"
-    script.write_text(
-        _FAKE_OPENPAREM3D_PY.format(
-            python=sys.executable,
-            results_csv=RESULTS_CSV_RI,
-            farfield_csv=FARFIELD_CSV,
-            project_name=project_name,
-        )
+    body = _FAKE_OPENPAREM3D_PY.format(
+        results_csv=RESULTS_CSV_RI,
+        farfield_csv=FARFIELD_CSV,
+        project_name=project_name,
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_openparem3d_realistic")
 
 
 def test_run_openparem_simulation_end_to_end_with_fake_executable(tmp_path: Path):
@@ -572,7 +569,9 @@ def test_run_openparem_simulation_end_to_end_with_fake_executable(tmp_path: Path
 
 
 def test_run_openparem_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_openparem(tmp_path, 'echo "ERROR3999: fake failure" >&2\nexit 1\n')
+    script = _make_fake_openparem(
+        tmp_path, 'import sys\nsys.stderr.write("ERROR3999: fake failure\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_openparem_simulation(
             mesh_file="m.msh",
@@ -591,7 +590,7 @@ def test_run_openparem_simulation_no_far_field_when_not_requested(tmp_path: Path
     *_FarField_results.csv, and this stays honestly uncomputed=False."""
     script = _make_fake_openparem(
         tmp_path,
-        f"cat > monopole_results.csv <<'EOF'\n{RESULTS_CSV_RI}EOF\n",
+        f"with open('monopole_results.csv', 'w') as f:\n    f.write({RESULTS_CSV_RI!r})\n",
     )
     result = run_openparem_simulation(
         mesh_file="m.msh",

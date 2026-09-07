@@ -204,13 +204,27 @@ class _FlushTarget:
 
 
 def _flush_target_for(
-    decision: LoopDecision, design_id: int, design_key: str, loop_id: str, iteration: int
+    decision: LoopDecision,
+    design_id: int,
+    design_key: str,
+    loop_id: str,
+    iteration: int,
+    design_family: str | None,
 ) -> _FlushTarget | None:
     """The designs.db call one LoopDecision translates to, or None for a
     decision kind with nothing to persist (`requirements` -- it already
     became the design's own `requirements`/`verification_items` at
     creation time, via start_new_design_loop's create_design call, not a
-    decision_records/engineering_results/verification_items row)."""
+    decision_records/engineering_results/verification_items row).
+
+    `design_family` (issue #167) is NOT read from `decision.input` here --
+    it is computed once by `_flush_decisions`, across the whole batch being
+    flushed, and handed down; see that function's own comment for why. It
+    is passed through for every decision.kind unconditionally (harmless:
+    only the architecture_decision/redesign_decision branch below actually
+    uses it) so this function stays a straight decision-in/target-out
+    mapping, matching every other branch here.
+    """
     record_key = f"{design_key}-{loop_id}-iter{iteration}-{decision.step}"
 
     if decision.kind in ("architecture_decision", "redesign_decision"):
@@ -223,6 +237,7 @@ def _flush_target_for(
                 "alternatives": [],
                 "rationale": decision.input["rationale"],
                 "evidence": [],
+                "design_family": design_family,
             },
         )
     if decision.kind == "verification_record":
@@ -287,13 +302,49 @@ def _flush_decisions(
     fails for any other reason still raises") rather than relabeling it.
     Both cases share one property: `advance_design_loop_step` never
     returns a state that claims the transition succeeded.
+
+    DESIGN_FAMILY CARRY-FORWARD (issue #167). `design_family` is a required
+    field on `_handle_architecture`'s step_input (issue #161) but is NOT a
+    field `_handle_redesign_decision` asks for at all -- the two handlers
+    disagree on whether it's present in `decision.input` at flush time.
+    Rather than reading `decision.input.get("design_family")` independently
+    per-decision (which would leave every redesign_decision row's
+    design_family permanently NULL, since nothing ever puts it in that
+    step_input), this loop tracks the MOST RECENTLY STATED design_family as
+    it walks `decisions` in their recorded order, and uses that running
+    value for every architecture_decision/redesign_decision row. This is
+    the conservative, information-preserving reading of what a
+    REDESIGN_DECISION row's design_family means: STEP_ORDER (design_loop.py)
+    puts ARCHITECTURE immediately before ANALYSIS..REDESIGN_DECISION in
+    every iteration and routes `next_action="iterate"` back to ARCHITECTURE
+    (never anywhere else), so by construction every decisions batch this
+    function ever receives starts with that iteration's own
+    architecture_decision -- the redesign_decision closing the SAME
+    iteration is a decision about that already-declared family, not about
+    an unrelated or unknown one, and recording it as NULL would silently
+    discard information this module already has in hand. Two things this
+    is NOT: (1) a cross-flush registry lookup -- nothing here reads a prior
+    flush's persisted decision_records rows, only the batch already being
+    flushed; a batch with no architecture_decision in it (not reachable
+    today, per the paragraph above) simply carries `None` through, honestly
+    reflecting that nothing in this flush says what family it was; (2) a
+    silent override -- if design_loop.py ever grows a way for a
+    REDESIGN_DECISION step_input to state its OWN `design_family` (an
+    explicit change, not merely "no change"), that value wins over the
+    carried-forward one for every decision recorded after it, same as an
+    architecture_decision would.
     """
-    targets = [
-        target
-        for decision in decisions
-        if (target := _flush_target_for(decision, design_id, design_key, loop_id, iteration))
-        is not None
-    ]
+    targets: list[_FlushTarget] = []
+    current_design_family: str | None = None
+    for decision in decisions:
+        stated_family = decision.input.get("design_family")
+        if stated_family is not None:
+            current_design_family = stated_family
+        target = _flush_target_for(
+            decision, design_id, design_key, loop_id, iteration, current_design_family
+        )
+        if target is not None:
+            targets.append(target)
 
     conn = designs_db.get_connection()
     try:

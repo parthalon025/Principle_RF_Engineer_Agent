@@ -1615,6 +1615,7 @@ def record_decision(
     alternatives: list,
     rationale: str,
     evidence: list,
+    design_family: str | None = None,
     approval_required: bool = True,
 ) -> dict:
     """Log a judgment-laden design choice -- a decision between real
@@ -1625,7 +1626,10 @@ def record_decision(
     rejected with a structured error pointing at the existing record,
     never silently overwritten. Every new decision starts
     approval_status='PENDING' -- this does not yet block anything (no
-    manufacturing_release tool or review UI exists)."""
+    manufacturing_release tool or review UI exists). design_family (issue
+    #167) is optional -- which design family (absorber, reflection-phase
+    steering surface, patch antenna, ...) this decision was made about;
+    leave unset for a decision that isn't about a design family at all."""
     return _record_decision(
         design_id=design_id,
         record_key=record_key,
@@ -1633,6 +1637,7 @@ def record_decision(
         alternatives=alternatives,
         rationale=rationale,
         evidence=evidence,
+        design_family=design_family,
         approval_required=approval_required,
     )
 
@@ -2002,6 +2007,20 @@ def run_candidate_search(
     state/candidates/score_specs shape) versus a single candidate's own
     drive failing, which is recorded on that candidate's trail entry and
     never aborts the rest of the batch.
+
+    A stop_reason="score_plateau" result is not the same signal as
+    target_satisfaction or evaluation_budget: it means the running-best
+    overall_score_percent stopped improving by more than plateau_epsilon
+    across the last plateau_window candidates -- it does NOT mean this
+    architecture's OPTIMIZATION is exhausted. Read a plateau stop as a cue
+    to construct and submit ONE more batch that is deliberately different
+    from the one that just plateaued -- built on a different region of the
+    parameter space, or a different construction/proposal strategy, never
+    a near-identical resubmission with minor tweaks -- before concluding
+    parameter-level search is exhausted for this architecture. Only after
+    that second, deliberately-different batch also plateaus should the
+    caller move on to compile_lab_test_plan or a REDESIGN_DECISION for
+    this architecture.
 
     Returns a report dict: stop_reason/stop_detail naming exactly why the
     search stopped, an ordered `trail` (one entry per candidate actually

@@ -6,9 +6,46 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
+from knowledge import extraction
 from knowledge.ingest import ingest_document
 
 load_dotenv()
+
+
+def _extraction_error(document_id: int) -> str | None:
+    """Fetch the captured extraction-error text for a document, for use in
+    assertion-failure messages -- so a red `extraction_status` check shows
+    *why* parsing failed (per issue #141) instead of just a bare status
+    mismatch. `ingest_document`'s return value doesn't carry this text (only
+    the stored row's metadata does), so this is a small direct DB read."""
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metadata->>'extraction_error' FROM documents WHERE id = %s",
+                (document_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def no_ocr(monkeypatch):
+    """Forces `ingest_document`'s internal `parse_document` call to run with
+    OCR (image-to-text) switched off, for tests whose fixture PDF already
+    has a real, selectable text layer and never needs it.
+
+    Patches the `parse_document` name as looked up inside `knowledge.ingest`
+    (not `knowledge.extraction`'s own default) so this is scoped to the
+    tests that opt into it -- `parse_document`'s own default (`do_ocr=True`)
+    is untouched, so any other caller (real ingestion of a scanned document)
+    still gets OCR by default (issue #141)."""
+    monkeypatch.setattr(
+        "knowledge.ingest.parse_document",
+        lambda path: extraction.parse_document(path, do_ocr=False),
+    )
 
 
 def _write_pdf(path: Path, lines: list[str]) -> None:
@@ -109,7 +146,7 @@ def test_ingest_rejects_invalid_source_type():
         )
 
 
-def test_ingest_new_document_creates_row_and_chunks(tmp_path, cleanup_documents):
+def test_ingest_new_document_creates_row_and_chunks(tmp_path, cleanup_documents, no_ocr):
     pdf_path = tmp_path / "widget_amp.pdf"
     _write_pdf(pdf_path, ["Widget Amplifier Datasheet", "Gain: 20 dB typical."])
 
@@ -122,7 +159,7 @@ def test_ingest_new_document_creates_row_and_chunks(tmp_path, cleanup_documents)
     cleanup_documents.append(result["document_id"])
 
     assert result["status"] == "ingested"
-    assert result["extraction_status"] == "ok"
+    assert result["extraction_status"] == "ok", _extraction_error(result["document_id"])
     assert result["chunk_count"] >= 1
     assert result["supersedes_document_id"] is None
 

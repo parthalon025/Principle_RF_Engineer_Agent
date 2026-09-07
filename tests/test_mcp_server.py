@@ -10,12 +10,12 @@ test_calculations.py and test_touchstone.py.
 """
 
 import asyncio
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 import skrf as rf
+from conftest import make_fake_executable
 
 import mcp_server.server as server
 from orchestration.policy import assert_all_tools_categorized
@@ -656,19 +656,10 @@ DEGREES DEGREES   DB     DB    DB    RATIO    DEG.           VOLTS/M
 
 
 def _write_fake_nec2pp(tmp_path: Path) -> Path:
-    import stat
-    import sys
-
-    script = tmp_path / "fake_nec2pp.py"
-    script.write_text(
-        f"#!{sys.executable}\n"
-        "import sys\n"
-        f'OUTPUT = """{_FAKE_NEC2PP_OUTPUT}"""\n'
-        "sys.stdout.write(OUTPUT)\n"
-        "sys.exit(0)\n"
+    body = (
+        f'import sys\nOUTPUT = """{_FAKE_NEC2PP_OUTPUT}"""\nsys.stdout.write(OUTPUT)\nsys.exit(0)\n'
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 
 
 def test_run_nec2_simulation_calls_through(tmp_path: Path, monkeypatch):
@@ -718,19 +709,13 @@ Speed: 118.02 MCells/s
 
 
 def _write_fake_openems(tmp_path: Path) -> Path:
-    import stat
-    import sys
-
-    script = tmp_path / "fake_openems.py"
-    script.write_text(
-        f"#!{sys.executable}\n"
+    body = (
         "import sys\n"
         f'OUTPUT = """{_FAKE_OPENEMS_OUTPUT}"""\n'
         "sys.stdout.write(OUTPUT)\n"
         "sys.exit(0)\n"
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_openems")
 
 
 def test_run_openems_simulation_calls_through(tmp_path: Path, monkeypatch):
@@ -809,12 +794,7 @@ _MATCHING_NETWORK_JOB = {
 
 
 def _write_fake_ngspice(tmp_path: Path) -> Path:
-    import stat
-    import sys
-
-    script = tmp_path / "fake_ngspice.py"
-    script.write_text(
-        f"#!{sys.executable}\n"
+    body = (
         "import sys\n"
         "args = sys.argv[1:]\n"
         "with open(args[2], 'w') as f:\n"
@@ -823,8 +803,7 @@ def _write_fake_ngspice(tmp_path: Path) -> Path:
         "    f.write('1e+08 2.0 0.0\\n1e+09 1.5 -0.5\\n')\n"
         "sys.exit(0)\n"
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_ngspice")
 
 
 # ---------------------------------------------------------------------------
@@ -845,12 +824,7 @@ def _write_fake_ngspice(tmp_path: Path) -> Path:
 
 
 def _write_fake_gprmax_python(tmp_path: Path, vinc, vtotal, itotal, dt: float) -> Path:
-    import stat
-    import sys
-
-    script = tmp_path / "fake_gprmax_python.py"
-    script.write_text(
-        f"#!{sys.executable}\n"
+    body = (
         "import sys\n"
         "from pathlib import Path\n"
         "import h5py\n"
@@ -871,8 +845,7 @@ def _write_fake_gprmax_python(tmp_path: Path, vinc, vtotal, itotal, dt: float) -
         "    tl.create_dataset('Itotal', data=ITOTAL)\n"
         "sys.exit(0)\n"
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_gprmax_python")
 
 
 def test_run_ngspice_simulation_calls_through(tmp_path: Path, monkeypatch):
@@ -891,19 +864,13 @@ def test_run_ngspice_simulation_calls_through(tmp_path: Path, monkeypatch):
 
 
 def _write_fake_xyce(tmp_path: Path) -> Path:
-    import stat
-    import sys
-
-    script = tmp_path / "fake_xyce.py"
-    script.write_text(
-        f"#!{sys.executable}\n"
+    body = (
         "import sys\n"
         "with open('xyce_output.csv', 'w') as f:\n"
         "    f.write('FREQ,V(OUT)\\n100000000.0,2.0\\n1000000000.0,1.5\\n')\n"
         "sys.exit(0)\n"
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_xyce")
 
 
 def test_run_xyce_simulation_calls_through(tmp_path: Path, monkeypatch):
@@ -1105,12 +1072,7 @@ _FAKE_OPENPAREM3D_FARFIELD_CSV = (
 
 
 def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
-    import stat
-    import sys
-
-    script = tmp_path / "fake_openparem3d.py"
-    script.write_text(
-        f"#!{sys.executable}\n"
+    body = (
         "import sys\n"
         f'with open("{project_name}_results.csv", "w") as f:\n'
         f'    f.write("""{_FAKE_OPENPAREM3D_RESULTS_CSV}""")\n'
@@ -1118,8 +1080,7 @@ def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
         f'    f.write("""{_FAKE_OPENPAREM3D_FARFIELD_CSV}""")\n'
         "sys.exit(0)\n"
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_openparem3d")
 
 
 # ---------------------------------------------------------------------------
@@ -1141,8 +1102,6 @@ _FAKE_PALACE_CSV_ROW = ["10.000000e+00", "-6.0206", "0.0"]
 def _write_fake_palace(tmp_path: Path) -> Path:
     import csv
     import io
-    import stat
-    import sys
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -1150,9 +1109,7 @@ def _write_fake_palace(tmp_path: Path) -> Path:
     writer.writerow(_FAKE_PALACE_CSV_ROW)
     csv_text = buf.getvalue()
 
-    script = tmp_path / "fake_palace.py"
-    script.write_text(
-        f"#!{sys.executable}\n"
+    body = (
         "import json\n"
         "import sys\n"
         "from pathlib import Path\n"
@@ -1164,8 +1121,7 @@ def _write_fake_palace(tmp_path: Path) -> Path:
         '(output_dir / "port-floquet-S.csv").write_text(CSV)\n'
         "sys.exit(0)\n"
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, body, name="fake_palace")
 
 
 def test_run_openparem_simulation_calls_through(tmp_path: Path, monkeypatch):
@@ -1260,18 +1216,13 @@ sys.exit(0)
 
 
 def _write_fake_elmer_toolchain(tmp_path: Path):
-    import stat
-
     scripts = {}
     for name, body in (
         ("fake_gmsh.py", _FAKE_GMSH_FOR_MCP_TEST),
         ("fake_elmergrid.py", _FAKE_ELMERGRID_FOR_MCP_TEST),
         ("fake_elmersolver.py", _FAKE_ELMERSOLVER_FOR_MCP_TEST),
     ):
-        script = tmp_path / name
-        script.write_text(f"#!{sys.executable}\n" + body)
-        script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-        scripts[name] = script
+        scripts[name] = make_fake_executable(tmp_path, body, name=name.removesuffix(".py"))
     return scripts
 
 
@@ -1485,12 +1436,7 @@ sys.exit(0)
 
 
 def _write_fake_freecadcmd(tmp_path: Path) -> Path:
-    import stat
-
-    script = tmp_path / "fake_freecadcmd.py"
-    script.write_text(f"#!{sys.executable}\n" + _FAKE_FREECADCMD_FOR_MCP_TEST)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    return make_fake_executable(tmp_path, _FAKE_FREECADCMD_FOR_MCP_TEST, name="fake_freecadcmd")
 
 
 def test_run_freecad_curved_geometry_calls_through(tmp_path: Path, monkeypatch):
