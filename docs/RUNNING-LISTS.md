@@ -397,6 +397,155 @@ adopting these results will hit the same thing.
     IEEE's own FSV committee page states no reference implementation ships with
     the standard — a properly established absence, not a failed search.
 
+### Found while grilling the map itself (2026-09-06)
+
+Four corrections about the map's own text rather than about the domain. The
+map is an index of decisions; when an index starts asserting what was *built*,
+it rots exactly the way `CLAUDE.md`'s preamble warns.
+
+30. **Map #104's Decisions-so-far claimed a field had shipped that does not
+    exist.** The entry for #112 read *"Ships now as an additive
+    `input_provenance` field on `success_score()`'s output."* The string
+    `input_provenance` **occurs nowhere in the repository** — not in
+    `designs/success_score.py`, not in any test, not in any document. The
+    result dict (`success_score.py:568–584`) carries `provenance`,
+    `target_provenance`, `target_status` and `note_provenance`; the measured
+    value itself arrives at line 448 as a bare `actual_value: float` with no
+    provenance tag at all. The same sweep found #117's two *blocking* model
+    changes equally unbuilt: `TargetComparator` (`requirement_targets.py:113`)
+    still has exactly `EQUALS` / `AT_LEAST` / `AT_MOST` at lines 129–131, so
+    there is **no `ONE_OF` comparator**, and no optional second (objective)
+    value anywhere in the module. **The decisions are sound and remain
+    recorded; only the claim that they shipped was false.** Rule adopted on the
+    map as a result: *Decisions-so-far records the decision, never the
+    implementation status.* Contrast #148's Material-property library, which
+    genuinely is built, in `designs/material_properties.py`.
+
+31. **The `GATED_STEPS` citation was wrong, and the ungated-step count it
+    implied was wrong with it.** The map's standing preference cited
+    `orchestration/design_loop.py:136`. **Line 136 is
+    `ARCHITECTURE = "architecture"`**, a `DesignStep` enum member;
+    `GATED_STEPS` is assigned at **lines 160–161** and contains exactly three
+    members — `ARCHITECTURE`, `MEASUREMENT`, `REDESIGN_DECISION`. The
+    preference also credited ADR-0014 for the gating, which governs something
+    else: `orchestration/solver.py:405` defines `_ORDERED_UNGATED_SPAN` as
+    `(ANALYSIS, SIMULATION, OPTIMIZATION)` — **CORRELATION deliberately
+    excluded**, with the reason in the module's own comment at `solver.py:78`
+    and `:89`. So four steps are *ungated* but the solver drives only three:
+    correlation compares a simulation against a measurement and has nothing to
+    work on until a gated `MEASUREMENT` has run. *In plain terms: an overnight
+    run reaches three steps, not four, and cannot compare itself to reality.*
+    Bears on #125, which is about what such a run hands the morning reviewer.
+
+32. **The map's Destination has been contradicted by shipped code since PR #86
+    merged, and the map recorded it nowhere.** The Destination requires a
+    periodic-surface degree of freedom "rather than patch length."
+    `orchestration/design_loop.py` calls `patch_resonant_frequency_hz` at lines
+    503 and 513 inside `_handle_analysis` (line 497), and
+    `optimize_patch_length_for_target_frequency` at line 613 inside
+    `_handle_optimization` (line 605) — both rectangular microstrip patch
+    antenna formulas. `_STEP_HANDLERS` (line 751) is a flat one-handler-per-step
+    table with **no family dimension**, and `design_family` appears only as an
+    unvalidated string recorded at ARCHITECTURE (line 434), a fact the code's
+    own comment at 424–433 states outright. *In plain terms: the loop still
+    tunes a design by stretching a rectangle, and a printed metamaterial has no
+    rectangle to stretch.* Raised in a comment on the map in September with a
+    proposed fog entry; **the entry was never added**, so for three months the
+    map neither knew nor said. Now ticketed.
+
+33. **Correction 7 and #111's thickness correction disagree about MXene's skin
+    depth by ~1.8×, and neither cites a conductivity.** Correction 7 above says
+    a ~10 µm printed film is *"already ~1.65 skin depths at 10 GHz"*, hence
+    opaque, hence *"thickness is a dead knob."* Map #104's 2026-09-05
+    correction to the conductor-thickness preference says MXene's **3δ is
+    ≈33 µm**, i.e. δ ≈ 11 µm, which puts the same 10 µm film at **~0.9 δ** —
+    below the regime where thickness stops mattering, making thickness *linear*
+    in sheet resistance and the strongest lever the process has. Both cannot be
+    right: δ goes as `1/√σ`, so a 1.8× disagreement in δ is a ~3.3×
+    disagreement in the assumed conductivity, and MXene's printed conductivity
+    genuinely spans that much between grades and ages (see the ink-handling
+    figures on the map). **Recorded, not resolved** — it needs one stated
+    conductivity at one stated frequency, and it changes whether MXene has a
+    thickness knob at all. Note both routes still converge on #128's finding
+    that for a *lossy* element the aspect ratio, not the film thickness, is the
+    knob that reaches the target — so this is a live discrepancy about MXene,
+    not a threat to that conclusion.
+
+### Found by reading every comment on every ticket (2026-09-06)
+
+Six more, from a sweep of the comment threads on all thirty-seven tickets
+rather than their bodies. Most were already written down *somewhere* — on
+the ticket that found them — and had never reached the map, a document, or
+this list.
+
+34. **The patent names neither MXene, nor silver, nor "ink."** Full-text
+    checks of US12089385B2 from two independent sources return **NOT
+    PRESENT** for `MXene`, `silver`, `ink` and `conductive material`; the
+    only conductors named are **copper and gold**. So any argument of the
+    form "the patent allows silver, copper, or MXene" is unsupported. #105's
+    decision is untouched — MXene is a candidate scored on merit, which
+    never needed the patent's endorsement — but the justification must not
+    lean on the patent. Confirmed present and verbatim in the same checks:
+    1–2 mm thickness, 8.0–12.0 GHz, `R = T(50/r − 1)`, `R = 3T`. Found on
+    #113.
+
+35. **`docs/mxene-voltera-nova-printability.md` attributes its central
+    printability figures to the wrong paper, about six times.** The 120 µm
+    line width and the 6,260 → 6,900 S/cm conductivity are **Shao et al.
+    2022**, cited throughout as "Song et al." Worse in the same document:
+    MXene's widely-quoted **"3 µm" figure is a line *gap*, not a line
+    *width*** — the achievable width is 120 µm, forty times larger. *In
+    plain terms: one number says how finely two printed lines can be
+    separated, the other how thin a single line can be, and they were being
+    used interchangeably.* They are enforced at different points in a
+    design rule, so the conflation is not cosmetic. Found on #115.
+
+36. **Rejected alternatives are destroyed, not merely unindexed.**
+    `orchestration/tooling.py:223` hardcodes `"alternatives": []` into every
+    decision record regardless of step input, so what a design considered
+    and rejected never reaches the database at all. #125's own earlier
+    comment claimed the field "already stores rejected options today but is
+    write-only" and then falsified itself. Three tickets (#125, #150, #151)
+    assume that data survives. Related and separately filed as **#167**:
+    `design_family` is *required* by the state machine
+    (`design_loop.py:434`) and then **dropped before the database** —
+    `_flush_target_for` (`tooling.py:216–227`) does not carry it and
+    `decision_records` has no such column (`db/schema.sql:101–112`).
+
+37. **Landy's real build is a five-part laminate, not a single slab.** The
+    fabricated device is **FR4 / adhesive / FR4 / adhesive / FR4**, with
+    ~0.06 mm adhesive layers — not the one 0.72 mm sheet of εr 4.8 FR4 that
+    a reproduction modelled from the patent's own stated simulation inputs
+    would build. Anyone reproducing Example 3 from the patent therefore
+    models a different physical object from the one that was measured.
+    Bears directly on #142's ~20% frequency discrepancy and on #168's
+    curve-comparison spec. Found on #116.
+
+38. **"At a 10 dB requirement every element family surveyed is feasible" is
+    contradicted by #138 and was being carried as settled.** #130's
+    corrected super-cell rule produced that headline. #138 then found that a
+    0.4 λ square patch has **no feasible N on a 6 λ coupon even at 10 dB** —
+    it becomes feasible only on a panel around 30 λ. The map recorded the
+    *cause* of the correction ("no feasible N is a statement about part
+    size, not about the alphabet") while still stating the conflicting
+    headline as fact. The panel-fit constraint `2·N·p ≤ L` binds first on a
+    coupon, so feasibility is a claim about a **part size**, and quoting it
+    without one is the same "measurement without its box" failure this list
+    records elsewhere.
+
+39. **Six ticket resolutions were written into comment threads and never
+    recorded as decisions.** #124 (material commitment is not gated at
+    ARCHITECTURE — *"the premise does not survive contact with the
+    schema"*), #152 (defer: **zero** named consumers exist in code, and two
+    of the four it named are positively misidentified), #129 (dead as
+    posed; the surviving question has a worked recommendation), #113 (a
+    glossary edit, nothing to decide), #98 (investigated, correctly
+    blocked), and #128 (a full proposed resolution awaiting acceptance).
+    *In plain terms: the answers existed; nothing had promoted them from a
+    comment into anything a later session would read.* This is the failure
+    the map's "a decision is an ADR, or a correction to one" rule exists to
+    close, and it is why the frontier looked far wider than it was.
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
