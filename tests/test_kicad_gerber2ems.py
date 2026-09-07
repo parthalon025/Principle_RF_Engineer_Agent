@@ -32,9 +32,9 @@ import os
 from pathlib import Path
 
 import pytest
+from conftest import make_fake_executable
 
 import simulation.kicad_gerber2ems as kicad_gerber2ems
-from conftest import make_fake_executable
 from simulation.base import SimulatorError
 from simulation.kicad_gerber2ems import (
     KicadGerber2emsSimulator,
@@ -467,7 +467,9 @@ def _make_workdir(tmp_path: Path) -> Path:
 
 
 def test_kicad_gerber2ems_simulator_invokes_dash_a(tmp_path: Path):
-    script = _make_fake_gerber2ems(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
+    script = _make_fake_gerber2ems(
+        tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n"
+    )
     workdir = _make_workdir(tmp_path)
 
     simulator = KicadGerber2emsSimulator(executable=str(script))

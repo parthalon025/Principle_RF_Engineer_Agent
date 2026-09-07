@@ -27,8 +27,8 @@ import math
 from pathlib import Path
 
 import pytest
-
 from conftest import make_fake_executable
+
 from geometry.freecad_curved import (
     FreecadGeometryError,
     _nearest_cardinal_axis,

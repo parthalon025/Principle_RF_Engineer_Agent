@@ -28,8 +28,8 @@ import os
 from pathlib import Path
 
 import pytest
-
 from conftest import make_fake_executable
+
 from simulation.base import SimulatorError
 from simulation.nec2pp import (
     Nec2ppSimulator,
@@ -284,9 +284,7 @@ def test_nec2pp_simulator_invokes_dash_i_and_dash_o_dash(tmp_path: Path):
     docstring citation) is what actually gets shelled out -- the previous
     invocation shape (a bare positional filename) is rejected by real
     nec2++ with 'nec2++: -i input_filename is required'."""
-    script = _make_fake_nec2pp(
-        tmp_path, 'import sys\nsys.stdout.write(" ".join(sys.argv[1:]))\n'
-    )
+    script = _make_fake_nec2pp(tmp_path, 'import sys\nsys.stdout.write(" ".join(sys.argv[1:]))\n')
     input_file = tmp_path / "model.nec"
     input_file.write_text("CM test\nCE\nEN\n")
 

@@ -17,8 +17,8 @@ import os
 from pathlib import Path
 
 import pytest
-
 from conftest import make_fake_executable
+
 from simulation.base import SimulatorError
 from simulation.elmer import (
     ElmerSimulator,

@@ -24,8 +24,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
-
 from conftest import make_fake_executable
+
 from simulation.base import SimulatorError
 from simulation.gprmax import (
     GprmaxSimulator,

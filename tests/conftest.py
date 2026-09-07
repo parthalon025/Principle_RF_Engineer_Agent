@@ -48,11 +48,7 @@ def make_fake_executable(tmp_path: Path, body: str, name: str = "fake_exe") -> P
         script = tmp_path / f"{name}.py"
         script.write_text(body)
         launcher = tmp_path / f"{name}.bat"
-        launcher.write_text(
-            '@echo off\r\n"{python}" "{script}" %*\r\n'.format(
-                python=sys.executable, script=script
-            )
-        )
+        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
         return launcher
     else:
         script = tmp_path / name

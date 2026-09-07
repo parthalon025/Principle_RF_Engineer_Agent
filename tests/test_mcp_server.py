@@ -15,9 +15,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 import skrf as rf
+from conftest import make_fake_executable
 
 import mcp_server.server as server
-from conftest import make_fake_executable
 from orchestration.policy import assert_all_tools_categorized
 from rf_tools.calculations import (
     abcd_to_s,
@@ -657,10 +657,7 @@ DEGREES DEGREES   DB     DB    DB    RATIO    DEG.           VOLTS/M
 
 def _write_fake_nec2pp(tmp_path: Path) -> Path:
     body = (
-        "import sys\n"
-        f'OUTPUT = """{_FAKE_NEC2PP_OUTPUT}"""\n'
-        "sys.stdout.write(OUTPUT)\n"
-        "sys.exit(0)\n"
+        f'import sys\nOUTPUT = """{_FAKE_NEC2PP_OUTPUT}"""\nsys.stdout.write(OUTPUT)\nsys.exit(0)\n'
     )
     return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 

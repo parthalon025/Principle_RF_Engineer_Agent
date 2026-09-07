@@ -25,8 +25,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from conftest import make_fake_executable
+
 from simulation.base import SimulatorError
 from simulation.ngspice import (
     NgspiceSimulator,

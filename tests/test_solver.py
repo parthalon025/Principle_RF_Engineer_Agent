@@ -37,9 +37,9 @@ import logging
 from pathlib import Path
 
 import pytest
+from conftest import make_fake_executable
 
 import orchestration.solver as solver_module
-from conftest import make_fake_executable
 from designs.requirement_targets import mark_unscoreable, propose_target
 from orchestration.approval import request_loop_step_approval
 from orchestration.design_loop import DesignStep, start_design_loop

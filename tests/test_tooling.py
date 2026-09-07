@@ -27,9 +27,9 @@ import numpy as np
 import psycopg
 import pytest
 import skrf as rf
+from conftest import make_fake_executable
 from dotenv import load_dotenv
 
-from conftest import make_fake_executable
 from designs.requirement_targets import (
     confirm_requirement_target,
     propose_requirement_target,

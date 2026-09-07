@@ -38,9 +38,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 import skrf as rf
+from conftest import make_fake_executable
 
 import orchestration.design_loop as design_loop_module
-from conftest import make_fake_executable
 from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
 from measurement.external import ExternalMeasurementError
 from orchestration.approval import (

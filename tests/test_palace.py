@@ -30,8 +30,8 @@ import os
 from pathlib import Path
 
 import pytest
-
 from conftest import make_fake_executable
+
 from simulation.base import SimulatorError
 from simulation.palace import (
     BOUND_X_MAX,

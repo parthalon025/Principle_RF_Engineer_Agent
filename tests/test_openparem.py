@@ -26,8 +26,8 @@ import os
 from pathlib import Path
 
 import pytest
-
 from conftest import make_fake_executable
+
 from simulation.base import SimulatorError
 from simulation.openparem import (
     OpenParemSimulator,
@@ -590,9 +590,7 @@ def test_run_openparem_simulation_no_far_field_when_not_requested(tmp_path: Path
     *_FarField_results.csv, and this stays honestly uncomputed=False."""
     script = _make_fake_openparem(
         tmp_path,
-        "with open('monopole_results.csv', 'w') as f:\n    f.write({!r})\n".format(
-            RESULTS_CSV_RI
-        ),
+        f"with open('monopole_results.csv', 'w') as f:\n    f.write({RESULTS_CSV_RI!r})\n",
     )
     result = run_openparem_simulation(
         mesh_file="m.msh",

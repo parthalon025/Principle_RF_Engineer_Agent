@@ -42,8 +42,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from conftest import make_fake_executable
+
 from simulation.base import SimulatorError
 from simulation.openems import (
     OpenemsSimulator,
@@ -658,9 +658,7 @@ def test_openems_simulator_invokes_xml_file_positionally_with_disable_dumps(tmp_
     """Confirm the real openEMS CLI contract (a single positional XML file
     argument, then flags -- see module docstring citation) is what actually
     gets shelled out, and that --disable-dumps is passed by default."""
-    script = _make_fake_openems(
-        tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n"
-    )
+    script = _make_fake_openems(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     xml_file = tmp_path / "model.xml"
     xml_file.write_text("<openEMS/>")
 
@@ -674,9 +672,7 @@ def test_openems_simulator_invokes_xml_file_positionally_with_disable_dumps(tmp_
 
 
 def test_openems_simulator_custom_extra_args(tmp_path: Path):
-    script = _make_fake_openems(
-        tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n"
-    )
+    script = _make_fake_openems(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     xml_file = tmp_path / "model.xml"
     xml_file.write_text("<openEMS/>")
 
