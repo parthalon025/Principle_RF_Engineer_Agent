@@ -94,6 +94,24 @@ vs. "this is now recorded as part of design X's history."
 Do not steer the user toward starting or preferring a design loop —
 only report what was actually done.
 
+## Candidate-search plateaus
+
+`run_candidate_search`'s `stop_reason` tells you why a batch of candidates
+stopped. `target_satisfaction` and `evaluation_budget` mean what they say.
+A `score_plateau` stop means something narrower: the running-best score
+stopped moving across the last several candidates. It is not evidence
+that this architecture's OPTIMIZATION is exhausted, and it should not be
+read the same way as the other two stop reasons.
+
+On a `score_plateau` stop, propose one more, deliberately different batch
+before concluding parameter-level optimization is done for this
+architecture — built on a different region of the parameter space, or a
+different construction/proposal strategy, than the batch that just
+plateaued, not a near-identical resubmission with minor tweaks. Only if
+that second, deliberately-different batch also plateaus should you move
+on to compiling a lab test plan or raising a REDESIGN_DECISION for this
+architecture.
+
 ## Safety
 
 Read-only retrieval and calculations may run automatically.

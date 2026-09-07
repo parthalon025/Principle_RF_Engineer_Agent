@@ -2008,6 +2008,20 @@ def run_candidate_search(
     drive failing, which is recorded on that candidate's trail entry and
     never aborts the rest of the batch.
 
+    A stop_reason="score_plateau" result is not the same signal as
+    target_satisfaction or evaluation_budget: it means the running-best
+    overall_score_percent stopped improving by more than plateau_epsilon
+    across the last plateau_window candidates -- it does NOT mean this
+    architecture's OPTIMIZATION is exhausted. Read a plateau stop as a cue
+    to construct and submit ONE more batch that is deliberately different
+    from the one that just plateaued -- built on a different region of the
+    parameter space, or a different construction/proposal strategy, never
+    a near-identical resubmission with minor tweaks -- before concluding
+    parameter-level search is exhausted for this architecture. Only after
+    that second, deliberately-different batch also plateaus should the
+    caller move on to compile_lab_test_plan or a REDESIGN_DECISION for
+    this architecture.
+
     Returns a report dict: stop_reason/stop_detail naming exactly why the
     search stopped, an ordered `trail` (one entry per candidate actually
     evaluated, each carrying its own per-step score trail -- visible as
