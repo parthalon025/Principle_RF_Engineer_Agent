@@ -1,8 +1,14 @@
 # Fabrication-capability and Ink-property libraries — specification
 
-**Status:** plan-only specification. No code accompanies it, per issue
-[#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104)'s standing
-preference. Implementation lands as its own `ready-for-agent` issue, the same way
+**Status:** plan-only specification. No code implementing either library accompanies it, per
+issue [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104)'s standing
+preference — one unrelated one-line error-message fix this spec's own analysis found
+(`rf_tools/calculations.py`, §12 below) is included as a trivial, self-contained correction, not
+implementation. A real code change (uncertainty/method fields on the existing Material-property
+library) originally bundled into this PR was split out to
+[#199](https://github.com/parthalon025/Principle_RF_Engineer_Agent/pull/199) for exactly this
+reason. Implementation of the two libraries below lands as its own `ready-for-agent` issue, the
+same way
 [#154](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/154) implemented
 ADR-0015 after the decision was accepted.
 
