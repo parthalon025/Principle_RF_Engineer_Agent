@@ -133,22 +133,33 @@ CREATE TABLE IF NOT EXISTS material_properties (
     provenance TEXT NOT NULL,
     citation TEXT,
     note TEXT,
-    -- Both nullable and both added after the FR4 seeds, when migrating the
-    -- twelve substrates of docs/xband-absorber-substrate-shortlist.md showed
-    -- the schema could not hold what the sources actually report.
-    -- `uncertainty` is the source's OWN stated uncertainty on this value
-    -- (Kapton 500HN is published as tan_delta 0.012 +/- 0.004); it is a
-    -- different quantity from the spread across disagreeing citations, which
-    -- resolve_material_property already derives, and storing only the spread
-    -- would silently discard a measurement's own error bar.
-    -- `method` is how the value was obtained (coaxial dielectric probe,
-    -- microstrip ring resonator, CPW de-embedding). Two values that disagree
-    -- may not really disagree if they were measured differently, so without
-    -- it a caller cannot tell a genuine conflict from a systematic offset.
-    uncertainty DOUBLE PRECISION,
-    method TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Added after the FR4 seeds, when migrating the twelve substrates of
+-- docs/xband-absorber-substrate-shortlist.md showed the schema could not
+-- hold what the sources actually report. Both nullable, so every row and
+-- caller written before them is unaffected.
+--
+-- ALTER, not columns in the CREATE above, because apply_schema.py must stay
+-- safe to re-run "against an already-initialized database" -- and against
+-- one, CREATE TABLE IF NOT EXISTS is a no-op that would silently skip them,
+-- leaving inserts to fail on a missing column. Same pattern as the
+-- documents table's status/supersedes_document_id above.
+--
+-- `uncertainty` is the source's OWN stated error bar on this value (Kapton
+-- 500HN is published as tan_delta 0.012 +/- 0.004). It is a different
+-- quantity from the spread across disagreeing citations, which
+-- resolve_material_property already derives: the spread says how much two
+-- labs disagree, the uncertainty says how much one lab doubts itself.
+--
+-- `method` is how the value was obtained (coaxial dielectric probe,
+-- microstrip ring resonator, CPW de-embedding). Different methods carry
+-- different systematic biases, so two values that disagree may not really
+-- disagree; without it a caller cannot tell a genuine conflict from a
+-- systematic offset.
+ALTER TABLE material_properties ADD COLUMN IF NOT EXISTS uncertainty DOUBLE PRECISION;
+ALTER TABLE material_properties ADD COLUMN IF NOT EXISTS method TEXT;
 
 CREATE INDEX IF NOT EXISTS material_properties_material_property_idx
 ON material_properties (material, property);
