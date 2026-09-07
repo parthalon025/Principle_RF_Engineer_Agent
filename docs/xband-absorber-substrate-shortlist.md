@@ -89,6 +89,25 @@ polymer and every textile in this survey sits at or above FR4's loss tangent.
 
 ## 1. Main shortlist
 
+> **Migrated into the Material-property library.** Eight of these twelve now exist as
+> `SUBSTRATE_SEED_ENTRIES` in `designs/material_properties.py`, so the library is the
+> queryable source and this table is the human-readable one. Three things changed on the way,
+> and this table has not been rewritten to match:
+>
+> - **Provenance was downgraded.** The `MEASURED` tags below on silicone, Kapton and PDMS mean
+>   "somebody measured this." `CONTEXT.md` reserves `MEASURED` for what *this programme*
+>   measured, and maps a paper to `LITERATURE-SUPPORTED`; the library does not admit
+>   `MEASURED` as an entry tier at all. The measurement method that earned the tag is carried
+>   in the library's new `method` field instead.
+> - **The TPU row is stale.** It records εr and tanδ as `UNKNOWN` at X-band; issue #114 has
+>   since resolved them from Vong *et al.* (εr 2.71 ± 0.3, tanδ 0.099 ± 0.01 at 10 GHz), and
+>   the library carries those.
+> - **Four substrates were deliberately not migrated**, because no value here can be held
+>   honestly: Eccosorb publishes no ε′/ε″ at all, PDMS is a dispersion curve rather than an
+>   X-band point, and felt and denim are unattributed ranges measured at 2.45/5.8 GHz. Their
+>   absence from the library is the correct `no_data` outcome, not an oversight.
+
+
 Host regime: **A** = large-radius hosts (wing, hull, sUAS body), where `R = 3T` clears by
 one to two orders of magnitude and rigid-but-low-loss substrates are fully competitive;
 **B** = tight or compound-curvature hosts (textiles, small fairings, anything that cannot
