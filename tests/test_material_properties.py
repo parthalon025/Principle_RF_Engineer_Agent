@@ -24,12 +24,14 @@ import pytest
 
 from designs.material_properties import (
     FR4_SEED_ENTRIES,
+    SUBSTRATE_SEED_ENTRIES,
     InvalidMaterialPropertyError,
     add_entry,
     add_family_bracket,
     lookup_entries,
     resolve_material_property,
 )
+from knowledge.provenance import LITERATURE_SUPPORTED
 
 # ---------------------------------------------------------------------------
 # add_entry -- validation and provenance tagging
@@ -434,3 +436,107 @@ def test_fr4_seed_entries_are_three_citations_each_covering_eps_r_and_tan_delta(
     # exactly the disagreement issue #154 cites as the reason to store each
     # one rather than collapse to a hardcoded constant.
     assert {round(e["value"], 3) for e in tan_delta_entries} == {0.02, 0.024, 0.025}
+
+
+# ---------------------------------------------------------------------------
+# uncertainty and method -- the two fields the substrate migration needed
+# ---------------------------------------------------------------------------
+
+
+def _minimal_entry(**overrides):
+    kwargs = {
+        "material": "Kapton 500HN",
+        "property_name": "tan_delta",
+        "frequency_low_hz": 10.0e9,
+        "frequency_high_hz": 65.0e9,
+        "value": 0.012,
+        "unit": "unitless",
+        "provenance": LITERATURE_SUPPORTED,
+        "citation": "Yang et al., microstrip ring resonator",
+    }
+    kwargs.update(overrides)
+    return add_entry(**kwargs)
+
+
+def test_uncertainty_and_method_default_to_none_so_existing_callers_are_unaffected():
+    entry = _minimal_entry()
+    assert entry["uncertainty"] is None
+    assert entry["method"] is None
+
+
+def test_uncertainty_records_the_sources_own_error_bar():
+    # Kapton 500HN is published as tan_delta 0.012 +/- 0.004. The +/- is a
+    # property of that one measurement, not of the spread across citations,
+    # so the library has to be able to hold both.
+    entry = _minimal_entry(uncertainty=0.004)
+    assert entry["uncertainty"] == pytest.approx(0.004)
+
+
+def test_uncertainty_may_be_zero_but_never_negative():
+    assert _minimal_entry(uncertainty=0.0)["uncertainty"] == 0.0
+    with pytest.raises(InvalidMaterialPropertyError, match="uncertainty"):
+        _minimal_entry(uncertainty=-0.004)
+
+
+def test_uncertainty_must_be_finite():
+    with pytest.raises(InvalidMaterialPropertyError, match="uncertainty"):
+        _minimal_entry(uncertainty=math.inf)
+
+
+def test_method_records_how_the_value_was_obtained():
+    entry = _minimal_entry(method="microstrip ring resonator, 10-65 GHz")
+    assert entry["method"] == "microstrip ring resonator, 10-65 GHz"
+
+
+def test_method_when_given_must_not_be_blank():
+    # Omitting the method is honest; claiming one and leaving it empty is not.
+    with pytest.raises(InvalidMaterialPropertyError, match="method"):
+        _minimal_entry(method="   ")
+
+
+# ---------------------------------------------------------------------------
+# SUBSTRATE_SEED_ENTRIES -- the migrated shortlist
+# ---------------------------------------------------------------------------
+
+
+def test_substrate_seeds_cover_the_eight_migratable_substrates():
+    # Twelve substrates are catalogued; four are deliberately absent because
+    # the shortlist states no value the library can hold honestly (Eccosorb
+    # publishes none, PDMS is a dispersion curve, felt and denim are
+    # unattributed ranges measured off-band). See the module comment.
+    assert len({e["material"] for e in SUBSTRATE_SEED_ENTRIES}) == 8
+
+
+def test_no_substrate_seed_claims_MEASURED_provenance():
+    # The shortlist tags several rows MEASURED, meaning "somebody measured
+    # this." CONTEXT.md reserves MEASURED for what this programme measured
+    # itself, and ENTRY_PROVENANCE_VALUES does not admit it at all.
+    assert all(e["provenance"] != "MEASURED" for e in SUBSTRATE_SEED_ENTRIES)
+
+
+def test_every_substrate_seed_records_its_method_even_when_it_is_unknown():
+    # A missing method is a fact worth storing: it is why two disagreeing
+    # values cannot be adjudicated.
+    assert all(e["method"] for e in SUBSTRATE_SEED_ENTRIES)
+
+
+def test_the_patents_FR4_disagrees_with_the_three_seeded_FR4_citations():
+    # The whole reason this library stores a value per citation. The patent's
+    # 4.8 sits well outside the 4.3-4.4 the other three report.
+    seeded = [e["value"] for e in FR4_SEED_ENTRIES if e["property"] == "eps_r"]
+    migrated = [
+        e["value"]
+        for e in SUBSTRATE_SEED_ENTRIES
+        if e["material"] == "FR4" and e["property"] == "eps_r"
+    ]
+    assert migrated == [4.8]
+    assert max(seeded) < min(migrated)
+
+
+def test_PET_is_entered_at_its_datasheet_band_so_an_x_band_lookup_misses():
+    # No X-band measurement exists for Melinex ST505. Entering the kHz-MHz
+    # datasheet value at X-band would silently hand a low-frequency number to
+    # an X-band design; entering it at its real band makes the lookup miss.
+    pet = [e for e in SUBSTRATE_SEED_ENTRIES if e["material"].startswith("PET")]
+    assert lookup_entries(pet, pet[0]["material"], "eps_r", 10.0e9) == []
+    assert lookup_entries(pet, pet[0]["material"], "eps_r", 1.0e5) == pet

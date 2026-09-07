@@ -133,6 +133,20 @@ CREATE TABLE IF NOT EXISTS material_properties (
     provenance TEXT NOT NULL,
     citation TEXT,
     note TEXT,
+    -- Both nullable and both added after the FR4 seeds, when migrating the
+    -- twelve substrates of docs/xband-absorber-substrate-shortlist.md showed
+    -- the schema could not hold what the sources actually report.
+    -- `uncertainty` is the source's OWN stated uncertainty on this value
+    -- (Kapton 500HN is published as tan_delta 0.012 +/- 0.004); it is a
+    -- different quantity from the spread across disagreeing citations, which
+    -- resolve_material_property already derives, and storing only the spread
+    -- would silently discard a measurement's own error bar.
+    -- `method` is how the value was obtained (coaxial dielectric probe,
+    -- microstrip ring resonator, CPW de-embedding). Two values that disagree
+    -- may not really disagree if they were measured differently, so without
+    -- it a caller cannot tell a genuine conflict from a systematic offset.
+    uncertainty DOUBLE PRECISION,
+    method TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
