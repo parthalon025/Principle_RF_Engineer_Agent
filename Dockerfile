@@ -31,6 +31,22 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # --- apt-installable solvers -------------------------------------------
+# pandoc and file are not solvers -- they're the two apt-installable
+# runtime dependencies of .claude/skills/arxiv-doc-builder's `convert-paper`
+# CLI (knowledge/sourcing/arxiv.py shells out to it via `uv run --project`):
+# pandoc does the LaTeX-source-to-Markdown conversion (its happy path, per
+# that skill's SKILL.md), and fetch_paper.py's own format-detection shells
+# to `file --brief` on the downloaded arXiv source archive. tar/gzip (the
+# other two external commands that script invokes) are already part of
+# ubuntu:24.04's base image, unlike these two, which are not. Placed in this
+# same general apt block as gerbv (another non-solver runtime dependency
+# already living here) rather than a dedicated layer, since both are small,
+# fast apt installs. Standard Ubuntu universe packages, not independently
+# verified against a live build the way this file's other, larger layers
+# below are (see this file's own top comment) -- if either name turns out
+# wrong, `apt-cache show pandoc`/`apt-cache show file` in a real ubuntu:24.04
+# container is the first thing to check, per that same top comment's own
+# "always check real byte content" warning.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -50,6 +66,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kicad \
     gmsh \
     gerbv \
+    pandoc \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 # FreeCAD ships NO installable candidate at all in default Ubuntu 24.04/26.04

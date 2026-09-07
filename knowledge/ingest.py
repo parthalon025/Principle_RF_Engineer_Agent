@@ -38,6 +38,10 @@ def ingest_document(
     classification: str,
     supersedes_document_id: int | None = None,
     authority_rank_override: int | None = None,
+    title_override: str | None = None,
+    author: str | None = None,
+    revision: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Parse, chunk, and store a datasheet/standard/textbook/paper PDF.
 
@@ -55,6 +59,24 @@ def ingest_document(
     arXiv-sourced `paper` document ranks below a peer-reviewed one, since
     arXiv preprints are not peer-reviewed. Omit it (the default) and this
     behaves exactly as before -- every other existing caller is unaffected.
+
+    `title_override`, `author`, `revision`, and `extra_metadata` let a
+    caller that already has authoritative document-level metadata (e.g.
+    `knowledge/sourcing/arxiv.py` parsing an arXiv record's title/authors/
+    version/abstract) supply it directly instead of relying on docling's own
+    parse. `title_override`, when given, wins over docling's parsed title
+    (or the bare filename) unconditionally -- including when extraction
+    fails, since an authoritative external title is strictly better evidence
+    than a file stem. `author`/`revision` are stored on the `documents` row
+    as-is (both `None` by default; `knowledge/sourcing/arxiv.py` is the
+    first and, as of this writing, only caller that sets them, from the
+    same arXiv frontmatter). `extra_metadata` is merged into the stored
+    `metadata` dict, but can never override the three reserved keys this
+    function itself sets (`classification`, `extraction_status`, and --
+    when present -- `extraction_error`): those are applied after the merge
+    so a caller's dict can't accidentally (or maliciously) mask the real
+    extraction outcome. Omit all four (the default) and this behaves
+    exactly as before.
 
     Re-ingesting an identical file (matching checksum) is rejected and
     returns the existing document's id instead of creating a duplicate.
@@ -100,10 +122,12 @@ def ingest_document(
         extraction_status = "failed"
         extraction_error = str(exc)
 
-    metadata: dict[str, Any] = {
-        "classification": classification_enum.value,
-        "extraction_status": extraction_status,
-    }
+    if title_override:
+        title = title_override
+
+    metadata: dict[str, Any] = dict(extra_metadata or {})
+    metadata["classification"] = classification_enum.value
+    metadata["extraction_status"] = extraction_status
     if extraction_error is not None:
         metadata["extraction_error"] = extraction_error
 
@@ -114,6 +138,8 @@ def ingest_document(
         license=license,
         checksum_sha256=checksum,
         source_uri=str(path.resolve()),
+        author=author,
+        revision=revision,
         metadata=metadata,
         supersedes_document_id=supersedes_document_id,
     )

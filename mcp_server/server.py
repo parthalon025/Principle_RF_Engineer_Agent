@@ -30,6 +30,7 @@ from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1323,6 +1324,35 @@ def ingest_document(
     return _ingest_document(
         file_path=file_path,
         source_type=source_type,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_arxiv_paper(
+    arxiv_id: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch and convert an arXiv preprint (e.g. "2401.01234", or the older
+    "cond-mat/0207270" form) into the knowledge base as source_type='paper'.
+    Uses the arxiv-doc-builder skill to fetch LaTeX source (preferred) + PDF and
+    convert to Markdown via pandoc -- preserving math/structure far better than
+    feeding a raw PDF to docling -- falling back to naive PDF text extraction
+    when no LaTeX source exists. Automatically pulls title/authors/publication
+    date/DOI/journal/categories/abstract from arXiv's own record into the
+    stored document. license must be the reuse terms that actually apply to
+    this specific paper (arXiv's default license does not itself grant
+    downstream reuse beyond citation/summary; check for an author-chosen CC0/
+    CC-BY license). authority_rank is always overridden below the peer-
+    reviewed 'paper' default, since arXiv preprints are not peer-reviewed --
+    only a "superficial" moderator check. Pass supersedes_document_id to
+    declare this upload a newer revision of that document (never inferred)."""
+    return _ingest_arxiv_paper(
+        arxiv_id,
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,

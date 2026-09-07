@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "arxiv-doc-builder",
+  "owner": "ultimatile",
+  "repo": "arxiv-skills",
+  "path": "skills/arxiv-doc-builder",
+  "branch": "main",
+  "sha": "57295079a321b71ebdc53d057056b4c08ad61a3a",
+  "source": "manual"
+}

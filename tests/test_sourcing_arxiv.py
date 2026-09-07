@@ -1,12 +1,15 @@
-"""Ticket #68: knowledge/sourcing/arxiv.py, tested at the seam -- a
-stubbed `fetch_fn` stands in for the real network GET, and `ingest_document`
-is monkeypatched to capture exactly what it was called with, mirroring
-tests/test_nec2pp.py's fake-executable-not-real-binary pattern applied to a
-network fetch instead of a subprocess. No network access, no database.
+"""Ticket #68 (and its arxiv-doc-builder integration follow-up):
+knowledge/sourcing/arxiv.py, tested at the seam -- a stubbed `convert_fn`
+stands in for the real `uv run --project .../arxiv-doc-builder convert-paper`
+subprocess, and `ingest_document` is monkeypatched to capture exactly what
+it was called with, mirroring tests/test_nec2pp.py's fake-executable-not-
+real-binary pattern applied to a subprocess call instead of a network fetch.
+No network access, no subprocess, no database.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -27,41 +30,228 @@ def _capture(monkeypatch, result=None):
     return captured
 
 
+def _write_md_with_frontmatter(path: Path, **fields) -> None:
+    """Hand-write a Markdown file shaped like arxiv-doc-builder's real
+    output: a YAML frontmatter block (arxiv_metadata.build_frontmatter's
+    exact key set is a superset of what's passed here -- callers only need
+    to supply the fields a given test cares about) followed by body text."""
+    lines = ["---"]
+    for key, value in fields.items():
+        if value is None:
+            lines.append(f"{key}:")
+        elif isinstance(value, list):
+            lines.append(f"{key}:")
+            lines.extend(f'  - "{item}"' for item in value)
+        else:
+            lines.append(f'{key}: "{value}"')
+    lines += ["---", "", "", "# Body", "", "Paper content."]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+# --- _parse_frontmatter (pure) ----------------------------------------
+
+_SAMPLE_FRONTMATTER = """---
+title: "Adaptive Metamaterial Skins for Conformal Antennas"
+authors: "Jane Doe, John Smith"
+arxiv_id: "2401.01234"
+version: "2401.01234v2"
+published: "2024-01-15"
+primary_category: "physics.app-ph"
+categories:
+  - "physics.app-ph"
+  - "eess.SP"
+doi:
+journal:
+source_type: "paper"
+conversion_date: "2026-09-05"
+abstract: |-
+  We present a design for adaptive metamaterial skins.
+---
+
+# Adaptive Metamaterial Skins
+
+Body content here.
+"""
+
+
+def test_parse_frontmatter_extracts_all_fields():
+    fm = arxiv._parse_frontmatter(_SAMPLE_FRONTMATTER)
+    assert fm["title"] == "Adaptive Metamaterial Skins for Conformal Antennas"
+    assert fm["authors"] == "Jane Doe, John Smith"
+    assert fm["version"] == "2401.01234v2"
+    assert fm["doi"] is None
+    assert fm["categories"] == ["physics.app-ph", "eess.SP"]
+    assert fm["abstract"] == "We present a design for adaptive metamaterial skins."
+
+
+def test_parse_frontmatter_returns_empty_dict_when_absent():
+    assert arxiv._parse_frontmatter("# No frontmatter here\n\nJust body text.\n") == {}
+
+
+# --- _run_convert_paper (subprocess boundary, stubbed) -----------------
+
+
+def test_run_convert_paper_invokes_uv_run_against_the_skill_project(tmp_path, monkeypatch):
+    captured_cmd = {}
+
+    def fake_run(cmd, capture_output, text, timeout):
+        captured_cmd["cmd"] = cmd
+        captured_cmd["timeout"] = timeout
+        md_path = tmp_path / "2401.01234" / "2401.01234.md"
+        _write_md_with_frontmatter(md_path, title="X", authors="Y", version="v1")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(arxiv.subprocess, "run", fake_run)
+    md_path = arxiv._run_convert_paper("2401.01234", tmp_path)
+
+    assert md_path == tmp_path / "2401.01234" / "2401.01234.md"
+    cmd = captured_cmd["cmd"]
+    assert cmd[:3] == ["uv", "run", "--project"]
+    assert "--no-dev" in cmd
+    assert str(arxiv._ARXIV_DOC_BUILDER_DIR) in cmd
+    assert "convert-paper" in cmd
+    assert "2401.01234" in cmd
+    assert "--output-dir" in cmd
+    assert str(tmp_path) in cmd
+    assert captured_cmd["timeout"] == arxiv._CONVERT_PAPER_TIMEOUT_S
+
+
+def test_run_convert_paper_raises_on_nonzero_exit(tmp_path, monkeypatch):
+    def fake_run(cmd, capture_output, text, timeout):
+        return subprocess.CompletedProcess(cmd, 1, stdout="fetch failed", stderr="network error")
+
+    monkeypatch.setattr(arxiv.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="fetch failed"):
+        arxiv._run_convert_paper("2401.01234", tmp_path)
+
+
+def test_run_convert_paper_raises_if_output_file_missing(tmp_path, monkeypatch):
+    def fake_run(cmd, capture_output, text, timeout):
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(arxiv.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="does not exist"):
+        arxiv._run_convert_paper("2401.01234", tmp_path)
+
+
+def test_run_convert_paper_raises_on_timeout(tmp_path, monkeypatch):
+    def fake_run(cmd, capture_output, text, timeout):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(arxiv.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="timed out"):
+        arxiv._run_convert_paper("2401.01234", tmp_path)
+
+
+# --- ingest_arxiv_paper (convert_fn seam, ingest_document monkeypatched) --
+
+
 def test_ingest_arxiv_paper_calls_ingest_document_with_paper_source_type(tmp_path, monkeypatch):
     captured = _capture(monkeypatch)
-    fetched_urls: list[str] = []
-
-    def fake_fetch(url: str) -> bytes:
-        fetched_urls.append(url)
-        return b"%PDF-1.4 fake pdf bytes"
+    md_path = tmp_path / "2401.01234" / "2401.01234.md"
+    _write_md_with_frontmatter(md_path, title="A Great Paper", authors="Jane Doe", version="v1")
 
     result = arxiv.ingest_arxiv_paper(
         "2401.01234",
         license="cc-by-4.0",
         classification="PUBLIC",
         download_dir=str(tmp_path),
-        fetch_fn=fake_fetch,
+        convert_fn=lambda arxiv_id, output_dir: md_path,
     )
 
-    assert fetched_urls == ["https://arxiv.org/pdf/2401.01234"]
     assert captured["source_type"] == "paper"
     assert captured["license"] == "cc-by-4.0"
     assert captured["classification"] == "PUBLIC"
-    assert Path(captured["file_path"]).read_bytes() == b"%PDF-1.4 fake pdf bytes"
+    assert captured["file_path"] == str(md_path)
     assert result == {"status": "ingested", "document_id": 1}
 
 
-def test_ingest_arxiv_paper_overrides_authority_rank_below_peer_reviewed_default(
-    tmp_path, monkeypatch
-):
+def test_ingest_arxiv_paper_extracts_title_author_revision_from_frontmatter(tmp_path, monkeypatch):
     captured = _capture(monkeypatch)
+    md_path = tmp_path / "paper.md"
+    _write_md_with_frontmatter(
+        md_path,
+        title="Adaptive Metamaterial Skins",
+        authors="Jane Doe, John Smith",
+        version="2401.01234v2",
+    )
 
     arxiv.ingest_arxiv_paper(
         "2401.01234",
         license="cc-by-4.0",
         classification="PUBLIC",
         download_dir=str(tmp_path),
-        fetch_fn=lambda url: b"stub",
+        convert_fn=lambda arxiv_id, output_dir: md_path,
+    )
+
+    assert captured["title_override"] == "Adaptive Metamaterial Skins"
+    assert captured["author"] == "Jane Doe, John Smith"
+    assert captured["revision"] == "2401.01234v2"
+
+
+def test_ingest_arxiv_paper_passes_remaining_frontmatter_as_extra_metadata(tmp_path, monkeypatch):
+    captured = _capture(monkeypatch)
+    md_path = tmp_path / "paper.md"
+    _write_md_with_frontmatter(
+        md_path,
+        title="A Paper",
+        authors="Jane Doe",
+        version="v1",
+        arxiv_id="2401.01234",
+        doi="10.1000/example",
+        categories=["physics.app-ph"],
+    )
+
+    arxiv.ingest_arxiv_paper(
+        "2401.01234",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        download_dir=str(tmp_path),
+        convert_fn=lambda arxiv_id, output_dir: md_path,
+    )
+
+    extra = captured["extra_metadata"]
+    assert extra["arxiv_id"] == "2401.01234"
+    assert extra["doi"] == "10.1000/example"
+    assert extra["categories"] == ["physics.app-ph"]
+    assert "title" not in extra
+    assert "authors" not in extra
+    assert "version" not in extra
+
+
+def test_ingest_arxiv_paper_handles_missing_frontmatter_gracefully(tmp_path, monkeypatch):
+    captured = _capture(monkeypatch)
+    md_path = tmp_path / "paper.md"
+    md_path.write_text("# No frontmatter\n\nJust body text.\n", encoding="utf-8")
+
+    arxiv.ingest_arxiv_paper(
+        "2401.01234",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        download_dir=str(tmp_path),
+        convert_fn=lambda arxiv_id, output_dir: md_path,
+    )
+
+    assert captured["title_override"] is None
+    assert captured["author"] is None
+    assert captured["revision"] is None
+    assert captured["extra_metadata"] == {}
+
+
+def test_ingest_arxiv_paper_overrides_authority_rank_below_peer_reviewed_default(
+    tmp_path, monkeypatch
+):
+    captured = _capture(monkeypatch)
+    md_path = tmp_path / "paper.md"
+    _write_md_with_frontmatter(md_path, title="X", authors="Y", version="v1")
+
+    arxiv.ingest_arxiv_paper(
+        "2401.01234",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        download_dir=str(tmp_path),
+        convert_fn=lambda arxiv_id, output_dir: md_path,
     )
 
     assert captured["authority_rank_override"] == arxiv_preprint_authority_rank()
@@ -70,18 +260,46 @@ def test_ingest_arxiv_paper_overrides_authority_rank_below_peer_reviewed_default
     assert captured["authority_rank_override"] > default_authority_rank(SourceType.PAPER)
 
 
-def test_ingest_arxiv_paper_accepts_old_style_slash_id(tmp_path, monkeypatch):
-    captured = _capture(monkeypatch)
+def test_ingest_arxiv_paper_passes_raw_arxiv_id_to_convert_fn(tmp_path, monkeypatch):
+    _capture(monkeypatch)
+    md_path = tmp_path / "paper.md"
+    _write_md_with_frontmatter(md_path, title="X", authors="Y", version="v1")
+    seen_ids: list[str] = []
+
+    def fake_convert(arxiv_id, output_dir):
+        seen_ids.append(arxiv_id)
+        return md_path
 
     arxiv.ingest_arxiv_paper(
         "cond-mat/0207270",
         license="arxiv-perpetual-non-exclusive",
         classification="PUBLIC",
         download_dir=str(tmp_path),
-        fetch_fn=lambda url: b"stub",
+        convert_fn=fake_convert,
     )
 
-    assert Path(captured["file_path"]).name == "cond-mat_0207270.pdf"
+    assert seen_ids == ["cond-mat/0207270"]
+
+
+def test_ingest_arxiv_paper_creates_tempdir_when_download_dir_omitted(monkeypatch):
+    _capture(monkeypatch)
+    seen_dirs: list[Path] = []
+
+    def fake_convert(arxiv_id, output_dir):
+        seen_dirs.append(output_dir)
+        md_path = output_dir / "paper.md"
+        _write_md_with_frontmatter(md_path, title="X", authors="Y", version="v1")
+        return md_path
+
+    arxiv.ingest_arxiv_paper(
+        "2401.01234",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        convert_fn=fake_convert,
+    )
+
+    assert len(seen_dirs) == 1
+    assert seen_dirs[0].exists()
 
 
 def test_ingest_arxiv_paper_rejects_implausible_id(tmp_path):
@@ -91,7 +309,7 @@ def test_ingest_arxiv_paper_rejects_implausible_id(tmp_path):
             license="x",
             classification="PUBLIC",
             download_dir=str(tmp_path),
-            fetch_fn=lambda url: b"stub",
+            convert_fn=lambda arxiv_id, output_dir: Path("unused"),
         )
 
 
