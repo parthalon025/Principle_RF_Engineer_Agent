@@ -70,7 +70,7 @@ so which one you target changes everything downstream.
 |---|---|---|---|
 | 1 | Magnetic mirror — reflects with zero phase shift, so an antenna can sit flush on metal | Strontium titanate cubes, ~~εr = 310~~ **ε₁ = 250 − 1.25j** (FIG. 5C, not the prose); Mie resonance gives µ ≈ 5→20 | 8.3–8.7 GHz |
 | 2 | Impedance-matched to free space, no refraction | Dual cubes, ε and µ resonances matched | 9–10 GHz |
-| 3 | **Absorber** — no reflection, no transmission | I-shape electric ring resonators over rectangular wire resonators, on FR4 (εr 4.8, **tanδ 0.017**) | 8.5–10.5 GHz |
+| 3 | **Absorber** — no reflection, no transmission | I-shape electric ring resonators over rectangular wire resonators, on FR4 (εr 4.8, **tanδ 0.017**) | 8.5–10.5 GHz — **FIG. 7G's plot range, not a stated requirement** (`RUNNING-LISTS.md` §3 correction 27) |
 | 4 | Reflection phase tuned per cell → steers the bounce | Cylinders; **diameter** is the knob | 10 GHz |
 | 5 | Same, electrically tunable | Square patches with BST film ~20 µm, <40 V bias | 10–20 GHz |
 | 6 | Polarization converter, linear ↔ circular | Meander lines | 13–17 GHz |

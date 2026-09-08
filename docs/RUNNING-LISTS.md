@@ -333,6 +333,18 @@ adopting these results will hit the same thing.
     perfectly reflecting backing (correction 26), so #129's Example 3 headroom
     figures rest on an assumption that example does not satisfy.
 
+    **Landed in the document 2026-09-08** (#203, under ADR-0024): all four
+    sites corrected in `absorber-scoring-conventions.md`. The general
+    convention was left standing — the one-port collapse really is valid for
+    a ground-backed absorber, and ADR-0017 makes the programme's own skins
+    exactly that. What was removed is the claim that the **anchor** is one of
+    them. Because the error is re-derivable (anyone applying the programme's
+    own default would make it again), the corrected passage carries an inline
+    inoculation naming ADR-0017 and this entry, per ADR-0024's format. §5.3's
+    dependent conclusion — *"the Rozanov limit is not binding for Example 3"* —
+    was re-aimed rather than deleted: it is sound for a ground-backed skin and
+    was never a fact about the anchor, which Rozanov does not govern at all
+    (correction 26).
 26. **Rozanov (2000) has now been read first-hand, and it is metal-backed by
     assumption.** The bound's own opening sentence, verbatim: *"We consider a
     slab of thickness d, permittivity ε = ε′ − iε″, and permeability
@@ -366,6 +378,20 @@ adopting these results will hit the same thing.
     already fired. The rule stands unchanged: *a number read off a plot is not
     a requirement.*
 
+    **Landed in the documents 2026-09-08** (#203, under ADR-0024).
+    `absorber-scoring-conventions.md`: the two scoring recommendations no
+    longer state a band for the anchor, and §5.3's worked figures are re-aimed
+    at a ground-backed skin. `absorber-thickness-bandwidth-bound.md`: a
+    governing note in the bottom line, and every prose claim about "where
+    Example 3 sits" re-aimed — that document also fails its **own** stated
+    assumption 4 (*"Backed by a perfect electric conductor"*) when applied to
+    the anchor, which correction 26 established after it was written. Its
+    literal script output is left verbatim as the record of what the script
+    printed, with the block labelled. `HANDOFF-metamaterial-printing-grill.md`
+    is marked in its own `~~struck~~ **corrected**` house style rather than
+    rewritten: ADR-0024 exempts it as an explicit historical record of what
+    was believed when. **The arithmetic was correct throughout and none of it
+    changed** — only what it is about.
 28. **The FR4-permittivity explanation for the patent-vs-Landy 20% frequency gap
     is dead by arithmetic.** The patent states its own simulation inputs:
     *"a 0.87 mm-thick absorber metamaterial layer using FR4 dielectric layer of
@@ -499,6 +525,16 @@ this list.
     separated, the other how thin a single line can be, and they were being
     used interchangeably.* They are enforced at different points in a
     design rule, so the conflation is not cosmetic. Found on #115.
+    **Landed in the document 2026-09-08** (#203, under ADR-0024): all ten
+    citations corrected. The attribution was verified first-hand against
+    PMC9184614 rather than taken from this entry — that record confirms
+    **Shao** as first author of *Nat. Commun.* **13**, 3223 (2022),
+    DOI 10.1038/s41467-022-30648-2, and confirms all three figures
+    (120 µm line width; "line gaps ranging from 3 to 30 μm"; 6260 S cm⁻¹ at
+    N = 2, rising to 6900 in low humidity). Everything in the original
+    citation except the surname was already correct. The gap-versus-width
+    half of this correction was **already** handled in the document at
+    :8, :79 and :90, and needed no change.
 
 36. **Rejected alternatives are destroyed, not merely unindexed.**
     `orchestration/tooling.py:223` hardcodes `"alternatives": []` into every
