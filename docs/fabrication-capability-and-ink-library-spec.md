@@ -12,7 +12,7 @@ same way
 [#154](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/154) implemented
 ADR-0015 after the decision was accepted.
 
-**Provenance ladder** is `CONTEXT.md`'s eight rungs. `MEASURED` appears nowhere in this
+**Provenance** is `CONTEXT.md`'s nine-value set. `MEASURED` appears nowhere in this
 document: this programme has measured none of it yet. That is the point — see §7.
 
 ---

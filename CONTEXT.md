@@ -16,14 +16,18 @@ and a glossary that churns with it stops being trustworthy (see
 
 - **Provenance**: the evidence class of a stated RF result — exactly one of
   `MEASURED`, `SIMULATED`, `CALCULATED`, `MANUFACTURER-SPECIFIED`,
-  `LITERATURE-SUPPORTED`, `INFERRED`, `ASSUMED`, `UNKNOWN`. A closed set, and
-  the only confidence vocabulary in the project: there is no parallel
-  "provisional"/"draft" tag, and no path by which an LLM-estimated confidence
-  becomes a `CALCULATED` one. Never state a value without one once the agent
-  produces it. A knowledge-base chunk cited by the agent inherits its
-  provenance from the source document's **source type**:
+  `LITERATURE-SUPPORTED`, `INTERNAL-HISTORY`, `INFERRED`, `ASSUMED`,
+  `UNKNOWN`. A closed set, and the only confidence vocabulary in the
+  project: there is no parallel "provisional"/"draft" tag, and no path by
+  which an LLM-estimated confidence becomes a `CALCULATED` one. Never
+  state a value without one once the agent produces it. A knowledge-base
+  chunk cited by the agent inherits its provenance from the source
+  document's **source type**:
   `datasheet`/`application_note` → `MANUFACTURER-SPECIFIED`;
-  `standard`/`textbook`/`paper`/`patent` → `LITERATURE-SUPPORTED`. An
+  `standard`/`textbook`/`paper`/`patent` → `LITERATURE-SUPPORTED`;
+  `design_record` → `INTERNAL-HISTORY`, which sits below published
+  authority because it is the team's own prior write-up rather than an
+  outside source (`knowledge/provenance.py`). An
   automatically extracted **component** specification field is
   `MANUFACTURER-SPECIFIED` when the extraction was unambiguous, `INFERRED`
   when the read was ambiguous or low-confidence, and `UNKNOWN` when it
@@ -31,10 +35,26 @@ and a glossary that churns with it stops being trustworthy (see
   regardless of the extractor's own confidence — there is no human review
   step, so provenance and physical bounds are the only signal a downstream
   user gets that a value should be double-checked.
+  _Avoid_: Provenance ladder as a name in its own right — the ladder
+  metaphor is fine and "rung" is used throughout, but the phrase blurs two
+  things this glossary keeps apart: Provenance is the closed set of nine
+  labels, and **Evidence hierarchy** is the order they are compared in.
+  Name whichever one you mean.
 - **Evidence hierarchy**: measured > validated simulation > deterministic
   calculation > manufacturer spec > authoritative reference > internal
   engineering history > general web material > LLM inference. Higher wins
-  when evidence conflicts.
+  when evidence conflicts. Its ranks name Provenance values in order —
+  `MEASURED`, `SIMULATED`, `CALCULATED`, `MANUFACTURER-SPECIFIED`,
+  `LITERATURE-SUPPORTED`, `INTERNAL-HISTORY`, then `INFERRED` — with two
+  deliberate gaps at the join: **general web material** is a rank with no
+  Provenance value, because no source type ingests it, and `ASSUMED` and
+  `UNKNOWN` are values with no rank, because both mark the *absence* of
+  evidence rather than a kind of it. So the hierarchy orders seven of the
+  nine values, and a conflict involving `ASSUMED` or `UNKNOWN` is not
+  settled by rank.
+  *In plain terms: this is the tie-breaker for "two sources disagree, which
+  do we believe?" — and two of the nine labels mean "we have no source at
+  all," which is why they are not in the running.*
 - **Source type**: the classification of an ingested knowledge document —
   `datasheet`, `application_note`, `standard`, `textbook`, `paper`,
   `patent`, or `design_record`. Fixed at ingest time; determines the
@@ -127,6 +147,19 @@ and a glossary that churns with it stops being trustworthy (see
   (#113). Cite the drawings, not the prose: the prose figure of εr = 310
   is not what Example 1 was simulated with (#107).
   _Avoid_: Meta-atom — an optics-context term, not this project's.
+- **Supercell**: a block of identical **Symbols** repeated side by side on a
+  coded surface, so each symbol sits among neighbours like itself and
+  behaves as it did when it was characterised. Its size is never a project
+  constant — it is derived per **Customer requirement** from the
+  RCS-reduction target, which sets a phase budget
+  `δ = 2·arcsin(10^(−RCSR_dB/20))` that the coupling error at the block's
+  edges must stay inside (`docs/supercell-sizing-rule.md`, #130).
+  *In plain terms: identical tiles are laid in patches because a tile
+  misbehaves when the tiles beside it are different, and how big a patch
+  has to be falls out of how much radar reduction the customer asked for.*
+  _Avoid_: super-cell — the hyphenated spelling is in live use (#187 and
+  several docs), but the code and both filenames carry the unhyphenated
+  one, so that is the spelling to write.
 - **Customer requirement**: a stated design target for one antenna/EM-skin
   design — frequency band, gain or VSWR/bandwidth target, form factor,
   host-surface curvature, platform, and ground-plane presence (whether the
@@ -145,7 +178,7 @@ and a glossary that churns with it stops being trustworthy (see
   inventing a stronger provenance tier. A requirement whose prose yields no
   defensible target is `UNSCOREABLE`, with the reason recorded, never given
   an invented number.
-  _Avoid_: a `CONFIRMED` provenance tier — Provenance's eight-value set is
+  _Avoid_: a `CONFIRMED` provenance tier — Provenance's nine-value set is
   fixed; confirmation is a trust signal about the reading, not a new kind
   of evidence.
 - **Threshold/Objective**: the two values a Requirement target's numeric
@@ -174,7 +207,9 @@ and a glossary that churns with it stops being trustworthy (see
   settled fact merely by having been made before. Contrast **Material-
   property library** entry, the one kind of data this project deliberately
   does carry forward between passes, because it is a fact about a
-  material rather than about any one requirement.
+  material rather than about any one requirement
+  (`docs/requirement-derived-thresholds.md`, #110/#112/#115;
+  `designs/material_properties.py` names it as the contrast case).
 - **Material-property library**: a persistent store of physical material
   properties (permittivity, loss tangent, conductivity, etc.), keyed by
   `(material, frequency, property)` rather than by design or requirement —
@@ -203,6 +238,24 @@ and a glossary that churns with it stops being trustworthy (see
   to one number: a decisive property's bracket produces a visibly wide
   spread in the resulting rank — the spread itself is the signal that
   this guess matters — while a minor property's bracket barely moves it.
+- **Ink-property library**: a persistent store of what one purchasable ink
+  is and what its datasheet says it becomes when printed a stated way
+  (volume resistivity, recommended cured thickness, cure schedule,
+  viscosity), keyed by `(ink, process state, property)`. That process axis
+  is exactly what a **Material-property library** entry has no room for,
+  and it is the reason this is a separate store: an ink's electrical
+  behaviour is not a property of the ink alone — the same ink at 6 µm,
+  12 µm and 24 µm is three different sheet resistances, and MXene's
+  conductivity depends on whether it was cured and at what temperature.
+  One of three libraries that split a single question between them:
+  Ink-property is *what you buy*, **Fabrication capability** is *what a
+  machine can lay down*, and Material-property is *what the cured film
+  then is, electromagnetically, at frequency*. A printable candidate is
+  therefore a `(machine, ink, material)` triple, and the loop enumerates
+  triples rather than assuming one of each
+  (`docs/fabrication-capability-and-ink-library-spec.md`, #106).
+  _Avoid_: ink database, and folding ink into the Material-property library
+  — the missing process axis is the whole reason the two are separate.
 - **Fabrication capability**: the configured, cross-run set of what a
   specific piece of equipment can currently build — which processes, what
   cure ceiling, what minimum feature size, whether it can embed a discrete
@@ -227,7 +280,15 @@ and a glossary that churns with it stops being trustworthy (see
   parameter recommendation (e.g. unit-cell spacing, layer stack, expected
   gain) with rationale tracing back to CALCULATED results and/or
   LITERATURE-SUPPORTED sources. Not a fabrication-ready CAD file or mesh;
-  a human still builds the prototype from it.
+  a human still builds the prototype from it. This is the sense meant by
+  the rule that a patent's claim language is never design guidance
+  (`knowledge/provenance.py`, `agent/main.py`, `mcp_server/server.py`).
+  _Avoid_: using the bare phrase for a *ticket's* implementation advice —
+  several modules say "this ticket's own design guidance"
+  (`optimization/gradient.py`, `simulation/hfss.py`, and others) meaning
+  what the issue told the author to build, which is a different thing
+  entirely. Say "the ticket's guidance" for that and keep Design guidance
+  for what the agent hands the customer.
 - **Design/decision record**: an internally-authored write-up of what was
   decided for a prior design, why, and what alternatives were considered —
   ingested as an ordinary `documents` row (`source_type = design_record`,
@@ -289,7 +350,7 @@ and a glossary that churns with it stops being trustworthy (see
   affects ranking or `score_percent` (#112) — and it may steer which
   candidates get proposed next, never how any candidate is scored (#194).
   _Avoid_: a `REFUTED` provenance tier, or a "validated"/"unvalidated"
-  confidence tag — Provenance's eight-value set is fixed and is the only
+  confidence tag — Provenance's nine-value set is fixed and is the only
   confidence scale in the project.
 - **Mechanism claim**: the single statement of *why this batch* that
   accompanies a batch of LLM-proposed candidates, written as a testable

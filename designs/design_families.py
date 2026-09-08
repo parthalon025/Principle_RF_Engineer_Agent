@@ -36,7 +36,7 @@ Those are genuinely different states and the registry holds both, distinctly:
 
 The second is the load-bearing one. Guessing a plausible-looking formula for
 an unread bound would produce a confident number with no source behind it,
-which is precisely the failure the Provenance ladder exists to prevent -- and
+which is precisely the failure Provenance exists to prevent -- and
 a silent `None` would have made "we never looked" indistinguishable from
 "there is nothing to look for".
 
