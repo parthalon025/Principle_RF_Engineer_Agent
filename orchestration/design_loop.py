@@ -163,6 +163,12 @@ from rf_tools.calculations import vswr_from_gamma as _vswr_from_gamma
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
+from rf_tools.transmissive_absorber import (
+    refuse_ground_backed_model as _refuse_ground_backed_model,
+)
+from rf_tools.transmissive_absorber import (
+    transmissive_absorber_band_response as _transmissive_absorber_band_response,
+)
 from simulation.base import SimulatorError as _SimulatorError
 from simulation.meep import (
     PERIODIC_ABSORBER_VALIDITY as _MEEP_PERIODIC_ABSORBER_VALIDITY,
@@ -689,10 +695,11 @@ def _handle_analysis(
             "designs/design_families.py -- running a different family's model "
             "instead is the exact defect issue #239 removed."
         )
-    return handler(step_input)
+    return handler(family, step_input)
 
 
 def _handle_analysis_absorber(
+    family: Any,
     step_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any], str | None]:
     """Worst-in-band absorption for a ground-backed printed absorber.
@@ -702,7 +709,16 @@ def _handle_analysis_absorber(
     a `validity` list naming each load-bearing assumption -- notably the
     unrecovered thin-spacer term (#190) -- and never withholds a number
     for one: the loop reports and proceeds.
+
+    Refuses a transmissive stack before computing anything (#242). This
+    model's whole legitimacy is that a ground plane guarantees nothing gets
+    through, so every watt not reflected became heat; applied to a surface
+    with free space behind it, it would credit as absorbed the power that
+    simply escaped out the back. The guard is defined beside the two-port
+    model it points at, and reads what the family DECLARES -- its
+    `requires_ground_plane` and `port_count` -- rather than its name.
     """
+    _refuse_ground_backed_model(family)
     _require_fields(
         step_input,
         {
@@ -758,9 +774,89 @@ def _handle_analysis_absorber(
     return "calculation", result, "CALCULATED"
 
 
-def _handle_analysis_patch(
+def _handle_analysis_transmissive_absorber(
+    family: Any,
     step_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any], str | None]:
+    """Worst-in-band absorption for an UNBACKED, TWO-PORT surface (#242).
+
+    Same minimax rule as the ground-backed handler above -- the single
+    worst-absorbing frequency in the band, never the mean and never the peak
+    (#110) -- and the same bracketed-permittivity treatment (ADR-0015/#127: a
+    guess on a decisive property yields a RANGE, and the swing IS the
+    warning).
+
+    What differs is the sum. This family has no metal behind it, so power can
+    leave out the back, and absorption is what is left after BOTH the
+    reflected and the transmitted share: A = 1 - |S11|^2 - |S21|^2
+    (docs/absorber-scoring-conventions.md section 1). The transmitted
+    fraction rides along in the result rather than being folded away, because
+    for this family it is a different decision: "44 % absorbed" and "44 %
+    absorbed, 44 % straight through the part" are not the same answer to
+    someone who has to know whether whatever sits behind the surface will
+    hear it.
+
+    The family's physical bound rides along as UNREAD rather than absent, and
+    the Rozanov bound is never quoted here: its own opening line fixes a slab
+    over a perfectly reflecting plane, which this family has not got.
+    """
+    del family  # the model needs no family fact; the signature is the dispatch's
+    _require_fields(
+        step_input,
+        {
+            "f_low_hz",
+            "f_high_hz",
+            "tan_delta",
+            "thickness_m",
+            "period_m",
+            "gap_m",
+            "sheet_resistance_ohm_sq",
+            "squares",
+        },
+        "analysis",
+    )
+    eps_r_low, eps_r_high, material_property = _resolve_eps_r_bounds(step_input, "analysis")
+
+    def response(eps_r: float) -> dict[str, Any]:
+        return _transmissive_absorber_band_response(
+            f_low_hz=step_input["f_low_hz"],
+            f_high_hz=step_input["f_high_hz"],
+            eps_r=eps_r,
+            tan_delta=step_input["tan_delta"],
+            thickness_m=step_input["thickness_m"],
+            period_m=step_input["period_m"],
+            gap_m=step_input["gap_m"],
+            sheet_resistance_ohm_sq=step_input["sheet_resistance_ohm_sq"],
+            squares=step_input["squares"],
+        )
+
+    at_low = response(eps_r_low)
+    if eps_r_high == eps_r_low:
+        result = dict(at_low)
+    else:
+        at_high = response(eps_r_high)
+        result = dict(at_low)
+        result["worst_absorption_low"] = min(
+            at_low["worst_absorption"], at_high["worst_absorption"]
+        )
+        result["worst_absorption_high"] = max(
+            at_low["worst_absorption"], at_high["worst_absorption"]
+        )
+        # Both endpoints' warnings apply; neither is discarded.
+        seen = {v["flag"] for v in result["validity"]}
+        result["validity"] = list(result["validity"]) + [
+            v for v in at_high["validity"] if v["flag"] not in seen
+        ]
+    if material_property is not None:
+        result["material_property"] = material_property
+    return "calculation", result, "CALCULATED"
+
+
+def _handle_analysis_patch(
+    family: Any,
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    del family  # a patch resonance needs no family fact; the signature is uniform
     _require_fields(step_input, {"w_m", "h_m", "l_m"}, "analysis")
     eps_r_low, eps_r_high, material_property = _resolve_eps_r_bounds(step_input, "analysis")
 
@@ -798,6 +894,7 @@ def _handle_analysis_patch(
 # reported failure, not a fallback.
 _ANALYSIS_MODELS: dict[str, Any] = {
     "ABSORBER_BAND_RESPONSE": _handle_analysis_absorber,
+    "TRANSMISSIVE_ABSORBER_BAND_RESPONSE": _handle_analysis_transmissive_absorber,
     "PATCH_RESONANT_FREQUENCY": _handle_analysis_patch,
 }
 

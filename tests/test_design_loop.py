@@ -1451,7 +1451,7 @@ _PATCH_ANALYSIS_INPUT = {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016, "l_m": 0.029
 # declaration recorded in designs/design_families.py, not an omission -- see
 # that file for why each one has nothing to declare yet.
 _FAMILIES_DECLARING_NO_ANALYSIS = [
-    "ABSORBER_TRANSMISSIVE",
+    # ABSORBER_TRANSMISSIVE was here until #242 gave it the two-port model.
     "DIFFUSIVE",
     "POLARIZATION_CONVERTER",
     "REFLECTION_PHASE",
@@ -1478,16 +1478,95 @@ def test_a_family_declaring_no_analysis_fails_loudly_instead_of_becoming_a_patch
     assert all(d.step != DesignStep.ANALYSIS.value for d in state.decisions)
 
 
-def test_the_transmissive_absorbers_analysis_failure_names_the_ticket_that_will_fix_it():
-    """#239 only removes the wrong dispatch; the two-port absorption model
-    is #242. So ABSORBER_TRANSMISSIVE is EXPECTED to land on this path, and
-    the message has to say so rather than reading like an oversight."""
+def test_the_transmissive_absorber_runs_the_two_port_model_not_the_patch_formula():
+    """The defect #239 existed to remove, now checked on the family that had
+    it: ABSORBER_TRANSMISSIVE reaches the unbacked two-port model (#242) and
+    its result carries a transmitted share -- the quantity a patch resonant
+    frequency has no notion of."""
     state = start_design_loop(REQUIREMENTS)
     state = _grant_and_advance(
         state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER_TRANSMISSIVE")
     )
-    with pytest.raises(DesignLoopValidationError, match="242"):
-        advance_loop_step(state, dict(_PATCH_ANALYSIS_INPUT))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+
+    result = state.decisions[-1].result
+    assert "resonant_frequency_hz" not in result
+    assert result["worst_absorption"] is not None
+    assert result["provenance"] == "CALCULATED"
+
+
+def test_the_same_stack_scores_lower_unbacked_because_power_leaves_out_the_back():
+    """The number this whole spec exists to correct. One printed stack,
+    scored under both families: the ground-backed sum credits every watt not
+    reflected as heat, which is legitimate ONLY because a ground plane means
+    nothing gets through. Take the ground plane away and some of that power
+    walked out the back -- so the honest score must be lower, by at least the
+    transmitted share."""
+
+    def _score(family: str) -> dict:
+        state = start_design_loop(REQUIREMENTS)
+        state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+        state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+        return state.decisions[-1].result
+
+    backed = _score("ABSORBER")
+    unbacked = _score("ABSORBER_TRANSMISSIVE")
+
+    assert unbacked["worst_absorption"] < backed["worst_absorption"]
+    # And the gap is not a tuning artefact: it is the power that got through.
+    # The ground-backed model has no such quantity to report at all, which is
+    # the structural difference between the two families.
+    assert unbacked["transmission_at_worst"] > 0.0
+    assert "transmission_at_worst" not in backed
+
+
+def test_the_transmissive_analysis_reports_its_bound_unread_and_never_names_rozanov():
+    """The bound is reported as UNREAD, never as absent -- absence of a
+    citation is not evidence that no bound exists. And the ground-backed
+    family's bound is not named anywhere in the result: its derivation fixes
+    a slab over a perfectly reflecting plane, this family has no such plane,
+    and issue #216's failure mode is somebody finding the familiar name
+    sitting beside a transmissive number and reapplying it."""
+    import json as _json
+
+    from designs.design_families import ABSORBER_TRANSMISSIVE as _AT
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER_TRANSMISSIVE")
+    )
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    result = state.decisions[-1].result
+
+    assert result["physical_bound"]["status"] == "unread_primary_source"
+    assert result["physical_bound"]["applies"] is False
+    assert "rozanov" not in _json.dumps(result, default=str).lower()
+    # The registry entry is where that explanation belongs, and it is there.
+    assert "Rozanov" in _AT.physical_bound.citation
+
+
+def test_the_ground_backed_model_refuses_a_transmissive_family_at_the_dispatch():
+    """The guard sits where a design family and a model first meet. Aimed at
+    the transmissive family, the ground-backed handler must raise rather than
+    return the high score it would happily compute for a stack that lets a
+    large share straight through."""
+    from designs.design_families import ABSORBER_TRANSMISSIVE as _AT
+    from rf_tools.transmissive_absorber import GroundBackedModelMisappliedError
+
+    with pytest.raises(GroundBackedModelMisappliedError, match="ABSORBER_TRANSMISSIVE"):
+        design_loop_module._handle_analysis_absorber(_AT, dict(_ABSORBER_ANALYSIS_INPUT))
+
+
+def test_the_ground_backed_absorber_result_is_byte_for_byte_what_it_always_was():
+    """#242 must not move ABSORBER. The loop's result has to equal a direct
+    call to the untouched `rf_tools.absorber.absorber_band_response` for the
+    same inputs -- not merely resemble it."""
+    from rf_tools.absorber import absorber_band_response as _abr
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    assert state.decisions[-1].result == _abr(**_ABSORBER_ANALYSIS_INPUT)
 
 
 def test_analysis_follows_the_declared_model_even_when_the_family_name_disagrees(monkeypatch):

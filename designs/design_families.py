@@ -601,21 +601,19 @@ ABSORBER_TRANSMISSIVE = DesignFamily(
     requires_ground_plane=False,
     port_count=2,
     spine_fields=SPINE_FIELDS,
-    # DELIBERATELY NOTHING TO DECLARE YET, and that is #239's intended
-    # outcome for this family rather than an oversight -- see issue #242.
-    analysis_model=UndeclaredAnalysisModel(
-        reason=(
-            "this family's absorptivity is A = 1 - |S11|^2 - |S21|^2 "
-            "(docs/absorber-scoring-conventions.md section 1) and nothing in "
-            "rf_tools computes the transmission term |S21|. rf_tools.absorber's "
-            "closed form collapses to A = 1 - |S11|^2, and it may do that ONLY "
-            "because a ground plane is there to guarantee nothing gets through "
-            "-- exactly the thing this family does not have, so running it here "
-            "would credit as absorbed every watt that simply passed out the "
-            "back. In plain terms: the existing sum assumes the wave has "
-            "nowhere else to go, and here it does. Issue #242 is the ticket "
-            "that adds the two-port model; #239 (which removed the wrong "
-            "dispatch) deliberately stops short of writing one."
+    analysis_model=AnalysisModel(
+        name="TRANSMISSIVE_ABSORBER_BAND_RESPONSE",
+        function="rf_tools.transmissive_absorber.transmissive_absorber_band_response",
+        answers=(
+            "what fraction of the incident power this surface turns into heat at "
+            "the single worst frequency in the required band, counting SEPARATELY "
+            "the fraction that passes straight through it: A = 1 - |S11|^2 - "
+            "|S21|^2 (docs/absorber-scoring-conventions.md section 1). With no "
+            "metal behind it, power can leave out the back, so the ground-backed "
+            "collapse A = 1 - |S11|^2 would credit as absorbed every watt that "
+            "merely escaped. In plain terms: this one is a tinted window rather "
+            "than a mirror, and the model says how much light gets out the far "
+            "side instead of crediting the design for it. Issue #242."
         ),
     ),
     physical_bound=UnreadPhysicalBound(

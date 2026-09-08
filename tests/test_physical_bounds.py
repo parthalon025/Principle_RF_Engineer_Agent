@@ -425,7 +425,7 @@ def test_asking_a_family_with_no_model_raises_naming_the_family_and_the_file():
     """The message has to be actionable on its own: which family, what is
     missing, where to put it -- the standard UnknownDesignFamilyError and
     UnreadPhysicalBound already set."""
-    for family in (ABSORBER_TRANSMISSIVE, DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE):
+    for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE):
         assert not family.has_analysis_model
         with pytest.raises(UndeclaredAnalysisModelError) as exc:
             family.declared_analysis_model()
@@ -438,11 +438,18 @@ def test_asking_a_family_with_no_model_raises_naming_the_family_and_the_file():
         assert family.analysis_model.reason[:40] in message
 
 
-def test_the_transmissive_absorber_points_at_the_ticket_that_will_give_it_a_model():
-    """#239 deliberately stops at removing the wrong dispatch; #242 adds the
-    two-port model. Recorded so the next reader does not take this for an
-    oversight."""
-    assert "242" in ABSORBER_TRANSMISSIVE.analysis_model.reason
+def test_the_transmissive_absorber_declares_the_two_port_model():
+    """#239 removed the wrong dispatch and left this family with nothing to
+    declare; #242 gave it the unbacked two-port model. What the declaration
+    must NOT be is the ground-backed one -- that model's sum is legitimate
+    only because a ground plane guarantees nothing gets through."""
+    model = ABSORBER_TRANSMISSIVE.declared_analysis_model()
+    assert model.name == "TRANSMISSIVE_ABSORBER_BAND_RESPONSE"
+    assert model.function == ("rf_tools.transmissive_absorber.transmissive_absorber_band_response")
+    assert model.name != ABSORBER.declared_analysis_model().name
+    # The plain-language statement has to say what makes this family
+    # different: power leaves out the back and is not absorbed.
+    assert "S21" in model.answers
 
 
 def test_a_family_cannot_be_constructed_without_stating_its_analysis():
