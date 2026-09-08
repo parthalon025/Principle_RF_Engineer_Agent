@@ -7,12 +7,21 @@ or, more simply, run it directly with an interpreter that has Meep:
 
     /opt/conda/envs/mp/bin/python3 -m verification.meep_absorber_validation
 
-WHY THIS EXISTS. Every simulator adapter in this repo is tested against a
-hand-built fake: the tests confirm the adapter writes the right input and
-parses the output it is handed. Nothing confirmed that a real solve produces
-physically correct numbers -- which is the claim the `SIMULATED` provenance
-tag actually makes. `verification/simulator_reference_cases.py` names the
+WHY THIS EXISTS. An adapter's own unit tests use hand-built fakes: they
+confirm the adapter writes the right input and parses the output it is
+handed. That is a claim about talking to the solver, not about whether the
+solver told us the truth -- and only the second justifies the `SIMULATED`
+provenance tag. `verification/simulator_reference_cases.py` names the
 problems whose answers are published; this runs two of them.
+
+NOT the first real-solver run in this repo. #210 drove simulation/palace.py
+against a real compiled binary (docs/palace-floquet-validation.md) and found
+two genuine defects. The two efforts checked DIFFERENT halves and neither has
+done both: #210 validated the adapter path and says plainly it is "no check
+at all on the physics"; this validates the physics and does NOT exercise the
+adapter, because the runs below build mp.Simulation objects directly rather
+than calling run_meep_simulation(), deliberately, so the validation does not
+assume the thing it validates.
 
 THE TWO CASES, and why these two:
 

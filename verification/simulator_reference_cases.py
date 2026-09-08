@@ -1,15 +1,17 @@
 """Reference cases for validating simulator adapters (issue #144).
 
-The simulator adapters are tested against hand-built fakes: the tests confirm
-an adapter writes the right input deck and correctly parses output it is
-handed. Nothing confirms that a real solve produces physically correct
-numbers.
+An adapter's own unit tests use hand-built fakes: they confirm the adapter
+writes the right input deck and correctly parses output it is handed. That
+says nothing about whether a real solve produces physically correct numbers.
 
-In plain terms: we test that we can talk to the solver, not that the solver
-told us the truth and we read it correctly. Those are different claims, and
-only the second one justifies the `SIMULATED` provenance tag -- CONTEXT.md's
-evidence hierarchy ranks *validated* simulation second only to measurement,
-and today nothing performs that validation.
+In plain terms: those tests check that we can talk to the solver, not that
+the solver told us the truth and we read it correctly. Those are different
+claims, and only the second one justifies the `SIMULATED` provenance tag --
+CONTEXT.md's evidence hierarchy ranks *validated* simulation second only to
+measurement.
+
+Two of the cases below have now been checked that way (see the status note
+further down); the third has not.
 
 A reference case is a problem whose right answer is published and independent
 of this codebase, so running it end to end says something a fake cannot: that
