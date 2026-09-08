@@ -193,6 +193,42 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: a `CONFIRMED` provenance tier — Provenance's nine-value set is
   fixed; confirmation is a trust signal about the reading, not a new kind
   of evidence.
+- **Intended effect** (of a Customer requirement): what the requirement
+  wants done to the wave — absorbed, reflected in phase, steered,
+  transmitted, scattered diffusely, polarisation-converted, shielded
+  against. Distinct from a **Design family**, which is a *mechanism* that
+  might deliver it: one intended effect is typically servable by several
+  families, and **that one-to-many mapping is the trade space a set of
+  candidates is drawn from**. "Reduce radar return" is answered both by an
+  absorber, bounded by Rozanov's thickness-versus-bandwidth inequality, and
+  by a diffusive/coding surface, which carries no published bound at all —
+  physically different routes with different costs and different
+  confidence.
+  Established by interview with whoever speaks for the customer rather than
+  inferred silently, and then tracked exactly like a **Requirement
+  target**: provenance is always `ASSUMED`, because it is a reading of
+  someone's words and not anybody's measurement, with confirmation carried
+  on a separate status axis rather than a stronger provenance tier. Its
+  vocabulary is **open, not a closed enum** — the same reasoning as
+  **Optimizer class**, stored as an open value so an approach nobody needs
+  yet has room to exist.
+  **A requirement may legitimately have none, and saying so is an answer
+  rather than a gap.** A bend radius, a mass budget or a cure ceiling asks
+  nothing of the wave. Such a requirement still constrains the
+  electromagnetic design and may remove a whole family from the trade space
+  — a coding surface tolerates only `S ≤ 2·θ_max·R` of arc before its cells
+  sit outside their **Validity box**'s incidence-angle range
+  (`docs/curvature-effects-on-em-surfaces.md`) — and that exclusion is a
+  `capability-verdict` in the **Considered-and-dropped ledger**, so it
+  expires if the stated curvature changes.
+  *In plain terms: what the customer wants to happen to the radio wave, as
+  opposed to which trick you use to make it happen.*
+  _Avoid_: Objective — taken, and means the desired value of a numeric
+  target (**Threshold/Objective**). Function — taken as a loop
+  `step_output` key naming the calculation that ran. Mechanism — ADR-0022's
+  **Mechanism claim** is a predicted ordering, not a physical effect.
+  Designed-for behaviour — describes a family's property, not a customer's
+  wish.
 - **Threshold/Objective**: the two values a Requirement target's numeric
   value may carry, adopted from defence-acquisition practice (JCIDS
   Enclosure B, via #122) to settle #117. **Threshold** is the minimum
