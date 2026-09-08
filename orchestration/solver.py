@@ -144,6 +144,22 @@ batch is mostly failures will exhaust `evaluation_budget` long before a
 meaningful plateau window accumulates; that is the honest outcome, not
 patched over here.
 
+WHAT A PLATEAU MEANS FOR THE CALLING AGENT'S NEXT MOVE: this module only
+detects and reports a plateau (`stop_reason="score_plateau"`) -- it never
+decides what happens next, and never re-enters itself between batches
+(that would need a mechanism this module deliberately does not have; see
+docs/design-loop-convergence-sequencing.md Sec.5a's SGDR/warm-restart
+comparison). That operating convention lives in the prompt layer instead,
+per ADR-0010: `prompts/principal_engineer.md`'s "Candidate-search
+plateaus" section, and both tool-wrapper docstrings (`agent/main.py`,
+`mcp_server/server.py`) for `run_candidate_search`, tell the calling agent
+to treat a plateau stop as a cue to submit one more, deliberately
+different batch before concluding this architecture's OPTIMIZATION is
+exhausted -- not to read it the same way as `target_satisfaction` or
+`evaluation_budget`. This module's own return value is unchanged by that
+convention: `stop_reason`/`stop_detail` report the plateau exactly as
+before, and nothing here gates, refuses, or automates the next batch.
+
 ------------------------------------------------------------------------
 DESIGN QUESTION 3 -- WHICH SCORE DRIVES CONVERGENCE: THE WORST SCORED
 STEP, PER CANDIDATE ("worst_of_scored_steps", named in every result dict's
@@ -271,21 +287,28 @@ step handlers each return a small, DIFFERENT dict shape (ANALYSIS:
 "impedance": {...}, "pattern": [...], ...}`; OPTIMIZATION: `{"achieved_
 frequency_hz": ...}`, among other fields) -- something has to say which
 key of which step's result is the number being scored, and in what unit.
-`_DEFAULT_SCORE_FIELDS` below is a fixed, duplicated-not-imported lookup
-of that (`resonant_frequency_hz`/Hz for ANALYSIS, `gain_dbi`/dBi for
-SIMULATION, `achieved_frequency_hz`/Hz for OPTIMIZATION) -- mechanical
-wiring knowledge already fixed by those functions' own documented output
-shapes (rf_tools/calculations.py, simulation/nec2pp.py, optimization/
-rf_objectives.py), not an RF judgment call, the same kind of small,
-stable per-step lookup `orchestration/tooling.py`'s own `_STEP_TO_TOOL_
-NAME` already keeps. A caller wanting a DIFFERENT field scored (e.g.
-SIMULATION's `average_power_gain_linear` instead of `gain_dbi`) overrides
-`result_field` in that step's `score_specs` entry, but then MUST also
-supply an explicit `unit` -- this module has no basis for guessing the
-unit of an arbitrary overridden field, matching designs/success_score.py's
-own "refuse rather than guess a unit conversion" rule exactly (see that
-module's "UNIT HANDLING" section); `_resolve_score_field` below enforces
-this and raises `SolverError` naming the problem if violated.
+`_DEFAULT_SCORE_FIELDS` below is that lookup (`resonant_frequency_hz`/Hz
+for ANALYSIS, `gain_dbi`/dBi for SIMULATION, `achieved_frequency_hz`/Hz
+for OPTIMIZATION), built at import time from `orchestration/
+score_fields.py`'s `SCORE_FIELD_SOURCES` -- the single source of truth
+this module and `orchestration/lab_test_plan.py` both derive their own
+lookup shape from (issue #102; that module needs the same facts grouped
+by physical quantity kind instead of by step, so it builds a differently-
+shaped index from the identical triples rather than this module's flat
+one). See `orchestration/score_fields.py`'s own docstring for why this is
+mechanical wiring knowledge fixed by those functions' own documented
+output shapes (rf_tools/calculations.py, simulation/nec2pp.py,
+optimization/rf_objectives.py), not an RF judgment call, and for why it is
+kept separate from `orchestration/tooling.py`'s own `_STEP_TO_TOOL_NAME`
+despite the overlapping step keys. A caller wanting a DIFFERENT field
+scored (e.g. SIMULATION's `average_power_gain_linear` instead of
+`gain_dbi`) overrides `result_field` in that step's `score_specs` entry,
+but then MUST also supply an explicit `unit` -- this module has no basis
+for guessing the unit of an arbitrary overridden field, matching designs/
+success_score.py's own "refuse rather than guess a unit conversion" rule
+exactly (see that module's "UNIT HANDLING" section); `_resolve_score_field`
+below enforces this and raises `SolverError` naming the problem if
+violated.
 
 A step with no `score_specs` entry is still DRIVEN (its `LoopDecision` is
 recorded, exactly as if scored) but never scored -- its trail entry
@@ -352,6 +375,28 @@ SIMULATION's `pattern`/`impedance` sub-dicts) would multiply the response
 size by the batch length for no benefit: only one candidate's parameters
 can honestly continue as "the" design going forward, and every candidate's
 SCORE (not its full state) is already in `trail`.
+
+------------------------------------------------------------------------
+OPTIONAL `design_id`: SEEDING FROM A DESIGN'S OWN PRIOR RESULTS -- issue
+#87's "cross-run learning" follow-up to this ticket's own user story #21
+("a design's score history across iterations, so I can see whether
+iterating is still improving anything"), left unimplemented when this
+module was first built: every call used to start `best_so_far` (design
+question 2) empty, so a caller re-running the same design later got no
+benefit from what an earlier call (or an earlier session) had already
+found. `run_candidate_search(..., design_id=<int>)` closes that gap: it
+reads `design_id`'s own best-ever recorded score, per scoreable step (via
+a new READ-ONLY query, `designs.db.read_engineering_results_for_scoring`),
+and seeds the plateau-window baseline with it before evaluating any NEW
+candidate -- see `_prior_best_from_design`'s own docstring for the full
+mechanics, including the one honestly-documented limitation in how it
+infers "which prior iteration" from recording order alone. Two properties
+worth stating up front, both already true of the rest of this module: (1)
+this is READ-ONLY -- it opens a connection only to SELECT, never to write,
+same discipline "THE NON-NEGOTIABLE CONSTRAINT" above already holds this
+whole module to for gates; (2) it never touches GATED_STEPS or any
+approval machinery -- it is pure historical arithmetic over already-
+recorded numbers, exactly like every OTHER score this module computes.
 """
 
 from __future__ import annotations
@@ -359,10 +404,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import designs.db as designs_db
 from designs.requirement_targets import TargetStatus
 from designs.success_score import success_score
 
 from .design_loop import GATED_STEPS, DesignStep
+from .score_fields import SCORE_FIELD_SOURCES
 from .tooling import advance_design_loop_step
 
 _logger = logging.getLogger(__name__)
@@ -388,7 +435,13 @@ _ORDERED_UNGATED_SPAN: tuple[DesignStep, ...] = (
 # -- this module performs no validation of its own on these.
 _REQUIRED_FIELDS: dict[DesignStep, tuple[str, ...]] = {
     DesignStep.ANALYSIS: ("eps_r", "w_m", "h_m", "l_m"),
-    DesignStep.SIMULATION: ("geometry", "frequency_hz"),
+    # reference_impedance_ohms (issue #101): _handle_simulation now derives
+    # VSWR/return loss from the feed-point impedance it already computes,
+    # and requires its caller to state the reference impedance explicitly
+    # -- never silently assumed to be 50 ohms. A candidate driving
+    # SIMULATION through this module must carry it the same way it must
+    # carry geometry/frequency_hz.
+    DesignStep.SIMULATION: ("geometry", "frequency_hz", "reference_impedance_ohms"),
     DesignStep.OPTIMIZATION: (
         "eps_r",
         "w_m",
@@ -404,13 +457,24 @@ _OPTIONAL_FIELDS: dict[DesignStep, tuple[str, ...]] = {
 }
 
 # Which raw result field a scoreable step's numeric value lives at, and its
-# unit -- see this module's docstring, "SCORING". Fixed wiring knowledge
-# about the Phase 1/6/9 functions' own documented output shapes, not an RF
-# judgment call.
+# unit -- see this module's docstring, "SCORING". Derived from
+# orchestration/score_fields.py's SCORE_FIELD_SOURCES (issue #102's single
+# source of truth), not restated here -- see that module's own docstring.
 _DEFAULT_SCORE_FIELDS: dict[DesignStep, tuple[str, str]] = {
-    DesignStep.ANALYSIS: ("resonant_frequency_hz", "Hz"),
-    DesignStep.SIMULATION: ("gain_dbi", "dBi"),
-    DesignStep.OPTIMIZATION: ("achieved_frequency_hz", "Hz"),
+    source.step: (source.result_field, source.unit) for source in SCORE_FIELD_SOURCES
+}
+
+# Which engineering_results.tool_name a scoreable step's own PAST rows are
+# recorded under -- the same lookup orchestration/tooling.py's own
+# _STEP_TO_TOOL_NAME keeps for ANALYSIS/SIMULATION/OPTIMIZATION,
+# duplicated rather than imported (same convention _DEFAULT_SCORE_FIELDS
+# above already follows). Used only by _prior_best_from_design, below, for
+# the optional design_id-seeding feature (issue #87's cross-run-learning
+# follow-up) -- nothing else in this module reads engineering_results.
+_STEP_TOOL_NAME: dict[DesignStep, str] = {
+    DesignStep.ANALYSIS: "patch_resonant_frequency_hz",
+    DesignStep.SIMULATION: "run_nec2_simulation",
+    DesignStep.OPTIMIZATION: "optimize_patch_length_for_target_frequency",
 }
 
 _REQUIRED_STATE_KEYS = (
@@ -694,6 +758,118 @@ def _overall_score(step_trail: list[dict[str, Any]]) -> tuple[float | None, bool
     return overall, all_met
 
 
+def _prior_best_from_design(
+    design_id: int,
+    scoreable_steps: list[DesignStep],
+    score_specs: dict[str, dict[str, Any]],
+) -> tuple[float | None, int | None]:
+    """The best `overall_score_percent` (design question 3's own
+    worst_of_scored_steps rule, reused unchanged) that `design_id` has
+    EVER already recorded on `scoreable_steps`, and which of its prior
+    iterations achieved it -- read-only, via `designs.db.
+    read_engineering_results_for_scoring`; this function issues no write
+    of any kind (see that function's own docstring for the read/write
+    split it preserves). `run_candidate_search`'s optional `design_id`
+    parameter (issue #87's cross-run-learning follow-up to issue #95's own
+    user story #21, "a design's score history across iterations") calls
+    this once, before evaluating any NEW candidate, to seed the plateau-
+    window baseline (design question 2) from this design's OWN past
+    results -- so a fresh call does not have to re-discover, at the cost
+    of a fresh evaluation_budget, a local optimum a PRIOR call (or a prior
+    session) already found for the exact same design.
+
+    HOW "WHICH PRIOR ITERATION" IS DETERMINED, HONESTLY: engineering_results
+    rows carry no iteration number of their own -- design_loop.py's
+    LoopDecision.iteration exists only in memory; orchestration/tooling.py's
+    flush never persists it onto the row it writes (a pre-existing gap,
+    not something this function fixes or needs fixed). This function
+    infers one instead, from recording order alone: within one design's
+    history, a row is only ever written by orchestration/tooling.py's
+    REDESIGN_DECISION flush (docs/adr/0011), and that flush fires at most
+    once per design-loop iteration, writing at most one row per step per
+    firing (the loop's own linear state machine visits ANALYSIS/
+    SIMULATION/OPTIMIZATION exactly once each before REDESIGN_DECISION can
+    even be reached) -- so, for a design_id whose engineering_results were
+    written EXCLUSIVELY by that flush, the Nth-recorded row for a given
+    step's tool_name really is that design's Nth iteration to reach that
+    step. A design_id that ALSO received a row from some other caller
+    (e.g. record_engineering_result called directly, outside any design
+    loop) would make this numbering wrong in a way nothing here can
+    detect -- accepted as a known limitation, not solved, the same
+    "accepted rather than solved" honesty LoopDecision.iteration's own
+    docstring already applies to a different gap in the same area.
+
+    Combining PER-STEP bests into one prior_best_score/prior_iteration
+    pair (rather than reporting a best per step, which would leave
+    "seed the plateau baseline" with no single number to seed from):
+    treat each recording ordinal `i` as if it were one historical
+    candidate's own step_trail (exactly design question 3's shape), taking
+    the SAME worst_of_scored_steps rule across whichever scoreable steps
+    have a value recorded at that ordinal, then keep the best (highest)
+    such per-ordinal overall across all ordinals -- mirroring, at the
+    granularity of "one design's whole history" rather than "one call's
+    candidate batch", precisely how `_overall_score` already turns one
+    candidate's own steps into one number.
+
+    Returns `(None, None)` if `design_id` has no prior row for ANY step in
+    `scoreable_steps`, if `scoreable_steps` is empty, or if every prior row
+    found fails to score (e.g. an old row missing the scored field
+    entirely -- logged and skipped, never raised: a corrupt or unrelated
+    historical row must not block evaluating this call's own NEW
+    candidates).
+    """
+    if not scoreable_steps:
+        return None, None
+
+    tool_names = [_STEP_TOOL_NAME[step] for step in scoreable_steps]
+    conn = designs_db.get_connection()
+    try:
+        grouped = designs_db.read_engineering_results_for_scoring(conn, design_id, tool_names)
+    finally:
+        conn.close()
+
+    per_step_scores: dict[DesignStep, list[dict[str, Any] | None]] = {}
+    for step in scoreable_steps:
+        spec = score_specs[step.value]
+        rows = grouped.get(_STEP_TOOL_NAME[step], [])
+        scores: list[dict[str, Any] | None] = []
+        for row in rows:
+            try:
+                scores.append(_score_step(step, spec, row.get("value") or {}, note=None))
+            except Exception as exc:
+                _logger.info(
+                    "solver: design_id=%s prior engineering_results id=%s for step=%s "
+                    "could not be scored, skipped for prior-best seeding: %s",
+                    design_id,
+                    row.get("id"),
+                    step.value,
+                    exc,
+                )
+                scores.append(None)
+        per_step_scores[step] = scores
+
+    n_common = min(len(scores) for scores in per_step_scores.values())
+    best_overall: float | None = None
+    best_iteration: int | None = None
+    for i in range(n_common):
+        step_trail = [{"score": per_step_scores[step][i]} for step in scoreable_steps]
+        if any(entry["score"] is None for entry in step_trail):
+            # Not every scored step has a usable value at this ordinal --
+            # skipped rather than computing a partial "worst" that would
+            # silently ignore a step that failed to score at this position
+            # (same reasoning _overall_score's own docstring gives for
+            # treating a missing target_met as "not decisively met").
+            continue
+        overall, _ = _overall_score(step_trail)
+        if overall is None:
+            continue
+        if best_overall is None or overall > best_overall:
+            best_overall = overall
+            best_iteration = i + 1  # 1-based, matching this module's other ordinals
+
+    return best_overall, best_iteration
+
+
 def run_candidate_search(
     state: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -702,6 +878,7 @@ def run_candidate_search(
     plateau_window: int = 5,
     plateau_epsilon: float = 0.5,
     target_satisfaction_threshold: float = 100.0,
+    design_id: int | None = None,
 ) -> dict[str, Any]:
     """Drive a batch of LLM-proposed candidates through a design loop's
     ungated ANALYSIS/SIMULATION/OPTIMIZATION span, candidate after
@@ -719,7 +896,9 @@ def run_candidate_search(
       - `candidates`: a non-empty list of plain dicts, each the union of
         whatever `_REQUIRED_FIELDS`/`_OPTIONAL_FIELDS` the steps actually
         driven need (e.g. `eps_r`/`w_m`/`h_m`/`l_m` for ANALYSIS,
-        `geometry`/`frequency_hz` for SIMULATION, plus `target_frequency_
+        `geometry`/`frequency_hz`/`reference_impedance_ohms` for
+        SIMULATION -- the last one stated explicitly per candidate, never
+        assumed to be 50 ohms (issue #101) -- plus `target_frequency_
         hz`/`length_lower_m`/`length_upper_m` for OPTIMIZATION). An
         optional `"note"` key, if present, is forwarded to every scored
         step's `success_score(note=...)` call for that candidate.
@@ -738,12 +917,39 @@ def run_candidate_search(
       - `target_satisfaction_threshold`: an `overall_score_percent` (see
         "DESIGN QUESTION 3") at or above this (default 100.0) ends the
         search immediately on that candidate.
+      - `design_id`: optional (default `None`, meaning no seeding at all --
+        no database is touched). When supplied, `run_candidate_search`
+        reads this design's own PRIOR recorded scores for whichever steps
+        in `score_specs` it would actually drive this call (via
+        `designs.db.read_engineering_results_for_scoring`, read-only --
+        see `_prior_best_from_design`) and seeds the plateau-window
+        baseline (design question 2) with the best one found, before
+        evaluating any NEW candidate. This lets a caller re-run the same
+        design later without re-spending evaluation_budget rediscovering a
+        local optimum a PRIOR call (or session) already found -- issue
+        #87's "cross-run learning" follow-up to issue #95's own user story
+        #21. Independent of `state["design_id"]`: nothing here requires
+        the two to match (a caller MAY seed from a different, related
+        design's history -- see this module's docstring for why that
+        flexibility is deliberate), and `state["design_id"]` is never
+        substituted in when this argument is omitted. Never affects
+        `best_candidate_index`/`best_candidate_overall_score_percent`/
+        `best_candidate_state` -- those three remain scoped to THIS call's
+        own newly-evaluated candidates only, since a historical score has
+        no matching NEW state to hand back.
 
     Raises `SolverError` for a malformed call (bad `state`/`candidates`/
-    `score_specs` shape, or an out-of-range budget/plateau parameter) --
-    before any candidate is evaluated. Never raises for a single
-    candidate's own drive failing (see "DESIGN QUESTION 4") -- that is
-    recorded on the candidate's own trail entry instead.
+    `score_specs`/`design_id` shape, or an out-of-range budget/plateau
+    parameter) -- before any candidate is evaluated. Never raises for a
+    single candidate's own drive failing (see "DESIGN QUESTION 4") -- that
+    is recorded on the candidate's own trail entry instead. NOT covered by
+    that `SolverError` guarantee: when `design_id` is supplied, a hard
+    failure of `designs_db.get_connection()`/`designs_db.
+    read_engineering_results_for_scoring()` itself (e.g. the database being
+    unreachable) propagates as whatever exception that call raises,
+    uncaught here -- `_prior_best_from_design` only catches a single prior
+    ROW's own scoring failure (see its docstring), never a connection-level
+    one. A documented, disclosed choice, not a defect.
 
     Returns a dict:
       - `provenance`: always `"CALCULATED"` -- every score and stopping
@@ -781,6 +987,16 @@ def run_candidate_search(
         to continue the design -- or `None`. See "RESULT SHAPE" in this
         module's docstring for why only the best candidate's state is
         returned in full.
+      - `prior_best_score` / `prior_iteration`: `None`/`None` when
+        `design_id` was not supplied, or when it was but nothing prior was
+        found to score. Otherwise the best `overall_score_percent` this
+        `design_id` had ALREADY recorded (across every prior iteration,
+        not just this call) on whichever `score_specs` steps this call
+        would drive, and which prior iteration achieved it -- see
+        `_prior_best_from_design`'s own docstring for exactly how "prior
+        iteration" is determined (and its one honestly-documented
+        limitation). This value is also what seeded the plateau-window
+        baseline (design question 2) before any NEW candidate ran.
     """
     _validate_state_shape(state)
     candidates = _validate_candidates(candidates)
@@ -791,6 +1007,8 @@ def run_candidate_search(
         raise SolverError(f"plateau_epsilon must be >= 0, got {plateau_epsilon!r}")
     if evaluation_budget is not None and evaluation_budget < 1:
         raise SolverError(f"evaluation_budget must be >= 1, got {evaluation_budget!r}")
+    if design_id is not None and not isinstance(design_id, int):
+        raise SolverError(f"design_id must be an int or None, got {type(design_id).__name__}")
 
     report: dict[str, Any] = {
         "provenance": CALCULATED,
@@ -809,6 +1027,8 @@ def run_candidate_search(
         "best_candidate_overall_score_percent": None,
         "best_candidate_state": None,
         "pending_approval": None,
+        "prior_best_score": None,
+        "prior_iteration": None,
     }
 
     if state.get("completed"):
@@ -865,6 +1085,22 @@ def run_candidate_search(
     report["evaluation_budget"] = effective_budget
 
     best_so_far: list[float] = []
+    if design_id is not None:
+        scoreable_steps = [step for step in steps_to_drive if step.value in score_specs]
+        prior_best_score, prior_iteration = _prior_best_from_design(
+            design_id, scoreable_steps, score_specs
+        )
+        report["prior_best_score"] = prior_best_score
+        report["prior_iteration"] = prior_iteration
+        if prior_best_score is not None:
+            # Seeds the plateau-window baseline (design question 2) with
+            # this design's own best PRIOR result -- never touches
+            # best_candidate_index/best_candidate_overall_score_percent/
+            # best_candidate_state, which stay scoped to THIS call's own
+            # newly-evaluated candidates (see this function's own
+            # docstring's `design_id` paragraph).
+            best_so_far.append(prior_best_score)
+
     stop_reason = "evaluation_budget"
     stop_detail: str | None = None
 

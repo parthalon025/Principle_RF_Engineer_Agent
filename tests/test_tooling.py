@@ -20,8 +20,6 @@ imported, matching this test suite's existing per-file convention.
 from __future__ import annotations
 
 import os
-import stat
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -29,9 +27,14 @@ import numpy as np
 import psycopg
 import pytest
 import skrf as rf
+from conftest import make_fake_executable
 from dotenv import load_dotenv
 
-from designs.requirement_targets import propose_target
+from designs.requirement_targets import (
+    confirm_requirement_target,
+    propose_requirement_target,
+    propose_target,
+)
 from designs.service import read_design
 from orchestration.approval import request_loop_step_approval
 from orchestration.design_loop import DesignStep
@@ -157,6 +160,95 @@ def test_inspect_design_loop_state_passes_through_design_fields(cleanup_designs)
 
 
 # ---------------------------------------------------------------------------
+# Issue #100: a loop's carried `requirements` must reflect a requirement
+# target proposed/confirmed after the loop started, not the frozen snapshot
+# `start_design_loop` recorded once and orchestration/design_loop.py never
+# updates again.
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_design_loop_state_reflects_a_target_confirmed_after_start(cleanup_designs):
+    """The exact stale case issue #100 names: start a loop, confirm a
+    target (a write straight to the persisted `designs.requirements`
+    column via designs.requirement_targets -- a completely different path
+    than anything orchestration.tooling touches directly), then read the
+    loop's own state back -- with no advance_design_loop_step call in
+    between -- and see the confirmed target, not the empty snapshot from
+    start time."""
+    state = start_new_design_loop("TOOL-FRESH-1", "Fresh Requirements Test", "A", REQUIREMENTS)
+    cleanup_designs.append(state["design_id"])
+    design_id = state["design_id"]
+
+    assert "target" not in state["requirements"]["R1"]
+
+    propose_result = propose_requirement_target(
+        design_id=design_id,
+        requirement_id="R1",
+        value=5.0,
+        comparator="AT_LEAST",
+        unit="dBi",
+    )
+    assert propose_result["status"] == "proposed"
+    confirm_result = confirm_requirement_target(
+        design_id=design_id, requirement_id="R1", confirmed_by="jane.engineer"
+    )
+    assert confirm_result["status"] == "confirmed"
+
+    # `state` itself was captured BEFORE either of those calls -- this is
+    # the exact caller pattern the issue describes: holding a loop-state
+    # dict from before a target was confirmed, then reading it later.
+    inspected = inspect_design_loop_state(state)
+    target = inspected["requirements"]["R1"]["target"]
+    assert target["target_status"] == "CONFIRMED"
+    assert target["value"] == 5.0
+    assert target["confirmed_by"] == "jane.engineer"
+
+
+def test_advance_design_loop_step_reflects_a_target_confirmed_after_start(cleanup_designs):
+    """Same staleness fix, exercised through advance_design_loop_step
+    instead of inspect_design_loop_state -- and checks the REQUIREMENTS
+    decision itself is untouched (issue #100 acceptance criteria: "the
+    record of what the customer first said is not overwritten by later
+    interpretation")."""
+    state = start_new_design_loop("TOOL-FRESH-2", "Fresh Requirements Test 2", "A", REQUIREMENTS)
+    cleanup_designs.append(state["design_id"])
+    design_id = state["design_id"]
+
+    propose_requirement_target(
+        design_id=design_id,
+        requirement_id="R1",
+        value=5.0,
+        comparator="AT_LEAST",
+        unit="dBi",
+    )
+    confirm_requirement_target(
+        design_id=design_id, requirement_id="R1", confirmed_by="jane.engineer"
+    )
+
+    state = _grant_and_advance(
+        state,
+        DesignStep.ARCHITECTURE,
+        {
+            "decision": "rectangular microstrip patch on FR4",
+            "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": "patch_antenna",
+        },
+    )
+
+    target = state["requirements"]["R1"]["target"]
+    assert target["target_status"] == "CONFIRMED"
+    assert target["confirmed_by"] == "jane.engineer"
+
+    # The REQUIREMENTS decision (decisions[0]) still shows exactly what was
+    # originally stated at loop start -- the confirmed target must not leak
+    # into it.
+    requirements_decision = state["decisions"][0]
+    assert requirements_decision["step"] == DesignStep.REQUIREMENTS.value
+    assert "target" not in requirements_decision["result"]["R1"]
+    assert "target" not in requirements_decision["input"]["R1"]
+
+
+# ---------------------------------------------------------------------------
 # Shared end-to-end driver -- same real step sequence as
 # tests/test_design_loop.py's test_end_to_end_full_requirements_to_redesign_cycle,
 # driven through orchestration.tooling's dict-in/dict-out functions instead
@@ -188,7 +280,7 @@ _DIPOLE_GEOMETRY = {
     ]
 }
 
-_FAKE_NEC2PP_PY = '''#!{python}
+_FAKE_NEC2PP_PY = '''
 import sys
 
 OUTPUT = """{sample}"""
@@ -201,10 +293,8 @@ sys.exit(0)
 
 
 def _make_fake_nec2pp(tmp_path: Path) -> Path:
-    script = tmp_path / "fake_nec2pp.py"
-    script.write_text(_FAKE_NEC2PP_PY.format(python=sys.executable, sample=_GUIDE_SAMPLE_OUTPUT))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_NEC2PP_PY.format(sample=_GUIDE_SAMPLE_OUTPUT)
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 
 
 def _write_measured_touchstone(tmp_path: Path, name: str = "measured") -> Path:
@@ -241,20 +331,28 @@ def _grant_and_advance(state: dict[str, Any], step: DesignStep, step_input: dict
 
 
 def _drive_to_redesign_decision(
-    state: dict[str, Any], tmp_path: Path, verification_status: str = "PASS"
+    state: dict[str, Any],
+    tmp_path: Path,
+    verification_status: str = "PASS",
+    design_family: str = "patch_antenna",
 ) -> dict[str, Any]:
     """Real ARCHITECTURE -> ... -> CORRELATION, leaving `state` positioned
     at REDESIGN_DECISION -- callers advance the final gated step themselves
     with whatever next_action they're testing. `verification_status` lets
     callers exercise design_loop.py's wider VERIFICATION_STATUSES
     vocabulary (CONDITIONAL PASS/BLOCKED, not just designs.models.
-    VerificationStatus's own PASS/FAIL/MARGINAL/NOT VERIFIED)."""
+    VerificationStatus's own PASS/FAIL/MARGINAL/NOT VERIFIED). `design_family`
+    (issue #167) lets a caller drive two iterations with two DIFFERENT
+    families, to prove the ADR-0011 flush's design_family carry-forward is
+    scoped to each iteration's own flush batch, not a stale value left over
+    from a previous one."""
     state = _grant_and_advance(
         state,
         DesignStep.ARCHITECTURE,
         {
             "decision": "rectangular microstrip patch on FR4",
             "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": design_family,
         },
     )
     state = advance_design_loop_step(
@@ -266,6 +364,7 @@ def _drive_to_redesign_decision(
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -341,6 +440,14 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path)
     assert set(decision_records) == {"architecture", "redesign_decision"}
     assert decision_records["architecture"]["decision"] == "rectangular microstrip patch on FR4"
     assert decision_records["redesign_decision"]["decision"] == "accept the design as-is"
+    # Issue #167: design_family survives the flush on BOTH rows. The
+    # REDESIGN_DECISION step_input above never states a design_family of
+    # its own (design_loop.py's _handle_redesign_decision doesn't ask for
+    # one) -- its persisted row carries forward this iteration's own
+    # ARCHITECTURE decision's family rather than persisting NULL (this
+    # module's own "DESIGN_FAMILY CARRY-FORWARD" decision).
+    assert decision_records["architecture"]["design_family"] == "patch_antenna"
+    assert decision_records["redesign_decision"]["design_family"] == "patch_antenna"
 
     results_by_tool = {r["tool_name"]: r for r in stored["engineering_results"]}
     assert set(results_by_tool) == {
@@ -353,6 +460,105 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path)
     assert results_by_tool["patch_resonant_frequency_hz"]["provenance"] == "CALCULATED"
     assert results_by_tool["run_nec2_simulation"]["provenance"] == "SIMULATED"
     assert results_by_tool["record_external_measurement"]["provenance"] == "MEASURED"
+
+
+# ---------------------------------------------------------------------------
+# Issue #205: a decision's `alternatives` must survive the flush, not be
+# discarded as a hardcoded `[]`.
+# ---------------------------------------------------------------------------
+
+
+def test_flush_persists_alternatives_the_caller_supplied(cleanup_designs, tmp_path):
+    """Prerequisite for ADR-0026 (#125): a rejected alternative is worthless
+    to a later human review if `_flush_target_for` throws it away at the
+    flush. Drives ARCHITECTURE with a real `alternatives` list and asserts
+    the persisted `decision_records` row carries it through verbatim --
+    the regression this issue asks for. `redesign_decision`'s own step_input
+    supplies no `alternatives` key at all here, proving the `.get(...,
+    [])` default (not a `KeyError`) is what a caller who legitimately
+    offers none gets back."""
+    state = start_new_design_loop("TOOL-ALTS", "Alternatives Flush Test", "A", REQUIREMENTS)
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    architecture_alternatives = [
+        {"decision": "printed dipole", "rejected_because": "narrowband vs. requirement"},
+        {"decision": "PIFA", "rejected_because": "host surface curvature too tight"},
+    ]
+    state = _grant_and_advance(
+        state,
+        DesignStep.ARCHITECTURE,
+        {
+            "decision": "rectangular microstrip patch on FR4",
+            "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": "patch_antenna",
+            "alternatives": architecture_alternatives,
+        },
+    )
+    state = advance_design_loop_step(
+        state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
+    )
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    state = advance_design_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+            "executable": str(fake_nec2pp),
+            "workdir": str(tmp_path / "nec2_run"),
+        },
+    )
+    state = advance_design_loop_step(
+        state,
+        {
+            "eps_r": 4.4,
+            "w_m": 0.03,
+            "h_m": 0.0016,
+            "target_frequency_hz": 2.45e9,
+            "length_lower_m": 0.02,
+            "length_upper_m": 0.04,
+            "method": "sweep",
+            "n_evaluations": 5,
+        },
+    )
+    state = advance_design_loop_step(
+        state,
+        {
+            "requirement_id": "R1",
+            "requirement": "gain >= 5 dBi over 2.4-2.5 GHz",
+            "method": "analysis",
+            "expected": 5.0,
+            "actual": 5.2,
+            "status": "PASS",
+        },
+    )
+    touchstone_path = _write_measured_touchstone(tmp_path, name="tooling-alts")
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, {"touchstone_file": str(touchstone_path)}
+    )
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_design_loop_step(state, {"simulated": simulated_override})
+    assert state["current_step"] == DesignStep.REDESIGN_DECISION.value
+
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+        # deliberately no "alternatives" key -- proves the .get(..., [])
+        # default, not a KeyError, is what a caller supplying none gets.
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+    assert state["completed"] is True
+
+    stored = read_design(design_id)
+    decision_records = {d["record_key"].rsplit("-", 1)[-1]: d for d in stored["decision_records"]}
+    assert decision_records["architecture"]["alternatives"] == architecture_alternatives
+    assert decision_records["redesign_decision"]["alternatives"] == []
 
     assert stored["verification_items"][0]["status"] == "PASS"
     assert stored["verification_items"][0]["method"] == "analysis"
@@ -441,6 +647,65 @@ def test_flush_at_iterate_persists_that_iteration_and_moves_status_to_analysis(
     assert len(stored["engineering_results"]) == 10  # 5 per iteration x 2 iterations
 
 
+def test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration(
+    cleanup_designs, tmp_path
+):
+    """Issue #167. A REDESIGN_DECISION's step_input never states its own
+    design_family (design_loop.py's _handle_redesign_decision doesn't ask
+    for one) -- orchestration/tooling.py's _flush_decisions carries forward
+    the MOST RECENT design_family stated within the batch being flushed, so
+    a redesign_decision row is recorded against the family its own
+    iteration's ARCHITECTURE decision actually declared, not left NULL.
+
+    This drives TWO iterations that each declare a DIFFERENT design_family
+    (an engineer abandoning one family for another between iterations) to
+    prove that carry-forward is scoped to each flush's own batch of
+    decisions -- iteration 2's redesign_decision row must show iteration
+    2's family, never iteration 1's stale one left over from the previous,
+    already-committed flush."""
+    state = start_new_design_loop(
+        "TOOL-FAMILY-ITER", "Design Family Carry-Forward Test", "A", REQUIREMENTS
+    )
+    cleanup_designs.append(state["design_id"])
+    design_id = state["design_id"]
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="patch_antenna")
+    iterate_input = {
+        "decision": "abandon the patch, try a reflection-phase surface instead",
+        "rationale": "patch antenna cannot meet the beam-steering requirement",
+        "next_action": "iterate",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, iterate_input)
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="reflection_phase_surface")
+    accept_input = {
+        "decision": "accept the reflection-phase surface design",
+        "rationale": "meets the beam-steering requirement with margin",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, accept_input)
+
+    stored = read_design(design_id)
+    by_record_key = {d["record_key"]: d for d in stored["decision_records"]}
+
+    def _row(iteration_marker: str, kind_marker: str) -> dict[str, Any]:
+        matches = [
+            row
+            for key, row in by_record_key.items()
+            if iteration_marker in key and kind_marker in key
+        ]
+        assert len(matches) == 1, f"expected exactly one {iteration_marker}-{kind_marker} row"
+        return matches[0]
+
+    assert _row("iter1", "architecture")["design_family"] == "patch_antenna"
+    assert _row("iter1", "redesign_decision")["design_family"] == "patch_antenna"
+    assert _row("iter2", "architecture")["design_family"] == "reflection_phase_surface"
+    # The real regression this test guards: iteration 2's redesign_decision
+    # must show iteration 2's OWN family, not iteration 1's already-flushed
+    # "patch_antenna" leaking forward across a flush boundary.
+    assert _row("iter2", "redesign_decision")["design_family"] == "reflection_phase_surface"
+
+
 # ---------------------------------------------------------------------------
 # Fail-loud, all-or-nothing flush (docs/adr/0011).
 # ---------------------------------------------------------------------------
@@ -487,6 +752,69 @@ def test_flush_failure_is_atomic_and_leaves_design_status_untouched(cleanup_desi
     assert stored["engineering_results"] == []  # none of the 5 computed results landed either
 
 
+def test_fresh_requirements_failure_leaves_the_redesign_decision_flush_uncommitted(
+    cleanup_designs, tmp_path, monkeypatch
+):
+    """Code-review fix on issue #100: advance_design_loop_step's own
+    _fresh_requirements(design_id) read must run BEFORE the
+    REDESIGN_DECISION flush, not after -- it has no data dependency on the
+    flush (it neither reads nor writes designs.requirements). Simulates
+    that read's own DB connection/read failing on the exact call that
+    would otherwise immediately follow a successful flush, and asserts
+    nothing from the flush landed: `designs.status` is still whatever it
+    was before this call (DRAFT), and no decision_records/
+    engineering_results rows exist for it.
+
+    Reproduces the bug this test guards against: under the ordering this
+    fixes (fresh-requirements read AFTER the flush), the flush would
+    already have committed -- design status ANALYSIS/PASS,
+    decision_records/engineering_results already written -- by the time
+    this same simulated failure raised, so this test's assertions below
+    would fail (status would read PASS, decision_records/
+    engineering_results would be non-empty) even though the caller only
+    ever saw an exception and still holds their pre-call `state`."""
+    state = start_new_design_loop(
+        "TOOL-FRESH-FAIL", "Fresh Requirements Failure Test", "A", REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    # Drive to REDESIGN_DECISION first, unpatched -- _fresh_requirements is
+    # called (successfully) on every one of these intermediate steps too
+    # (see orchestration/tooling.py's module docstring, "REQUIREMENTS
+    # FRESHNESS"), so the sabotage below is installed only after that real
+    # traffic is done, to isolate it to the one call under test.
+    state = _drive_to_redesign_decision(state, tmp_path)
+
+    class _FreshRequirementsReadFailed(Exception):
+        pass
+
+    import orchestration.tooling as tooling_module
+
+    # Mirrors _fresh_requirements' real signature exactly, `fallback` included
+    # and deliberately not defaulted: a default here would let this double
+    # drift out of step with production again without any test noticing, which
+    # is how it came to be stale in the first place.
+    def _boom(design_id_arg: int, fallback: dict[str, Any]) -> dict[str, Any]:
+        assert design_id_arg == design_id
+        raise _FreshRequirementsReadFailed("fresh requirements read failed (simulated)")
+
+    monkeypatch.setattr(tooling_module, "_fresh_requirements", _boom)
+
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    with pytest.raises(_FreshRequirementsReadFailed):
+        _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    stored = read_design(design_id)
+    assert stored["status"] == "DRAFT"  # never reached PASS -- the flush never ran
+    assert stored["decision_records"] == []  # nothing landed
+    assert stored["engineering_results"] == []  # none of the 5 computed results landed either
+
+
 # ---------------------------------------------------------------------------
 # The candidate solver's decisions persist at the existing flush (issue #95).
 #
@@ -523,6 +851,7 @@ def test_solver_produced_decisions_persist_at_the_redesign_decision_flush(
     architecture_input = {
         "decision": "rectangular microstrip patch on FR4",
         "rationale": "meets band/gain target with a simple, low-cost fabrication",
+        "design_family": "patch_antenna",
     }
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE, architecture_input)
     assert state["current_step"] == DesignStep.ANALYSIS.value
@@ -535,6 +864,7 @@ def test_solver_produced_decisions_persist_at_the_redesign_decision_flush(
         "l_m": 0.0286,
         "geometry": _DIPOLE_GEOMETRY,
         "frequency_hz": 300e6,
+        "reference_impedance_ohms": 50.0,
         "executable": str(fake_nec2pp),
         "workdir": str(tmp_path / "nec2_run"),
         "target_frequency_hz": 2.45e9,

@@ -34,11 +34,10 @@ section, so `gain_dbi` parses to `None` there.
 from __future__ import annotations
 
 import logging
-import stat
-import sys
 from pathlib import Path
 
 import pytest
+from conftest import make_fake_executable
 
 import orchestration.solver as solver_module
 from designs.requirement_targets import mark_unscoreable, propose_target
@@ -53,6 +52,7 @@ REQUIREMENTS = {"R1": {"requirement": "resonant frequency near 2.45 GHz"}}
 _ARCHITECTURE_INPUT = {
     "decision": "rectangular microstrip patch on FR4",
     "rationale": "meets band/gain target with a simple, low-cost fabrication",
+    "design_family": "patch_antenna",
 }
 
 # Base patch parameters (matches tests/test_design_loop.py's own fixture) --
@@ -96,7 +96,7 @@ _GUIDE_SAMPLE_OUTPUT_WITH_PATTERN = """
    AVERAGE POWER GAIN= 2.02793E+00       SOLID ANGLE USED IN AVERAGING=(  .5000)*PI STERADIANS.
 """
 
-_FAKE_NEC2PP_PY = '''#!{python}
+_FAKE_NEC2PP_PY = '''
 import sys
 
 OUTPUT = """{sample}"""
@@ -109,12 +109,8 @@ sys.exit(0)
 
 
 def _make_fake_nec2pp(tmp_path: Path) -> Path:
-    script = tmp_path / "fake_nec2pp.py"
-    script.write_text(
-        _FAKE_NEC2PP_PY.format(python=sys.executable, sample=_GUIDE_SAMPLE_OUTPUT_WITH_PATTERN)
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_NEC2PP_PY.format(sample=_GUIDE_SAMPLE_OUTPUT_WITH_PATTERN)
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 
 
 def _fingerprint(state: dict, step: DesignStep, step_input: dict) -> dict:
@@ -168,6 +164,7 @@ def _full_candidate(tmp_path: Path, fake_nec2pp: Path, **overrides) -> dict:
         **_BASE_CANDIDATE,
         "geometry": _DIPOLE_GEOMETRY,
         "frequency_hz": 300e6,
+        "reference_impedance_ohms": 50.0,
         "executable": str(fake_nec2pp),
         "workdir": str(tmp_path / "nec2_run"),
         "target_frequency_hz": 2.45e9,
@@ -252,6 +249,7 @@ def test_score_specs_must_share_a_step_with_the_driven_span(tmp_path):
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -287,6 +285,25 @@ def test_evaluation_budget_must_be_positive():
     with pytest.raises(SolverError, match="evaluation_budget"):
         run_candidate_search(
             state, [_BASE_CANDIDATE], {"analysis": {"target": target}}, evaluation_budget=0
+        )
+
+
+def test_design_id_argument_must_be_an_int_or_none():
+    """The CALL-level `design_id` keyword argument (run_candidate_search's
+    own parameter, checked directly against `isinstance(design_id, int)`) --
+    distinct from `test_state_with_none_design_id_is_rejected` above, which
+    exercises `state["design_id"]` (a different field, validated inside
+    `_validate_state_shape`). `None` is the valid "no seeding" sentinel for
+    this argument (see Group 6 below), so only a non-int, non-None value
+    (e.g. a str) should trip this branch."""
+    state = _state_at_analysis()
+    target = _exact_frequency_target(_BASE_CANDIDATE)
+    with pytest.raises(SolverError, match="design_id must be an int or None"):
+        run_candidate_search(
+            state,
+            [_BASE_CANDIDATE],
+            {"analysis": {"target": target}},
+            design_id="not-an-int",
         )
 
 
@@ -363,6 +380,7 @@ def test_solver_halts_at_measurement_with_pending_approval_reported(tmp_path):
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -441,6 +459,7 @@ def test_solver_halts_at_a_gated_redesign_decision_step_with_no_receipt_ever_cre
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -511,6 +530,7 @@ def test_solver_halts_out_of_scope_at_verification(tmp_path):
         {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
         },
@@ -756,6 +776,7 @@ def test_full_span_drives_and_scores_all_three_ungated_steps(tmp_path):
         **_BASE_CANDIDATE,
         "geometry": _DIPOLE_GEOMETRY,
         "frequency_hz": 300e6,
+        "reference_impedance_ohms": 50.0,
         "executable": str(fake_nec2pp),
         "workdir": str(tmp_path / "nec2_run"),
         "target_frequency_hz": 2.45e9,
@@ -854,3 +875,325 @@ def test_result_field_override_with_explicit_unit_scores_a_different_field(tmp_p
     score = result["trail"][0]["steps"][1]["score"]
     assert score["actual_value"] == pytest.approx(2.02793)
     assert score["unit"] == "linear"
+
+
+# ---------------------------------------------------------------------------
+# Group 6: optional design_id -- seeding the plateau baseline from a
+# design's own prior-recorded scores (issue #87's cross-run-learning
+# follow-up to issue #95's own user story #21, "a design's score history
+# across iterations"). Still no live database: run_candidate_search's own
+# design_id-seeding code path talks to designs.db.read_engineering_
+# results_for_scoring, which THIS suite fakes -- the same "fakes for the
+# seam only" precedent this file's fake NEC2++ executable already
+# establishes for the simulator seam -- so a design_id here never needs to
+# be a real designs row, matching this whole file's existing conceit for
+# every OTHER design_id used above.
+# ---------------------------------------------------------------------------
+
+
+class _FakeConn:
+    """Stands in for designs.db.get_connection()'s real psycopg.Connection
+    -- run_candidate_search only ever calls .close() on it once
+    designs.db.read_engineering_results_for_scoring (also faked below) has
+    already been monkeypatched to ignore the connection object entirely."""
+
+    def close(self):
+        pass
+
+
+def test_design_id_defaults_to_no_seeding_and_never_touches_the_database(monkeypatch):
+    # _state_at_analysis() built first, and unpatched: its own bootstrap
+    # through tooling.advance_design_loop_step legitimately touches the
+    # database now (issue #100's fresh-requirements read), which is
+    # unrelated to what THIS test checks -- that run_candidate_search
+    # itself never touches it when design_id is not supplied. The
+    # monkeypatch below is installed only around that call.
+    state = _state_at_analysis()
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError(
+            "designs_db.get_connection must not be called when design_id is not supplied"
+        )
+
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", _must_not_be_called)
+
+    target = _exact_frequency_target(_BASE_CANDIDATE)
+    result = run_candidate_search(state, [_BASE_CANDIDATE], {"analysis": {"target": target}})
+
+    assert result["prior_best_score"] is None
+    assert result["prior_iteration"] is None
+
+
+def test_design_id_with_no_prior_recorded_rows_leaves_prior_best_score_none(monkeypatch):
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note on test_design_id_defaults_to_no_seeding_and_never_touches_the_
+    # database above; its bootstrap now legitimately touches the database
+    # (issue #100), and must not be caught by the fake connection below,
+    # which is shaped only for run_candidate_search's own seeding read.
+    state = _state_at_analysis()
+
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {name: [] for name in tool_names},
+    )
+
+    target = _exact_frequency_target(_BASE_CANDIDATE)
+    result = run_candidate_search(
+        state, [_BASE_CANDIDATE], {"analysis": {"target": target}}, design_id=42
+    )
+
+    assert result["prior_best_score"] is None
+    assert result["prior_iteration"] is None
+
+
+def test_design_id_reports_the_best_prior_score_and_its_recording_ordinal(monkeypatch):
+    """Three canned prior ANALYSIS rows for design_id=99, closest-to-target
+    in the MIDDLE -- proves both that the correct one is picked (not just
+    the first or the last) and that prior_iteration is that row's own
+    1-based position among this design's recorded rows for the step, not
+    its database id."""
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note earlier in this Group 6 block; its bootstrap now legitimately
+    # touches the database (issue #100) and must not be caught by the fake
+    # connection below.
+    state = _state_at_analysis()
+
+    target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
+    prior_rows = [
+        {"id": 101, "value": {"resonant_frequency_hz": 2.20e9}, "created_at": "2026-01-01"},
+        {"id": 102, "value": {"resonant_frequency_hz": 2.451e9}, "created_at": "2026-01-02"},
+        {"id": 103, "value": {"resonant_frequency_hz": 2.10e9}, "created_at": "2026-01-03"},
+    ]
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {"patch_resonant_frequency_hz": prior_rows},
+    )
+
+    from designs.success_score import success_score
+
+    expected_score_percent = success_score(
+        step="analysis", target=target, actual_value=2.451e9, actual_unit="Hz"
+    )["score_percent"]
+
+    result = run_candidate_search(
+        state, [_BASE_CANDIDATE], {"analysis": {"target": target}}, design_id=99
+    )
+
+    assert result["prior_best_score"] == pytest.approx(expected_score_percent)
+    assert result["prior_iteration"] == 2
+
+
+def test_design_id_seed_shortens_the_plateau_window(tmp_path, monkeypatch):
+    """Mirrors test_score_plateau_stops_after_the_window's own unreachable-
+    target/identical-candidate setup exactly, but seeds one prior recorded
+    ANALYSIS row scoring identically to every new candidate here -- so the
+    plateau-window list starts with 1 entry already in it (the seed)
+    instead of 0. plateau_window=3 needs 4 entries to compare; with the
+    seed occupying one, only 3 NEW candidates are needed (candidates_
+    evaluated == 3) where the unseeded sibling test needs 4 -- the seed
+    genuinely shortens the search, not just changes its reported numbers.
+    """
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    same_candidate = _full_candidate(tmp_path, fake_nec2pp)
+    # Unreachable target, matching test_score_plateau_stops_after_the_window
+    # -- isolates plateau detection from target_satisfaction.
+    target = propose_target(value=1.0e9, comparator="EQUALS", unit="Hz", tolerance=1.0)
+
+    seed_frequency_hz = patch_resonant_frequency_hz(
+        same_candidate["eps_r"], same_candidate["w_m"], same_candidate["h_m"], same_candidate["l_m"]
+    )
+    # NOTE: unlike its sibling seeding tests, this one is the only one that
+    # both seeds from a fake AND needs its candidates to really evaluate --
+    # so `get_connection` is deliberately NOT faked here. `designs.db` is one
+    # module object shared by orchestration/solver.py and orchestration/
+    # tooling.py (both `import designs.db as designs_db`), so faking
+    # `get_connection` on it is global: it would also intercept the real read
+    # that driving each candidate now performs, via advance_design_loop_step
+    # -> _fresh_requirements -> read_design (issue #100), which calls
+    # .cursor() on the connection. _FakeConn has no .cursor, so every
+    # candidate would fail at ANALYSIS, score None, never reach
+    # best_so_far.append(), and the plateau could never fire -- the search
+    # would run the full budget and stop with "evaluation_budget".
+    #
+    # Faking only the read below is sufficient and safe: _prior_best_from_
+    # design does nothing with the connection except hand it to this function
+    # (which ignores it) and close it, so a real connection serves the seed
+    # path unchanged while leaving candidate driving its real database.
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {
+            "patch_resonant_frequency_hz": [
+                {"id": 1, "value": {"resonant_frequency_hz": seed_frequency_hz}, "created_at": "x"}
+            ]
+        },
+    )
+
+    candidates = [same_candidate] * 6
+    result = run_candidate_search(
+        state,
+        candidates,
+        {"analysis": {"target": target}},
+        plateau_window=3,
+        plateau_epsilon=0.5,
+        design_id=7,
+    )
+
+    assert result["prior_best_score"] is not None
+    assert result["prior_iteration"] == 1
+    assert result["stop_reason"] == "score_plateau"
+    assert result["candidates_evaluated"] == 3
+
+
+def test_design_id_pairs_two_scoreable_steps_by_matching_ordinal(monkeypatch):
+    """_prior_best_from_design's most assumption-laden step, exercised for
+    real: TWO scoreable steps (analysis + simulation), each with its own
+    two prior rows. Ordinal 1 pairs a 90%-analysis row with a 50%-
+    simulation row -> worst_of_scored_steps overall 50%; ordinal 2 pairs a
+    60%-analysis row with a 95%-simulation row -> overall 60%. The
+    correctly-paired winner is ordinal 2 (60% > 50%). A function that
+    mismatched the pairing -- e.g. zipped analysis's Nth row against
+    simulation's (len-1-N)th, or combined each step's own INDIVIDUAL best
+    rather than same-ordinal rows -- would instead surface ordinal 1's
+    cross-combination (90% analysis & 95% simulation -> 90%), a different
+    prior_best_score/prior_iteration this test would catch.
+    """
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note earlier in this Group 6 block; its bootstrap now legitimately
+    # touches the database (issue #100) and must not be caught by the fake
+    # connection below.
+    state = _state_at_analysis()
+
+    analysis_target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
+    simulation_target = propose_target(value=8.0, comparator="EQUALS", unit="dBi", tolerance=2.0)
+
+    analysis_rows = [
+        {"id": 201, "value": {"resonant_frequency_hz": 2.455e9}, "created_at": "2026-01-01"},  # 90%
+        {"id": 202, "value": {"resonant_frequency_hz": 2.43e9}, "created_at": "2026-01-02"},  # 60%
+    ]
+    simulation_rows = [
+        {"id": 301, "value": {"gain_dbi": 7.0}, "created_at": "2026-01-01"},  # 50%
+        {"id": 302, "value": {"gain_dbi": 8.1}, "created_at": "2026-01-02"},  # 95%
+    ]
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {
+            "patch_resonant_frequency_hz": analysis_rows,
+            "run_nec2_simulation": simulation_rows,
+        },
+    )
+
+    from designs.success_score import success_score
+
+    def _overall_at(analysis_hz: float, gain_dbi: float) -> float:
+        a = success_score(
+            step="analysis", target=analysis_target, actual_value=analysis_hz, actual_unit="Hz"
+        )["score_percent"]
+        s = success_score(
+            step="simulation", target=simulation_target, actual_value=gain_dbi, actual_unit="dBi"
+        )["score_percent"]
+        return min(a, s)
+
+    ordinal1_overall = _overall_at(2.455e9, 7.0)
+    ordinal2_overall = _overall_at(2.43e9, 8.1)
+    mismatched_cross_overall = _overall_at(2.455e9, 8.1)  # what a wrong pairing would surface
+    # Sanity check on the test's own setup: the correct pairing (ordinal 2)
+    # must differ from what a wrong, cross-ordinal pairing would produce --
+    # otherwise this test could pass even with a pairing bug.
+    assert ordinal2_overall != mismatched_cross_overall
+
+    result = run_candidate_search(
+        state,
+        [_BASE_CANDIDATE],
+        {"analysis": {"target": analysis_target}, "simulation": {"target": simulation_target}},
+        design_id=55,
+    )
+
+    assert result["prior_best_score"] == pytest.approx(ordinal2_overall)
+    assert result["prior_best_score"] == pytest.approx(max(ordinal1_overall, ordinal2_overall))
+    assert result["prior_iteration"] == 2
+
+
+def test_design_id_skips_an_ordinal_when_only_one_step_scores_there(monkeypatch):
+    """Three prior rows per step; the MIDDLE ordinal (2, 1-based) has an
+    unscoreable analysis row (empty `value` -- no `resonant_frequency_hz`
+    at all) paired with a very-high-scoring simulation row at that SAME
+    ordinal -- exercising _prior_best_from_design's skip-this-ordinal
+    branch (`if any(entry["score"] is None ...): continue`). If that
+    branch were removed and the missing analysis score just silently
+    dropped out of the worst_of_scored_steps computation instead (leaving
+    a partial, simulation-only "worst"), ordinal 2's ~99% simulation-only
+    score would wrongly win; correctly skipped, ordinal 3's fully-paired
+    80%/80% (overall 80%) wins instead.
+    """
+    # _state_at_analysis() built first, and unpatched -- see the identical
+    # note earlier in this Group 6 block; its bootstrap now legitimately
+    # touches the database (issue #100) and must not be caught by the fake
+    # connection below.
+    state = _state_at_analysis()
+
+    analysis_target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
+    simulation_target = propose_target(value=8.0, comparator="EQUALS", unit="dBi", tolerance=2.0)
+
+    analysis_rows = [
+        {"id": 401, "value": {"resonant_frequency_hz": 2.465e9}, "created_at": "d1"},  # 70%
+        {"id": 402, "value": {}, "created_at": "d2"},  # missing field -> unscoreable
+        {"id": 403, "value": {"resonant_frequency_hz": 2.46e9}, "created_at": "d3"},  # 80%
+    ]
+    simulation_rows = [
+        {"id": 501, "value": {"gain_dbi": 8.6}, "created_at": "d1"},  # 70%
+        {"id": 502, "value": {"gain_dbi": 8.02}, "created_at": "d2"},  # ~99%
+        {"id": 503, "value": {"gain_dbi": 8.4}, "created_at": "d3"},  # 80%
+    ]
+    monkeypatch.setattr(solver_module.designs_db, "get_connection", lambda: _FakeConn())
+    monkeypatch.setattr(
+        solver_module.designs_db,
+        "read_engineering_results_for_scoring",
+        lambda conn, design_id, tool_names: {
+            "patch_resonant_frequency_hz": analysis_rows,
+            "run_nec2_simulation": simulation_rows,
+        },
+    )
+
+    from designs.success_score import success_score
+
+    ordinal1_overall = min(
+        success_score(
+            step="analysis", target=analysis_target, actual_value=2.465e9, actual_unit="Hz"
+        )["score_percent"],
+        success_score(
+            step="simulation", target=simulation_target, actual_value=8.6, actual_unit="dBi"
+        )["score_percent"],
+    )
+    ordinal2_simulation_only = success_score(
+        step="simulation", target=simulation_target, actual_value=8.02, actual_unit="dBi"
+    )["score_percent"]
+    ordinal3_overall = min(
+        success_score(
+            step="analysis", target=analysis_target, actual_value=2.46e9, actual_unit="Hz"
+        )["score_percent"],
+        success_score(
+            step="simulation", target=simulation_target, actual_value=8.4, actual_unit="dBi"
+        )["score_percent"],
+    )
+    # Sanity check on the test's own setup: the skipped ordinal's
+    # simulation-only score must be the highest of the three, or a broken
+    # skip branch could accidentally still land on the right answer.
+    assert ordinal2_simulation_only > ordinal3_overall > ordinal1_overall
+
+    result = run_candidate_search(
+        state,
+        [_BASE_CANDIDATE],
+        {"analysis": {"target": analysis_target}, "simulation": {"target": simulation_target}},
+        design_id=56,
+    )
+
+    assert result["prior_best_score"] == pytest.approx(ordinal3_overall)
+    assert result["prior_iteration"] == 3

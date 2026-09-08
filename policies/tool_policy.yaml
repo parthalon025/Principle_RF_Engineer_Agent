@@ -151,7 +151,48 @@ approval_self_gated:
   - lookup_nexar_component
 
 ingestion_auto:
+  # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule join
+  # ingest_arxiv_paper here, not approval_self_gated below, for the same
+  # reason ingest_arxiv_paper itself is here rather than there (see
+  # knowledge/sourcing/arxiv.py's module docstring, quoted in part below).
+  # approval_self_gated exists for a tool that ALREADY enforces its own
+  # independent gate before it runs -- concretely, knowledge/
+  # sourcing_common.py's require_external_network_tools_enabled()
+  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the three distributor lookups
+  # (lookup_digikey_component/lookup_mouser_component/lookup_nexar_component)
+  # call because each places a real, CREDENTIALED call to a third party
+  # (an API key/secret read from the environment) the instant it runs. None
+  # of the three new sourcing clients do that, or need to: 3GPP's FTP
+  # archive, ETSI's deliver-path PDFs, and the FCC's eCFR versioner API are
+  # each confirmed (in the sourcing clients' own module docstrings, from
+  # each standards body's own documentation) to need no registration, no API
+  # key, and no account of any kind -- "same ungated posture" as arXiv,
+  # arxiv.py's own words. There is no self-gate to categorize them under
+  # here; putting them in approval_self_gated anyway, with nothing behind
+  # it, would misrepresent what actually happens at call time.
+  #
+  # issue #219: ingest_patent sits here, ungated, for exactly the reason
+  # ingest_arxiv_paper does -- and deliberately NOT in approval_self_gated
+  # beside the three distributor lookups. The distinction that category
+  # actually draws is a CREDENTIAL: Digi-Key/Mouser/Nexar place an
+  # authenticated, account-billed call to a third party the instant they
+  # run, which is why knowledge/sourcing_common.py gates them. The USPTO
+  # endpoint this client uses
+  # (image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/<number>)
+  # takes no API key, no account and no payment -- verified live against
+  # five documents during the ticket -- so there is nothing to spend and
+  # nobody to bill. What it does is write one document into this project's
+  # own knowledge base, which is what every tool in this category does.
+  #
+  # It also spends no material, machine time or money, so it is nowhere near
+  # the one hard stop this project keeps (nothing prints, orders or releases
+  # without a human saying yes).
   - ingest_document
+  - ingest_arxiv_paper
+  - ingest_3gpp_spec
+  - ingest_etsi_standard
+  - ingest_fcc_rule
+  - ingest_patent
   - index_document
   - extract_components
   - reconcile_component_sources
@@ -171,7 +212,7 @@ design_tracking:
   # a signed DesignReleaseApprovalReceipt, and no workflow issues one, so a
   # release attempt returns release_not_approved rather than writing. The
   # autonomous release ACTION stays unbuilt and stays gated there; see
-  # docs/adr/0015 for why the two coexist.
+  # docs/adr/0016 for why the two coexist.
   - advance_design_status
   # issue #92: interpreting a prose customer requirement into a proposed/
   # confirmed/unscoreable requirement target. Same informational-only

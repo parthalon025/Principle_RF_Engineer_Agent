@@ -32,15 +32,16 @@ Phase 12 -- the final ticket of the 23-ticket build-out).
 """
 
 import re
-import stat
-import sys
 from dataclasses import replace as _dc_replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 import skrf as rf
+from conftest import make_fake_executable
 
+import orchestration.design_loop as design_loop_module
+from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
 from measurement.external import ExternalMeasurementError
 from orchestration.approval import (
     LoopStepApprovalReceipt,
@@ -48,6 +49,7 @@ from orchestration.approval import (
     request_loop_step_approval,
 )
 from orchestration.design_loop import (
+    DEFAULT_SIMULATION_ADAPTER,
     GATED_STEPS,
     REDESIGN_ACTIONS,
     STEP_ORDER,
@@ -55,8 +57,15 @@ from orchestration.design_loop import (
     DesignLoopValidationError,
     DesignStep,
     LoopDecision,
+    _simulation_adapter_for,
     advance_loop_step,
     start_design_loop,
+)
+from simulation.meep import (
+    PERIODIC_ABSORBER_VALIDITY as MEEP_PERIODIC_ABSORBER_VALIDITY,
+)
+from simulation.meep import (
+    periodic_absorber_capability_gaps as meep_periodic_absorber_capability_gaps,
 )
 
 REQUIREMENTS = {
@@ -324,17 +333,80 @@ def test_loop_decision_iteration_round_trips_through_to_dict_and_from_dict():
 
 def test_loop_decision_from_dict_tolerates_a_pre_88_dump_with_no_iteration_field():
     """A DesignLoopState serialized before issue #88 has no `iteration` key
-    on any decision -- from_dict must still load it, defaulting each
-    decision's iteration to 1 (see LoopDecision's own docstring for why 1
-    is the only value such a dump's decisions could have meant)."""
+    on any decision -- from_dict must still load it, but it must NOT guess
+    which round produced it. A pre-#88 dump could have come from any round
+    (issue #135): filling the blank with 1 would misrepresent a decision
+    genuinely recorded in round 5 as round 1. from_dict defaults the
+    missing value to None -- "nobody recorded this" -- instead."""
     state = start_design_loop(REQUIREMENTS)
     legacy_dict = state.to_dict()
     for decision_dict in legacy_dict["decisions"]:
         del decision_dict["iteration"]
 
     restored = DesignLoopState.from_dict(legacy_dict)
-    assert restored.decisions[0].iteration == 1
+    assert restored.decisions[0].iteration is None
     assert isinstance(restored.decisions[0], LoopDecision)
+
+
+def test_loop_decision_from_dict_keeps_a_real_recorded_iteration():
+    """A decision that DOES carry an `iteration` field (every dump from
+    issue #88 onward) must still round-trip to its real value, not be
+    swept into the same None bucket as a genuinely unknown one."""
+    state = start_design_loop(REQUIREMENTS)
+    as_dict = state.to_dict()
+    assert as_dict["decisions"][0]["iteration"] == 1
+
+    restored = DesignLoopState.from_dict(as_dict)
+    assert restored.decisions[0].iteration == 1
+
+
+def test_grouping_decisions_by_iteration_treats_none_as_its_own_case():
+    """A mixed old/new decision list -- some decisions carry a real
+    `iteration` (freshly recorded, or a post-#135 dump), others carry
+    `None` (a pre-#88 dump with no round recorded at all, issue #135).
+    Filtering for "this round's decisions" must not lump the unknown-round
+    decision into round 1's bucket, and filtering for "round 1's
+    decisions" must not include it either -- it belongs in neither."""
+    now = 0.0
+    unknown_round = LoopDecision(
+        step=DesignStep.ARCHITECTURE.value,
+        kind="architecture_decision",
+        input={},
+        result={"decision": "legacy, pre-#88"},
+        provenance=None,
+        approved_by="a.human",
+        recorded_at=now,
+        iteration=None,
+    )
+    round_one = LoopDecision(
+        step=DesignStep.ANALYSIS.value,
+        kind="calculation",
+        input={},
+        result={},
+        provenance="CALCULATED",
+        approved_by=None,
+        recorded_at=now,
+        iteration=1,
+    )
+    round_two = LoopDecision(
+        step=DesignStep.ANALYSIS.value,
+        kind="calculation",
+        input={},
+        result={},
+        provenance="CALCULATED",
+        approved_by=None,
+        recorded_at=now,
+        iteration=2,
+    )
+    decisions = [unknown_round, round_one, round_two]
+
+    round_1_decisions = [d for d in decisions if d.iteration == 1]
+    round_2_decisions = [d for d in decisions if d.iteration == 2]
+    unknown_decisions = [d for d in decisions if d.iteration is None]
+
+    assert round_1_decisions == [round_one]
+    assert round_2_decisions == [round_two]
+    assert unknown_decisions == [unknown_round]
 
 
 def test_state_round_trips_through_to_dict_and_from_dict():
@@ -408,6 +480,307 @@ def test_analysis_requires_expected_fields():
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
     with pytest.raises(DesignLoopValidationError, match="missing required field"):
         advance_loop_step(state, {"eps_r": 4.4})
+
+
+def test_architecture_requires_a_design_family():
+    """#161: design_family is a required, structured slot on the
+    ARCHITECTURE decision -- alongside the existing free-form decision/
+    rationale prose, not replacing it -- so #150/#151 have a grouping key
+    to key off of without parsing prose. No enum/registry validation yet
+    (docs/adr/0018 is the separate, harder ticket for that): a bare string
+    is enough, so a step_input missing the key entirely is the only
+    rejection this ticket adds."""
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target with a simple, low-cost fabrication",
+    }
+    fields = _fingerprint(state, DesignStep.ARCHITECTURE, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        advance_loop_step(state, step_input, approval=receipt)
+
+
+def test_architecture_decision_records_the_design_family_alongside_decision_and_rationale():
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target with a simple, low-cost fabrication",
+        "design_family": "patch_antenna",
+    }
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+    architecture_decision = state.decisions[-1]
+    assert architecture_decision.kind == "architecture_decision"
+    assert architecture_decision.result["design_family"] == "patch_antenna"
+    # The existing prose fields are still there, not replaced by the new
+    # structured field.
+    assert architecture_decision.result["decision"] == step_input["decision"]
+    assert architecture_decision.result["rationale"] == step_input["rationale"]
+
+
+# ---------------------------------------------------------------------------
+# Group 2b (issue #154, ADR-0015): ANALYSIS wired to the Material-property
+# library -- a caller may supply 'material_property' (a
+# designs.material_properties.resolve_material_property result) instead of
+# a bare 'eps_r' number. A confident single-value lookup behaves exactly
+# like the existing eps_r path; a Family fallback bracket or a set of
+# disagreeing citations is computed at BOTH ends of the range (ADR-0015's
+# Consequences section), never collapsed to one number.
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_accepts_material_property_in_place_of_eps_r():
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    assert material_property["low"] != material_property["high"]  # sanity: this is the spread case
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    state = advance_loop_step(
+        state,
+        {"material_property": material_property, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286},
+    )
+    result = state.decisions[-1].result
+    assert "resonant_frequency_hz" not in result
+    assert result["resonant_frequency_hz_low"] < result["resonant_frequency_hz_high"]
+    assert result["material_property"] == material_property
+    assert state.decisions[-1].provenance == "CALCULATED"
+
+
+def test_analysis_material_property_degenerates_to_a_single_value_for_one_confident_entry():
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    material_property = dict(
+        material_property, low=4.4, high=4.4, entries=[]
+    )  # a confident, agreed value
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    step_input_material = {
+        "material_property": material_property,
+        "w_m": 0.03,
+        "h_m": 0.0016,
+        "l_m": 0.0286,
+    }
+    state_material = advance_loop_step(state, step_input_material)
+    result_material = state_material.decisions[-1].result
+
+    state_direct = advance_loop_step(
+        state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
+    )
+    result_direct = state_direct.decisions[-1].result
+
+    assert result_material["resonant_frequency_hz"] == result_direct["resonant_frequency_hz"]
+    assert "resonant_frequency_hz_low" not in result_material
+
+
+def test_analysis_rejects_both_eps_r_and_material_property():
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    with pytest.raises(DesignLoopValidationError, match="exactly one"):
+        advance_loop_step(
+            state,
+            {
+                "eps_r": 4.4,
+                "material_property": material_property,
+                "w_m": 0.03,
+                "h_m": 0.0016,
+                "l_m": 0.0286,
+            },
+        )
+
+
+def test_analysis_rejects_a_material_property_with_no_library_data():
+    material_property = resolve_material_property(
+        [], material="unobtainium foam", property_name="eps_r", frequency_hz=9.5e9
+    )
+    assert material_property["status"] == "no_data"
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    with pytest.raises(DesignLoopValidationError, match="no usable"):
+        advance_loop_step(
+            state,
+            {"material_property": material_property, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group 2c (issue #101): SIMULATION derives VSWR/return loss from its own
+# feed-point impedance, against an explicitly caller-stated reference
+# impedance. These stub out run_nec2_simulation itself (monkeypatching the
+# name orchestration/design_loop.py imports it under) rather than driving a
+# real/fake nec2++ subprocess -- that subprocess path is exercised for real
+# by the end-to-end test below (Group 5); isolating this arithmetic from
+# subprocess execution keeps these tests fast and independent of whether a
+# shell can exec a Python script directly (which native Windows cannot do
+# without going through the interpreter -- issue #159's own tracked gap,
+# see test_end_to_end_full_requirements_to_redesign_cycle below).
+# ---------------------------------------------------------------------------
+
+
+def _fake_nec2_result(
+    resistance_ohms: float = 82.6979, reactance_ohms: float = 46.3060, **overrides
+):
+    """A run_nec2_simulation-shaped return value, carrying the same
+    feed-point impedance tests/test_nec2pp.py's/this file's own NEC-2
+    User's Guide 'Example 1' sample output parses to, by default."""
+    result = {
+        "provenance": "SIMULATED",
+        "impedance": {
+            "tag": 0,
+            "segment": 4,
+            "voltage_real_v": 1.0,
+            "voltage_imag_v": 0.0,
+            "current_real_a": 0.00920585,
+            "current_imag_a": -0.00515474,
+            "resistance_ohms": resistance_ohms,
+            "reactance_ohms": reactance_ohms,
+            "admittance_real_mhos": 0.00920585,
+            "admittance_imag_mhos": -0.00515474,
+            "power_w": 0.00460292,
+        },
+        "pattern": [],
+        "gain_dbi": None,
+        "average_power_gain_linear": None,
+        "simulator": "NEC2++",
+        "status": "COMPLETED",
+        "workdir": "/fake/workdir",
+        "input_file": "/fake/workdir/model.nec",
+    }
+    result.update(overrides)
+    return result
+
+
+def _advance_to_simulation(monkeypatch, fake_result) -> DesignLoopState:
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", lambda **kw: fake_result)
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE)
+    state = advance_loop_step(state, _valid_step_input(state, DesignStep.ANALYSIS))
+    assert state.current_step == DesignStep.SIMULATION.value
+    return state
+
+
+def test_simulation_requires_reference_impedance_ohms_explicitly(monkeypatch):
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result())
+    with pytest.raises(DesignLoopValidationError, match="missing required field"):
+        advance_loop_step(state, {"geometry": _DIPOLE_GEOMETRY, "frequency_hz": 300e6})
+
+
+def test_simulation_derives_vswr_and_return_loss_from_feed_point_impedance(monkeypatch):
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result())
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.step == DesignStep.SIMULATION.value
+    assert decision.provenance == "SIMULATED"
+    # Independently computed from (82.6979 + j46.3060) referenced to 50
+    # ohms -- see tests/test_calculations.py's own
+    # test_reflection_coefficient_of_a_known_complex_impedance.
+    assert decision.result["reflection_coefficient_magnitude"] == pytest.approx(0.40333507086482756)
+    assert decision.result["vswr"] == pytest.approx(2.35196506839923)
+    assert decision.result["return_loss_db"] == pytest.approx(7.8866802699461624)
+    # The reference impedance is recorded verbatim alongside the value --
+    # never silently assumed (issue #101's own acceptance criterion).
+    assert decision.result["reference_impedance_ohms"] == 50.0
+    assert decision.result["frequency_hz"] == 300e6
+    # NEC2++'s adapter only ever solves at one frequency -- honestly
+    # flagged, so a reader never mistakes this for a swept-band answer.
+    assert decision.result["single_frequency_prediction"] is True
+
+
+def test_simulation_reference_impedance_is_never_silently_defaulted_to_50(monkeypatch):
+    """The same feed-point impedance, scored against a DIFFERENT explicit
+    reference impedance, produces a materially different VSWR -- proving
+    the value actually came from step_input, not a hardcoded 50 ohms."""
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result())
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 75.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["reference_impedance_ohms"] == 75.0
+    assert decision.result["vswr"] != pytest.approx(2.35196506839923)
+
+
+def test_simulation_vswr_undefined_at_total_mismatch_is_recorded_as_none(monkeypatch):
+    # A short-circuit feed point (0 ohms): |Gamma| = 1 exactly -- VSWR is
+    # mathematically infinite/undefined (vswr_from_gamma's own domain is
+    # [0, 1)), so it is recorded as None rather than raising and failing
+    # the whole step. Return loss (0 dB at total reflection) is finite and
+    # still computed.
+    state = _advance_to_simulation(
+        monkeypatch, _fake_nec2_result(resistance_ohms=0.0, reactance_ohms=0.0)
+    )
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["vswr"] is None
+    assert decision.result["return_loss_db"] == pytest.approx(0.0)
+
+
+def test_simulation_return_loss_undefined_at_perfect_match_is_recorded_as_none(monkeypatch):
+    # A feed point exactly at the reference impedance: |Gamma| = 0 -- VSWR
+    # is a valid, finite 1.0, but return loss (-20*log10(0)) is
+    # mathematically infinite/undefined, so it is recorded as None.
+    state = _advance_to_simulation(
+        monkeypatch, _fake_nec2_result(resistance_ohms=50.0, reactance_ohms=0.0)
+    )
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["vswr"] == pytest.approx(1.0)
+    assert decision.result["return_loss_db"] is None
+
+
+def test_simulation_with_no_parsed_impedance_records_no_vswr_but_still_advances(monkeypatch):
+    # A defensive case: if run_nec2_simulation's own parse ever fails to
+    # find an ANTENNA INPUT PARAMETERS block (impedance=None), there is
+    # nothing to derive VSWR/return loss from -- recorded as None, not
+    # raised, since the underlying simulation itself still completed.
+    state = _advance_to_simulation(monkeypatch, _fake_nec2_result(impedance=None))
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+        },
+    )
+    decision = state.decisions[-1]
+    assert decision.result["vswr"] is None
+    assert decision.result["return_loss_db"] is None
+    assert decision.result["reflection_coefficient_magnitude"] is None
+    assert decision.result["reference_impedance_ohms"] == 50.0
 
 
 def test_verification_rejects_an_unrecognized_status():
@@ -523,7 +896,7 @@ _DIPOLE_GEOMETRY = {
     ]
 }
 
-_FAKE_NEC2PP_PY = '''#!{python}
+_FAKE_NEC2PP_PY = '''
 import sys
 
 OUTPUT = """{sample}"""
@@ -536,10 +909,8 @@ sys.exit(0)
 
 
 def _make_fake_nec2pp(tmp_path: Path) -> Path:
-    script = tmp_path / "fake_nec2pp.py"
-    script.write_text(_FAKE_NEC2PP_PY.format(python=sys.executable, sample=_GUIDE_SAMPLE_OUTPUT))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_NEC2PP_PY.format(sample=_GUIDE_SAMPLE_OUTPUT)
+    return make_fake_executable(tmp_path, body, name="fake_nec2pp")
 
 
 def _write_measured_touchstone(tmp_path: Path, name: str = "measured") -> Path:
@@ -722,9 +1093,13 @@ def test_end_to_end_full_requirements_to_redesign_cycle(tmp_path: Path):
             "frequency_hz": 300e6,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
+            "reference_impedance_ohms": 50.0,
         },
     )
     seen_steps.append(DesignStep.SIMULATION)
+    assert state.decisions[-1].result["reference_impedance_ohms"] == 50.0
+    assert state.decisions[-1].result["vswr"] is not None
+    assert state.decisions[-1].result["return_loss_db"] is not None
 
     state = advance_loop_step(
         state,
@@ -835,6 +1210,7 @@ def _valid_step_input(_state: DesignLoopState, step: DesignStep) -> dict:
         return {
             "decision": "rectangular microstrip patch on FR4",
             "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": "patch_antenna",
             "eps_r": 4.4,
             "w_m": 0.03,
             "h_m": 0.0016,
@@ -900,3 +1276,276 @@ def _advance_to(
 
 def _run_full_cycle_up_to_redesign(state: DesignLoopState) -> DesignLoopState:
     return _advance_to(state, DesignStep.REDESIGN_DECISION)
+
+
+# ---------------------------------------------------------------------------
+# Group 2c (issue #109, ADR-0018): ARCHITECTURE validates `design_family`
+# against the Design family registry. #161 landed the field as a bare,
+# unvalidated string because the registry did not exist; it does now.
+# ---------------------------------------------------------------------------
+
+
+def test_architecture_rejects_a_design_family_the_registry_does_not_know():
+    """A misspelled family previously survived into `decision_records` as a
+    grouping key nothing downstream recognises (#150, #151). It now fails at
+    the step that named it."""
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target",
+        "design_family": "absorbre",
+    }
+    with pytest.raises(DesignLoopValidationError, match="Unknown design_family"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_architecture_records_the_registry_entry_for_the_named_family():
+    state = start_design_loop(REQUIREMENTS)
+    step_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target",
+        "design_family": "patch_antenna",
+    }
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+    registry = state.decisions[-1].result["design_family_registry"]
+
+    # The caller's own string survives verbatim; the canonical name is added
+    # alongside it so runs spelling it differently still group together.
+    assert state.decisions[-1].result["design_family"] == "patch_antenna"
+    assert registry["canonical_name"] == "PATCH"
+    assert registry["simulation_tier"] == "TIER_A"
+    assert registry["physical_bound"]["status"] == "available"
+    assert "Nel" in registry["physical_bound"]["citation"]
+    assert registry["physical_bound"]["primary_source_doc"].startswith("docs/")
+
+
+def test_architecture_distinguishes_an_unread_bound_from_a_family_with_none():
+    """ADR-0018 rejected a fixed schema because a bare `None` would be
+    ambiguous between 'not yet computed' and 'doesn't exist for this family'.
+    That distinction must survive into the decision record, not collapse on
+    the way in."""
+    unread = _grant_and_advance(
+        start_design_loop(REQUIREMENTS),
+        DesignStep.ARCHITECTURE,
+        step_input_override={
+            "decision": "reflectarray on a grounded silicone spacer",
+            "rationale": "beam steering is the requirement",
+            "design_family": "reflection_phase",
+        },
+    )
+    none_exists = _grant_and_advance(
+        start_design_loop(REQUIREMENTS),
+        DesignStep.ARCHITECTURE,
+        step_input_override={
+            "decision": "1-bit coding surface",
+            "rationale": "backscatter redistribution, not absorption",
+            "design_family": "diffusive",
+        },
+    )
+    unread_bound = unread.decisions[-1].result["design_family_registry"]["physical_bound"]
+    none_bound = none_exists.decisions[-1].result["design_family_registry"]["physical_bound"]
+
+    assert unread_bound["status"] == "unread_primary_source"
+    assert "Gustafsson" in unread_bound["citation"]
+    assert none_bound["status"] == "none_exists"
+    assert none_bound != unread_bound
+
+
+# --- #191: ANALYSIS dispatches on the design family -------------------------
+
+_ABSORBER_ANALYSIS_INPUT = {
+    "f_low_hz": 8e9,
+    "f_high_hz": 12e9,
+    "eps_r": 2.9,
+    "tan_delta": 0.10,
+    "thickness_m": 2.0e-3,
+    "period_m": 3.0e-3,
+    "gap_m": 0.2e-3,
+    "sheet_resistance_ohm_sq": 500.0,
+    "squares": 0.1,
+}
+
+
+def _architecture_input(family: str) -> dict:
+    return {
+        "decision": f"a {family.lower()} design",
+        "rationale": "chosen for this requirement",
+        "design_family": family,
+    }
+
+
+def test_analysis_runs_the_absorber_model_when_architecture_chose_absorber():
+    """#191: an ABSORBER must not be analysed with a patch-antenna resonant
+    frequency -- that answers a question about a different device."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+
+    result = state.decisions[-1].result
+    assert result["function"] == "absorber_band_response"
+    assert "resonant_frequency_hz" not in result
+    assert 0.0 <= result["worst_absorption"] <= 1.0
+    assert 8e9 <= result["worst_frequency_hz"] <= 12e9
+    assert state.decisions[-1].provenance == "CALCULATED"
+
+
+def test_analysis_still_runs_the_patch_model_for_patch():
+    """The dispatch is additive: PATCH keeps exactly the analysis it had."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    state = advance_loop_step(state, {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016, "l_m": 0.029})
+    result = state.decisions[-1].result
+    assert result["function"] == "patch_resonant_frequency_hz"
+    assert result["resonant_frequency_hz"] > 0
+
+
+def test_absorber_analysis_requires_its_own_fields_not_the_patch_ones():
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    with pytest.raises(DesignLoopValidationError, match="missing required field"):
+        advance_loop_step(state, {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016, "l_m": 0.029})
+
+
+def test_absorber_analysis_carries_its_validity_warnings_into_the_decision():
+    """A warning that never reaches the recorded decision is not a warning.
+    The thin-spacer flag must ride in the loop's own trail.
+
+    Renamed at #245: #190's `thin_spacer_bias_unrecovered` is gone because
+    Costa's eq (10) IS carried now; what survives is the narrower
+    `thin_spacer_prefactor_disputed` -- the correction is applied, but which
+    of two published prefactors is right is still open (#234). What this
+    test guards is unchanged: the flag has to reach the decision record."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    thin = dict(_ABSORBER_ANALYSIS_INPUT, thickness_m=0.5e-3)
+    state = advance_loop_step(state, thin)
+    flags = {v["flag"] for v in state.decisions[-1].result["validity"]}
+    assert "thin_spacer_prefactor_disputed" in flags
+
+
+def test_absorber_analysis_reports_a_range_for_a_bracketed_permittivity():
+    """ADR-0015/#127: a bracketed material property yields a RANGE, never
+    one false-precise number -- the swing is the warning."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    assert material_property["low"] != material_property["high"]  # sanity: the spread case
+    bracketed = {k: v for k, v in _ABSORBER_ANALYSIS_INPUT.items() if k != "eps_r"}
+    bracketed["material_property"] = material_property
+    state = advance_loop_step(state, bracketed)
+    result = state.decisions[-1].result
+    assert result["worst_absorption_low"] <= result["worst_absorption_high"]
+
+
+# --- #229: SIMULATION dispatches on the family's declared adapter -----------
+
+
+def test_simulation_adapter_defaults_to_nec2_with_no_architecture_decision():
+    """Nothing that worked before this dispatch existed changes behaviour."""
+    state = start_design_loop(REQUIREMENTS)
+    assert _simulation_adapter_for(state) == DEFAULT_SIMULATION_ADAPTER == "NEC2"
+
+
+def test_patch_declares_nec2_and_absorber_declares_meep():
+    state = start_design_loop(REQUIREMENTS)
+    patch = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    absorber = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    assert _simulation_adapter_for(patch) == "NEC2"
+    assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
+
+
+def test_absorber_simulation_runs_meep_with_a_periodic_cell(monkeypatch):
+    """#230/#231: the three capability gaps are closed, so the absorber path
+    now runs rather than refusing. It must reach Meep -- never NEC2 -- and it
+    must make the cell periodic, because a unit cell IS an infinite array and
+    forgetting that fails silently."""
+    captured = {}
+
+    def fake_run(geometry, characteristic_length_m, nfreq, workdir):
+        captured["geometry"] = geometry
+        return {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [9e9, 10e9], "reflectance": [0.2, 0.01]},
+        }
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", fake_run)
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(
+        state, {"geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]}, "frequency_hz": 10e9}
+    )
+
+    assert captured["geometry"]["periodic_axes"] == ["x", "y"]
+    result = state.decisions[-1].result
+    assert result["function"] == "run_meep_simulation"
+    # Ground-backed: nothing transmits, so every watt not reflected was
+    # dissipated. A = 1 - R is legitimate only for that reason.
+    assert result["absorption"] == pytest.approx([0.8, 0.99])
+    assert result["worst_absorption"] == pytest.approx(0.8)
+    assert state.decisions[-1].provenance == "SIMULATED"
+
+
+def test_absorber_simulation_never_silently_falls_back_to_nec2(monkeypatch):
+    """The failure this whole dispatch exists to remove: quietly running the
+    wire solver on a metamaterial cell and reporting success."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError("NEC2 must never be reached for an ABSORBER")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.05]},
+        },
+    )
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(state, {"geometry": {}, "frequency_hz": 10e9})
+    assert state.decisions[-1].result["simulator"] == "MEEP"
+
+
+def test_the_absorbers_closed_form_analysis_is_kept_alongside_the_full_wave_run(monkeypatch):
+    """#111's two tiers: the cheap closed form screens, the expensive
+    full-wave run confirms. Both stay in the trail -- the point of a
+    cross-check is that you can compare them."""
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.05]},
+        },
+    )
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(state, {"geometry": {}, "frequency_hz": 10e9})
+
+    kinds = [(d.step, d.result.get("function")) for d in state.decisions]
+    assert ("analysis", "absorber_band_response") in kinds
+    assert ("simulation", "run_meep_simulation") in kinds
+
+
+def test_no_capability_gaps_remain_and_the_survivors_are_honest_caveats():
+    """The three gaps (#230) are closed and verified against real Meep. What
+    is left is approximate rather than absent, and each survivor still owes
+    the charter's three things: what is assumed, what it costs, the cheapest
+    way to find out."""
+    assert meep_periodic_absorber_capability_gaps() == []
+    assert MEEP_PERIODIC_ABSORBER_VALIDITY
+    for entry in MEEP_PERIODIC_ABSORBER_VALIDITY:
+        assert entry["flag"] and entry["assumed"] and entry["costs"] and entry["cheapest_test"]

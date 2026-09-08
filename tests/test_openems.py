@@ -38,12 +38,11 @@ module's honest caveat).
 """
 
 import os
-import stat
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.openems import (
@@ -75,11 +74,9 @@ Speed: 55.00 MCells/s
 
 
 def _make_fake_openems(tmp_path: Path, body: str) -> Path:
-    """Write a small fake 'openEMS' shell script and make it executable."""
-    script = tmp_path / "fake_openems.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake 'openEMS' executable (a Python script body,
+    launched cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_openems")
 
 
 PATCH_GEOMETRY = {
@@ -661,7 +658,7 @@ def test_openems_simulator_invokes_xml_file_positionally_with_disable_dumps(tmp_
     """Confirm the real openEMS CLI contract (a single positional XML file
     argument, then flags -- see module docstring citation) is what actually
     gets shelled out, and that --disable-dumps is passed by default."""
-    script = _make_fake_openems(tmp_path, 'echo "$@"\n')
+    script = _make_fake_openems(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     xml_file = tmp_path / "model.xml"
     xml_file.write_text("<openEMS/>")
 
@@ -675,7 +672,7 @@ def test_openems_simulator_invokes_xml_file_positionally_with_disable_dumps(tmp_
 
 
 def test_openems_simulator_custom_extra_args(tmp_path: Path):
-    script = _make_fake_openems(tmp_path, 'echo "$@"\n')
+    script = _make_fake_openems(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     xml_file = tmp_path / "model.xml"
     xml_file.write_text("<openEMS/>")
 
@@ -687,7 +684,9 @@ def test_openems_simulator_custom_extra_args(tmp_path: Path):
 
 
 def test_openems_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_openems(tmp_path, 'echo "boom: invalid mesh" >&2\nexit 1\n')
+    script = _make_fake_openems(
+        tmp_path, 'import sys\nsys.stderr.write("boom: invalid mesh\\n")\nsys.exit(1)\n'
+    )
     xml_file = tmp_path / "model.xml"
     xml_file.write_text("<openEMS/>")
 
@@ -697,7 +696,7 @@ def test_openems_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_openems_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_openems(tmp_path, "sleep 5\n")
+    script = _make_fake_openems(tmp_path, "import time\ntime.sleep(5)\n")
     xml_file = tmp_path / "model.xml"
     xml_file.write_text("<openEMS/>")
 
@@ -713,7 +712,7 @@ def test_openems_simulator_missing_xml_file_raises(tmp_path: Path):
 
 
 def test_openems_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_openems(tmp_path, "exit 0\n")
+    script = _make_fake_openems(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("OPENEMS_BIN", str(script))
     simulator = OpenemsSimulator()
     assert simulator.executable == str(script)
@@ -726,7 +725,7 @@ def test_openems_simulator_picks_up_executable_from_env_var(tmp_path: Path, monk
 # docstring for the not-verified-against-a-real-binary caveat.
 # ---------------------------------------------------------------------------
 
-_FAKE_OPENEMS_PY = '''#!{python}
+_FAKE_OPENEMS_PY = '''
 import sys
 
 OUTPUT = """{sample}"""
@@ -740,10 +739,8 @@ sys.exit(0)
 
 
 def _make_fake_openems_py(tmp_path: Path, sample_output: str) -> Path:
-    script = tmp_path / "fake_openems_realistic.py"
-    script.write_text(_FAKE_OPENEMS_PY.format(python=sys.executable, sample=sample_output))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_OPENEMS_PY.format(sample=sample_output)
+    return make_fake_executable(tmp_path, body, name="fake_openems_realistic")
 
 
 def test_run_openems_simulation_end_to_end_converged(tmp_path: Path):
@@ -783,7 +780,9 @@ def test_run_openems_simulation_end_to_end_max_timesteps(tmp_path: Path):
 
 
 def test_run_openems_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_openems(tmp_path, 'echo "mesh error" >&2\nexit 1\n')
+    script = _make_fake_openems(
+        tmp_path, 'import sys\nsys.stderr.write("mesh error\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_openems_simulation(
             geometry=PATCH_GEOMETRY,
@@ -802,7 +801,7 @@ def test_run_openems_simulation_propagates_simulator_error_on_failure(tmp_path: 
 # probes() call chain, not just parse_openems_output() directly.
 # ---------------------------------------------------------------------------
 
-_FAKE_OPENEMS_WITH_PORTS_PY = '''#!{python}
+_FAKE_OPENEMS_WITH_PORTS_PY = '''
 import sys
 
 PORT_FILES = {port_files!r}
@@ -826,14 +825,8 @@ def _make_fake_openems_with_ports_py(
     """Like _make_fake_openems_py, but the fake script ALSO writes
     `port_files` (dump filename -> full ASCII content) into its cwd before
     printing OUTPUT -- mimicking a real openEMS run's ProbeBox dumps."""
-    script = tmp_path / "fake_openems_with_ports.py"
-    script.write_text(
-        _FAKE_OPENEMS_WITH_PORTS_PY.format(
-            python=sys.executable, sample=sample_output, port_files=port_files
-        )
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_OPENEMS_WITH_PORTS_PY.format(sample=sample_output, port_files=port_files)
+    return make_fake_executable(tmp_path, body, name="fake_openems_with_ports")
 
 
 def test_run_openems_simulation_end_to_end_computes_real_s_parameters(tmp_path: Path):

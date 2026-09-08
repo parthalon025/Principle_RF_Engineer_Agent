@@ -27,6 +27,7 @@ from rf_tools.calculations import (
     patch_resonant_frequency_hz,
     quality_factor_from_fractional_bandwidth,
     quarter_wave_transformer_impedance,
+    reflection_coefficient_from_impedance,
     return_loss_db,
     rollett_k_factor,
     s_to_abcd,
@@ -71,6 +72,54 @@ def test_gain():
 def test_invalid_gamma():
     with pytest.raises(ValueError):
         vswr_from_gamma(1.0)
+
+
+# --- Reflection coefficient from feed-point impedance (issue #101) ---
+#
+# Gamma = (Z_load - Z0) / (Z_load + Z0) -- the standard transmission-line
+# result (Pozar, "Microwave Engineering"), the missing link between a
+# SIMULATION step's feed-point impedance and vswr_from_gamma/return_loss_db
+# above, both of which take |Gamma| directly, not an impedance.
+
+
+def test_reflection_coefficient_of_a_matched_load_is_zero():
+    # Z_load == Z0: no reflection at all.
+    assert reflection_coefficient_from_impedance(50.0, z0=50.0) == pytest.approx(0.0)
+
+
+def test_reflection_coefficient_of_a_short_circuit_is_minus_one():
+    assert reflection_coefficient_from_impedance(0.0, z0=50.0) == pytest.approx(-1.0)
+
+
+def test_reflection_coefficient_of_a_known_complex_impedance():
+    # The same feed-point impedance tests/test_design_loop.py's/tests/
+    # test_nec2pp.py's own NEC-2 User's Guide "Example 1" sample output
+    # parses to (82.6979 + j46.3060 ohms), referenced to 50 ohms --
+    # independently computed via (Z-Z0)/(Z+Z0).
+    gamma = reflection_coefficient_from_impedance(complex(82.6979, 46.3060), z0=50.0)
+    assert abs(gamma) == pytest.approx(0.40333507086482756)
+
+
+def test_reflection_coefficient_composes_with_vswr_and_return_loss():
+    gamma = reflection_coefficient_from_impedance(complex(82.6979, 46.3060), z0=50.0)
+    gamma_mag = abs(gamma)
+    assert vswr_from_gamma(gamma_mag) == pytest.approx(2.35196506839923)
+    assert return_loss_db(gamma_mag) == pytest.approx(7.8866802699461624)
+
+
+def test_reflection_coefficient_rejects_a_non_positive_reference_impedance():
+    with pytest.raises(ValueError):
+        reflection_coefficient_from_impedance(50.0, z0=0.0)
+    with pytest.raises(ValueError):
+        reflection_coefficient_from_impedance(50.0, z0=-50.0)
+
+
+def test_reflection_coefficient_undefined_when_load_cancels_reference():
+    # Z_load + Z0 = 0 (a negative-resistance load equal in magnitude to
+    # Z0) makes the formula's denominator zero -- genuinely undefined, not
+    # a value to silently guess at.
+    with pytest.raises(ValueError):
+        reflection_coefficient_from_impedance(complex(-50.0, 0.0), z0=50.0)
 
 
 # --- Network parameter conversions (S/Z/Y/ABCD) ---

@@ -92,7 +92,15 @@ def _load_policy() -> dict[str, frozenset[str]]:
     return {category: frozenset(names or []) for category, names in raw.items()}
 
 
-def _category_for(tool_name: str) -> str | None:
+def category_for(tool_name: str) -> str | None:
+    """Return `tool_name`'s category from `tool_policy.yaml`, or `None` if it
+    has no category anywhere in the file. Public (unlike `_load_policy`)
+    because it is a legitimate second use of the same loaded policy data --
+    `enforce` uses it to check for a hard-gated category below, and issue
+    #158's provenance guard (`agent/main.py`) uses it to confirm a
+    CALCULATED claim is backed by a `calculation`-category tool call
+    specifically, not just any tool call at all.
+    """
     for category, names in _load_policy().items():
         if tool_name in names:
             return category
@@ -125,7 +133,7 @@ def enforce(tool_name: str) -> None:
     is `assert_all_tools_categorized`'s job, checked once at import time
     for the whole tool surface, not re-checked on every call.
     """
-    category = _category_for(tool_name)
+    category = category_for(tool_name)
     if category not in _GATED_CATEGORIES:
         return
     raise PolicyError(

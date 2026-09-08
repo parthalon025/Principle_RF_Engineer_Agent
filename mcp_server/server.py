@@ -30,6 +30,11 @@ from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
+from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
+from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
+from knowledge.sourcing.patent import ingest_patent as _ingest_patent
+from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1052,6 +1057,7 @@ def run_palace_simulation(
     sweep: dict | None = None,
     num_processes: int = 1,
     timeout_s: int = 3600,
+    solver_order: int = 1,
 ) -> dict:
     """Simulate a periodic metamaterial unit cell with Palace, a full-wave finite-element
     solver with NATIVE Floquet/periodic-boundary ports -- the only simulator in this
@@ -1065,20 +1071,28 @@ def run_palace_simulation(
     polarization/max_order overrides -- see simulation.palace.generate_palace_mesh and
     generate_palace_config for the full shape), runs it via the real `palace` binary,
     and parses port-floquet-S.csv into structured per-diffraction-order S-parameter
-    data (plus a "specular" S11/S21-style convenience view for the fundamental order).
-    Returns "SIMULATED" provenance. Embedded PEC conductor patches (a metallic
-    metasurface, as opposed to an all-dielectric grating/photonic-crystal unit cell)
-    are NOT supported in this pass -- see simulation/palace.py's module docstring.
-    Config/mesh format verified against Palace's own primary documentation and MFEM's
-    own mesh-format documentation (see simulation/palace.py's module docstring for the
-    full citation list) but NOT against a real palace binary -- none is installed in
-    this environment."""
+    data (plus a "specular" convenience view keyed "S11_TE"/"S21_TE"/... for the
+    fundamental order -- the key carries the polarization because Palace reports both,
+    and the co-polarized one is whichever matches the polarization you asked for).
+    `solver_order` is the finite-element order: 1 (Palace's own default) is fast and
+    approximate, 2 is what Palace's own worked example uses and what reproduced its
+    published answers. Returns "SIMULATED" provenance. Embedded PEC conductor patches
+    (a metallic metasurface, as opposed to an all-dielectric grating/photonic-crystal
+    unit cell) are NOT supported in this pass -- see simulation/palace.py's module
+    docstring. This adapter HAS been run end to end against a real palace binary
+    (issue #210): driving Palace's own "Floquet Ports for a Dielectric Grating"
+    example through this exact function reproduced Palace's published S-parameters to
+    within 0.056 dB and 0.91 degrees, and agreed on which diffraction orders
+    propagate. That is one all-dielectric geometry at one incidence angle, and it is
+    still a simulation agreeing with a simulation -- nothing here has been checked
+    against a bench measurement. See docs/palace-floquet-validation.md."""
     return _run_palace_simulation(
         geometry=geometry,
         frequency_hz=frequency_hz,
         sweep=sweep,
         num_processes=num_processes,
         timeout_s=timeout_s,
+        solver_order=solver_order,
     )
 
 
@@ -1214,7 +1228,16 @@ def inspect_design_loop_state(state: dict) -> dict:
     every decision recorded so far with its own provenance, and whether an
     approval is currently pending (and for which step). Safe to call at any
     point mid-loop, not just at completion; does not mutate or advance the
-    loop, and does not touch the database."""
+    loop.
+
+    When `state` carries a `design_id`, this opens a real database
+    connection and substitutes `requirements` with a fresh read of the
+    persisted `designs.requirements` column (issue #100), so a target
+    proposed or confirmed via `designs.requirement_targets` after `state`
+    was captured is reflected here without the caller re-reading the
+    design themselves -- everything else is passed through unchanged,
+    read-only. Without a `design_id`, this never touches the database and
+    `requirements` is returned exactly as given."""
     return _inspect_design_loop_state(state)
 
 
@@ -1275,6 +1298,20 @@ def run_candidate_search(
     VERIFICATION/CORRELATION/REQUIREMENTS similarly halts with
     stop_reason="out_of_scope_step".
 
+    A stop_reason="score_plateau" result is not the same signal as
+    target_satisfaction or evaluation_budget: it means the running-best
+    overall_score_percent stopped improving by more than plateau_epsilon
+    across the last plateau_window candidates -- it does NOT mean this
+    architecture's OPTIMIZATION is exhausted. Read a plateau stop as a cue
+    to construct and submit ONE more batch that is deliberately different
+    from the one that just plateaued -- built on a different region of the
+    parameter space, or a different construction/proposal strategy, never
+    a near-identical resubmission with minor tweaks -- before concluding
+    parameter-level search is exhausted for this architecture. Only after
+    that second, deliberately-different batch also plateaus should the
+    caller move on to compile_lab_test_plan or a REDESIGN_DECISION for
+    this architecture.
+
     Returns a report dict: stop_reason/stop_detail naming exactly why the
     search stopped, an ordered `trail` (one entry per candidate actually
     evaluated, each carrying its own per-step score trail), and
@@ -1301,22 +1338,207 @@ def ingest_document(
     license: str,
     classification: str,
     supersedes_document_id: int | None = None,
+    author: str | None = None,
+    revision: str | None = None,
 ) -> dict:
     """Parse a document PDF via docling, chunk it, and store it. source_type must be one
-    of: datasheet, application_note, standard, textbook, paper, patent, design_record --
-    it is fixed at ingest time and sets the document's default provenance and authority
-    rank, so a wrong value permanently mis-ranks everything retrieved from it. Note
-    patent: its numbers are citable evidence but rank below a peer-reviewed paper (a
-    patent office does not check that a stated number reproduces), and its claim text is
-    legal boundary-setting, never design guidance. Pass supersedes_document_id to declare
-    this upload a newer revision of that document (never inferred from title); omit it for
-    a plain new, independent document."""
+    of: datasheet, application_note, standard, textbook, paper, patent, partner_research,
+    design_record -- it is fixed at ingest time and sets the document's default provenance
+    and authority rank, so a wrong value permanently mis-ranks everything retrieved from
+    it. Note patent: its numbers are citable evidence but rank below a peer-reviewed paper
+    (a patent office does not check that a stated number reproduces), and its claim text is
+    legal boundary-setting, never design guidance. Note partner_research (ADR-0029):
+    unpublished technical work received from an outside research partner -- use this, not
+    paper (which would overclaim peer review, outranking even a granted patent) or
+    design_record (which claims a document as this team's own authorship); it ranks between
+    patent and design_record and gets no structured component extraction, same as
+    paper/patent. Pass supersedes_document_id to declare this upload a newer revision of
+    that document (never inferred from title); omit it for a plain new, independent
+    document. author/revision are stored as-is on the document (both optional) -- for a
+    partner_research document, author should identify the partner/author, since a partner
+    source is not much use without knowing whose work it is."""
     return _ingest_document(
         file_path=file_path,
         source_type=source_type,
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,
+        author=author,
+        revision=revision,
+    )
+
+
+@mcp.tool()
+def ingest_arxiv_paper(
+    arxiv_id: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch and convert an arXiv preprint (e.g. "2401.01234", or the older
+    "cond-mat/0207270" form) into the knowledge base as source_type='paper'.
+    Uses the arxiv-doc-builder skill to fetch LaTeX source (preferred) + PDF and
+    convert to Markdown via pandoc -- preserving math/structure far better than
+    feeding a raw PDF to docling -- falling back to naive PDF text extraction
+    when no LaTeX source exists. Automatically pulls title/authors/publication
+    date/DOI/journal/categories/abstract from arXiv's own record into the
+    stored document. license must be the reuse terms that actually apply to
+    this specific paper (arXiv's default license does not itself grant
+    downstream reuse beyond citation/summary; check for an author-chosen CC0/
+    CC-BY license). authority_rank is always overridden below the peer-
+    reviewed 'paper' default, since arXiv preprints are not peer-reviewed --
+    only a "superficial" moderator check. Pass supersedes_document_id to
+    declare this upload a newer revision of that document (never inferred)."""
+    return _ingest_arxiv_paper(
+        arxiv_id,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_3gpp_spec(
+    spec_number: str,
+    version: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Download a 3GPP specification from 3GPP's own open FTP archive (no
+    registration/credential needed) and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- you must
+    already know the identifier:
+    spec_number: the spec's own number, e.g. "38.331" (or a multi-part spec
+    like "38.521-1", dash kept intact).
+    version: 3GPP's own version string exactly as it appears in the archive
+    filename, e.g. "h00" -- not a bare revision letter or a guess.
+    3GPP specs are free to download but are NOT public domain -- copyright is
+    jointly held by the 3GPP Organizational Partners and each document
+    carries its own reproduction-restriction notice. license must be the
+    reuse terms that actually apply; this tool does not assume a default.
+    Extracts the single .docx/.doc member from the downloaded zip (preferring
+    .docx). A legacy pre-2020ish .doc spec docling can't parse still stores
+    the document row with extraction_status="failed" rather than raising --
+    expect zero chunks in that case. Pass supersedes_document_id to declare
+    this upload a newer revision of that document (never inferred from
+    title); omit it for a plain new, independent document."""
+    return _ingest_3gpp_spec(
+        spec_number,
+        version,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_etsi_standard(
+    document_url: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Download an ETSI standard PDF and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- and
+    unlike ingest_3gpp_spec/ingest_fcc_rule, the identifier here is a full
+    URL, not a bare document number: ETSI's per-document "deliver" path
+    (document-type folder, a grouped numeric-range folder, the document-
+    number folder, a version folder, then the filename) is not mechanically
+    derivable from a bare standard number alone, and no confirmed public
+    search API exists to script that lookup -- only ETSI's own human-facing
+    standards-search UI (https://www.etsi.org/standards-search) resolves a
+    document number to its deliver path today.
+    document_url: the full deliverable URL, e.g. "https://www.etsi.org/
+    deliver/etsi_ts/119600_119699/119612/02.02.01_60/ts_119612v020201p.pdf"
+    -- must be an https://www.etsi.org/deliver/... URL (no registration
+    needed to fetch it), obtained however you already found it (e.g. from
+    the standards-search UI or a citation).
+    ETSI standards are free to download but carry ETSI's own copyright and
+    (F)RAND patent terms, same internal-use posture as 3GPP. license must be
+    the reuse terms that actually apply; this tool does not assume a
+    default. Pass supersedes_document_id to declare this upload a newer
+    revision of that document (never inferred from title); omit it for a
+    plain new, independent document."""
+    return _ingest_etsi_standard(
+        document_url,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_fcc_rule(
+    part: int,
+    license: str,
+    classification: str,
+    title: int = 47,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch FCC rule text via eCFR's public versioner API (no
+    authentication) and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- you must
+    already know the identifier:
+    part: the CFR part number, e.g. 15 for the Part 15 unlicensed-device
+    rules, or 97 for the Part 97 amateur-radio rules.
+    title: the CFR title number, default 47 (Telecommunication) -- pass a
+    different title only if you genuinely need rule text outside Title 47.
+    Always resolves the current edition date from eCFR's own titles.json
+    first (an arbitrary caller-supplied date can 404 against eCFR's
+    versioner), then flattens the fetched Federal-Register XML to plain text
+    locally before ingesting (docling does not support that XML DTD).
+    eCFR content is public domain as a work of the U.S. Government -- the
+    strongest license status of any source this package ingests -- but is
+    explicitly not the official legal edition (GPO's Federal Register
+    printing is authoritative); flag that distinction if a result is ever
+    used for formal regulatory sign-off. license must still be the reuse
+    terms that actually apply; this tool does not assume a default. Pass
+    supersedes_document_id to declare this upload a newer revision of that
+    document (never inferred from title); omit it for a plain new,
+    independent document."""
+    return _ingest_fcc_rule(
+        part,
+        license=license,
+        classification=classification,
+        title=title,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_patent(
+    patent_number: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+    render_page_images: bool = True,
+) -> dict:
+    """Fetch a US patent document from the USPTO and ingest it as
+    source_type='patent'. Takes either a granted patent number ("US12089385B2",
+    "12089385") or the pre-grant publication number of the same application
+    ("US 2022/0192066 A1", "20220192066") -- the same invention published at two
+    moments, often worth ingesting both. It cannot look one number up from the
+    other, and it does not search: call it once per number you have.
+    Which conversion runs depends on what is in the file, not on which number
+    you gave. Every USPTO PDF measured so far is a scan -- a photograph of the
+    page with no machine-readable text -- so the usual path hands the PDF to the
+    normal ingest pipeline, whose OCR transcribes it, and renders every page to
+    an image so the drawings can be read by eye. A PDF that does carry real text
+    is converted to Markdown two columns at a time, the way a patent is printed,
+    with the front-page fields (title, inventors, assignee, dates, application
+    number) parsed into its header; anything the page did not yield stays empty
+    rather than guessed. render_page_images=False skips the image rendering.
+    authority_rank is NOT overridden: source_type='patent' already defaults below
+    a peer-reviewed paper. A patent's CLAIMS are legal boundary-setting, never
+    design guidance. Pass supersedes_document_id to declare this a newer revision
+    of a stored document (never inferred)."""
+    return _ingest_patent(
+        patent_number,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+        render_page_images=render_page_images,
     )
 
 
@@ -1455,6 +1677,7 @@ def record_decision(
     alternatives: list,
     rationale: str,
     evidence: list,
+    design_family: str | None = None,
     approval_required: bool = True,
 ) -> dict:
     """Log a judgment-laden design choice -- a decision between real
@@ -1465,7 +1688,10 @@ def record_decision(
     rejected with a structured error pointing at the existing record,
     never silently overwritten. Every new decision starts
     approval_status='PENDING' -- this does not yet block anything (no
-    manufacturing_release tool or review UI exists)."""
+    manufacturing_release tool or review UI exists). design_family (issue
+    #167) is optional -- which design family (absorber, reflection-phase
+    steering surface, patch antenna, ...) this decision was made about;
+    leave unset for a decision that isn't about a design family at all."""
     return _record_decision(
         design_id=design_id,
         record_key=record_key,
@@ -1473,6 +1699,7 @@ def record_decision(
         alternatives=alternatives,
         rationale=rationale,
         evidence=evidence,
+        design_family=design_family,
         approval_required=approval_required,
     )
 

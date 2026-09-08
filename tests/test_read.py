@@ -4,10 +4,41 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
+from knowledge import extraction
 from knowledge.ingest import ingest_document
 from knowledge.read import read_document
 
 load_dotenv()
+
+
+def _extraction_error(document_id: int) -> str | None:
+    """Fetch the captured extraction-error text for a document, for use in
+    assertion-failure messages -- mirrors tests/test_ingest.py's identical
+    helper (see its docstring for why `ingest_document`'s return value alone
+    doesn't carry this text)."""
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metadata->>'extraction_error' FROM documents WHERE id = %s",
+                (document_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def no_ocr(monkeypatch):
+    """Forces `ingest_document`'s internal `parse_document` call to run with
+    OCR switched off -- mirrors tests/test_ingest.py's identical fixture
+    (see its docstring for why this doesn't touch OCR's on-by-default
+    behavior for any other caller)."""
+    monkeypatch.setattr(
+        "knowledge.ingest.parse_document",
+        lambda path: extraction.parse_document(path, do_ocr=False),
+    )
 
 
 def _write_pdf(path, lines: list[str]) -> None:
@@ -81,7 +112,9 @@ def test_read_document_returns_not_found_for_nonexistent_id():
     assert result == {"status": "not_found", "document_id": 999_999}
 
 
-def test_read_document_returns_full_metadata_and_ordered_chunks(tmp_path, cleanup_documents):
+def test_read_document_returns_full_metadata_and_ordered_chunks(
+    tmp_path, cleanup_documents, no_ocr
+):
     pdf_path = tmp_path / "read_me_amp.pdf"
     _write_pdf(
         pdf_path,
@@ -95,6 +128,7 @@ def test_read_document_returns_full_metadata_and_ordered_chunks(tmp_path, cleanu
         classification="PUBLIC",
     )
     cleanup_documents.append(ingested["document_id"])
+    assert ingested["extraction_status"] == "ok", _extraction_error(ingested["document_id"])
     assert ingested["chunk_count"] >= 1
 
     result = read_document(ingested["document_id"])

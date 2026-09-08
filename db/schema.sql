@@ -111,6 +111,91 @@ CREATE TABLE IF NOT EXISTS decision_records (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Issue #167: which design family (absorber, reflection-phase steering
+-- surface, patch antenna, ...) an ARCHITECTURE/REDESIGN_DECISION row's
+-- decision was made about (CONTEXT.md's "Design family", docs/adr/0018).
+-- Nullable -- only architecture_decision/redesign_decision rows carry a
+-- value; every other decision_records row (there are none yet from any
+-- other source) has none. Added via ALTER TABLE ADD COLUMN IF NOT EXISTS,
+-- not folded into the CREATE TABLE above, matching this file's own
+-- already-established convention for extending a table that predates the
+-- column (see `documents.status`/`documents.supersedes_document_id`
+-- above) -- schema.sql is re-applied against a live database
+-- (db/apply_schema.py), where CREATE TABLE IF NOT EXISTS is a no-op.
+ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family TEXT;
+
+-- Issue #154 (ADR-0015, CONTEXT.md: Material-property library). Every
+-- citation is its own row, keyed by (material, property, frequency band) --
+-- deliberately no UNIQUE constraint on that triple, since two independent,
+-- disagreeing citations for the same material/property/frequency are the
+-- exact case this table exists to keep (designs/material_properties.py's
+-- own module docstring gives the worked example: three FR4 papers
+-- disagreeing on epsilon_r/tan_delta). frequency_low_hz/frequency_high_hz
+-- model the validity band a real citation reports (equal for a single test
+-- point); citation/note are TEXT rather than a foreign key into `documents`
+-- because ADR-0015 only requires a human-readable citation trail, not a
+-- second document-ingestion path for this feature.
+CREATE TABLE IF NOT EXISTS material_properties (
+    id BIGSERIAL PRIMARY KEY,
+    material TEXT NOT NULL,
+    property TEXT NOT NULL,
+    frequency_low_hz DOUBLE PRECISION NOT NULL,
+    frequency_high_hz DOUBLE PRECISION NOT NULL,
+    value DOUBLE PRECISION NOT NULL,
+    unit TEXT NOT NULL,
+    provenance TEXT NOT NULL,
+    citation TEXT,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Added after the FR4 seeds, when migrating the twelve substrates of
+-- docs/xband-absorber-substrate-shortlist.md showed the schema could not
+-- hold what the sources actually report. Both nullable, so every row and
+-- caller written before them is unaffected.
+--
+-- ALTER, not columns in the CREATE above, because apply_schema.py must stay
+-- safe to re-run "against an already-initialized database" -- and against
+-- one, CREATE TABLE IF NOT EXISTS is a no-op that would silently skip them,
+-- leaving inserts to fail on a missing column. Same pattern as the
+-- documents table's status/supersedes_document_id above.
+--
+-- `uncertainty` is the source's OWN stated error bar on this value (Kapton
+-- 500HN is published as tan_delta 0.012 +/- 0.004). It is a different
+-- quantity from the spread across disagreeing citations, which
+-- resolve_material_property already derives: the spread says how much two
+-- labs disagree, the uncertainty says how much one lab doubts itself.
+--
+-- `method` is how the value was obtained (coaxial dielectric probe,
+-- microstrip ring resonator, CPW de-embedding). Different methods carry
+-- different systematic biases, so two values that disagree may not really
+-- disagree; without it a caller cannot tell a genuine conflict from a
+-- systematic offset.
+ALTER TABLE material_properties ADD COLUMN IF NOT EXISTS uncertainty DOUBLE PRECISION;
+ALTER TABLE material_properties ADD COLUMN IF NOT EXISTS method TEXT;
+
+CREATE INDEX IF NOT EXISTS material_properties_material_property_idx
+ON material_properties (material, property);
+
+-- Issue #154 (ADR-0015): a Family fallback bracket is one current best
+-- cited [min, max] range per (family, property) -- UNIQUE here, unlike
+-- material_properties above, because a bracket narrows over time as more
+-- per-material entries accumulate rather than accumulating disagreeing
+-- brackets of its own (designs/material_properties.py's
+-- insert_family_bracket upserts on this constraint).
+CREATE TABLE IF NOT EXISTS material_family_brackets (
+    id BIGSERIAL PRIMARY KEY,
+    family TEXT NOT NULL,
+    property TEXT NOT NULL,
+    min_value DOUBLE PRECISION NOT NULL,
+    min_citation TEXT NOT NULL,
+    max_value DOUBLE PRECISION NOT NULL,
+    max_citation TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(family, property)
+);
+
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw
 ON document_chunks USING hnsw (embedding vector_cosine_ops);
 

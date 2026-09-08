@@ -99,6 +99,30 @@ def test_record_decision_returns_recorded_status_and_pending_approval(cleanup_de
     assert "decision_id" in result
 
 
+def test_record_decision_threads_design_family_through_to_the_stored_row(cleanup_designs):
+    """Issue #167: designs.service.record_decision (the record_decision
+    tool wrapper's backing function, mcp_server/server.py and agent/main.py)
+    must pass design_family through to designs.db.record_decision, not
+    just accept it and drop it -- read_design is the durable proof, since
+    record_decision's own structured return value is a narrow
+    status/decision_id/design_id/record_key/approval_status projection
+    that never echoed decision/rationale/alternatives/evidence either."""
+    design_id = _make_design(cleanup_designs, "SVC-DES-DEC-FAMILY")
+    record_decision(
+        design_id=design_id,
+        record_key="SVC-DES-DEC-FAMILY-architecture",
+        decision="rectangular microstrip patch on FR4",
+        alternatives=[],
+        rationale="meets band/gain target with a simple, low-cost fabrication",
+        evidence=[],
+        design_family="patch_antenna",
+    )
+
+    stored = read_design(design_id)
+    (dr,) = stored["decision_records"]
+    assert dr["design_family"] == "patch_antenna"
+
+
 def test_record_decision_with_reused_record_key_returns_structured_error(cleanup_designs):
     design_id = _make_design(cleanup_designs, "SVC-DES-DEC-2")
     first = record_decision(

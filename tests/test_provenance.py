@@ -4,6 +4,7 @@ from knowledge.provenance import (
     INTERNAL_HISTORY,
     LITERATURE_SUPPORTED,
     MANUFACTURER_SPECIFIED,
+    PARTNER_RESEARCH_AUTHORITY_RANK,
     PATENT_AUTHORITY_RANK,
     UNKNOWN,
     component_field_provenance,
@@ -69,6 +70,33 @@ def test_patent_default_rank_needs_no_per_document_override():
     # rank without any caller remembering to pass authority_rank_override,
     # unlike the arXiv case which is a per-source (not per-type) override.
     assert default_authority_rank(SourceType.PATENT) == PATENT_AUTHORITY_RANK
+
+
+# ADR-0029: partner_research (unpublished technical work from an outside
+# research partner) is its own source type, resolving to LITERATURE_SUPPORTED
+# but ranked strictly between patent and design_record.
+def test_partner_research_is_literature_supported():
+    assert provenance_tier_for(SourceType.PARTNER_RESEARCH) == LITERATURE_SUPPORTED
+
+
+def test_partner_research_ranks_below_a_patent():
+    # Unreviewed and unpublished -- no patent office examined it -- so it
+    # must not outrank a granted patent.
+    assert default_authority_rank(SourceType.PARTNER_RESEARCH) > default_authority_rank(
+        SourceType.PATENT
+    )
+
+
+def test_partner_research_ranks_above_design_record():
+    # It is outside work, not this team's own internal precedent, so it must
+    # not be discounted down to design_record's internal-history rank.
+    assert default_authority_rank(SourceType.PARTNER_RESEARCH) < default_authority_rank(
+        SourceType.DESIGN_RECORD
+    )
+
+
+def test_partner_research_default_rank_needs_no_per_document_override():
+    assert default_authority_rank(SourceType.PARTNER_RESEARCH) == PARTNER_RESEARCH_AUTHORITY_RANK
 
 
 # All four (extraction_confidence, physically_valid) combinations (ticket

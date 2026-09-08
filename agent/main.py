@@ -10,6 +10,7 @@ from agents import (
     Handoff,
     ModelSettings,
     Runner,
+    RunResult,
     function_tool,
     handoff,
     set_default_openai_api,
@@ -46,11 +47,16 @@ from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
+from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
+from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
+from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
+from knowledge.sourcing.patent import ingest_patent as _ingest_patent
+from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
 from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
-from orchestration.policy import assert_all_tools_categorized
+from orchestration.policy import assert_all_tools_categorized, category_for
 from orchestration.solver import run_candidate_search as _run_candidate_search
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
@@ -1108,6 +1114,7 @@ def run_palace_simulation(
     sweep: dict | None = None,
     num_processes: int = 1,
     timeout_s: int = 3600,
+    solver_order: int = 1,
 ) -> dict:
     """Simulate a periodic metamaterial unit cell with Palace, a full-wave finite-element
     solver with NATIVE Floquet/periodic-boundary ports -- the only simulator in this
@@ -1121,23 +1128,28 @@ def run_palace_simulation(
     polarization/max_order overrides -- see simulation.palace.generate_palace_mesh and
     generate_palace_config for the full shape), runs it via the real `palace` binary,
     and parses port-floquet-S.csv into structured per-diffraction-order S-parameter
-    data (plus a "specular" S11/S21-style convenience view for the fundamental order).
-    Returns "SIMULATED" provenance. Embedded PEC conductor patches (a metallic
-    metasurface, as opposed to an all-dielectric grating/photonic-crystal unit cell)
-    are NOT supported in this pass -- an explicitly-scoped gap, see simulation/
-    palace.py's module docstring. Config/mesh format verified against Palace's own
-    primary documentation and MFEM's own mesh-format documentation (see simulation/
-    palace.py's module docstring for the full citation list, several facts there
-    graded as reasoned-by-analogy rather than independently confirmed byte-exact) but
-    NOT against a real palace binary -- none is installed in this environment; treat
-    any result as unverified end-to-end until it has been run against the real tool at
-    least once."""
+    data (plus a "specular" convenience view keyed "S11_TE"/"S21_TE"/... for the
+    fundamental order -- the key carries the polarization because Palace reports both,
+    and the co-polarized one is whichever matches the polarization you asked for).
+    `solver_order` is the finite-element order: 1 (Palace's own default) is fast and
+    approximate, 2 is what Palace's own worked example uses and what reproduced its
+    published answers. Returns "SIMULATED" provenance. Embedded PEC conductor patches
+    (a metallic metasurface, as opposed to an all-dielectric grating/photonic-crystal
+    unit cell) are NOT supported in this pass -- an explicitly-scoped gap, see
+    simulation/palace.py's module docstring. This adapter HAS been run end to end
+    against a real palace binary (issue #210): driving Palace's own "Floquet Ports for
+    a Dielectric Grating" example through this exact function reproduced Palace's
+    published S-parameters to within 0.056 dB and 0.91 degrees, and agreed on which
+    diffraction orders propagate. That is one all-dielectric geometry at one incidence
+    angle, and it is still a simulation agreeing with a simulation -- nothing here has
+    been checked against a bench measurement. See docs/palace-floquet-validation.md."""
     return _run_palace_simulation(
         geometry=geometry,
         frequency_hz=frequency_hz,
         sweep=sweep,
         num_processes=num_processes,
         timeout_s=timeout_s,
+        solver_order=solver_order,
     )
 
 
@@ -1390,23 +1402,219 @@ def ingest_document(
     license: str,
     classification: str,
     supersedes_document_id: int | None = None,
+    author: str | None = None,
+    revision: str | None = None,
 ) -> dict:
     """Parse a document PDF via docling, chunk it, and store it in the knowledge base.
     source_type, license, and classification are all mandatory. source_type must be one
-    of: datasheet, application_note, standard, textbook, paper, patent, design_record --
-    it is fixed at ingest time and sets the document's default provenance and authority
-    rank, so a wrong value permanently mis-ranks everything retrieved from it. Note
-    patent: its numbers are citable evidence but rank below a peer-reviewed paper (a
-    patent office does not check that a stated number reproduces), and its claim text is
-    legal boundary-setting, never design guidance. Pass supersedes_document_id to declare
-    this upload a newer revision of that document (never inferred from title); omit it for
-    a plain new, independent document."""
+    of: datasheet, application_note, standard, textbook, paper, patent, partner_research,
+    design_record -- it is fixed at ingest time and sets the document's default provenance
+    and authority rank, so a wrong value permanently mis-ranks everything retrieved from
+    it. Note patent: its numbers are citable evidence but rank below a peer-reviewed paper
+    (a patent office does not check that a stated number reproduces), and its claim text is
+    legal boundary-setting, never design guidance. Note partner_research (ADR-0029):
+    unpublished technical work received from an outside research partner -- use this, not
+    paper (which would overclaim peer review, outranking even a granted patent) or
+    design_record (which claims a document as this team's own authorship); it ranks between
+    patent and design_record and gets no structured component extraction, same as
+    paper/patent. Pass supersedes_document_id to declare this upload a newer revision of
+    that document (never inferred from title); omit it for a plain new, independent
+    document. author/revision are stored as-is on the document (both optional) -- for a
+    partner_research document, author should identify the partner/author, since a partner
+    source is not much use without knowing whose work it is."""
     return _ingest_document(
         file_path=file_path,
         source_type=source_type,
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,
+        author=author,
+        revision=revision,
+    )
+
+
+@function_tool
+def ingest_arxiv_paper(
+    arxiv_id: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch and convert an arXiv preprint (e.g. "2401.01234", or the older
+    "cond-mat/0207270" form) into the knowledge base as source_type='paper'.
+    Uses the arxiv-doc-builder skill to fetch LaTeX source (preferred) + PDF and
+    convert to Markdown via pandoc -- preserving math/structure far better than
+    feeding a raw PDF to docling -- falling back to naive PDF text extraction
+    when no LaTeX source exists. Automatically pulls title/authors/publication
+    date/DOI/journal/categories/abstract from arXiv's own record into the
+    stored document. license must be the reuse terms that actually apply to
+    this specific paper (arXiv's default license does not itself grant
+    downstream reuse beyond citation/summary; check for an author-chosen CC0/
+    CC-BY license). authority_rank is always overridden below the peer-
+    reviewed 'paper' default, since arXiv preprints are not peer-reviewed --
+    only a "superficial" moderator check. Pass supersedes_document_id to
+    declare this upload a newer revision of that document (never inferred)."""
+    return _ingest_arxiv_paper(
+        arxiv_id,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@function_tool
+def ingest_3gpp_spec(
+    spec_number: str,
+    version: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Download a 3GPP specification from 3GPP's own open FTP archive (no
+    registration/credential needed) and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- you must
+    already know the identifier:
+    spec_number: the spec's own number, e.g. "38.331" (or a multi-part spec
+    like "38.521-1", dash kept intact).
+    version: 3GPP's own version string exactly as it appears in the archive
+    filename, e.g. "h00" -- not a bare revision letter or a guess.
+    3GPP specs are free to download but are NOT public domain -- copyright is
+    jointly held by the 3GPP Organizational Partners and each document
+    carries its own reproduction-restriction notice. license must be the
+    reuse terms that actually apply; this tool does not assume a default.
+    Extracts the single .docx/.doc member from the downloaded zip (preferring
+    .docx). A legacy pre-2020ish .doc spec docling can't parse still stores
+    the document row with extraction_status="failed" rather than raising --
+    expect zero chunks in that case. Pass supersedes_document_id to declare
+    this upload a newer revision of that document (never inferred from
+    title); omit it for a plain new, independent document."""
+    return _ingest_3gpp_spec(
+        spec_number,
+        version,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@function_tool
+def ingest_etsi_standard(
+    document_url: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Download an ETSI standard PDF and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- and
+    unlike ingest_3gpp_spec/ingest_fcc_rule, the identifier here is a full
+    URL, not a bare document number: ETSI's per-document "deliver" path
+    (document-type folder, a grouped numeric-range folder, the document-
+    number folder, a version folder, then the filename) is not mechanically
+    derivable from a bare standard number alone, and no confirmed public
+    search API exists to script that lookup -- only ETSI's own human-facing
+    standards-search UI (https://www.etsi.org/standards-search) resolves a
+    document number to its deliver path today.
+    document_url: the full deliverable URL, e.g. "https://www.etsi.org/
+    deliver/etsi_ts/119600_119699/119612/02.02.01_60/ts_119612v020201p.pdf"
+    -- must be an https://www.etsi.org/deliver/... URL (no registration
+    needed to fetch it), obtained however you already found it (e.g. from
+    the standards-search UI or a citation).
+    ETSI standards are free to download but carry ETSI's own copyright and
+    (F)RAND patent terms, same internal-use posture as 3GPP. license must be
+    the reuse terms that actually apply; this tool does not assume a
+    default. Pass supersedes_document_id to declare this upload a newer
+    revision of that document (never inferred from title); omit it for a
+    plain new, independent document."""
+    return _ingest_etsi_standard(
+        document_url,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@function_tool
+def ingest_fcc_rule(
+    part: int,
+    license: str,
+    classification: str,
+    title: int = 47,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch FCC rule text via eCFR's public versioner API (no
+    authentication) and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- you must
+    already know the identifier:
+    part: the CFR part number, e.g. 15 for the Part 15 unlicensed-device
+    rules, or 97 for the Part 97 amateur-radio rules.
+    title: the CFR title number, default 47 (Telecommunication) -- pass a
+    different title only if you genuinely need rule text outside Title 47.
+    Always resolves the current edition date from eCFR's own titles.json
+    first (an arbitrary caller-supplied date can 404 against eCFR's
+    versioner), then flattens the fetched Federal-Register XML to plain text
+    locally before ingesting (docling does not support that XML DTD).
+    eCFR content is public domain as a work of the U.S. Government -- the
+    strongest license status of any source this package ingests -- but is
+    explicitly not the official legal edition (GPO's Federal Register
+    printing is authoritative); flag that distinction if a result is ever
+    used for formal regulatory sign-off. license must still be the reuse
+    terms that actually apply; this tool does not assume a default. Pass
+    supersedes_document_id to declare this upload a newer revision of that
+    document (never inferred from title); omit it for a plain new,
+    independent document."""
+    return _ingest_fcc_rule(
+        part,
+        license=license,
+        classification=classification,
+        title=title,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@function_tool
+def ingest_patent(
+    patent_number: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+    render_page_images: bool = True,
+) -> dict:
+    """Fetch a US patent document from the USPTO and ingest it as
+    source_type='patent'. Takes either a granted patent number ("US12089385B2",
+    "US 12,089,385 B2", "12089385") or the pre-grant publication number of the
+    same application ("US 2022/0192066 A1", "20220192066") -- the same invention
+    published at two moments, and often worth ingesting both, since they differ
+    a lot in how readable the file is. This tool CANNOT look one number up from
+    the other (that needs a keyed API this project has no credential for) and it
+    does NOT search: call it once per number you already have.
+    How the file is read depends on what is in it, not on which number you gave.
+    Every USPTO PDF measured so far is a scan -- a photograph of the page, with
+    no machine-readable text -- so the usual path is: hand the PDF to the normal
+    ingest pipeline, whose OCR transcribes it, and render every page to an image
+    so a drawing can be read by eye (this project's load-bearing numbers live in
+    the figures). A PDF that does have real text instead gets converted to
+    Markdown two columns at a time, the way a patent is printed, with the front-
+    page bibliographic fields (title, inventors, assignee, dates, application
+    number) parsed into its header. Fields the front page did not yield come back
+    empty rather than guessed. Set render_page_images=False to skip the image
+    rendering (it is a few hundred files for a long patent, and needs poppler
+    installed; if it fails the document is still ingested and the reason is
+    recorded). authority_rank is NOT overridden here: source_type='patent'
+    already defaults below a peer-reviewed paper, because a patent office checks
+    novelty and candor, not whether a stated number reproduces. Treat a patent's
+    CLAIMS as legal boundary-setting, never as design guidance -- cite numbers
+    from its worked examples. license must be the terms that actually apply
+    (US patent documents carry no USPTO copyright claim, but an individual
+    document can contain third-party copyrighted material with a notice on it).
+    Pass supersedes_document_id to declare this a newer revision of a stored
+    document (never inferred -- a grant does not automatically supersede its own
+    earlier publication unless you say so)."""
+    return _ingest_patent(
+        patent_number,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+        render_page_images=render_page_images,
     )
 
 
@@ -1584,6 +1792,7 @@ def record_decision(
     alternatives: list,
     rationale: str,
     evidence: list,
+    design_family: str | None = None,
     approval_required: bool = True,
 ) -> dict:
     """Log a judgment-laden design choice -- a decision between real
@@ -1594,7 +1803,10 @@ def record_decision(
     rejected with a structured error pointing at the existing record,
     never silently overwritten. Every new decision starts
     approval_status='PENDING' -- this does not yet block anything (no
-    manufacturing_release tool or review UI exists)."""
+    manufacturing_release tool or review UI exists). design_family (issue
+    #167) is optional -- which design family (absorber, reflection-phase
+    steering surface, patch antenna, ...) this decision was made about;
+    leave unset for a decision that isn't about a design family at all."""
     return _record_decision(
         design_id=design_id,
         record_key=record_key,
@@ -1602,6 +1814,7 @@ def record_decision(
         alternatives=alternatives,
         rationale=rationale,
         evidence=evidence,
+        design_family=design_family,
         approval_required=approval_required,
     )
 
@@ -1849,10 +2062,13 @@ def advance_design_loop_step(state: dict, step_input: dict, approval: dict | Non
     (docs/BUILD_PLAN.md's Phase 12). `state` is a prior call's returned
     loop state. `step_input` is step-specific -- see
     orchestration/design_loop.py's per-step handlers for exactly what each
-    current_step expects (e.g. ARCHITECTURE wants "decision"/"rationale";
-    ANALYSIS wants the patch_resonant_frequency_hz inputs eps_r/w_m/h_m/
-    l_m; SIMULATION wants the same geometry/frequency_hz run_nec2_
-    simulation itself takes).
+    current_step expects (e.g. ARCHITECTURE wants "decision"/"rationale"/
+    "design_family"; ANALYSIS wants the patch_resonant_frequency_hz
+    inputs eps_r/w_m/h_m/l_m; SIMULATION wants the same geometry/
+    frequency_hz run_nec2_simulation itself takes, PLUS
+    reference_impedance_ohms -- the impedance SIMULATION's own derived
+    vswr/return_loss_db are scored against, stated explicitly every call,
+    never assumed to be 50 ohms (issue #101)).
 
     `approval` is REQUIRED whenever the loop is currently at ARCHITECTURE,
     MEASUREMENT, or REDESIGN_DECISION -- every step that is not a pure
@@ -1880,7 +2096,16 @@ def inspect_design_loop_state(state: dict) -> dict:
     every decision recorded so far with its own provenance, and whether an
     approval is currently pending (and for which step). Safe to call at any
     point mid-loop, not just at completion; does not mutate or advance the
-    loop, and does not touch the database."""
+    loop.
+
+    When `state` carries a `design_id`, this opens a real database
+    connection and substitutes `requirements` with a fresh read of the
+    persisted `designs.requirements` column (issue #100), so a target
+    proposed or confirmed via `designs.requirement_targets` after `state`
+    was captured is reflected here without the caller re-reading the
+    design themselves -- everything else is passed through unchanged,
+    read-only. Without a `design_id`, this never touches the database and
+    `requirements` is returned exactly as given."""
     return _inspect_design_loop_state(state)
 
 
@@ -1938,10 +2163,11 @@ def run_candidate_search(
     start_design_loop or a prior advance_design_loop_step call, carrying
     design_id) -- never a bare design_loop-layer state. `candidates` is a
     non-empty list of dicts, each supplying the fields the driven steps
-    need (e.g. eps_r/w_m/h_m/l_m for ANALYSIS, geometry/frequency_hz for
-    SIMULATION, target_frequency_hz/length_lower_m/length_upper_m for
-    OPTIMIZATION). `score_specs` names which steps to score and against
-    what target (a designs.requirement_targets PROPOSED/CONFIRMED target),
+    need (e.g. eps_r/w_m/h_m/l_m for ANALYSIS, geometry/frequency_hz/
+    reference_impedance_ohms for SIMULATION, target_frequency_hz/
+    length_lower_m/length_upper_m for OPTIMIZATION). `score_specs` names
+    which steps to score and against what target (a
+    designs.requirement_targets PROPOSED/CONFIRMED target),
     keyed by step name ("analysis"/"simulation"/"optimization").
 
     This tool NEVER constructs, forges, or accepts an approval receipt,
@@ -1958,6 +2184,20 @@ def run_candidate_search(
     state/candidates/score_specs shape) versus a single candidate's own
     drive failing, which is recorded on that candidate's trail entry and
     never aborts the rest of the batch.
+
+    A stop_reason="score_plateau" result is not the same signal as
+    target_satisfaction or evaluation_budget: it means the running-best
+    overall_score_percent stopped improving by more than plateau_epsilon
+    across the last plateau_window candidates -- it does NOT mean this
+    architecture's OPTIMIZATION is exhausted. Read a plateau stop as a cue
+    to construct and submit ONE more batch that is deliberately different
+    from the one that just plateaued -- built on a different region of the
+    parameter space, or a different construction/proposal strategy, never
+    a near-identical resubmission with minor tweaks -- before concluding
+    parameter-level search is exhausted for this architecture. Only after
+    that second, deliberately-different batch also plateaus should the
+    caller move on to compile_lab_test_plan or a REDESIGN_DECISION for
+    this architecture.
 
     Returns a report dict: stop_reason/stop_detail naming exactly why the
     search stopped, an ordered `trail` (one entry per candidate actually
@@ -2001,12 +2241,28 @@ def run_candidate_search(
 #                   wavelength/electrical-size bookkeeping, the dB<->linear
 #                   unit converters those calculations lean on, plus the
 #                   knowledge-base *authoring* tools (ingest_document,
-#                   index_document, and (ticket #67) lookup_digikey_component/
+#                   index_document, (ticket #67) lookup_digikey_component/
 #                   lookup_mouser_component/lookup_nexar_component/
 #                   reconcile_component_sources -- sourcing a datasheet
 #                   straight from a distributor and reconciling it into one
 #                   components row is the same authoring concern as manually
-#                   ingesting one), since standing up the knowledge base for
+#                   ingesting one -- and ingest_arxiv_paper, the arxiv-doc-
+#                   builder-backed arXiv preprint fetcher, plus (issue #219)
+#                   ingest_patent, the USPTO patent/published-application
+#                   fetcher that reuses the same skill's PDF converters; both
+#                   sit in the same authoring
+#                   bucket as ingest_document since it's the same "bring an
+#                   external document into the knowledge base" action, just
+#                   with its own fetch+convert step ahead of it -- and (issue
+#                   #215) ingest_3gpp_spec/ingest_etsi_standard/
+#                   ingest_fcc_rule, the 3GPP/ETSI/FCC-eCFR standards-body
+#                   fetchers, same authoring bucket again: each is a thin,
+#                   fetch-by-identifier client with its own extraction step
+#                   ahead of ingest_document, exactly the ingest_arxiv_paper
+#                   shape) -- and (issue #219) ingest_patent, the USPTO
+#                   grant/publication fetcher, same bucket and same
+#                   unauthenticated-endpoint posture as those four, since
+#                   standing up the knowledge base for
 #                   the team is systems-level work. Shares the cascaded-IP3/
 #                   IM3 tools with microwave -- linearity budgeting is both a
 #                   chain-level (systems) and single-stage (microwave)
@@ -2172,6 +2428,11 @@ _ALL_TOOLS = [
     run_meep_simulation,
     generate_freecad_curved_geometry,
     ingest_document,
+    ingest_arxiv_paper,
+    ingest_3gpp_spec,
+    ingest_etsi_standard,
+    ingest_fcc_rule,
+    ingest_patent,
     index_document,
     read_document,
     search_knowledge,
@@ -2264,8 +2525,13 @@ ROLE_SPECS: list[RoleSpec] = [
             "You focus on link-level and systems-engineering concerns: cascaded "
             "gain/noise-figure budgets, wavelength/electrical-size bookkeeping, "
             "and standing up the knowledge base (ingesting and indexing "
-            "documents, and sourcing component datasheets directly from "
-            "Digi-Key/Mouser/Nexar) other roles rely on. Defer network-level "
+            "documents, sourcing component datasheets directly from Digi-Key/"
+            "Mouser/Nexar, fetching/converting arXiv preprints via "
+            "ingest_arxiv_paper, fetching 3GPP specs/ETSI standards/FCC "
+            "eCFR rule text via ingest_3gpp_spec/ingest_etsi_standard/"
+            "ingest_fcc_rule, and fetching US patents and published patent "
+            "applications from the USPTO via ingest_patent) other roles rely "
+            "on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -2285,6 +2551,11 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_third_order_intermod_output,
             calculate_third_order_intermod_dbc,
             ingest_document,
+            ingest_arxiv_paper,
+            ingest_3gpp_spec,
+            ingest_etsi_standard,
+            ingest_fcc_rule,
+            ingest_patent,
             index_document,
             search_knowledge,
             lookup_digikey_component,
@@ -2758,7 +3029,11 @@ ROLES["principal"] = Agent(
         "directly once you hand off. Only use your own direct tools "
         "(design-record management, the design-iteration loop, or "
         "knowledge search) for what's actually your own job: tracking a "
-        "design's state, not computing RF values yourself."
+        "design's state, not computing RF values yourself. Never label a "
+        "value you reasoned out yourself CALCULATED -- that label means a "
+        "calculation tool actually computed it. If you (or the specialist "
+        "you hand off to) work a number out by reasoning instead of calling "
+        "a calculation tool, label it INFERRED or ASSUMED instead."
         f"{_local_reasoning_output_tail()}"
     ),
     tools=list(_PRINCIPAL_DIRECT_TOOLS),
@@ -2769,8 +3044,132 @@ ROLES["principal"] = Agent(
 principal = ROLES["principal"]
 
 
+# ---------------------------------------------------------------------------
+# Issue #158: provenance-integrity guard.
+#
+# Live-testing against a real local Ollama backend reproduced a failure
+# mode distinct from the routing-recall bug this branch's rebase target
+# (#165) fixed: on some draws, a role skips every calculation tool AND
+# every route_to_<role>_role handoff, answers a squarely tool-shaped
+# question from its own reasoning instead -- then labels that hand-computed
+# number CALCULATED anyway. CONTEXT.md's Provenance entry and
+# prompts/principal_engineer.md's "Mandatory provenance" section both
+# define CALCULATED as "deterministic calculation" specifically -- the kind
+# "Numerical discipline" says to get from a tool "instead of mental
+# arithmetic". A reader has no way to tell a mislabeled hand-computed value
+# apart from a genuinely tool-verified one, so this is a provenance-
+# integrity violation, not a wording nuance.
+#
+# WHERE THIS IS WIRED, AND WHY ONLY HERE: the prior version of this fix
+# (see git history on this branch) also hooked `Agent.as_tool()`'s
+# `custom_output_extractor` to guard each specialist's nested result before
+# it reached the principal. That mechanism is gone -- issue #165's routing
+# redesign (this section's own "Principal routing to specialists" comment
+# above) replaced `.as_tool()` with `Agent(handoffs=[...])`, which transfers
+# control to the specialist WITHIN THE SAME `Runner.run()` call instead of
+# starting a second, nested one. Concretely verified (not assumed) against
+# this repo's actual installed `openai-agents` version: a scripted fake
+# model driven through a real `Runner.run()` call -- one turn emitting a
+# handoff tool call, the next (now running as the handed-off-to agent)
+# emitting a real function-tool call, a final turn emitting the answer --
+# shows the specialist's own post-handoff `tool_call_item` lands in the
+# SAME top-level `RunResult.new_items` list `run()` below already inspects.
+# There is no second `RunResult` for a specialist's answer to hide a
+# mislabeled claim inside of anymore, and no `custom_output_extractor`
+# hook left to attach a second guard to even if there were -- one guard
+# here, on the run's own top-level result, now covers the principal's own
+# answer AND every specialist's handed-off answer.
+#
+# `_assert_calculated_provenance_is_tool_backed` is the "cheap runtime
+# guard" the issue's own suggested next steps floated: a CALCULATED claim
+# in `final_output` with no matching tool call anywhere in that run's
+# `new_items` gets rejected -- fail closed, the same idiom
+# orchestration/policy.py's PolicyError already establishes for a policy
+# violation, rather than silently letting a mislabeled claim reach the
+# user. A HandoffCallItem does not count: handing control to another agent
+# is not itself a deterministic calculation.
+#
+# NARROWER THAN "any tool call at all" (a real gap a reviewer of this
+# branch's prior version found before it merged): a run can legitimately
+# call an unrelated tool -- search_knowledge, read_document -- and
+# separately hand-compute and mislabel an unrelated RF value in the same
+# final_output. A bare "does new_items contain *a* tool_call_item"
+# check passes that run, exactly the mislabeling issue #158 reports,
+# right past the guard meant to catch it. So this checks that the tool
+# call is specifically categorized `calculation` in
+# policies/tool_policy.yaml (orchestration/policy.py's `category_for`,
+# the same lookup `enforce()` already uses for its own gating) -- the
+# category that file's own comment defines as "Deterministic,
+# CALCULATED-provenance functions". A tool_call_item for search_knowledge
+# or read_document does not satisfy this; one for calculate_cascade_gain
+# (or any other calculation-category tool) does.
+#
+# Deliberately a plain substring check on `final_output`, not a structured
+# parse -- "cheap" per the issue's own framing, and this repo's own
+# provenance labels are always the bare uppercase token from the closed set
+# in CONTEXT.md's Provenance entry. This can false-positive on a
+# CALCULATED-that-isn't-a-label mention in running prose; a real structured
+# provenance parse would be the fuller fix, not attempted here.
+# ---------------------------------------------------------------------------
+
+
+class ProvenanceIntegrityError(RuntimeError):
+    """Raised when a run's `final_output` labels a result CALCULATED with no
+    calculation-category tool call anywhere in that run's `new_items` to
+    back it -- see issue #158. `_assert_calculated_provenance_is_tool_backed`
+    raises this; nothing here rewrites the label instead, since silently
+    "fixing" a claim nobody actually reviewed would just trade one
+    unverifiable label for another."""
+
+
+def _run_result_has_calculation_tool_call(result: RunResult) -> bool:
+    """True if `result.new_items` contains at least one real `tool_call_item`
+    whose tool is categorized `calculation` in `policies/tool_policy.yaml` --
+    the only kind of item that can back a CALCULATED provenance label. A
+    `handoff_call_item` alone does not count (handing control to another
+    agent is not itself a deterministic calculation), and neither does a
+    `tool_call_item` for a tool outside the `calculation` category (e.g.
+    search_knowledge) -- see this section's module-level comment above for
+    the concrete mislabeling that gap would otherwise miss."""
+    return any(
+        getattr(item, "type", None) == "tool_call_item"
+        and category_for(getattr(item, "tool_name", None)) == "calculation"
+        for item in result.new_items
+    )
+
+
+def _assert_calculated_provenance_is_tool_backed(result: RunResult) -> None:
+    """Raise `ProvenanceIntegrityError` if `result.final_output` claims
+    CALCULATED provenance but this run never actually called a
+    calculation-category tool -- see issue #158 and this section's
+    module-level comment above. Does nothing for any other provenance label
+    (INFERRED/ASSUMED/etc. never claimed a tool verified them, so there is
+    nothing to enforce) and does nothing when a CALCULATED claim genuinely
+    is tool-backed.
+    """
+    if "CALCULATED" in result.final_output and not _run_result_has_calculation_tool_call(result):
+        raise ProvenanceIntegrityError(
+            "final_output labels a result CALCULATED, but no calculation-"
+            "category tool_call_item (policies/tool_policy.yaml) appears "
+            "anywhere in this run's new_items -- the number came from the "
+            "model's own reasoning (or from an unrelated tool call), not a "
+            "deterministic calculation tool. Relabel as INFERRED or "
+            "ASSUMED (or call the calculation tool / route to the "
+            "specialist role that would actually compute it) instead of "
+            "reporting it as CALCULATED. See issue #158 and "
+            "prompts/principal_engineer.md's Mandatory provenance section."
+        )
+
+
 def run(query: str) -> str:
     result = Runner.run_sync(principal, query)
+    # Issue #158: native handoffs (route_to_<role>_role) keep the whole
+    # routed exchange in this one top-level RunResult -- new_items
+    # accumulates across the handoff, so this single check covers both the
+    # principal's own final answer and a specialist's handed-off answer.
+    # See this section's module-level comment above for how that was
+    # confirmed against this repo's actual installed SDK, not assumed.
+    _assert_calculated_provenance_is_tool_backed(result)
     return result.final_output
 
 

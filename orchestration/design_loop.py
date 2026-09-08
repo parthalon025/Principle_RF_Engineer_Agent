@@ -7,12 +7,52 @@ optimization -> verification -> measurement -> correlation -> redesign
 in Phases 1-11 by CALLING INTO the real functions those tickets already
 built and tested -- not reimplementing any of them:
 
-  - ANALYSIS    calls rf_tools.calculations.patch_resonant_frequency_hz
-                (Phase 1). ONE named calculation, not an arbitrary callable
+  - ANALYSIS    dispatches on the `design_family` ARCHITECTURE recorded
+                (issue #191). ABSORBER calls rf_tools.absorber.
+                absorber_band_response -- the Costa/Luukkonen equivalent-
+                circuit stack adopted at #111 -- and is scored on the single
+                worst-absorbing frequency in the required band (#110's
+                minimax rule). EVERY OTHER family keeps
+                rf_tools.calculations.patch_resonant_frequency_hz (Phase 1)
+                exactly as before, so the dispatch is additive: PATCH uses
+                it legitimately, and a family with no analysis of its own
+                falls back to it unchanged. Before #191 the patch formula
+                ran for every family including ABSORBER, which does not
+                return a wrong number so much as a number about a different
+                device -- a resonant transmit frequency for a surface whose
+                whole job is to transmit nothing.
+                ONE named calculation per family, not an arbitrary callable
                 crossing the tool boundary -- same reasoning
                 optimization/rf_objectives.py's module docstring gives for
-                wiring one named objective rather than a generic one.
-  - SIMULATION  calls simulation.nec2pp.run_nec2_simulation (Phase 6).
+                wiring one named objective rather than a generic one. Its
+                substrate permittivity input (eps_r) may come from a bare
+                number OR from a resolved designs.material_properties.
+                resolve_material_property lookup (issue #154, ADR-0015,
+                CONTEXT.md: Material-property library) -- see
+                _resolve_eps_r_bounds and _handle_analysis below for how a
+                Family fallback bracket or a set of disagreeing citations is
+                computed at both ends of the range rather than collapsed to
+                one number. SIMULATION and OPTIMIZATION are not wired to the
+                library by this ticket: SIMULATION's step_input (geometry,
+                frequency_hz) never carries a material property at all, and
+                OPTIMIZATION's "which of two independently-searched lengths
+                is THE recommended one for a two-ended eps_r" is a genuine
+                new design question ADR-0015 does not settle -- left for a
+                separate ticket rather than decided inline here.
+  - SIMULATION  dispatches on the design family's declared
+                `simulation_adapter` (issue #229; ADR-0018 declared the
+                field, nothing read it). NEC2 is the default and PATCH
+                declares it by name: simulation.nec2pp.run_nec2_simulation
+                (Phase 6), then (issue #101) derives VSWR/return loss from
+                that call's own feed-point impedance against an explicit
+                reference_impedance_ohms -- see _simulate_nec2's own
+                docstring. ABSORBER declares MEEP_FLOQUET, because NEC2 is
+                a thin-wire method-of-moments code with no periodic
+                boundary of any kind: a metamaterial unit cell is not a
+                hard case for it but an inexpressible one. That path is
+                honest about simulation/meep.py's own three gaps rather
+                than returning a number the adapter cannot stand behind --
+                see _simulate_meep_floquet.
   - OPTIMIZATION calls
                 optimization.rf_objectives.optimize_patch_length_for_target_
                 frequency (Phase 9), the one named optimization use case
@@ -91,14 +131,32 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
+from designs.design_families import (
+    UnknownDesignFamilyError as _UnknownDesignFamilyError,
+)
+from designs.design_families import get_design_family as _get_design_family
 from measurement.external import record_external_measurement as _record_external_measurement
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from rf_tools.absorber import absorber_band_response as _absorber_band_response
 from rf_tools.calculations import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
+from rf_tools.calculations import (
+    reflection_coefficient_from_impedance as _reflection_coefficient_from_impedance,
+)
+from rf_tools.calculations import return_loss_db as _return_loss_db
+from rf_tools.calculations import vswr_from_gamma as _vswr_from_gamma
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
+from simulation.base import SimulatorError as _SimulatorError
+from simulation.meep import (
+    PERIODIC_ABSORBER_VALIDITY as _MEEP_PERIODIC_ABSORBER_VALIDITY,
+)
+from simulation.meep import (
+    periodic_absorber_capability_gaps as _meep_periodic_absorber_capability_gaps,
+)
+from simulation.meep import run_meep_simulation as _run_meep_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 
 from .approval import LoopStepApprovalReceipt, OrchestrationError, check_loop_step_approval_gate
@@ -192,24 +250,30 @@ class LoopDecision:
     is NOT replaced or superseded by this field -- the two answer unrelated
     questions and both remain necessary.
 
-    `.get("iteration", 1)` on from_dict, matching this dataclass's existing
-    optional-field convention (`provenance`/`approved_by` are also read via
-    `.get`). Be honest about what that default is worth: for a
-    `DesignLoopState` serialized BEFORE this field existed, 1 is correct
-    only if that state never completed a REDESIGN_DECISION
-    `next_action="iterate"` transition. A pre-field dump that cycled twice
-    carries decisions from iterations 1, 2 and 3 with no per-decision
-    `iteration` recorded anywhere, and this default silently reports all of
-    them as iteration 1. That is accepted rather than solved because there
-    are no such dumps: docs/adr/0011 records that this loop "predates any
-    real caller, so no compatibility shim was added", and the same holds
-    here. If a real pre-field multi-iteration state ever does turn up, its
-    boundaries are recoverable without this field -- decisions accumulate
-    in STEP_ORDER order and each iteration contributes exactly one
-    ARCHITECTURE-through-REDESIGN_DECISION cycle, so counting
-    REDESIGN_DECISION entries reconstructs them -- but nothing in this
-    module does that today, and nothing should until there is a dump that
-    needs it."""
+    `iteration` is `None` when nobody recorded one -- exactly a
+    `DesignLoopState` serialized BEFORE this field existed (issue #88's own
+    prefactor shipped with a `.get("iteration", 1)` default instead; issue
+    #135 replaced it, once a saved multi-round loop was no longer
+    hypothetical). Guessing `1` for a missing value is only ever correct
+    for a loop saved during round 1 -- for a loop saved during round 5,
+    every decision in it would be mislabeled "round 1", indistinguishable
+    from a decision genuinely recorded in round 1. That is the same
+    category of mistake as tagging an assumption `MEASURED`: a guess
+    written down as though it were a fact, in a codebase whose whole
+    discipline is that a recorded value carries an honest account of where
+    it came from (CONTEXT.md, Provenance). `None` reads as "nobody recorded
+    this," which is exactly what happened, and matches how `provenance`/
+    `approved_by` already tolerate absence on this same dataclass.
+    `from_dict` fills a missing value with `None` accordingly; a consumer
+    that groups or filters `DesignLoopState.decisions` by `iteration` (see
+    the paragraph above -- the lab-test-plan and candidate-solver readers
+    this field was added for) must treat `None` as its own case, belonging
+    in neither round's bucket, rather than folding it into round 1.
+
+    Everything freshly recorded still gets a real `int`: every
+    `LoopDecision(...)` call in this module (`start_design_loop`,
+    `advance_loop_step`) passes `iteration=state.iteration` explicitly --
+    `None` is reachable only through `from_dict` on a pre-#88 dump."""
 
     step: str
     kind: str
@@ -218,7 +282,7 @@ class LoopDecision:
     provenance: str | None
     approved_by: str | None
     recorded_at: float
-    iteration: int = 1
+    iteration: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -242,7 +306,7 @@ class LoopDecision:
             provenance=data.get("provenance"),
             approved_by=data.get("approved_by"),
             recorded_at=data["recorded_at"],
-            iteration=data.get("iteration", 1),
+            iteration=data.get("iteration"),
         )
 
 
@@ -392,29 +456,428 @@ def _require_fields(step_input: dict[str, Any], required: set[str], step_name: s
 def _handle_architecture(
     _state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    _require_fields(step_input, {"decision", "rationale"}, "architecture")
-    return "architecture_decision", dict(step_input), None
+    # `design_family` (issue #161) is a required structured slot recording
+    # WHICH design family (absorber, reflection-phase steering surface,
+    # patch antenna, ...) this decision targets -- alongside the existing
+    # free-form decision/rationale prose, not replacing it. #150 (cross-run
+    # simulator-trust ledger) and #151 (DesignHistoryIndex/geometry-result
+    # cache) both need this as a grouping key.
+    #
+    # The name is now validated against the Design family registry
+    # (`designs/design_families.py`, ADR-0018), which #161 could not do
+    # because the registry did not exist. A misspelled or invented family
+    # fails HERE, at the step that named it, rather than surviving into
+    # `decision_records` as a grouping key nothing else recognises.
+    #
+    # Validation is deliberately all this step does with the registry. The
+    # loop does not evaluate the family's physical bound: that needs inputs
+    # (a thickness budget and band for an absorber; a reference half-wave
+    # simulation for a patch) that the ARCHITECTURE step does not have and
+    # which differ per family by design. The registry entry is echoed into
+    # the recorded decision so the ANALYSIS step and any downstream consumer
+    # can reach the bound without re-deriving which one applies -- and, for a
+    # family whose bound is unread or non-existent, can say WHICH of those
+    # two it is rather than seeing an undifferentiated absence.
+    _require_fields(step_input, {"decision", "rationale", "design_family"}, "architecture")
+    try:
+        family = _get_design_family(step_input["design_family"])
+    except _UnknownDesignFamilyError as exc:
+        raise DesignLoopValidationError(str(exc)) from exc
+
+    recorded = dict(step_input)
+    # `design_family` keeps the caller's own string verbatim -- a human wrote
+    # it, and a decision record that quietly rewrites what they wrote is worse
+    # than one that carries a second field. The canonical registry name goes
+    # alongside it instead, so a run recording "patch_antenna" and one
+    # recording "PATCH" still group together for #150/#151.
+    recorded["design_family_registry"] = {
+        "canonical_name": family.name,
+        "simulation_tier": str(family.simulation_tier),
+        "requires_ground_plane": family.requires_ground_plane,
+        "has_physical_bound": family.has_physical_bound,
+        "physical_bound": _describe_physical_bound(family),
+    }
+    return "architecture_decision", recorded, None
+
+
+def _describe_physical_bound(family: Any) -> dict[str, Any]:
+    """Flatten one family's `physical_bound` slot into a JSON-safe record.
+
+    ADR-0018 rejected a fixed schema partly because a bare `None` would be
+    "ambiguous between 'not yet computed' and 'doesn't exist for this
+    family'". That distinction is worth nothing if it collapses on the way
+    into the decision record, so `status` carries it explicitly:
+    `available` / `unread_primary_source` / `none_exists`.
+    """
+    bound = family.physical_bound
+    if family.has_physical_bound:
+        return {
+            "status": "available",
+            "name": bound.name,
+            "citation": bound.citation,
+            "primary_source_doc": bound.primary_source_doc,
+            "validity": bound.validity,
+        }
+    if hasattr(bound, "citation"):
+        return {
+            "status": "unread_primary_source",
+            "name": bound.name,
+            "citation": bound.citation,
+        }
+    return {"status": "none_exists", "reason": bound.reason}
+
+
+def _resolve_eps_r_bounds(
+    step_input: dict[str, Any], step_name: str
+) -> tuple[float, float, dict[str, Any] | None]:
+    """Return `(eps_r_low, eps_r_high, material_property)` for one ANALYSIS
+    step_input (issue #154; ADR-0015; CONTEXT.md: Material-property
+    library). `eps_r` (a bare number, the pre-existing path) and
+    `material_property` (a `designs.material_properties.
+    resolve_material_property` result the caller already looked up) are
+    mutually exclusive ways to supply the same input -- exactly one must be
+    given, or this raises `DesignLoopValidationError`. This module never
+    calls into `designs.material_properties` itself (the design loop stays
+    the DB-free, pure state machine its own module docstring's "STATE
+    DESIGN" section describes); the caller resolves the library lookup
+    first, the same way an agent proposes a Requirement target before
+    `designs.requirement_targets.attach_target` ever sees it.
+
+    `eps_r_low == eps_r_high` for the `eps_r` path (nothing to spread) and
+    for a `material_property` whose own `low == high` (one confident entry,
+    or several that happen to agree) -- both take the SAME single-value
+    codepath through `_handle_analysis` below, so a caller migrating from
+    `eps_r` to `material_property` sees identical results once the library
+    holds exactly one value. A `material_property` whose `low != high` (a
+    Family fallback bracket, or several disagreeing citations -- CONTEXT.md's
+    "the spread itself is the signal that this guess matters") makes
+    `_handle_analysis` compute the resonant frequency at both ends rather
+    than collapsing to one (ADR-0015's Consequences section), instead of
+    picking a value.
+
+    A `material_property` with `status="no_data"` (the library has nothing
+    to offer -- no per-material entry, no Family fallback bracket) raises
+    rather than proceeding with a made-up number, mirroring #127's own
+    rejected "silently excluding a candidate with no data" alternative.
+    """
+    has_eps_r = "eps_r" in step_input
+    has_material_property = "material_property" in step_input
+    if has_eps_r == has_material_property:
+        raise DesignLoopValidationError(
+            f"{step_name} step_input must supply exactly one of 'eps_r' (a bare "
+            "number) or 'material_property' (a designs.material_properties."
+            "resolve_material_property result) -- got eps_r="
+            f"{'present' if has_eps_r else 'absent'}, material_property="
+            f"{'present' if has_material_property else 'absent'}"
+        )
+    if has_eps_r:
+        eps_r = step_input["eps_r"]
+        return eps_r, eps_r, None
+
+    material_property = step_input["material_property"]
+    status = material_property.get("status") if isinstance(material_property, dict) else None
+    if not isinstance(material_property, dict) or status == "no_data":
+        raise DesignLoopValidationError(
+            f"{step_name} step_input['material_property'] has no usable eps_r data "
+            f"(status={status!r}) -- CONTEXT.md's Material-property library: a "
+            "missing entry with no Family fallback bracket is reported, never "
+            "silently guessed past (#127)."
+        )
+    return material_property["low"], material_property["high"], material_property
+
+
+def _family_of_record(state: DesignLoopState) -> str | None:
+    """The `design_family` the ARCHITECTURE step recorded for this
+    iteration, or None if ARCHITECTURE has not run yet. The family is
+    validated against the registry at ARCHITECTURE (see _handle_architecture),
+    so anything reaching here is a registry name."""
+    decision = _find_last_decision(state, DesignStep.ARCHITECTURE)
+    if decision is None:
+        return None
+    return decision.input.get("design_family")
 
 
 def _handle_analysis(
-    _state: DesignLoopState, step_input: dict[str, Any]
+    state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    _require_fields(step_input, {"eps_r", "w_m", "h_m", "l_m"}, "analysis")
-    resonant_frequency_hz = _patch_resonant_frequency_hz(
-        step_input["eps_r"], step_input["w_m"], step_input["h_m"], step_input["l_m"]
+    """Dispatch ANALYSIS on the design family ARCHITECTURE recorded.
+
+    Issue #191: this step used to compute a patch-antenna resonant
+    frequency for EVERY family, including an absorber, whose designed
+    behaviour is dissipation rather than resonant radiation. A patch
+    formula applied to an absorber does not return a wrong number -- it
+    returns a number about a different device. In plain terms: it was
+    answering "what frequency does this antenna transmit at?" for a
+    surface whose entire job is to transmit nothing.
+
+    ABSORBER gets the equivalent-circuit absorption model
+    (`rf_tools.absorber`, adopted at #111). Every other family keeps the
+    patch formula it had, unchanged -- PATCH legitimately, and any family
+    with no analysis of its own falling back to it exactly as before, so
+    this is additive.
+    """
+    if _family_of_record(state) == "ABSORBER":
+        return _handle_analysis_absorber(step_input)
+    return _handle_analysis_patch(step_input)
+
+
+def _handle_analysis_absorber(
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    """Worst-in-band absorption for a ground-backed printed absorber.
+
+    Scored on the single worst-absorbing frequency in the required band
+    (#110's minimax rule), never the mean or the peak. The result carries
+    a `validity` list naming each load-bearing assumption -- notably the
+    unrecovered thin-spacer term (#190) -- and never withholds a number
+    for one: the loop reports and proceeds.
+    """
+    _require_fields(
+        step_input,
+        {
+            "f_low_hz",
+            "f_high_hz",
+            "tan_delta",
+            "thickness_m",
+            "period_m",
+            "gap_m",
+            "sheet_resistance_ohm_sq",
+            "squares",
+        },
+        "analysis",
     )
-    result = {
-        "function": "patch_resonant_frequency_hz",
-        "resonant_frequency_hz": resonant_frequency_hz,
-        "provenance": "CALCULATED",
-    }
+    eps_r_low, eps_r_high, material_property = _resolve_eps_r_bounds(step_input, "analysis")
+
+    def response(eps_r: float) -> dict[str, Any]:
+        return _absorber_band_response(
+            f_low_hz=step_input["f_low_hz"],
+            f_high_hz=step_input["f_high_hz"],
+            eps_r=eps_r,
+            tan_delta=step_input["tan_delta"],
+            thickness_m=step_input["thickness_m"],
+            period_m=step_input["period_m"],
+            gap_m=step_input["gap_m"],
+            sheet_resistance_ohm_sq=step_input["sheet_resistance_ohm_sq"],
+            squares=step_input["squares"],
+        )
+
+    at_low = response(eps_r_low)
+    if eps_r_high == eps_r_low:
+        result = dict(at_low)
+    else:
+        # A bracketed permittivity (ADR-0015's Family fallback bracket)
+        # gives a RANGE of worst-case absorption, not one false-precise
+        # number -- #127's rule: a guess on a decisive property swings the
+        # answer widely, and that swing IS the warning.
+        at_high = response(eps_r_high)
+        result = dict(at_low)
+        result["worst_absorption_low"] = min(
+            at_low["worst_absorption"], at_high["worst_absorption"]
+        )
+        result["worst_absorption_high"] = max(
+            at_low["worst_absorption"], at_high["worst_absorption"]
+        )
+        # Both endpoints' warnings apply; neither is discarded.
+        seen = {v["flag"] for v in result["validity"]}
+        result["validity"] = list(result["validity"]) + [
+            v for v in at_high["validity"] if v["flag"] not in seen
+        ]
+    if material_property is not None:
+        result["material_property"] = material_property
     return "calculation", result, "CALCULATED"
 
 
-def _handle_simulation(
-    _state: DesignLoopState, step_input: dict[str, Any]
+def _handle_analysis_patch(
+    step_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any], str | None]:
+    _require_fields(step_input, {"w_m", "h_m", "l_m"}, "analysis")
+    eps_r_low, eps_r_high, material_property = _resolve_eps_r_bounds(step_input, "analysis")
+
+    frequency_at_low = _patch_resonant_frequency_hz(
+        eps_r_low, step_input["w_m"], step_input["h_m"], step_input["l_m"]
+    )
+    if eps_r_high == eps_r_low:
+        result = {
+            "function": "patch_resonant_frequency_hz",
+            "resonant_frequency_hz": frequency_at_low,
+            "provenance": "CALCULATED",
+        }
+    else:
+        frequency_at_high = _patch_resonant_frequency_hz(
+            eps_r_high, step_input["w_m"], step_input["h_m"], step_input["l_m"]
+        )
+        # Higher eps_r lowers the resonant frequency (f ~ 1/sqrt(eps_r)), so
+        # eps_r_low's frequency is the HIGHER of the two -- min/max over the
+        # actual results, never assumed from the eps_r ordering.
+        result = {
+            "function": "patch_resonant_frequency_hz",
+            "resonant_frequency_hz_low": min(frequency_at_low, frequency_at_high),
+            "resonant_frequency_hz_high": max(frequency_at_low, frequency_at_high),
+            "provenance": "CALCULATED",
+        }
+    if material_property is not None:
+        result["material_property"] = material_property
+    return "calculation", result, "CALCULATED"
+
+
+DEFAULT_SIMULATION_ADAPTER = "NEC2"
+
+
+def _simulation_adapter_for(state: DesignLoopState) -> str:
+    """Which solver this iteration's design family calls for.
+
+    Reads `simulation_adapter` off the Design family registry entry
+    (ADR-0018 declared the field; nothing read it until #229). A family that
+    declares none, or an iteration with no ARCHITECTURE decision yet, falls
+    back to NEC2 -- the solver every family used before this dispatch
+    existed, so nothing that worked before changes behaviour.
+    """
+    family_name = _family_of_record(state)
+    if family_name is None:
+        return DEFAULT_SIMULATION_ADAPTER
+    try:
+        family = _get_design_family(family_name)
+    except _UnknownDesignFamilyError:
+        # ARCHITECTURE validates the name against the registry, so this is
+        # unreachable in a normal loop; falling back beats raising from a
+        # step that is not the one that named the family.
+        return DEFAULT_SIMULATION_ADAPTER
+    return family.simulation_adapter or DEFAULT_SIMULATION_ADAPTER
+
+
+def _handle_simulation(
+    state: DesignLoopState, step_input: dict[str, Any]
+) -> tuple[str, dict[str, Any], str | None]:
+    """Dispatch SIMULATION to the solver this design family declares (#229).
+
+    Before this, every family ran NEC2. NEC2 is a thin-wire method-of-
+    moments code: it solves Maxwell's equations honestly, but the only
+    geometry it can express is wires in free space over an optional ground.
+    It has no periodic boundary, so it cannot represent a metamaterial unit
+    cell at all -- and a unit cell is not a hard case for it, it is an
+    inexpressible one. In plain terms: it was being asked to model an
+    infinite repeating surface using a tool whose entire vocabulary is
+    single wires.
+
+    NEC2 remains the default and PATCH keeps it by name. ABSORBER declares
+    MEEP_FLOQUET, whose handler reports honestly on what that adapter can
+    and cannot yet do.
+    """
+    adapter = _simulation_adapter_for(state)
+    if adapter == "MEEP_FLOQUET":
+        return _simulate_meep_floquet(step_input)
+    return _simulate_nec2(step_input)
+
+
+def _simulate_meep_floquet(
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    """The Floquet unit-cell path -- correct destination, incomplete adapter.
+
+    `simulation/meep.py` is a deliberately narrow slice of Meep, and three
+    of the things it leaves out are exactly a printed absorber's mechanism:
+    no periodic boundary, no lossy dielectric, no resistive sheet. With all
+    three missing, a run would not be uncertain -- it would model a
+    lossless perfect reflector and report that it absorbs nothing, for
+    every candidate, no matter what was designed.
+
+    So this raises instead, naming each gap and how to close it. That is
+    not the charter's "warn, never block": that rule governs withholding a
+    CANDIDATE from the reader, and nothing is withheld here -- ANALYSIS's
+    closed-form absorption (rf_tools/absorber.py) is already recorded and
+    survives this step's failure, exactly as #111's two-tier design
+    intends. What is refused is manufacturing a SIMULATED-provenance number
+    that the adapter cannot actually stand behind, the same discipline
+    request_loop_step_approval uses when it refuses to fabricate an
+    approval.
+    """
+    gaps = _meep_periodic_absorber_capability_gaps()
+    if gaps:
+        detail = "; ".join(f"{gap['gap']}: {gap['costs']}" for gap in gaps)
+        raise _SimulatorError(
+            "MEEP_FLOQUET is the right adapter for a periodic absorber cell "
+            "and simulation/meep.py cannot yet deliver one. Missing: "
+            f"{detail}. ANALYSIS's closed-form absorption still stands as this "
+            "candidate's evidence (rf_tools/absorber.py, provenance "
+            "CALCULATED); what is unavailable is the full-wave confirmation "
+            "that would raise it to SIMULATED. See simulation/meep.py's "
+            "periodic_absorber_capability_gaps() for how to close each one."
+        )
+
     _require_fields(step_input, {"geometry", "frequency_hz"}, "simulation")
+    geometry = dict(step_input["geometry"])
+    # A unit cell is periodic in the plane by definition. The caller may
+    # override, but it must not have to remember: forgetting this is the
+    # difference between an infinite surface and one lonely element, and it
+    # fails silently rather than loudly.
+    geometry.setdefault("periodic_axes", ["x", "y"])
+
+    result = _run_meep_simulation(
+        geometry=geometry,
+        characteristic_length_m=step_input.get("characteristic_length_m", 1e-3),
+        nfreq=int(step_input.get("nfreq", 1)),
+        workdir=step_input.get("workdir"),
+    )
+
+    s_parameters = result.get("s_parameters") or {}
+    reflectance = s_parameters.get("reflectance") or []
+    # Ground-backed, so nothing is transmitted and every watt not reflected
+    # was dissipated. This is the ONLY reason A = 1 - R is legitimate here,
+    # and it is why the same arithmetic must not be used on a two-port cell.
+    absorption = [1.0 - float(r) for r in reflectance]
+
+    recorded = {
+        "function": "run_meep_simulation",
+        "simulator": result.get("simulator"),
+        "status": result.get("status"),
+        "frequency_hz": s_parameters.get("frequency_hz"),
+        "reflectance": reflectance,
+        "absorption": absorption,
+        "worst_absorption": min(absorption) if absorption else None,
+        "periodic_axes": geometry["periodic_axes"],
+        "validity": [dict(entry) for entry in _MEEP_PERIODIC_ABSORBER_VALIDITY],
+        "provenance": result.get("provenance", "SIMULATED"),
+    }
+    return "simulation", recorded, recorded["provenance"]
+
+
+def _simulate_nec2(
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    """Runs run_nec2_simulation, then (issue #101) derives VSWR and return
+    loss from the feed-point impedance that call already returns, against
+    an explicit `reference_impedance_ohms` step_input MUST state -- never
+    silently assumed to be 50 ohms (CONTEXT.md's provenance discipline:
+    every recorded number's inputs are stated, not guessed). This is
+    deterministic arithmetic over SIMULATION's own already-computed
+    impedance, not a second solver run -- no new evidence is manufactured,
+    only a different reading of the same evidence, so the result still
+    carries run_nec2_simulation's own SIMULATED provenance, not a fresh
+    CALCULATED one.
+
+    NEC2++'s adapter only ever solves at ONE frequency (the frequency_hz
+    this step_input states) -- so the derived vswr/return_loss_db is
+    inherently a single-frequency point prediction, honestly recorded as
+    `single_frequency_prediction=True`: a requirement typically stated as
+    a band (e.g. "VSWR <= 2.0 across 8-12 GHz") is not fully evaluated by
+    one point. orchestration/lab_test_plan.py surfaces this flag alongside
+    the traced expected value rather than silently presenting one
+    frequency's answer as if it covered the whole band.
+
+    vswr_from_gamma/return_loss_db are each undefined at one of the two
+    physical extremes (|Gamma| == 0: perfect match, return loss is
+    infinite; |Gamma| == 1: total mismatch, VSWR is infinite) -- each is
+    caught independently so the whole step doesn't fail just because the
+    OTHER quantity happens to be finite; a genuinely undefined value is
+    recorded as None, never guessed at. impedance itself can also be None
+    (run_nec2_simulation's own parser found no ANTENNA INPUT PARAMETERS
+    block) -- nothing to derive from, so vswr/return_loss_db/
+    reflection_coefficient_magnitude are all None, but the step still
+    advances: the underlying simulation itself completed.
+    """
+    _require_fields(
+        step_input, {"geometry", "frequency_hz", "reference_impedance_ohms"}, "simulation"
+    )
     result = _run_nec2_simulation(
         geometry=step_input["geometry"],
         frequency_hz=step_input["frequency_hz"],
@@ -422,6 +885,34 @@ def _handle_simulation(
         executable=step_input.get("executable"),
         workdir=step_input.get("workdir"),
     )
+
+    reference_impedance_ohms = step_input["reference_impedance_ohms"]
+    reflection_coefficient_magnitude: float | None = None
+    vswr: float | None = None
+    return_loss_db_value: float | None = None
+    impedance = result.get("impedance")
+    if impedance is not None:
+        z_load = complex(impedance["resistance_ohms"], impedance["reactance_ohms"])
+        gamma = _reflection_coefficient_from_impedance(z_load, reference_impedance_ohms)
+        reflection_coefficient_magnitude = abs(gamma)
+        try:
+            vswr = _vswr_from_gamma(reflection_coefficient_magnitude)
+        except ValueError:
+            vswr = None  # |Gamma| == 1: total mismatch, VSWR is undefined (infinite)
+        try:
+            return_loss_db_value = _return_loss_db(reflection_coefficient_magnitude)
+        except ValueError:
+            return_loss_db_value = None  # |Gamma| == 0: perfect match, return loss undefined
+
+    result = {
+        **result,
+        "reference_impedance_ohms": reference_impedance_ohms,
+        "reflection_coefficient_magnitude": reflection_coefficient_magnitude,
+        "vswr": vswr,
+        "return_loss_db": return_loss_db_value,
+        "frequency_hz": step_input["frequency_hz"],
+        "single_frequency_prediction": True,
+    }
     return "simulation", result, result.get("provenance", "SIMULATED")
 
 

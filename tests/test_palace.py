@@ -1,25 +1,33 @@
-"""Tests for the Palace Floquet/periodic-port adapter (issue #61).
+"""Tests for the Palace Floquet/periodic-port adapter (issues #61, #210).
 
-The real `palace` binary is NOT installed in this environment (no MPI-
-parallel FEM solver install is present here) so `PalaceSimulator.run()` is
-exercised here only against small fake "palace" scripts checked in below
-(via `tmp_path`), per the same testing approach used for NEC2++/openEMS
-(tests/test_nec2pp.py, tests/test_openems.py): subprocess plumbing (argument
-shape, nonzero exit, timeout) and result parsing are tested; the physics
-itself is out of scope for automated tests.
+No `palace` binary is assumed to exist on the machine running these tests,
+so `PalaceSimulator.run()` is exercised here against small fake "palace"
+scripts written into `tmp_path`, per the same testing approach used for
+NEC2++/openEMS (tests/test_nec2pp.py, tests/test_openems.py): subprocess
+plumbing (argument shape, nonzero exit, timeout) and result parsing are
+tested; the physics itself is out of scope for automated tests.
 
-The config JSON schema, the MFEM ".mesh" v1.0 format, the Floquet/periodic
-boundary config shape, and the "-np <N> config.json" CLI contract were
-verified against Palace's/MFEM's own primary documentation -- see the header
-comment in simulation/palace.py for the full, per-fact citation list
-(several facts there are explicitly flagged as reasoned-by-analogy rather
-than independently confirmed byte-for-byte -- see that module's HONEST
-CAVEAT). The sample port-floquet-S.csv content used in
-test_parse_palace_output_* below is a SYNTHETIC file this test suite
-constructs itself (following the documented "S[P<port>(<m>,<n>)<pol>][<exc>]"
-mode-label convention and the port-S.csv dB/phase convention cited above),
-not a real Palace run's output -- it validates this module's parsing/
-dB-phase-to-complex arithmetic against known values, not real FEM physics.
+Two kinds of sample CSV appear below, and the difference matters:
+
+  - The `SAMPLE_FLOQUET_CSV` fixture is SYNTHETIC -- text this test suite
+    writes itself, with round numbers chosen so the dB-and-phase to
+    real-and-imaginary arithmetic has a known answer. It proves the
+    arithmetic, not the format.
+  - `PALACE_REFERENCE_FLOQUET_CSV` and
+    `PALACE_REFERENCE_BOTH_POLARIZATIONS_CSV` are columns copied VERBATIM
+    out of Palace's own published regression baseline for the "Floquet
+    Ports for a Dielectric Grating" example (awslabs/palace commit
+    43a5483). Those prove the format. Issue #210 exists because the format
+    had only ever been transcribed from prose: the real mode label puts a
+    SEMICOLON between the two diffraction-order indices ("S[P1(0;0)TE][1]")
+    where the prose in Palace's boundaries.md shows a comma, and the parser
+    matched the comma -- so it returned computed=False for every real
+    Palace run while passing every synthetic test here.
+
+The adapter has since been run end to end against a real Palace binary; the
+record of that run, and the two defects it exposed, is in
+docs/palace-floquet-validation.md and in simulation/palace.py's own
+"VALIDATED AGAINST A REAL PALACE BINARY" section.
 """
 
 import csv
@@ -27,11 +35,10 @@ import io
 import json
 import math
 import os
-import stat
-import sys
 from pathlib import Path
 
 import pytest
+from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.palace import (
@@ -67,11 +74,9 @@ GRATING_GEOMETRY = {
 
 
 def _make_fake_palace(tmp_path: Path, body: str) -> Path:
-    """Write a small fake 'palace' shell script and make it executable."""
-    script = tmp_path / "fake_palace.sh"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    """Write a small fake 'palace' executable (a Python script body,
+    launched cross-platform -- see conftest.make_fake_executable)."""
+    return make_fake_executable(tmp_path, body, name="fake_palace")
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +300,37 @@ def test_generate_palace_config_driven_sweep_explicit():
     assert samples["NSample"] == 6
 
 
+def test_generate_palace_config_emits_explicit_finite_element_order():
+    """Palace's own default finite-element order is 1, which is too coarse
+    to reproduce its own dielectric-grating example at any practical mesh
+    size (issue #210). The order is emitted explicitly, never left to the
+    default, and is caller-settable."""
+    config = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert config["Solver"]["Order"] == 1
+
+    config2 = generate_palace_config(
+        GRATING_GEOMETRY,
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+        solver_order=2,
+    )
+    assert config2["Solver"]["Order"] == 2
+
+
+def test_generate_palace_config_rejects_finite_element_order_below_one():
+    with pytest.raises(ValueError, match="solver_order"):
+        generate_palace_config(
+            GRATING_GEOMETRY,
+            mesh_file="m.mesh",
+            output_dir="postpro",
+            frequency_hz=10e9,
+            solver_order=0,
+        )
+
+
 def test_generate_palace_config_is_json_serializable():
     config = generate_palace_config(
         GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
@@ -309,16 +345,13 @@ def test_generate_palace_config_is_json_serializable():
 
 
 def _build_sample_floquet_csv() -> str:
-    """Build a synthetic port-floquet-S.csv via Python's own csv.writer
-    (which RFC4180-quotes any field containing a comma) rather than a
-    hand-formatted string -- the documented mode label itself contains a
-    literal comma ("(<m>,<n>)"), so a header cell like
-    "|S[P1(0,0)TE][1]| (dB)" MUST be quoted for a comma-delimited row to
-    parse back into the intended columns at all. This module's parser
-    assumes Palace's own CSV writer does the same standard RFC4180 quoting
-    -- REASONED (any correct CSV writer handling a comma-containing field
-    would have to), not independently confirmed against a real Palace run;
-    see simulation/palace.py's module docstring HONEST CAVEAT.
+    """Build a synthetic port-floquet-S.csv, using the real mode-label
+    spelling "S[P<port>(<m>;<n>)<pol>][<exc>]" -- semicolon between the two
+    diffraction-order indices, so the label never collides with the file's
+    own comma delimiter and never needs quoting. That spelling is confirmed
+    against Palace's own published reference output for the dielectric
+    grating example (see PALACE_REFERENCE_FLOQUET_CSV at the bottom of this
+    file, and issue #210).
 
     Values: a matched, lossless, frequency-independent reflection/
     transmission pair with a known closed-form answer -- |S11|=0.5
@@ -332,12 +365,12 @@ def _build_sample_floquet_csv() -> str:
     writer.writerow(
         [
             "f (GHz)",
-            "|S[P1(0,0)TE][1]| (dB)",
-            "arg(S[P1(0,0)TE][1]) (deg.)",
-            "|S[P2(0,0)TE][1]| (dB)",
-            "arg(S[P2(0,0)TE][1]) (deg.)",
-            "|S[P2(1,0)TE][1]| (dB)",
-            "arg(S[P2(1,0)TE][1]) (deg.)",
+            "|S[P1(0;0)TE][1]| (dB)",
+            "arg(S[P1(0;0)TE][1]) (deg.)",
+            "|S[P2(0;0)TE][1]| (dB)",
+            "arg(S[P2(0;0)TE][1]) (deg.)",
+            "|S[P2(1;0)TE][1]| (dB)",
+            "arg(S[P2(1;0)TE][1]) (deg.)",
         ]
     )
     writer.writerow(["8.000000e+00", "-6.0206", "0.0", "-1.2494", "-90.0", "nan", "nan"])
@@ -356,7 +389,7 @@ def test_parse_palace_output_extracts_frequency_hz():
 
 def test_parse_palace_output_extracts_mode_metadata():
     result = parse_palace_output(SAMPLE_FLOQUET_CSV)
-    mode = result["modes"]["S[P1(0,0)TE][1]"]
+    mode = result["modes"]["S[P1(0;0)TE][1]"]
     assert mode["port"] == 1
     assert mode["m"] == 0
     assert mode["n"] == 0
@@ -366,13 +399,13 @@ def test_parse_palace_output_extracts_mode_metadata():
 
 def test_parse_palace_output_converts_db_phase_to_complex():
     result = parse_palace_output(SAMPLE_FLOQUET_CSV)
-    s11 = result["modes"]["S[P1(0,0)TE][1]"]["value_complex"][0]
+    s11 = result["modes"]["S[P1(0;0)TE][1]"]["value_complex"][0]
     assert s11 is not None
     magnitude = math.hypot(*s11)
     assert magnitude == pytest.approx(0.5, rel=1e-3)
     assert s11[1] == pytest.approx(0.0, abs=1e-6)  # 0 deg phase -> purely real
 
-    s21 = result["modes"]["S[P2(0,0)TE][1]"]["value_complex"][0]
+    s21 = result["modes"]["S[P2(0;0)TE][1]"]["value_complex"][0]
     assert s21 is not None
     magnitude21 = math.hypot(*s21)
     assert magnitude21 == pytest.approx(0.8660254, rel=1e-3)
@@ -382,15 +415,15 @@ def test_parse_palace_output_converts_db_phase_to_complex():
 
 def test_parse_palace_output_nan_mode_is_none():
     result = parse_palace_output(SAMPLE_FLOQUET_CSV)
-    higher_order = result["modes"]["S[P2(1,0)TE][1]"]
+    higher_order = result["modes"]["S[P2(1;0)TE][1]"]
     assert higher_order["value_complex"] == [None, None]
 
 
 def test_parse_palace_output_specular_convenience_view():
     result = parse_palace_output(SAMPLE_FLOQUET_CSV)
-    assert "S11" in result["specular"]
-    assert "S21" in result["specular"]
-    assert "S[P2(1,0)TE][1]" not in result.get("specular", {})  # non-specular excluded
+    assert "S11_TE" in result["specular"]
+    assert "S21_TE" in result["specular"]
+    assert "S[P2(1;0)TE][1]" not in result.get("specular", {})  # non-specular excluded
 
 
 def test_parse_palace_output_empty_text_returns_computed_false():
@@ -412,7 +445,7 @@ def test_parse_palace_output_no_matching_header_returns_computed_false():
 def test_palace_simulator_invokes_dash_np_and_positional_config(tmp_path: Path):
     """Confirm the real palace CLI contract (-np <N> config.json, see
     module docstring citation) is what actually gets shelled out."""
-    script = _make_fake_palace(tmp_path, 'echo "$@"\n')
+    script = _make_fake_palace(tmp_path, "import sys\nsys.stdout.write(' '.join(sys.argv[1:]))\n")
     config_file = tmp_path / "config.json"
     config_file.write_text("{}")
 
@@ -426,7 +459,9 @@ def test_palace_simulator_invokes_dash_np_and_positional_config(tmp_path: Path):
 
 
 def test_palace_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_palace(tmp_path, 'echo "boom: bad config" >&2\nexit 1\n')
+    script = _make_fake_palace(
+        tmp_path, 'import sys\nsys.stderr.write("boom: bad config\\n")\nsys.exit(1)\n'
+    )
     config_file = tmp_path / "config.json"
     config_file.write_text("{}")
 
@@ -436,7 +471,7 @@ def test_palace_simulator_nonzero_exit_raises_simulator_error(tmp_path: Path):
 
 
 def test_palace_simulator_timeout_raises_simulator_error(tmp_path: Path):
-    script = _make_fake_palace(tmp_path, "sleep 5\n")
+    script = _make_fake_palace(tmp_path, "import time\ntime.sleep(5)\n")
     config_file = tmp_path / "config.json"
     config_file.write_text("{}")
 
@@ -452,7 +487,7 @@ def test_palace_simulator_missing_config_file_raises(tmp_path: Path):
 
 
 def test_palace_simulator_picks_up_executable_from_env_var(tmp_path: Path, monkeypatch):
-    script = _make_fake_palace(tmp_path, "exit 0\n")
+    script = _make_fake_palace(tmp_path, "import sys\nsys.exit(0)\n")
     monkeypatch.setenv("PALACE_BIN", str(script))
     simulator = PalaceSimulator()
     assert simulator.executable == str(script)
@@ -463,7 +498,7 @@ def test_palace_simulator_picks_up_executable_from_env_var(tmp_path: Path, monke
 # realistic port-floquet-S.csv into the configured Output directory.
 # ---------------------------------------------------------------------------
 
-_FAKE_PALACE_PY = '''#!{python}
+_FAKE_PALACE_PY = '''
 import json
 import sys
 from pathlib import Path
@@ -482,10 +517,8 @@ sys.exit(0)
 
 
 def _make_fake_palace_py(tmp_path: Path, sample_csv: str) -> Path:
-    script = tmp_path / "fake_palace_realistic.py"
-    script.write_text(_FAKE_PALACE_PY.format(python=sys.executable, csv=sample_csv))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+    body = _FAKE_PALACE_PY.format(csv=sample_csv)
+    return make_fake_executable(tmp_path, body, name="fake_palace_realistic")
 
 
 def test_run_palace_simulation_end_to_end_with_fake_executable(tmp_path: Path):
@@ -505,7 +538,7 @@ def test_run_palace_simulation_end_to_end_with_fake_executable(tmp_path: Path):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert result["s_parameters"]["frequency_hz"] == pytest.approx([8e9, 10e9])
-    assert "S11" in result["s_parameters"]["specular"]
+    assert "S11_TE" in result["s_parameters"]["specular"]
     assert os.path.exists(result["mesh_file"])
     assert os.path.exists(result["config_file"])
     # The generated mesh/config are on disk and inspectable.
@@ -515,7 +548,9 @@ def test_run_palace_simulation_end_to_end_with_fake_executable(tmp_path: Path):
 
 
 def test_run_palace_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
-    script = _make_fake_palace(tmp_path, 'echo "mesh error" >&2\nexit 1\n')
+    script = _make_fake_palace(
+        tmp_path, 'import sys\nsys.stderr.write("mesh error\\n")\nsys.exit(1)\n'
+    )
     with pytest.raises(SimulatorError):
         run_palace_simulation(
             geometry=GRATING_GEOMETRY,
@@ -530,7 +565,7 @@ def test_run_palace_simulation_missing_output_csv_is_honestly_computed_false(tmp
     """A run that 'succeeds' (exit 0) but never writes port-floquet-S.csv
     (e.g. no ports actually propagated, or a real-tool behavior this
     module's fake script doesn't model) must not fabricate S-parameters."""
-    script = _make_fake_palace(tmp_path, "exit 0\n")
+    script = _make_fake_palace(tmp_path, "import sys\nsys.exit(0)\n")
     result = run_palace_simulation(
         geometry=GRATING_GEOMETRY,
         frequency_hz=10e9,
@@ -539,3 +574,169 @@ def test_run_palace_simulation_missing_output_csv_is_honestly_computed_false(tmp
         workdir=str(tmp_path / "run3"),
     )
     assert result["s_parameters"]["computed"] is False
+
+
+# ---------------------------------------------------------------------------
+# Output parsing against Palace's OWN published reference output (issue #210).
+#
+# Everything above this line parses text this test suite invented. The block
+# below parses columns copied verbatim (cell for cell, including the leading
+# space padding Palace's CSV writer emits) out of Palace's own checked-in
+# regression baseline for the "Floquet Ports for a Dielectric Grating"
+# example --
+# test/data/regression/ref/dielectric_grating/uniform/port-floquet-S.csv at
+# awslabs/palace commit 43a5483 -- reduced to the f column plus the specular
+# (0;0)TE and first-order (-1;0)TE reflection/transmission column pairs so it
+# fits here. That file is the ground truth for the real spelling of the mode
+# label, which is "S[P<port>(<m>;<n>)<pol>][<exc>]" with a SEMICOLON between
+# the two diffraction-order indices, not the comma this module's parser was
+# originally written against.
+# ---------------------------------------------------------------------------
+
+PALACE_REFERENCE_FLOQUET_CSV = (
+    "        f (GHz),    |S[P1(-1;0)TE][1]| (dB),arg(S[P1(-1;0)TE][1]) (deg.),"
+    "     |S[P1(0;0)TE][1]| (dB),arg(S[P1(0;0)TE][1]) (deg.),"
+    "    |S[P2(-1;0)TE][1]| (dB),arg(S[P2(-1;0)TE][1]) (deg.),"
+    "     |S[P2(0;0)TE][1]| (dB),arg(S[P2(0;0)TE][1]) (deg.)\n"
+    " 2.00000000e+00,                       +nan,                        +nan,"
+    "        -1.895484400956e+01,        +9.707838147826e+01,"
+    "                       +nan,                        +nan,"
+    "        -5.560025422477e-02,        +7.078380823648e+00\n"
+    " 4.00000000e+00,                       +nan,                        +nan,"
+    "        -1.298955891900e+01,        -7.617254883785e+01,"
+    "                       +nan,                        +nan,"
+    "        -2.238582338362e-01,        -1.661725502428e+02\n"
+    " 6.00000000e+00,                       +nan,                        +nan,"
+    "        -9.271287457121e+00,        +1.091475553056e+02,"
+    "                       +nan,                        +nan,"
+    "        -5.466392958824e-01,        +1.914755575339e+01\n"
+    " 8.00000000e+00,                       +nan,                        +nan,"
+    "        -1.606377748701e+00,        -9.628124039262e+01,"
+    "                       +nan,                        +nan,"
+    "        -5.097960699491e+00,        +1.737193476250e+02\n"
+    " 1.00000000e+01,        -1.535155055903e+01,         +1.071923457487e+02,"
+    "        -8.959593343531e+00,        +1.040495087235e+02,"
+    "        -1.429624565164e+01,         -5.933868353774e+01,"
+    "        -2.187835210722e+00,        +3.997227066998e+01\n"
+    " 1.20000000e+01,        -1.688735328348e+01,         -1.266988626996e+02,"
+    "        -1.037783889469e+01,        -7.783956943716e+01,"
+    "        -1.272037520041e+01,         +8.814889854213e+01,"
+    "        -2.728281827842e+00,        -1.338939407403e+02\n"
+)
+
+
+def test_parse_palace_reference_output_is_parsed_at_all():
+    """The whole parser hinges on recognising Palace's real mode label. If
+    this returns computed=False, every downstream number is silently absent."""
+    result = parse_palace_output(PALACE_REFERENCE_FLOQUET_CSV)
+    assert result["computed"] is True, result.get("note")
+
+
+def test_parse_palace_reference_output_frequencies_are_the_published_sweep():
+    result = parse_palace_output(PALACE_REFERENCE_FLOQUET_CSV)
+    assert result["frequency_hz"] == pytest.approx([2e9, 4e9, 6e9, 8e9, 10e9, 12e9])
+
+
+def test_parse_palace_reference_output_specular_matches_published_values():
+    """|S11| and |S21| in the specular (0,0) order at 2 GHz, straight off
+    Palace's own published baseline: -18.9548 dB reflection (about 11% of
+    the wave's voltage amplitude comes back) and -0.0556 dB transmission
+    (essentially all of it goes through)."""
+    result = parse_palace_output(PALACE_REFERENCE_FLOQUET_CSV)
+    s11 = result["specular"]["S11_TE"][0]
+    s21 = result["specular"]["S21_TE"][0]
+    assert 20 * math.log10(math.hypot(*s11)) == pytest.approx(-18.954844009, rel=1e-9)
+    assert 20 * math.log10(math.hypot(*s21)) == pytest.approx(-0.0556002542, rel=1e-9)
+    # Phases, in degrees, back out of the real/imaginary pair the parser built.
+    assert math.degrees(math.atan2(s11[1], s11[0])) == pytest.approx(97.07838147826, rel=1e-9)
+    assert math.degrees(math.atan2(s21[1], s21[0])) == pytest.approx(7.078380823648, rel=1e-9)
+
+
+def test_parse_palace_reference_output_mode_metadata_uses_semicolon_label():
+    result = parse_palace_output(PALACE_REFERENCE_FLOQUET_CSV)
+    mode = result["modes"]["S[P1(-1;0)TE][1]"]
+    assert mode["port"] == 1
+    assert mode["m"] == -1
+    assert mode["n"] == 0
+    assert mode["polarization"] == "TE"
+    assert mode["excitation"] == 1
+
+
+def test_parse_palace_reference_output_non_propagating_orders_are_none():
+    """Below the 8.66 GHz Rayleigh anomaly the (-1,0) diffraction order
+    carries no power -- Palace writes '+nan' there, and the parser must
+    hand back None rather than a number."""
+    result = parse_palace_output(PALACE_REFERENCE_FLOQUET_CSV)
+    first_order = result["modes"]["S[P1(-1;0)TE][1]"]["value_complex"]
+    assert first_order[:4] == [None, None, None, None]  # 2, 4, 6, 8 GHz
+    assert first_order[4] is not None  # 10 GHz, above the anomaly
+    assert first_order[5] is not None  # 12 GHz
+
+
+def test_run_palace_simulation_passes_solver_order_into_the_config(tmp_path: Path):
+    script = _make_fake_palace_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    result = run_palace_simulation(
+        geometry=GRATING_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_order"),
+        solver_order=2,
+    )
+    config = json.loads(Path(result["config_file"]).read_text())
+    assert config["Solver"]["Order"] == 2
+
+
+# ---------------------------------------------------------------------------
+# The specular convenience view, against real Palace output (issue #210).
+#
+# Palace writes BOTH polarizations for every diffraction order -- for a TE
+# excitation, the co-polarized "TE" columns carry the answer and the "TM"
+# columns carry the cross-polarized leakage, which for this symmetric
+# grating is numerical noise near -275 dB. Both are (0,0) specular modes of
+# the same excitation, so a convenience view keyed on port number alone
+# cannot tell them apart. Below are the f, (0;0)TE and (0;0)TM column pairs
+# copied verbatim (again, padding included) from the same published
+# baseline, first two frequency rows.
+# ---------------------------------------------------------------------------
+
+PALACE_REFERENCE_BOTH_POLARIZATIONS_CSV = (
+    "        f (GHz),     |S[P1(0;0)TE][1]| (dB),arg(S[P1(0;0)TE][1]) (deg.),"
+    "     |S[P1(0;0)TM][1]| (dB),arg(S[P1(0;0)TM][1]) (deg.),"
+    "     |S[P2(0;0)TE][1]| (dB),arg(S[P2(0;0)TE][1]) (deg.),"
+    "     |S[P2(0;0)TM][1]| (dB),arg(S[P2(0;0)TM][1]) (deg.)\n"
+    " 2.00000000e+00,        -1.895484400956e+01,        +9.707838147826e+01,"
+    "        -2.784127923123e+02,        -1.316188402480e+02,"
+    "        -5.560025422477e-02,        +7.078380823648e+00,"
+    "        -2.749564046281e+02,        -1.107121947054e+02\n"
+    " 4.00000000e+00,        -1.298955891900e+01,        -7.617254883785e+01,"
+    "        -2.741310951283e+02,        +1.739541804703e+02,"
+    "        -2.238582338362e-01,        -1.661725502428e+02,"
+    "        -2.785632211121e+02,        -7.903485125874e+01\n"
+)
+
+
+def _specular_db(result, key, row=0):
+    value = result["specular"][key][row]
+    assert value is not None
+    return 20 * math.log10(math.hypot(*value))
+
+
+def test_specular_view_keeps_both_polarizations_apart():
+    """The co-polarized TE answer must not be overwritten by the
+    cross-polarized TM one. In plain terms: the grating sends back about
+    11% of the wave it was given (-18.95 dB); the cross-polarized channel
+    is dead (-278 dB, i.e. nothing). A view that reported the second number
+    as 'S11' would say the structure swallows everything, which is the
+    opposite of the truth."""
+    result = parse_palace_output(PALACE_REFERENCE_BOTH_POLARIZATIONS_CSV)
+    assert _specular_db(result, "S11_TE") == pytest.approx(-18.954844009, rel=1e-9)
+    assert _specular_db(result, "S11_TM") == pytest.approx(-278.4127923, rel=1e-9)
+    assert _specular_db(result, "S21_TE") == pytest.approx(-0.0556002542, rel=1e-9)
+    assert _specular_db(result, "S21_TM") == pytest.approx(-274.9564046, rel=1e-9)
+
+
+def test_specular_view_keys_are_polarization_qualified():
+    result = parse_palace_output(PALACE_REFERENCE_BOTH_POLARIZATIONS_CSV)
+    assert set(result["specular"]) == {"S11_TE", "S11_TM", "S21_TE", "S21_TM"}

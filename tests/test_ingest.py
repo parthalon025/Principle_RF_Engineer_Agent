@@ -6,9 +6,46 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
+from knowledge import extraction
 from knowledge.ingest import ingest_document
 
 load_dotenv()
+
+
+def _extraction_error(document_id: int) -> str | None:
+    """Fetch the captured extraction-error text for a document, for use in
+    assertion-failure messages -- so a red `extraction_status` check shows
+    *why* parsing failed (per issue #141) instead of just a bare status
+    mismatch. `ingest_document`'s return value doesn't carry this text (only
+    the stored row's metadata does), so this is a small direct DB read."""
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metadata->>'extraction_error' FROM documents WHERE id = %s",
+                (document_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def no_ocr(monkeypatch):
+    """Forces `ingest_document`'s internal `parse_document` call to run with
+    OCR (image-to-text) switched off, for tests whose fixture PDF already
+    has a real, selectable text layer and never needs it.
+
+    Patches the `parse_document` name as looked up inside `knowledge.ingest`
+    (not `knowledge.extraction`'s own default) so this is scoped to the
+    tests that opt into it -- `parse_document`'s own default (`do_ocr=True`)
+    is untouched, so any other caller (real ingestion of a scanned document)
+    still gets OCR by default (issue #141)."""
+    monkeypatch.setattr(
+        "knowledge.ingest.parse_document",
+        lambda path: extraction.parse_document(path, do_ocr=False),
+    )
 
 
 def _write_pdf(path: Path, lines: list[str]) -> None:
@@ -109,7 +146,7 @@ def test_ingest_rejects_invalid_source_type():
         )
 
 
-def test_ingest_new_document_creates_row_and_chunks(tmp_path, cleanup_documents):
+def test_ingest_new_document_creates_row_and_chunks(tmp_path, cleanup_documents, no_ocr):
     pdf_path = tmp_path / "widget_amp.pdf"
     _write_pdf(pdf_path, ["Widget Amplifier Datasheet", "Gain: 20 dB typical."])
 
@@ -122,7 +159,7 @@ def test_ingest_new_document_creates_row_and_chunks(tmp_path, cleanup_documents)
     cleanup_documents.append(result["document_id"])
 
     assert result["status"] == "ingested"
-    assert result["extraction_status"] == "ok"
+    assert result["extraction_status"] == "ok", _extraction_error(result["document_id"])
     assert result["chunk_count"] >= 1
     assert result["supersedes_document_id"] is None
 
@@ -284,6 +321,127 @@ def test_authority_rank_override_replaces_source_type_default(tmp_path, cleanup_
     finally:
         conn.close()
     assert stored_rank == 50
+
+
+def test_title_override_replaces_docling_derived_title(tmp_path, cleanup_documents):
+    pdf_path = tmp_path / "some_internal_filename.pdf"
+    _write_pdf(pdf_path, ["Whatever docling extracts as a title", "Body text."])
+
+    result = ingest_document(
+        file_path=str(pdf_path),
+        source_type="paper",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        title_override="Metamaterial Design for Adaptive EM Skins",
+    )
+    cleanup_documents.append(result["document_id"])
+
+    assert result["title"] == "Metamaterial Design for Adaptive EM Skins"
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT title FROM documents WHERE id = %s", (result["document_id"],))
+            (stored_title,) = cur.fetchone()
+    finally:
+        conn.close()
+    assert stored_title == "Metamaterial Design for Adaptive EM Skins"
+
+
+def test_title_override_applies_even_when_extraction_fails(tmp_path, cleanup_documents):
+    corrupt_path = tmp_path / "corrupt_with_override.pdf"
+    corrupt_path.write_bytes(b"%PDF-1.4\nthis is not a valid pdf body\n%%EOF")
+
+    result = ingest_document(
+        file_path=str(corrupt_path),
+        source_type="paper",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        title_override="Title From Authoritative Metadata",
+    )
+    cleanup_documents.append(result["document_id"])
+
+    assert result["extraction_status"] == "failed"
+    assert result["title"] == "Title From Authoritative Metadata"
+
+
+def test_author_and_revision_are_stored(tmp_path, cleanup_documents):
+    pdf_path = tmp_path / "author_revision.pdf"
+    _write_pdf(pdf_path, ["Author Revision Test", "Body text."])
+
+    result = ingest_document(
+        file_path=str(pdf_path),
+        source_type="paper",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        author="Jane Doe, John Smith",
+        revision="2401.01234v2",
+    )
+    cleanup_documents.append(result["document_id"])
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT author, revision FROM documents WHERE id = %s",
+                (result["document_id"],),
+            )
+            stored_author, stored_revision = cur.fetchone()
+    finally:
+        conn.close()
+    assert stored_author == "Jane Doe, John Smith"
+    assert stored_revision == "2401.01234v2"
+
+
+def test_extra_metadata_is_merged_into_stored_metadata(tmp_path, cleanup_documents):
+    pdf_path = tmp_path / "extra_metadata.pdf"
+    _write_pdf(pdf_path, ["Extra Metadata Test", "Body text."])
+
+    result = ingest_document(
+        file_path=str(pdf_path),
+        source_type="paper",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        extra_metadata={"arxiv_id": "2401.01234", "doi": "10.1000/example"},
+    )
+    cleanup_documents.append(result["document_id"])
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT metadata FROM documents WHERE id = %s", (result["document_id"],))
+            (stored_metadata,) = cur.fetchone()
+    finally:
+        conn.close()
+    assert stored_metadata["arxiv_id"] == "2401.01234"
+    assert stored_metadata["doi"] == "10.1000/example"
+    assert stored_metadata["classification"] == "PUBLIC"
+    assert stored_metadata["extraction_status"] == "ok"
+
+
+def test_extra_metadata_cannot_override_reserved_metadata_keys(tmp_path, cleanup_documents):
+    pdf_path = tmp_path / "extra_metadata_collision.pdf"
+    _write_pdf(pdf_path, ["Extra Metadata Collision Test", "Body text."])
+
+    result = ingest_document(
+        file_path=str(pdf_path),
+        source_type="paper",
+        license="cc-by-4.0",
+        classification="PUBLIC",
+        extra_metadata={"classification": "SOMETHING_ELSE", "extraction_status": "bogus"},
+    )
+    cleanup_documents.append(result["document_id"])
+
+    assert result["extraction_status"] == "ok"
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT metadata FROM documents WHERE id = %s", (result["document_id"],))
+            (stored_metadata,) = cur.fetchone()
+    finally:
+        conn.close()
+    assert stored_metadata["classification"] == "PUBLIC"
+    assert stored_metadata["extraction_status"] == "ok"
 
 
 def test_extraction_failure_still_writes_document_with_zero_chunks(tmp_path, cleanup_documents):

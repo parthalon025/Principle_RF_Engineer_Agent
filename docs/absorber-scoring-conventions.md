@@ -11,7 +11,7 @@
 
 **Four things are genuinely settled conventions and can be adopted without argument:**
 
-1. **Absorptivity is defined identically everywhere:** `A(ω) = 1 − |S₁₁|² − |S₂₁|²`, collapsing to `A(ω) = 1 − |S₁₁|²` for a ground-backed absorber. Every source checked uses this. No decision needed.
+1. **Absorptivity is defined identically everywhere:** `A(ω) = 1 − |S₁₁|² − |S₂₁|²`, collapsing to `A(ω) = 1 − |S₁₁|²` **only where transmission is zero** — which a ground-backed absorber guarantees and an unbacked one does not. Every source checked uses the definition; no decision is needed about *it*. **Which form applies to a given structure is a decision, and the reproduction anchor takes the two-port form** — see §1.
 2. **The threshold is 90% absorption, equivalently −10 dB reflectivity.** These are *the same number*, not two conventions — see §2. It is the field's default and it is what "effective bandwidth" means.
 3. **Bandwidth is reported two ways together:** absolute (GHz) and fractional (`FB = BW/f₀`, as a percent). Fractional bandwidth is what lets designs at different centre frequencies be compared.
 4. **Angle and polarisation are reported as retention statements** — "absorptivity stays above X% out to θ°, for TE and TM separately" — not as scored quantities.
@@ -45,7 +45,33 @@ Identically in [PMC10489010](https://pmc.ncbi.nlm.nih.gov/articles/PMC10489010/)
 > "A(ω) = 1 − |S11|2"
 > — [PMC12900087](https://pmc.ncbi.nlm.nih.gov/articles/PMC12900087/) (verbatim)
 
-US12089385B2's Example 3 is a ground-backed absorber, so **this is the form the loop needs**, and it means absorption scoring reduces entirely to a reflection measurement. `LITERATURE-SUPPORTED`, and unanimous.
+**US12089385B2's Example 3 is *not* ground-backed, so this is the wrong form for it.**
+`docs/seven-example-design-unknowns.md` records the anchor as two-port, Floquet on both faces,
+no ground plane, and gives the reason from the patent's own drawing: FIG. 7G plots a non-zero
+**Transmission** trace, which a metal-backed structure cannot produce. Landy *et al.*'s device —
+which Example 3 reproduces symbol for symbol — suppresses transmission with a **cut wire**, not a
+ground plane, which is why that trace exists at all.
+
+> **This error regenerates — read before reapplying the one-port form.** ADR-0017 makes skins
+> *this programme builds* print their own reflector, so **our own** designs genuinely are
+> one-port and `A = 1 − |S₁₁|²` is right for them. Example 3 is **somebody else's device**, used
+> as a blind reproduction target. Applying the programme's default to it is a category error, not
+> a slip, and it has already been made once (`RUNNING-LISTS.md` §3 correction 25).
+
+**So the loop needs both forms, selected by whether the structure being evaluated has a
+reflecting backing — not one form adopted as universal.** The two-port definition is
+`LITERATURE-SUPPORTED` and genuinely unanimous; the one-port collapse is `CALCULATED`, exact
+only when `S₂₁ = 0`.
+
+**This is now enforced in the design family registry, not just stated in prose (issue #216).**
+`designs/design_families.py`'s `ABSORBER` family had `requires_ground_plane=True` while carrying
+Example 3 — the ground-less, two-port structure this section describes — as its assigned anchor,
+which is exactly the contradiction this document warns against. The fix was to split the family:
+`ABSORBER` stays the ground-backed, one-port family this programme's own designs default to
+(ADR-0017), and `ABSORBER_TRANSMISSIVE` is the new, ground-less, two-port sibling that Example 3
+actually is. `DesignFamily.__post_init__` now refuses to construct a family whose
+`requires_ground_plane` flag and `port_count` disagree, so this particular error cannot regenerate
+silently in code the way it did in this document.
 
 ---
 
@@ -59,7 +85,7 @@ This was worth checking rather than assuming, and the arithmetic confirms the eq
 > "the frequency range that meets this condition is called effective absorption bandwidth (EAB)"
 > — as stated across the RAM review literature (see §3)
 
-**So "−10 dB bandwidth", "90% absorption bandwidth" and "effective absorption bandwidth" are three names for one quantity**, provided transmission is zero. For a ground-backed absorber it always is. This is the single most useful simplification in this document: it collapses what looked like competing conventions into one.
+**So "−10 dB bandwidth", "90% absorption bandwidth" and "effective absorption bandwidth" are three names for one quantity**, provided transmission is zero. For a ground-backed absorber it always is; **for an unbacked one it is not, and the reproduction anchor is unbacked** (§1). This is the most useful simplification in this document: it collapses what looked like competing conventions into one.
 
 **Conversions worth having in the code** (`CALCULATED`):
 
@@ -170,7 +196,7 @@ Three consequences follow immediately, and they settle questions #110 raises:
 2. **A candidate can only be beaten fairly by another of the same thickness** — unless the score normalises for thickness (§6).
 3. **The bound gives an absolute reference.** Any candidate can be scored as a fraction of the best physically possible absorber of its thickness. That is a meaningful zero-to-one scale, not an arbitrary one.
 
-### 5.3 The engineering shortcut — and a worked number for Example 3
+### 5.3 The engineering shortcut — and a worked number for a *ground-backed* skin
 
 Take the idealised case: reflectivity is flat at `ρ₀` across the band `λ₁…λ₂` and unity elsewhere. Then `(λ₂−λ₁)·ln(1/ρ₀) ≤ 2π²µ_s d`, so:
 
@@ -186,13 +212,31 @@ Take the idealised case: reflectivity is flat at `ρ₀` across the band `λ₁�
 
 The `1/17` recovers Rozanov's best-known result — for a broadband absorber (where `λ₁ ≪ λ₂`, so `Δλ ≈ λ_max`) the minimum thickness is about **one-seventeenth of the longest operating wavelength**. It also matches the engineering form quoted in the review literature, `f_L = cΓ₀/(172·d)` with `Γ₀` in dB: at `Γ₀ = 10 dB` that is `λ_L = 17.2·d`. Two independent routes agreeing to three significant figures.
 
-**Applied to Example 3 (8.5–10.5 GHz)** — `CALCULATED`:
+> **Two corrections govern what follows; the arithmetic below is unchanged but what it is
+> *about* is not.**
+>
+> **Rozanov does not apply to the reproduction anchor at all.** The bound's own opening fixes a
+> slab *"overlying a **perfectly reflecting plane**"*, and Eq. (6) is stated for *"any
+> **metal-backed** magnetodielectric layer"* (`rozanov-bound-primary-source.md`;
+> `RUNNING-LISTS.md` §3 correction 26). Example 3 is unbacked (§1), so the derivation's
+> bookkeeping does not close for it — energy has a third place to go, straight through.
+>
+> **And `8.5–10.5 GHz` is a plot axis, not a requirement.** The patent says only that FIG. 7G
+> *"shows simulated scattering performance … over select frequencies ranging from
+> 8.5-10.5×10⁹ Hz"*. Nothing states the device must absorb across it (§3 correction 27).
+> **Rozanov is linear in Δλ**, so every figure below scales one-for-one with that axis label —
+> which is exactly why reading a requirement off a plot is not a harmless shorthand.
+
+**Worked for a ground-backed skin over an 8.5–10.5 GHz span** — `CALCULATED`. This is a valid
+calculation for a design **this programme builds**, since ADR-0017 makes those one-port by
+construction; the span is carried over from FIG. 7G as an illustrative X-band sub-band, not as
+anyone's stated requirement:
 
 - λ at 8.5 GHz = 35.27 mm; λ at 10.5 GHz = 28.55 mm; **Δλ = 6.72 mm**
-- −10 dB across the whole band requires **d ≥ 0.392 mm**
-- −20 dB across the whole band requires **d ≥ 0.784 mm**
+- −10 dB across the whole span requires **d ≥ 0.392 mm**
+- −20 dB across the whole span requires **d ≥ 0.784 mm**
 
-**Read this carefully, because it is good news and a trap at once.** The patent's sub-2 mm build is comfortably above both bounds, so **the Rozanov limit is not binding for Example 3.** A 2 GHz band at X-band is narrow, and narrow bands are cheap in thickness. So the bound will *not* discriminate between candidates here — it will report every candidate as sitting well below its ceiling.
+**Read this carefully, because it is good news and a trap at once.** A sub-2 mm build is comfortably above both bounds, so **the Rozanov limit is not binding at this thickness over a span this narrow.** (It was previously stated here as a fact about Example 3. It is not one: the bound does not govern an unbacked structure, and the span it was evaluated over was a plot axis. The conclusion below holds for a ground-backed skin the programme builds, which is where it is useful.) A 2 GHz band at X-band is narrow, and narrow bands are cheap in thickness. So the bound will *not* discriminate between candidates here — it will report every candidate as sitting well below its ceiling.
 
 That is still worth computing, for two reasons. It tells the loop that **thickness is not the constraint for this requirement**, so a candidate failing to meet the band is failing on design or material, not on physics. And it makes the metric *ready* for the wideband requirements the loop is eventually pointed at, where it will bind hard.
 
@@ -346,7 +390,7 @@ It also targets **anechoic chamber lining** — thick pyramidal absorber — not
 
 | Convention | Exact definition | How commonly used | Directly adoptable for #110? |
 |---|---|---|---|
-| **Absorptivity** | `A(ω) = 1 − \|S₁₁\|² − \|S₂₁\|²`; ground-backed → `A = 1 − \|S₁₁\|²` | **Universal.** Every source checked. | **Yes — adopt as-is.** No decision to make. |
+| **Absorptivity** | `A(ω) = 1 − \|S₁₁\|² − \|S₂₁\|²`; **ground-backed only** → `A = 1 − \|S₁₁\|²` | **Universal.** Every source checked. | **Adopt the two-port definition as-is.** The one-port collapse is a per-structure choice, **not** a default — the reproduction anchor is unbacked (§1). Enforced in code as two families, `ABSORBER` (ground-backed) and `ABSORBER_TRANSMISSIVE` (Example 3's shape) — see §1 and issue #216. |
 | **90% absorption threshold** | Band where `A ≥ 0.90` | **Dominant default.** | **Yes**, but store the threshold as a requirement value, don't hard-code it. |
 | **−10 dB reflectivity threshold** | Band where `20log₁₀\|S₁₁\| ≤ −10` | **Dominant** in FSS/circuit-analog work. | **Yes — same quantity as above.** `CALCULATED` identity, exact when `S₂₁=0`. |
 | **Effective Absorption Bandwidth (EAB)** | Frequency range where `RL < −10 dB`, quoted **with the thickness that produced it** | **Universal in RAM/composite work**, incl. MXene. | **Yes**, and adopt its discipline: never quote a band without its thickness. |
@@ -371,9 +415,9 @@ It also targets **anechoic chamber lining** — thick pyramidal absorber — not
 
 **Adopt this set. It is coherent, it is the field's, and it maps onto the machinery #117 already put in place.**
 
-**1. Score on band-limited worst case, not on the peak.** The requirement is "≥90% absorption across 8.5–10.5 GHz." The natural score is the **worst absorptivity anywhere in the band** (equivalently `maxR`, the worst reflectivity). This is what Huynen's FOM uses, it is what a "across the whole band" requirement literally means, and it sidesteps §3.1's documented objection to `RL_min`. It also answers the ticket's "threshold or gradient?" question in the cleanest available way: **worst-in-band is simultaneously both** — thresholded it prunes, un-thresholded it grades, and it can never reward a solver for a deep null at one frequency while failing elsewhere, which is exactly the failure mode the ticket names.
+**1. Score on band-limited worst case, not on the peak.** For a requirement of the form "≥90% absorption across a stated band" — the band being whatever the customer asked for, never a figure read off a plot (§5.3) — the natural score is the **worst absorptivity anywhere in the band** (equivalently `maxR`, the worst reflectivity). This is what Huynen's FOM uses, it is what a "across the whole band" requirement literally means, and it sidesteps §3.1's documented objection to `RL_min`. It also answers the ticket's "threshold or gradient?" question in the cleanest available way: **worst-in-band is simultaneously both** — thresholded it prunes, un-thresholded it grades, and it can never reward a solver for a deep null at one frequency while failing elsewhere, which is exactly the failure mode the ticket names.
 
-**2. Express the requirement as a threshold/objective pair on that quantity (#117).** For Example 3: *threshold* `A ≥ 0.90 across 8.5–10.5 GHz` — below it, reject; *objective* a stated deeper value. The trade space between them is where the solver works. No new mechanism is needed; absorption depth was already named as a first-class threshold/objective quantity in #117's resolution.
+**2. Express the requirement as a threshold/objective pair on that quantity (#117).** *Threshold* `A ≥ 0.90 across the requirement's band` — below it, reject; *objective* a stated deeper value. **No band is stated for the reproduction anchor**: the patent gives FIG. 7G's 8.5–10.5 GHz plot range and no requirement (§5.3), so reproducing Example 3 is a curve-comparison exercise, not a threshold test, and #168's Feature Selective Validation is the shape that fits it. The trade space between them is where the solver works. No new mechanism is needed; absorption depth was already named as a first-class threshold/objective quantity in #117's resolution.
 
 **3. Carry the threshold and the band with every bandwidth number.** §2.1 shows the field is inconsistent about the threshold (70%, 80%, 90%, 95%, −15 dB, −20 dB all appear). A bandwidth without its threshold is not a number, and two candidates scored under different thresholds are silently incomparable. This is a `requirement_targets.py` concern, and it fits the `ONE_OF`/second-value model changes #117 already identified.
 

@@ -16,14 +16,18 @@ and a glossary that churns with it stops being trustworthy (see
 
 - **Provenance**: the evidence class of a stated RF result — exactly one of
   `MEASURED`, `SIMULATED`, `CALCULATED`, `MANUFACTURER-SPECIFIED`,
-  `LITERATURE-SUPPORTED`, `INFERRED`, `ASSUMED`, `UNKNOWN`. A closed set, and
-  the only confidence vocabulary in the project: there is no parallel
-  "provisional"/"draft" tag, and no path by which an LLM-estimated confidence
-  becomes a `CALCULATED` one. Never state a value without one once the agent
-  produces it. A knowledge-base chunk cited by the agent inherits its
-  provenance from the source document's **source type**:
+  `LITERATURE-SUPPORTED`, `INTERNAL-HISTORY`, `INFERRED`, `ASSUMED`,
+  `UNKNOWN`. A closed set, and the only confidence vocabulary in the
+  project: there is no parallel "provisional"/"draft" tag, and no path by
+  which an LLM-estimated confidence becomes a `CALCULATED` one. Never
+  state a value without one once the agent produces it. A knowledge-base
+  chunk cited by the agent inherits its provenance from the source
+  document's **source type**:
   `datasheet`/`application_note` → `MANUFACTURER-SPECIFIED`;
-  `standard`/`textbook`/`paper`/`patent` → `LITERATURE-SUPPORTED`. An
+  `standard`/`textbook`/`paper`/`patent` → `LITERATURE-SUPPORTED`;
+  `design_record` → `INTERNAL-HISTORY`, which sits below published
+  authority because it is the team's own prior write-up rather than an
+  outside source (`knowledge/provenance.py`). An
   automatically extracted **component** specification field is
   `MANUFACTURER-SPECIFIED` when the extraction was unambiguous, `INFERRED`
   when the read was ambiguous or low-confidence, and `UNKNOWN` when it
@@ -31,14 +35,42 @@ and a glossary that churns with it stops being trustworthy (see
   regardless of the extractor's own confidence — there is no human review
   step, so provenance and physical bounds are the only signal a downstream
   user gets that a value should be double-checked.
+  _Avoid_: Provenance ladder as a name in its own right — the ladder
+  metaphor is fine and "rung" is used throughout, but the phrase blurs two
+  things this glossary keeps apart: Provenance is the closed set of nine
+  labels, and **Evidence hierarchy** is the order they are compared in.
+  Name whichever one you mean.
 - **Evidence hierarchy**: measured > validated simulation > deterministic
   calculation > manufacturer spec > authoritative reference > internal
   engineering history > general web material > LLM inference. Higher wins
-  when evidence conflicts.
+  when evidence conflicts. Its ranks name Provenance values in order —
+  `MEASURED`, `SIMULATED`, `CALCULATED`, `MANUFACTURER-SPECIFIED`,
+  `LITERATURE-SUPPORTED`, `INTERNAL-HISTORY`, then `INFERRED` — with two
+  deliberate gaps at the join: **general web material** is a rank with no
+  Provenance value, because no source type ingests it, and `ASSUMED` and
+  `UNKNOWN` are values with no rank, because both mark the *absence* of
+  evidence rather than a kind of it. So the hierarchy orders seven of the
+  nine values, and a conflict involving `ASSUMED` or `UNKNOWN` is not
+  settled by rank.
+  *In plain terms: this is the tie-breaker for "two sources disagree, which
+  do we believe?" — and two of the nine labels mean "we have no source at
+  all," which is why they are not in the running.*
 - **Source type**: the classification of an ingested knowledge document —
   `datasheet`, `application_note`, `standard`, `textbook`, `paper`,
-  `patent`, or `design_record`. Fixed at ingest time; determines the
-  document's default provenance and authority rank.
+  `patent`, `partner_research`, or `design_record`. Fixed at ingest time;
+  determines the document's default provenance and authority rank.
+- **Partner research** (a source type): unpublished technical work received
+  from an outside research partner — a proposed design, a memo, an internal
+  report someone shares. Resolves to `LITERATURE-SUPPORTED` like a `paper`
+  or a `patent`, but ranks below both and above `design_record`
+  (ADR-0029). Below, because nothing examined it: no peer review, no patent
+  office. Above internal history, because it is genuinely outside work
+  rather than the team's own prior write-up. The two obvious alternatives
+  are both wrong in ways that propagate — filing it as a `paper` puts an
+  unreviewed proposal ahead of a granted patent in every search, and filing
+  it as a `design_record` makes the corpus claim a partner's work as ours.
+  *In plain terms: a partner's good idea is worth more than our own old
+  notes and less than something a journal or an examiner has checked.*
 - **Patent** (a source type): a granted patent or published application.
   Sits at the authoritative-reference tier like a `paper`, but ranks
   deliberately *below* one: a patent office examines for novelty,
@@ -86,12 +118,60 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: Flexible antenna — describes the substrate, not the
   mounting requirement; a flexible antenna mounted flat isn't
   exercising the conformal property.
-- **Metamaterial unit cell**: the repeating element (e.g. an elongated,
-  passive-magnetic-property element with tailored geometry) whose
-  geometry — not material composition — produces an antenna's effective
-  permittivity/permeability. The base building block a metamaterial
-  antenna design starts from.
+- **Host surface**: the surface an Adaptive EM skin is applied to, supplied
+  by each Customer requirement and never a project constant. **Described by
+  the properties it carries, never by what it is**: the range is unbounded —
+  a sticker, a PET film, an aircraft wing, a hull, an sUAS body, or
+  something living (`docs/mxene-voltera-nova-printability.md` records
+  printing demonstrated "on curved substrates and even on leaves and
+  fruit"). No closed list of host types is possible, so no design decision
+  may key on one.
+  Five properties gate a design, and each is supplied, not assumed: its
+  **radius of curvature**, which drives bend radius, which drives substrate
+  class; **whether the finished part can leave it and reach an external
+  oven**, which is what actually decides which conductors survive the cure
+  ceiling — not substrate class, a claim corrected on #105 — and is the
+  cure stage's own gate (see Fabrication capability); **whether it is a reliable
+  conductive backing**, which a requirement asserts and the loop never
+  infers (ADR-0017); its **own εr/tanδ and thickness**, where it
+  participates electromagnetically; and its **extent**, which bounds how
+  much of a pattern fits.
+  *In plain terms: the loop never asks whether it is looking at a wing or an
+  animal. It asks how sharply the thing curves, how hot it may get, whether
+  it conducts, and whether the part can come off to be baked.*
+  _Avoid_: Substrate — the printed or laminated dielectric the elements sit
+  on, which is a different layer; a skin has both a substrate and a host.
+  Platform — names a vehicle class rather than a surface, and a host need
+  not belong to one.
+- **Metamaterial unit cell**: the repeating element whose **sub-wavelength
+  structure** produces an effective permittivity/permeability the bulk
+  material does not have on its own. The base building block a
+  metamaterial design starts from.
+  The structure is usually a **patterned conductor** (US12089385B2's
+  Example 3 is an I-shaped ring resonator over a cut wire), but it need not
+  be: **Example 1 gets its magnetic response from Mie resonance in
+  strontium titanate**, at a permittivity FIG. 5C gives as
+  **ε₁ = 250 − 1.25j** (Example 2 is 294 − 0.5j), and **Example 5 uses a
+  tunable BST film**. *In plain terms: most of these work by the shape you
+  print, but some work by what the material itself is made of.* An earlier
+  version of this entry said the effect came from geometry "not material
+  composition," which three of the patent's own seven examples contradict
+  (#113). Cite the drawings, not the prose: the prose figure of εr = 310
+  is not what Example 1 was simulated with (#107).
   _Avoid_: Meta-atom — an optics-context term, not this project's.
+- **Supercell**: a block of identical **Symbols** repeated side by side on a
+  coded surface, so each symbol sits among neighbours like itself and
+  behaves as it did when it was characterised. Its size is never a project
+  constant — it is derived per **Customer requirement** from the
+  RCS-reduction target, which sets a phase budget
+  `δ = 2·arcsin(10^(−RCSR_dB/20))` that the coupling error at the block's
+  edges must stay inside (`docs/supercell-sizing-rule.md`, #130).
+  *In plain terms: identical tiles are laid in patches because a tile
+  misbehaves when the tiles beside it are different, and how big a patch
+  has to be falls out of how much radar reduction the customer asked for.*
+  _Avoid_: super-cell — the hyphenated spelling is in live use (#187 and
+  several docs), but the code and both filenames carry the unhyphenated
+  one, so that is the spelling to write.
 - **Customer requirement**: a stated design target for one antenna/EM-skin
   design — frequency band, gain or VSWR/bandwidth target, form factor,
   host-surface curvature, platform, and ground-plane presence (whether the
@@ -110,9 +190,45 @@ and a glossary that churns with it stops being trustworthy (see
   inventing a stronger provenance tier. A requirement whose prose yields no
   defensible target is `UNSCOREABLE`, with the reason recorded, never given
   an invented number.
-  _Avoid_: a `CONFIRMED` provenance tier — Provenance's eight-value set is
+  _Avoid_: a `CONFIRMED` provenance tier — Provenance's nine-value set is
   fixed; confirmation is a trust signal about the reading, not a new kind
   of evidence.
+- **Intended effect** (of a Customer requirement): what the requirement
+  wants done to the wave — absorbed, reflected in phase, steered,
+  transmitted, scattered diffusely, polarisation-converted, shielded
+  against. Distinct from a **Design family**, which is a *mechanism* that
+  might deliver it: one intended effect is typically servable by several
+  families, and **that one-to-many mapping is the trade space a set of
+  candidates is drawn from**. "Reduce radar return" is answered both by an
+  absorber, bounded by Rozanov's thickness-versus-bandwidth inequality, and
+  by a diffusive/coding surface, which carries no published bound at all —
+  physically different routes with different costs and different
+  confidence.
+  Established by interview with whoever speaks for the customer rather than
+  inferred silently, and then tracked exactly like a **Requirement
+  target**: provenance is always `ASSUMED`, because it is a reading of
+  someone's words and not anybody's measurement, with confirmation carried
+  on a separate status axis rather than a stronger provenance tier. Its
+  vocabulary is **open, not a closed enum** — the same reasoning as
+  **Optimizer class**, stored as an open value so an approach nobody needs
+  yet has room to exist.
+  **A requirement may legitimately have none, and saying so is an answer
+  rather than a gap.** A bend radius, a mass budget or a cure ceiling asks
+  nothing of the wave. Such a requirement still constrains the
+  electromagnetic design and may remove a whole family from the trade space
+  — a coding surface tolerates only `S ≤ 2·θ_max·R` of arc before its cells
+  sit outside their **Validity box**'s incidence-angle range
+  (`docs/curvature-effects-on-em-surfaces.md`) — and that exclusion is a
+  `capability-verdict` in the **Considered-and-dropped ledger**, so it
+  expires if the stated curvature changes.
+  *In plain terms: what the customer wants to happen to the radio wave, as
+  opposed to which trick you use to make it happen.*
+  _Avoid_: Objective — taken, and means the desired value of a numeric
+  target (**Threshold/Objective**). Function — taken as a loop
+  `step_output` key naming the calculation that ran. Mechanism — ADR-0022's
+  **Mechanism claim** is a predicted ordering, not a physical effect.
+  Designed-for behaviour — describes a family's property, not a customer's
+  wish.
 - **Threshold/Objective**: the two values a Requirement target's numeric
   value may carry, adopted from defence-acquisition practice (JCIDS
   Enclosure B, via #122) to settle #117. **Threshold** is the minimum
@@ -139,7 +255,9 @@ and a glossary that churns with it stops being trustworthy (see
   settled fact merely by having been made before. Contrast **Material-
   property library** entry, the one kind of data this project deliberately
   does carry forward between passes, because it is a fact about a
-  material rather than about any one requirement.
+  material rather than about any one requirement
+  (`docs/requirement-derived-thresholds.md`, #110/#112/#115;
+  `designs/material_properties.py` names it as the contrast case).
 - **Material-property library**: a persistent store of physical material
   properties (permittivity, loss tangent, conductivity, etc.), keyed by
   `(material, frequency, property)` rather than by design or requirement —
@@ -168,6 +286,24 @@ and a glossary that churns with it stops being trustworthy (see
   to one number: a decisive property's bracket produces a visibly wide
   spread in the resulting rank — the spread itself is the signal that
   this guess matters — while a minor property's bracket barely moves it.
+- **Ink-property library**: a persistent store of what one purchasable ink
+  is and what its datasheet says it becomes when printed a stated way
+  (volume resistivity, recommended cured thickness, cure schedule,
+  viscosity), keyed by `(ink, process state, property)`. That process axis
+  is exactly what a **Material-property library** entry has no room for,
+  and it is the reason this is a separate store: an ink's electrical
+  behaviour is not a property of the ink alone — the same ink at 6 µm,
+  12 µm and 24 µm is three different sheet resistances, and MXene's
+  conductivity depends on whether it was cured and at what temperature.
+  One of three libraries that split a single question between them:
+  Ink-property is *what you buy*, **Fabrication capability** is *what a
+  machine can lay down*, and Material-property is *what the cured film
+  then is, electromagnetically, at frequency*. A printable candidate is
+  therefore a `(machine, ink, material)` triple, and the loop enumerates
+  triples rather than assuming one of each
+  (`docs/fabrication-capability-and-ink-library-spec.md`, #106).
+  _Avoid_: ink database, and folding ink into the Material-property library
+  — the missing process axis is the whole reason the two are separate.
 - **Fabrication capability**: the configured, cross-run set of what a
   specific piece of equipment can currently build — which processes, what
   cure ceiling, what minimum feature size, whether it can embed a discrete
@@ -192,7 +328,15 @@ and a glossary that churns with it stops being trustworthy (see
   parameter recommendation (e.g. unit-cell spacing, layer stack, expected
   gain) with rationale tracing back to CALCULATED results and/or
   LITERATURE-SUPPORTED sources. Not a fabrication-ready CAD file or mesh;
-  a human still builds the prototype from it.
+  a human still builds the prototype from it. This is the sense meant by
+  the rule that a patent's claim language is never design guidance
+  (`knowledge/provenance.py`, `agent/main.py`, `mcp_server/server.py`).
+  _Avoid_: using the bare phrase for a *ticket's* implementation advice —
+  several modules say "this ticket's own design guidance"
+  (`optimization/gradient.py`, `simulation/hfss.py`, and others) meaning
+  what the issue told the author to build, which is a different thing
+  entirely. Say "the ticket's guidance" for that and keep Design guidance
+  for what the agent hands the customer.
 - **Design/decision record**: an internally-authored write-up of what was
   decided for a prior design, why, and what alternatives were considered —
   ingested as an ordinary `documents` row (`source_type = design_record`,
@@ -229,6 +373,45 @@ and a glossary that churns with it stops being trustworthy (see
   one for context a formula can't capture, but never replaces it (ADR-0014).
   _Avoid_: confidence, probability — both suggest a subjective estimate,
   which this explicitly is not.
+- **Prediction**: a stated expected value for the quantity a Success score
+  will later measure, recorded *before* the evaluation that produces it —
+  the fast tier's counterpart to the expected values the loop already
+  compiles before a bench trip. Provenance is always
+  `INFERRED`: it is an LLM's reading of the physics made before any
+  evidence exists, and it never becomes `CALCULATED` because the solver
+  later computed a matching number. Carries its own tolerance, which must
+  be narrower than the decision it informs — a prediction whose band
+  cannot separate a pass from a fail against the requirement's own
+  Threshold is `UNSCOREABLE` by construction, never `CONFIRMED` (#194).
+  *In plain terms: the machine writes down its guess before it looks, and
+  a guess loose enough to be right either way does not count.*
+  _Avoid_: estimate, guess, expectation — all three suggest something that
+  may be revised once the answer is known, and a Prediction's entire value
+  is that it was frozen first.
+- **Prediction status**: whether a Prediction has been tested against the
+  result it predicted — `PREDICTED` → `CONFIRMED`/`REFUTED`, plus
+  `UNSCOREABLE` for a candidate that failed at an earlier step and never
+  produced the number its prediction was about. A separate axis from
+  Provenance, on the same reasoning as a Requirement target's
+  `target_status`: Provenance says what kind of evidence a value is,
+  status says whether anything has checked it. Display-only — it never
+  affects ranking or `score_percent` (#112) — and it may steer which
+  candidates get proposed next, never how any candidate is scored (#194).
+  _Avoid_: a `REFUTED` provenance tier, or a "validated"/"unvalidated"
+  confidence tag — Provenance's nine-value set is fixed and is the only
+  confidence scale in the project.
+- **Mechanism claim**: the single statement of *why this batch* that
+  accompanies a batch of LLM-proposed candidates, written as a testable
+  ordering over them ("the shortest candidate scores worst") rather than
+  as prose. Carries its own Prediction status, tested against the ranking
+  the batch actually produced rather than against any one value — so a
+  batch whose every Prediction lands inside tolerance can still be
+  `REFUTED` on its mechanism. *In plain terms: predicting the answer and
+  being right about why are different things, and only the second one
+  teaches you anything.* (#194)
+  _Avoid_: hypothesis — too broad; a Mechanism claim is specifically about
+  the ordering one batch expects, not about the design or the physics at
+  large.
 - **Design**: a `designs` row — a named, revisioned unit of engineering work
   (`design_key`, `name`, `revision`, `status`) that `requirements`,
   `architecture`, engineering results, decisions, and verification all hang
@@ -291,6 +474,21 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: element library — this project's alphabet specifically admits
   only symbols that have been printed, measured, and validity-boxed; a
   generic "library" doesn't carry that admission bar.
+- **Letter**: a **Symbol** that has passed admission and is an entry in the
+  **Element/Coding-Alphabet library**. The two words are not
+  interchangeable: every letter is a symbol, but a symbol described in a
+  paper, or drawn and simulated but never printed, is not a letter. The
+  distinction is the whole content of ADR-0027 — a shape from the
+  literature enters as a candidate in the **Considered-and-dropped
+  ledger**, and only printing, measuring and characterising it here makes
+  it a letter. Because identity includes the process, *"the same outline
+  printed in carbon and in MXene is two letters, not one letter under two
+  conditions"* (#132).
+  *In plain terms: a letter is a shape you have actually printed and
+  measured. Anything else is a shape you have read about.*
+  _Avoid_: using "letter" for a proposed or simulated element — that is a
+  **Symbol** at best, and a candidate at worst. The looser usage is what
+  ADR-0027 exists to prevent.
 - **Validity box**: the stated set of conditions a symbol's or alphabet's
   characterised numbers hold under — pitch, substrate, ink, pass count,
   cure schedule, incidence-angle range, and the neighbour set it was
@@ -304,16 +502,51 @@ and a glossary that churns with it stops being trustworthy (see
   swapped for the alphabet's extremes. Sets the phase budget a coding
   block's size must satisfy against the requirement's own RCS-reduction
   target (#130).
+- **Ligature**: characterising a whole **Supercell** as one unit — solving
+  the block full-wave rather than assembling it from its symbols'
+  individual characterised responses. The name and the pattern are adopted
+  from published practice, which reaches for it for the same reason this
+  project does: once a cell sits beside unlike neighbours, its own
+  characterisation stops holding
+  (`docs/element-library-prior-art.md` §5). **The pattern is adopted; the
+  sizing rule is this project's own** — every block size found in the
+  literature was set by something other than a coupling-error budget, so
+  `docs/supercell-sizing-rule.md` derives it here from the requirement's
+  RCS-reduction target instead.
+  *In plain terms: when tiles misbehave next to unlike tiles, you stop
+  modelling one tile and start modelling the whole patch.*
+  _Avoid_: treating it as a synonym for **Supercell** — the supercell is
+  the block of identical symbols; the ligature is the decision to
+  characterise that block as a single object.
 - **Design family**: the classification of a design's target physics and
   topology (e.g. absorber, reflection-phase steering surface, polarization
   converter, diffusive-backscatter surface, plain patch antenna) that
   determines which analysis/optimization functions, simulation setup, and
-  physical bound apply (see `docs/adr/0018`). Declared as a structured
-  field on the ARCHITECTURE decision, not left implicit in which hardwired
-  function the loop happened to call — that field is `_handle_architecture`'s
-  target shape, not yet its current one; #161 is the open implementing
-  ticket. Selection stays human-authored:
-  the loop does not attempt to infer a family from a requirement's prose.
+  physical bound apply (see `docs/adr/0018`). Declared as a required
+  `design_family` string field on the ARCHITECTURE decision, alongside the
+  existing free-form `decision`/`rationale` prose, not left implicit in
+  which hardwired function the loop happened to call (`_handle_architecture`,
+  #161). The name is validated against the Design family registry
+  (`designs/design_families.py`, #109/ADR-0018): an unrecognised family is
+  rejected at the ARCHITECTURE step rather than persisted as a grouping key
+  nothing downstream recognises. The caller's own spelling is kept verbatim
+  and the registry's canonical name recorded alongside it, so a run written
+  as `patch_antenna` and one written as `PATCH` still group together. #150
+  and #151 key off this field. Selection stays human-authored: the loop does
+  not attempt to infer a family from a requirement's prose.
+  Persists through the ADR-0011 flush (#167): `db/schema.sql`'s
+  `decision_records` table has a nullable `design_family` column, and
+  `orchestration/tooling.py`'s `_flush_target_for`/`_flush_decisions` write
+  it for every `architecture_decision`/`redesign_decision` row, so #150 and
+  #151 can read it back out via `read_design` rather than only seeing it in
+  one design-loop session's in-memory state. `_handle_architecture` always
+  states `design_family`, but `_handle_redesign_decision` never asks for
+  one — `_flush_decisions` reconciles that by carrying forward the most
+  recently stated `design_family` to every decision recorded after it,
+  rather than persisting `NULL` for a redesign decision that is, in fact,
+  about a perfectly well-known family (the one its iteration's own
+  ARCHITECTURE step already declared); see that function's own docstring,
+  "DESIGN_FAMILY CARRY-FORWARD," for the full reasoning.
 - **Design family registry**: the open interface every design family
   implements — a thin common set of spine fields (band, host thickness,
   both cell periods, host εr/tanδ, conductor σ, incidence/polarisation
@@ -322,6 +555,13 @@ and a glossary that churns with it stops being trustworthy (see
   variables, analysis function, optimizer class, simulation adapter, and
   physical bound. See `docs/adr/0018` for why this is an open interface
   rather than one fixed schema with optional fields.
+  Implemented in `designs/design_families.py`. It resolves the ambiguity
+  ADR-0018 named as its reason for rejecting a fixed schema — a bare `None`
+  could not distinguish "this family has no bound" from "we have not read
+  the bound this family has" — by giving those two states distinct types.
+  `DIFFUSIVE` genuinely has none; `REFLECTION_PHASE`'s Gustafsson & Sjöberg
+  bound is named in #109 but unread, so calling it raises with the citation
+  rather than returning a plausible number.
   _Avoid_: family schema — implies a single shape every family fills in;
   the per-family parts are genuinely heterogeneous objects, not optional
   slots in a common shape.
@@ -365,12 +605,45 @@ and a glossary that churns with it stops being trustworthy (see
   `PALACE_FLOQUET` would silently get a wrong-but-plausible answer.
 - **Element/Coding-Alphabet library**: a persistent, cross-run store of
   characterized symbol-alphabet elements (Tier B design families only, see
-  #130), keyed by `(element family, substrate stack, frequency band,
-  incidence-angle range)` — the same accumulate-once-and-reuse shape as the
+  #130) — the same accumulate-once-and-reuse shape as the
   **Material-property library**, holding each symbol's characterized
   response so it is looked up rather than re-solved by every design that
-  shares its band and substrate. A pitch or validity-box change
-  invalidates the whole alphabet's entries, not one symbol's.
+  shares its band and substrate. Keyed by `(element family, symbol,
+  band, incidence-angle range, process)` — the **Process record**
+  reference is what makes #132's rule expressible, that "the same
+  outline printed in carbon and in MXene is two letters, not one letter
+  under two conditions." **Only a printed letter is in the library**
+  (ADR-0027): a shape from the literature enters as a candidate in the
+  **Considered-and-dropped ledger**, never as an entry, since its
+  published response was measured inside someone else's validity box.
+  **Entries never expire; they stop matching** — a configuration that no
+  longer exists simply never matches a lookup, and the measurement stays
+  true about the ink and machine that produced it. An equipment change
+  therefore orphans the whole alphabet at once, which is a known and
+  accepted cost, not an oversight.
+  _Avoid_: invalidating an entry — an earlier version of this entry said
+  a pitch or validity-box change "invalidates the whole alphabet's
+  entries." That contradicted #132 and is superseded by ADR-0027
+  (`RUNNING-LISTS.md` §3 correction 42).
+- **Process record**: the named, stored answer to "how was this artifact
+  made" — machine, ink and grade, substrate stack, pass count, achieved
+  film thickness, and cure schedule (ADR-0027). It is the *stated box*
+  the standing preference means when it calls manufacturing and material
+  figures "measurements valid inside a stated box (pitch, ink, pass
+  count, cure, grade)" and warns that "quoted without their box they are
+  assumptions" — so an **Element/Coding-Alphabet library** entry with no
+  Process record reference is an assumption, not a measurement.
+  Distinct from a **Validity box**, and the two must not merge: the
+  validity box says where a response may be *used* (band, incidence
+  angle, neighbours), the Process record says how the thing was *made*.
+  One says what this is good for, the other says where it came from.
+  Because the library keys on it, an equipment change mints a new
+  Process record and leaves every prior entry intact and queryable,
+  which is what makes "what did we measure on the old machine" a lookup
+  rather than an archaeology exercise.
+  _Avoid_: process parameters, run config — this is a stored, referenced
+  identity, not a loose bag of settings.
+
 - **Verification item**: a `verification_items` row tracking one
   requirement's status (`NOT VERIFIED` default, `PASS`/`FAIL`/`MARGINAL`),
   auto-created per key in a design's `requirements` at design-creation time
@@ -397,6 +670,59 @@ and a glossary that churns with it stops being trustworthy (see
   one is what would let `SIMULATED` mean *validated* simulation in the
   **Evidence hierarchy** above.
   _Avoid_: benchmark — that measures speed, not correctness.
+
+- **Run report**: what an unattended run hands the morning reviewer
+  (ADR-0025). Leads with the **trade space** — where the best candidate
+  sits against threshold and objective, which constraint is binding, and
+  what relaxing it would buy — with the ranked candidate list as
+  supporting detail, because a ranking is already legible in the numbers
+  and is silent on what to change next. Persisted, but stores only what
+  nothing else stores (predictions, the **Considered-and-dropped
+  ledger**, **Handoff records**, the stop reason, the diagnosis) and
+  references design/decision/engineering-result rows for the rest, so
+  the two cannot drift apart. Written inside ADR-0011's all-or-nothing
+  transaction, never appended after it. Cut by leverage on the result,
+  never by a fixed top-N — an option that was never tried has no score
+  and so could never rank into one.
+  _Avoid_: log, digest — both suggest a rendering of what happened,
+  where the load-bearing content is what *didn't*.
+- **Considered-and-dropped ledger**: the record, written at the moment a
+  batch is proposed and carried in ADR-0022's existing batch record, of
+  which families were weighed and which were set aside — per entry a
+  family, a kept/dropped flag, one free-text reason, and a **reason
+  kind** (ADR-0025). Structured rather than prose so a later proposal
+  call can look an entry up deterministically. The reason kind is what
+  keeps a machine's verdict from hardening into a permanent one:
+  `human-decision` carries forward under ADR-0026, `capability-verdict`
+  never does and is re-evaluated against the current configured
+  fabrication capability every run (ADR-0021, #108 — equipment changes,
+  so "we could not build this" must expire with the machine that could
+  not build it), and `engineering-judgment` carries forward with its
+  reasoning and stays overridable. It also makes the equipment-change
+  worklist a query: every entry dropped as a `capability-verdict` is
+  exactly what a new machine unlocks. It exists because `run_candidate_search`
+  receives its candidates as an argument and prunes nothing: the
+  narrowing happens in the LLM role that composes the list, upstream of
+  every module, and is otherwise unrecorded — making a thorough night
+  and a narrow one produce identical reports. No gate: a batch that
+  writes nothing here still runs, and the silence is itself recorded.
+- **Rejection record**: the stored fact that a human refused a specific
+  proposal, with who, when and the stated reason (ADR-0026). A named
+  exception to "a guess never becomes settled by repetition", on
+  ADR-0015's grounds — it is a fact about what a person decided, so
+  replaying it inherits no engineering guess. Stores the **refusal**,
+  never the conclusion: a later run may read that something was refused
+  and why, and must still re-derive the physics itself.
+  _Avoid_: rejected value, ruled-out material — both name the conclusion
+  this record deliberately does not carry.
+- **Handoff record**: role, question, answer and timestamp for one
+  Principal-to-specialist handoff (ADR-0025). Capture only: a
+  specialist's answer is an LLM inference sitting at the bottom of the
+  **Evidence hierarchy** and gets no provenance rung of its own, since
+  minting one would quietly promote it against the closed set above.
+  Exists because `SPECIALIST_HANDOFFS` transfers control one way and
+  nothing persists that it happened, so an overnight answer shaped by
+  six roles has no traceable author.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).
