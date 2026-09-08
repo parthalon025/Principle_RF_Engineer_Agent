@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE — Does the loop survive re-entry between batches?</title>
+<style>
+  :root {
+    --ink: #1b1917;
+    --muted: #6b625b;
+    --faint: #928980;
+    --rule: #e2dcd5;
+    --paper: #faf8f5;
+    --card: #ffffff;
+    --accent: #b3541e;
+    --accent-soft: #fdf1e8;
+    --gate: #7a2e2e;
+    --gate-soft: #fbeded;
+    --ok: #2f6b46;
+    --ok-soft: #edf5f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 40px 24px 96px; }
+  h1 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin: 40px 0 14px; font-weight: 600; }
+  h3 { font-size: 15px; margin: 0 0 8px; }
+  p { margin: 0 0 12px; }
+  .lede { color: var(--muted); max-width: 74ch; }
+  .banner {
+    background: var(--accent-soft); border: 1px solid #f0d9c6; border-left: 3px solid var(--accent);
+    padding: 14px 18px; border-radius: 4px; margin: 20px 0 8px; max-width: 88ch;
+  }
+  .banner strong { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: #f2ede7; padding: 1px 5px; border-radius: 3px; }
+  .card { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 20px 22px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+
+  /* step rail */
+  .rail { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 18px; }
+  .step {
+    font-size: 11px; letter-spacing: 0.04em; padding: 5px 9px; border-radius: 3px;
+    border: 1px solid var(--rule); color: var(--faint); background: #fff; white-space: nowrap;
+  }
+  .step.gated { border-color: #e8cccc; color: var(--gate); background: var(--gate-soft); }
+  .step.span { border-color: #e0d3c2; color: var(--accent); background: var(--accent-soft); }
+  .step.here { outline: 2px solid var(--ink); outline-offset: 1px; color: var(--ink); font-weight: 700; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td.num { font-variant-numeric: tabular-nums; }
+
+  .kv { display: grid; grid-template-columns: 210px 1fr; gap: 3px 14px; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  .tag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--rule); color: var(--muted); background: #fff; }
+  .tag.gate { border-color: #e8cccc; background: var(--gate-soft); color: var(--gate); }
+  .tag.good { border-color: #cfe3d7; background: var(--ok-soft); color: var(--ok); }
+  .tag.warn { border-color: #f0d9c6; background: var(--accent-soft); color: var(--accent); }
+
+  button {
+    font: inherit; font-size: 13.5px; padding: 8px 13px; border-radius: 4px;
+    border: 1px solid var(--rule); background: #fff; color: var(--ink); cursor: pointer; text-align: left;
+  }
+  button:hover:not(:disabled) { border-color: var(--ink); }
+  button:disabled { opacity: 0.42; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: #99461a; }
+  .btnrow { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btncol { display: flex; flex-direction: column; gap: 7px; }
+  .whynot { font-size: 12px; color: var(--gate); margin: 3px 0 0; }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--rule); margin-bottom: 18px; }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 9px 12px; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+
+  .stepline { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px dashed var(--rule); }
+  .stepline .n { color: var(--faint); font-size: 12px; min-width: 18px; font-variant-numeric: tabular-nums; }
+  .stepline.done .n::after { content: " ✓"; color: var(--ok); }
+  .stepline.next button { border-color: var(--accent); }
+
+  .log { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.65; max-height: 320px; overflow-y: auto; }
+  .log div { padding: 2px 0; border-bottom: 1px solid #f4f0ea; }
+  .log .f { color: var(--accent); }
+  .log .g { color: var(--gate); }
+  .log .o { color: var(--ok); }
+  .empty { color: var(--faint); font-style: italic; font-size: 13.5px; }
+  .findings li { margin-bottom: 10px; }
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--rule); color: var(--faint); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Does the design loop survive the model re-entering between batches?</h1>
+  <p class="lede">
+    A throwaway demo for <a href="https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/224">issue #224</a>,
+    under map <a href="https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104">#104</a>.
+    Press the buttons and watch the state change. Nothing here is production code.
+  </p>
+
+  <div class="banner">
+    <p><strong>The question.</strong> Today <code>run_candidate_search</code> drives one batch of ideas the model handed it, then
+    stops and returns a report. We want the model to read that report, think up a <em>better</em> batch, and go round again —
+    overnight, with nobody watching. <strong>Does the machinery underneath allow that?</strong></p>
+    <p style="margin-bottom:0"><em>In plain terms: the machine currently tries a list someone gave it and stops. We want it to write
+    its own next list and keep going. This demo pushes the real step rules through that loop to see what breaks.</em></p>
+  </div>
+
+  <p class="lede">Every rule below is lifted from the real modules — <code>DesignStep</code>, <code>STEP_ORDER</code>,
+  <code>GATED_STEPS</code> (<code>orchestration/design_loop.py</code>), <code>_ORDERED_UNGATED_SPAN</code>,
+  <code>_steps_from</code>, <code>_drive_candidate</code>, <code>run_candidate_search</code>
+  (<code>orchestration/solver.py</code>). The physics is stubbed: scores come from a fixed table so every walkthrough
+  runs the same way twice. <strong>No claim here is about antennas.</strong> It is about sequencing, gates and records.</p>
+
+  <h2>Where the loop is right now</h2>
+  <div class="card">
+    <div class="rail" id="rail"></div>
+    <div class="cols">
+      <div>
+        <dl class="kv" id="kv"></dl>
+      </div>
+      <div>
+        <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;">What just happened</h3>
+        <div id="lastmsg" class="empty">Nothing yet — press a button.</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Free play — every action, always visible</h2>
+  <div class="card">
+    <div class="cols">
+      <div>
+        <h3>Getting started</h3>
+        <div class="btncol" id="acts-setup"></div>
+        <h3 style="margin-top:22px;">Running a batch</h3>
+        <div class="btncol" id="acts-batch"></div>
+      </div>
+      <div>
+        <h3>Going round again — the three routes</h3>
+        <div class="btncol" id="acts-reentry"></div>
+        <h3 style="margin-top:22px;">Closing the iteration</h3>
+        <div class="btncol" id="acts-close"></div>
+      </div>
+    </div>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--rule);" class="btnrow" id="acts-misc"></div>
+  </div>
+
+  <h2>Guided walkthroughs</h2>
+  <div class="card">
+    <div class="tabs" id="tabs"></div>
+    <div id="scenario-desc" style="max-width:80ch;"></div>
+    <div id="scenario-steps" style="margin-top:14px;"></div>
+  </div>
+
+  <h2>The batches so far</h2>
+  <div class="card" id="batches"><p class="empty">No batch has run yet.</p></div>
+
+  <h2>What the record would hold</h2>
+  <div class="card">
+    <div class="cols">
+      <div>
+        <h3>Persisted <span class="tag">ADR-0011 flushes at iteration boundaries</span></h3>
+        <div id="flushed"></div>
+        <h3 style="margin-top:20px;">Waiting to be persisted</h3>
+        <div id="pending"></div>
+      </div>
+      <div>
+        <h3>Considered and dropped <span class="tag warn">ADR-0025</span></h3>
+        <div id="declined"></div>
+        <h3 style="margin-top:20px;">Human rejections carried forward <span class="tag">ADR-0026</span></h3>
+        <div id="rejections"></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>What this run has exposed</h2>
+  <div class="card">
+    <ul class="findings" id="findings"><li class="empty">Run a walkthrough and findings will collect here.</li></ul>
+  </div>
+
+  <h2>Event log</h2>
+  <div class="card log" id="log"></div>
+
+  <footer>
+    <strong>PROTOTYPE — throwaway.</strong> One self-contained file, no server, no database, no tests, no persistence:
+    reload and everything resets. The page is disposable; the pure state machine in the first
+    <code>&lt;script&gt;</code> block is the part that lifts into a real module if this shape survives contact.
+    Plan-only per #104: this decides what re-entry should look like, it does not implement it.
+  </footer>
+</div>
+
+<script>
+/* ============================================================================
+   THE PURE MODULE — no DOM, no document, no handlers. Lift this out whole.
+
+   Mirrors the real loop's rules:
+     STEP_ORDER, GATED_STEPS            orchestration/design_loop.py:150,164
+     forward-only advance + iterate     orchestration/design_loop.py:892-911
+     _ORDERED_UNGATED_SPAN              orchestration/solver.py:421
+     _steps_from  (None => halt)        orchestration/solver.py:507
+     _drive_candidate forks from base   orchestration/solver.py:648
+     stop reasons + plateau arithmetic  orchestration/solver.py:1139-1186
+     alternatives hardcoded empty       orchestration/tooling.py:237
+   ========================================================================== */
+
+const STEP_ORDER = ['REQUIREMENTS','ARCHITECTURE','ANALYSIS','SIMULATION',
+                    'OPTIMIZATION','VERIFICATION','MEASUREMENT','CORRELATION','REDESIGN_DECISION'];
+const GATED_STEPS = new Set(['ARCHITECTURE','MEASUREMENT','REDESIGN_DECISION']);
+const ORDERED_UNGATED_SPAN = ['ANALYSIS','SIMULATION','OPTIMIZATION'];
+
+// run_candidate_search defaults, solver.py:877-881
+const PLATEAU_WINDOW = 5, PLATEAU_EPSILON = 0.5, TARGET_SATISFACTION = 100.0;
+// The decision the predictions inform: pass/fail at 90% absorption (ADR-0022's worked example).
+const DECISION_THRESHOLD = 90.0;
+
+function stepsFrom(step) {                       // solver.py:507 _steps_from
+  const i = ORDERED_UNGATED_SPAN.indexOf(step);
+  return i === -1 ? null : ORDERED_UNGATED_SPAN.slice(i);
+}
+function nextStep(step) {
+  const i = STEP_ORDER.indexOf(step);
+  return i === -1 || i === STEP_ORDER.length - 1 ? null : STEP_ORDER[i + 1];
+}
+
+/* --- stubbed physics: a fixed table, so a walkthrough runs the same twice --- */
+const BATCH_TABLE = [
+  {
+    mechanism: 'The wider the interior gap, the better the candidate absorbs.',
+    ordering: 'gap descending should give score descending',
+    candidates: [
+      { name: 'gap 0.60 mm', gap: 0.60, predicted: 88, tol: 4,  actual: 61.00 },
+      { name: 'gap 0.50 mm', gap: 0.50, predicted: 80, tol: 3,  actual: 68.50 },
+      { name: 'gap 0.40 mm', gap: 0.40, predicted: 72, tol: 3,  actual: 70.00 },
+      { name: 'gap 0.35 mm', gap: 0.35, predicted: 82, tol: 15, actual: 70.10 },
+      { name: 'gap 0.30 mm', gap: 0.30, predicted: null, tol: null, actual: 70.20 },
+      { name: 'gap 0.25 mm', gap: 0.25, predicted: 71, tol: 2,  actual: 70.30 },
+      { name: 'gap 0.20 mm', gap: 0.20, predicted: 70, tol: 2,  actual: 70.40 },
+      { name: 'gap 0.15 mm', gap: 0.15, predicted: 70, tol: 1,  actual: 70.45 },
+    ],
+  },
+  {
+    mechanism: 'The gap was the wrong knob. Loss belongs in the printed pattern — a longer, narrower current path multiplies sheet resistance.',
+    ordering: 'squares ascending should give score ascending',
+    candidates: [
+      { name: '2.1 squares',  gap: 0.30, predicted: 74, tol: 3, actual: 76.00 },
+      { name: '6.4 squares',  gap: 0.30, predicted: 83, tol: 3, actual: 84.00 },
+      { name: '10.2 squares', gap: 0.30, predicted: 90, tol: 5, actual: 91.00 },
+      { name: '13.3 squares', gap: 0.30, predicted: 99, tol: 2, actual: 100.00 },
+    ],
+  },
+];
+
+// ADR-0022: a prediction whose band straddles the decision it informs cannot
+// separate a pass from a fail, so it is UNSCOREABLE by construction.
+function scorePrediction(c) {
+  if (c.predicted === null) return { status: 'no prediction stated', note: 'ran anyway — ADR-0022 sets no gate; the absence is itself a datum' };
+  const lo = c.predicted - c.tol, hi = c.predicted + c.tol;
+  if (lo < DECISION_THRESHOLD && hi > DECISION_THRESHOLD)
+    return { status: 'UNSCOREABLE', note: `±${c.tol} straddles the ${DECISION_THRESHOLD}% decision — cannot separate a pass from a fail` };
+  const miss = Math.abs(c.actual - c.predicted);
+  return miss <= c.tol
+    ? { status: 'CONFIRMED', note: `predicted ${c.predicted} ±${c.tol}, got ${c.actual.toFixed(2)}` }
+    : { status: 'REFUTED', note: `predicted ${c.predicted} ±${c.tol}, got ${c.actual.toFixed(2)} — out by ${miss.toFixed(2)}` };
+}
+
+function initialState() {
+  return {
+    mode: 'attended',
+    iteration: 1,
+    step: 'REQUIREMENTS',
+    started: false,
+    completed: false,
+    batchesRun: 0,
+    batches: [],
+    pending: [],
+    flushed: [],
+    declined: [],
+    rejections: [],
+    findings: [],
+    log: [],
+    lastMsg: null,
+  };
+}
+
+/* Which actions are legal right now, and — the useful half — why not. */
+function legality(s, id) {
+  const gateBlocked = (step) =>
+    s.mode === 'unattended'
+      ? { ok: false, why: `${step} is in GATED_STEPS and nobody is awake to sign a LoopStepApprovalReceipt. This is the wall an overnight run hits.` }
+      : { ok: true };
+
+  switch (id) {
+    case 'start':
+      return s.started ? { ok: false, why: 'The loop has already started. REQUIREMENTS is set once by start_design_loop and is never advanced through (design_loop.py:867).' } : { ok: true };
+    case 'toggle_mode':
+      return { ok: true };
+    case 'approve_architecture':
+      if (!s.started) return { ok: false, why: 'Nothing to approve — start the loop first.' };
+      if (s.step !== 'ARCHITECTURE') return { ok: false, why: `The loop is at ${s.step}, not ARCHITECTURE.` };
+      return gateBlocked('ARCHITECTURE');
+    case 'run_batch': {
+      if (!s.started) return { ok: false, why: 'Start the loop first.' };
+      const span = stepsFrom(s.step);
+      if (span === null) return { ok: false, why: `_steps_from(${s.step}) returns None, so run_candidate_search halts before evaluating a single candidate. Only ANALYSIS, SIMULATION and OPTIMIZATION are in the solver's span.` };
+      if (span.length < ORDERED_UNGATED_SPAN.length) return { ok: true, warn: `Starts at ${s.step}, so this batch drives only ${span.join(' → ')} — a silently narrower evaluation than the full span.` };
+      return { ok: true };
+    }
+    case 'adopt_winner':
+      if (s.batchesRun === 0) return { ok: false, why: 'Run a batch first — there is no winner to adopt.' };
+      if (!ORDERED_UNGATED_SPAN.includes(s.step)) return { ok: false, why: `The loop is at ${s.step}, already past the solver's span.` };
+      return { ok: true };
+    case 'reentry_same_base':
+      return s.batchesRun === 0 ? { ok: false, why: 'Run a batch first — there is no report to re-enter from.' } : { ok: true };
+    case 'reentry_winner_state':
+      return s.batchesRun === 0 ? { ok: false, why: 'Run a batch first.' } : { ok: true };
+    case 'advance_verification':
+      return s.step === 'VERIFICATION' ? { ok: true } : { ok: false, why: `The loop is at ${s.step}, not VERIFICATION.` };
+    case 'record_measurement':
+      if (s.step !== 'MEASUREMENT') return { ok: false, why: `The loop is at ${s.step}, not MEASUREMENT.` };
+      return gateBlocked('MEASUREMENT');
+    case 'run_correlation':
+      return s.step === 'CORRELATION'
+        ? { ok: true }
+        : { ok: false, why: `The loop is at ${s.step}, not CORRELATION. Note ADR-0014 keeps CORRELATION out of the solver's span deliberately: comparing a simulation to a measurement needs a measurement, which only a gated step supplies.` };
+    case 'redesign_iterate':
+    case 'redesign_accept':
+      if (s.step !== 'REDESIGN_DECISION') return { ok: false, why: `The loop is at ${s.step}, not REDESIGN_DECISION.` };
+      return gateBlocked('REDESIGN_DECISION');
+    case 'human_reject':
+      return s.batchesRun === 0 ? { ok: false, why: 'Nothing proposed yet to reject.' } : { ok: true };
+    case 'reset':
+      return { ok: true };
+    default:
+      return { ok: false, why: 'unknown action' };
+  }
+}
+
+function apply(state, id) {
+  const s = structuredClone(state);
+  const say = (msg, cls) => { s.log.push({ msg, cls }); s.lastMsg = msg; };
+  const find = (msg) => { if (!s.findings.includes(msg)) s.findings.push(msg); };
+  const verdict = legality(state, id);
+  if (!verdict.ok) { say('BLOCKED — ' + verdict.why, 'g'); return s; }
+
+  switch (id) {
+    case 'reset': return initialState();
+
+    case 'toggle_mode':
+      s.mode = s.mode === 'attended' ? 'unattended' : 'attended';
+      say(`Mode is now ${s.mode}.` + (s.mode === 'unattended' ? ' Nobody is awake to sign an approval receipt.' : ''));
+      return s;
+
+    case 'start':
+      s.started = true;
+      s.step = 'ARCHITECTURE';
+      s.pending.push({ step: 'REQUIREMENTS', kind: 'requirements', note: 'X-band 8–12 GHz, ≥90% absorption (a customer requirement, not a constant)' });
+      say('Loop started. REQUIREMENTS recorded; the loop sits at ARCHITECTURE.');
+      return s;
+
+    case 'approve_architecture':
+      s.pending.push({ step: 'ARCHITECTURE', kind: 'architecture_decision', note: 'design_family = ABSORBER, signed by a human', alternatives: '[] — discarded at the flush (tooling.py:237)' });
+      s.step = 'ANALYSIS';
+      say('ARCHITECTURE approved by a human. Loop advanced to ANALYSIS — the solver can drive from here.', 'o');
+      find('`orchestration/tooling.py:237` hardcodes `"alternatives": []`, so the options weighed at ARCHITECTURE are thrown away at the flush. ADR-0025 needs exactly that list. Filed as #205.');
+      return s;
+
+    case 'run_batch': {
+      const span = stepsFrom(s.step);
+      const table = BATCH_TABLE[Math.min(s.batchesRun, BATCH_TABLE.length - 1)];
+      const reused = s.batchesRun >= BATCH_TABLE.length;
+
+      // Mirrors run_candidate_search's loop: fork each candidate from base_state,
+      // track the running best, stop on target satisfaction / plateau / budget.
+      const bestSoFar = [];
+      let best = null, stopReason = 'evaluation_budget', stopDetail = null;
+      const evaluated = [];
+
+      for (let i = 0; i < table.candidates.length; i++) {
+        const c = table.candidates[i];
+        const row = { ...c, index: i, driven: span.join(' → '), prediction: scorePrediction(c) };
+        evaluated.push(row);
+        if (best === null || c.actual > best) best = c.actual;
+        bestSoFar.push(best);
+
+        if (c.actual >= TARGET_SATISFACTION) {
+          stopReason = 'target_satisfaction';
+          stopDetail = `candidate ${i} reached ${c.actual.toFixed(2)} ≥ ${TARGET_SATISFACTION}`;
+          break;
+        }
+        if (bestSoFar.length >= PLATEAU_WINDOW + 1) {
+          const baseline = bestSoFar[bestSoFar.length - 1 - PLATEAU_WINDOW];
+          const latest = bestSoFar[bestSoFar.length - 1];
+          if (latest - baseline <= PLATEAU_EPSILON) {
+            stopReason = 'score_plateau';
+            stopDetail = `running best moved ${baseline.toFixed(2)} → ${latest.toFixed(2)} over ${PLATEAU_WINDOW} candidates, ≤ ${PLATEAU_EPSILON}`;
+            break;
+          }
+        }
+      }
+
+      // The batch's own mechanism claim, checked as an ordering (ADR-0022).
+      const scored = evaluated.filter(e => e.actual !== null);
+      const byGapDesc = [...scored].sort((a, b) => b.gap - a.gap).map(e => e.actual);
+      const monotone = byGapDesc.every((v, i, a) => i === 0 || a[i - 1] >= v);
+      const mechanismStatus = s.batchesRun === 0 ? (monotone ? 'CONFIRMED' : 'REFUTED') : 'CONFIRMED';
+
+      s.batches.push({
+        n: s.batchesRun + 1, mechanism: table.mechanism, ordering: table.ordering,
+        mechanismStatus, candidates: evaluated, stopReason, stopDetail,
+        drivenSpan: span.join(' → '), reused,
+        budget: table.candidates.length, evaluatedCount: evaluated.length,
+      });
+      s.batchesRun += 1;
+
+      // Every candidate forks fresh from base_state (solver.py:648), so the
+      // caller's own state does NOT move. This is the crux of the whole ticket.
+      say(`Batch ${s.batchesRun} ran ${evaluated.length} of ${table.candidates.length} candidates over ${span.join(' → ')}. Stopped: ${stopReason}.`, 'f');
+      s.log.push({ msg: `  → the loop is STILL at ${s.step}: _drive_candidate forks each candidate from base_state, so the caller's state never moved.`, cls: '' });
+      find('`_drive_candidate` forks every candidate fresh from `base_state` (solver.py:648), so **the caller\'s state does not advance when a batch runs**. Re-entry is therefore already possible today — what is missing is any way for batch two to stand on batch one\'s result.');
+      if (evaluated.some(e => e.prediction.status === 'UNSCOREABLE'))
+        find('A prediction whose tolerance straddles the decision (`82 ±15` against a 90% threshold) is `UNSCOREABLE` by construction. ADR-0022 makes the tolerance *width* its own reviewable number so a model cannot make itself unfalsifiable by widening its bands.');
+      if (evaluated.some(e => e.prediction.status === 'no prediction stated'))
+        find('A candidate with no prediction records `no prediction stated` and **runs anyway** — ADR-0022 sets no gate, per #104\'s "the loop fills unknowns; it does not block on them".');
+      if (mechanismStatus === 'REFUTED')
+        find('The batch\'s **mechanism claim was refuted while its best candidate still improved**. Values and reasons fail independently: a batch can be right about the numbers and wrong about why. That is what re-entry is supposed to act on.');
+      if (stopReason === 'score_plateau')
+        find('A `score_plateau` stop is computed **inside one batch** (solver.py:1163). A plateau across five candidates the model picked blind is a different claim from a plateau across five it picked *knowing* the last batch plateaued — the stop reason does not yet distinguish them.');
+      return s;
+    }
+
+    case 'adopt_winner': {
+      const b = s.batches[s.batches.length - 1];
+      const best = Math.max(...b.candidates.map(c => c.actual));
+      s.pending.push({ step: 'ANALYSIS → OPTIMIZATION', kind: 'calculation', note: `best_candidate_state adopted (${best.toFixed(2)}%) — the winner's forked state becomes the loop's own` });
+      s.step = 'VERIFICATION';
+      say(`Adopted the winning candidate (${best.toFixed(2)}%) as the loop's state. It had been driven through OPTIMIZATION, so the loop now sits at VERIFICATION.`, 'o');
+      find('**Nothing in the code performs this move.** `run_candidate_search` returns `best_candidate_state` in its report and never advances the caller\'s state; taking that state and adopting it as the loop\'s own is left entirely to whoever called. It is the seam re-entry lives or dies on, and it currently has no name, no function and no record.');
+      return s;
+    }
+
+    /* ---- the three re-entry routes ---- */
+
+    case 'reentry_same_base': {
+      const span = stepsFrom(s.step);
+      say(`Route A — re-enter on the ORIGINAL state. The loop is at ${s.step}, so _steps_from gives ${span ? span.join(' → ') : 'None'}. A second batch is legal and drives the full span again.`, 'f');
+      s.log.push({ msg: '  → but it forks from the SAME base. Batch two is a sibling of batch one, never a descendant: nothing of batch one survives except what the model retypes into the candidate dicts.', cls: '' });
+      find('**Route A (re-enter on the original state) works, and is the only route that works unattended.** But every batch forks from the same base, so batches are siblings, never descendants. Anything batch two "learns" travels only as text the model rewrites into the next call — there is no state carrying it.');
+      return s;
+    }
+
+    case 'reentry_winner_state': {
+      // best_candidate_state has been driven past OPTIMIZATION, so it sits at VERIFICATION.
+      const winnerStep = 'VERIFICATION';
+      const span = stepsFrom(winnerStep);
+      say(`Route B — re-enter on best_candidate_state. That state was driven through OPTIMIZATION, so it sits at ${winnerStep}. _steps_from(${winnerStep}) returns ${span === null ? 'None' : span.join(' → ')}.`, 'g');
+      s.log.push({ msg: '  → run_candidate_search halts before evaluating a single candidate. Route B is a dead end.', cls: 'g' });
+      find('**Route B (re-enter on the winning candidate\'s state) is a dead end.** That state has been driven past OPTIMIZATION to VERIFICATION, and `_steps_from(VERIFICATION)` returns `None` — the documented signal to halt. The obvious way to build on the best candidate is the one the code refuses.');
+      return s;
+    }
+
+    case 'advance_verification':
+      s.pending.push({ step: 'VERIFICATION', kind: 'verification_record', note: 'status = CONDITIONAL PASS (SIMULATED ceiling — no VNA)' });
+      s.step = 'MEASUREMENT';
+      say('VERIFICATION recorded. Loop advanced to MEASUREMENT — which is gated.');
+      return s;
+
+    case 'record_measurement':
+      s.pending.push({ step: 'MEASUREMENT', kind: 'measurement', note: 'external Touchstone accepted by a human (ADR-0013)' });
+      s.step = 'CORRELATION';
+      say('MEASUREMENT recorded by a human. Loop advanced to CORRELATION.', 'o');
+      return s;
+
+    case 'run_correlation':
+      s.pending.push({ step: 'CORRELATION', kind: 'correlation', note: 'simulation vs measurement' });
+      s.step = 'REDESIGN_DECISION';
+      say('CORRELATION recorded. Loop advanced to REDESIGN_DECISION — gated.');
+      find('ADR-0014 keeps CORRELATION out of `_ORDERED_UNGATED_SPAN` on purpose: comparing a simulation against a measurement needs a measurement, and only a gated step can supply one. *In plain terms: an overnight run cannot check itself against reality.*');
+      return s;
+
+    case 'redesign_iterate':
+      s.pending.push({ step: 'REDESIGN_DECISION', kind: 'redesign_decision', note: 'next_action = iterate', alternatives: '[] — discarded at the flush (tooling.py:237)' });
+      s.flushed.push(...s.pending.map(p => ({ ...p, iteration: s.iteration })));
+      s.pending = [];
+      s.iteration += 1;
+      s.step = 'ARCHITECTURE';
+      s.batchesRun = 0;
+      say(`Route C — the honest round trip. REDESIGN_DECISION = iterate. Iteration ${s.iteration}, and the loop lands back on ARCHITECTURE, which is gated too.`, 'o');
+      find('**Route C (the honest round trip) costs three human signatures per lap**: MEASUREMENT to get a measurement, REDESIGN_DECISION to leave the iteration, and ARCHITECTURE to re-enter it (`design_loop.py:892-897` lands `iterate` on ARCHITECTURE, which is in `GATED_STEPS`). An unattended overnight run cannot complete one lap.');
+      find('Route C is also the **only** route that flushes. ADR-0011 persists at iteration boundaries, so under Routes A and B batch after batch accumulates with nothing written down — and #104\'s condition for unattended running is that everything decided alone be "reversible and **recorded**".');
+      return s;
+
+    case 'redesign_accept':
+      s.pending.push({ step: 'REDESIGN_DECISION', kind: 'redesign_decision', note: 'next_action = accept_design' });
+      s.flushed.push(...s.pending.map(p => ({ ...p, iteration: s.iteration })));
+      s.pending = [];
+      s.completed = true;
+      say('REDESIGN_DECISION = accept_design. Loop complete. Note it marks the loop done and nothing else — there is no manufacturing-release path from here.', 'o');
+      return s;
+
+    case 'human_reject': {
+      const b = s.batches[s.batches.length - 1];
+      const c = b.candidates[0];
+      s.rejections.push({ what: c.name, why: 'a human refused this on 8 September: the gap is below the printer feature floor', when: 'iteration ' + s.iteration });
+      s.declined.push({ what: c.name, why: 'human rejection', fate: 'would go in ADR-0025\'s considered-and-dropped ledger — but tooling.py:237 discards it' });
+      say(`A human rejected "${c.name}". ADR-0026 carries the refusal forward — the refusal, never the conclusion.`, 'g');
+      find('ADR-0026 stores **the refusal, never the conclusion**: a later run may read that a human refused something and why, and must still re-derive the physics itself. It is a fact about what a person decided — history, not physics — so replaying it inherits no engineering guess.');
+      return s;
+    }
+  }
+  return s;
+}
+</script>
+
+<script>
+/* ============================================================================
+   THE PAGE — throwaway shell. Calls into the module above; nothing flows back.
+   ========================================================================== */
+
+let S = initialState();
+
+const ACTIONS = {
+  'acts-setup': [
+    { id: 'start', label: 'State the customer requirement and start the loop' },
+    { id: 'approve_architecture', label: 'Human approves ARCHITECTURE (gated)' },
+  ],
+  'acts-batch': [
+    { id: 'run_batch', label: 'Model proposes a batch and the solver runs it', primary: true },
+    { id: 'adopt_winner', label: 'Adopt the winning candidate as the loop\'s state' },
+    { id: 'human_reject', label: 'Human rejects a candidate' },
+  ],
+  'acts-reentry': [
+    { id: 'reentry_same_base', label: 'Route A — re-enter on the original state' },
+    { id: 'reentry_winner_state', label: 'Route B — re-enter on the winning candidate\'s state' },
+    { id: 'advance_verification', label: 'Route C, step 1 — record VERIFICATION' },
+    { id: 'record_measurement', label: 'Route C, step 2 — record MEASUREMENT (gated)' },
+    { id: 'run_correlation', label: 'Route C, step 3 — run CORRELATION' },
+  ],
+  'acts-close': [
+    { id: 'redesign_iterate', label: 'REDESIGN_DECISION → iterate (gated)' },
+    { id: 'redesign_accept', label: 'REDESIGN_DECISION → accept_design (gated)' },
+  ],
+  'acts-misc': [
+    { id: 'toggle_mode', label: 'Switch attended / unattended' },
+    { id: 'reset', label: 'Reset everything' },
+  ],
+};
+
+const SCENARIOS = [
+  {
+    name: 'The happy path',
+    blurb: 'One batch, a human present at every gate, and a design accepted. This is the loop working as built today — worth feeling first, so the later scenarios read as departures from it. Watch step 4: after a batch runs, the loop has not moved, and somebody has to adopt the winner by hand before anything can go forward.',
+    steps: ['start', 'approve_architecture', 'run_batch', 'adopt_winner', 'advance_verification', 'record_measurement', 'run_correlation', 'redesign_accept'],
+  },
+  {
+    name: 'Route A — re-enter on the same state',
+    blurb: 'Run a batch, then go round again on the state we already had. Watch the loop never move, and watch batch two turn out to be a sibling of batch one rather than its descendant. Then ask yourself: where did anything batch one learned actually go?',
+    steps: ['start', 'approve_architecture', 'run_batch', 'reentry_same_base', 'run_batch'],
+  },
+  {
+    name: 'Route B — build on the winner',
+    blurb: 'The intuitive move: take the best candidate\'s state and carry on from there. Watch it refuse. The winning state has been driven past OPTIMIZATION, and the solver only knows how to start inside ANALYSIS → SIMULATION → OPTIMIZATION.',
+    steps: ['start', 'approve_architecture', 'run_batch', 'reentry_winner_state'],
+  },
+  {
+    name: 'Route C — the honest round trip',
+    blurb: 'Go all the way round: verify, measure, correlate, decide, iterate. It records everything properly and it is the only route that persists anything. Count the human signatures it costs — three — then run the overnight scenario and watch each one become a wall.',
+    steps: ['start', 'approve_architecture', 'run_batch', 'adopt_winner', 'advance_verification', 'record_measurement', 'run_correlation', 'redesign_iterate'],
+  },
+  {
+    name: 'Overnight, nobody watching',
+    blurb: 'The scenario the whole ticket exists for. A human sets the run up in the evening and goes to bed; from then on every gate is a wall. Try to complete one lap. Notice which single route still moves the work forward — and what it gives up to do so.',
+    steps: ['start', 'approve_architecture', 'run_batch', 'toggle_mode', 'reentry_same_base', 'run_batch', 'adopt_winner', 'advance_verification', 'record_measurement'],
+  },
+  {
+    name: 'What the record loses',
+    blurb: 'A human rejects a candidate, and a batch refutes its own stated reason while its numbers still improve. Both are things ADR-0025 promises the morning reviewer. Watch where they would be written — and what throws them away before anyone reads it.',
+    steps: ['start', 'approve_architecture', 'run_batch', 'human_reject', 'reentry_same_base', 'run_batch'],
+  },
+];
+
+let tab = 0, cursor = 0;
+
+const el = (id) => document.getElementById(id);
+
+function render() {
+  // step rail
+  el('rail').innerHTML = STEP_ORDER.map(st => {
+    const cls = ['step'];
+    if (GATED_STEPS.has(st)) cls.push('gated');
+    if (ORDERED_UNGATED_SPAN.includes(st)) cls.push('span');
+    if (st === S.step && !S.completed) cls.push('here');
+    return `<span class="${cls.join(' ')}">${st}</span>`;
+  }).join('') + '<span style="font-size:11.5px;color:var(--faint);margin-left:8px;align-self:center;">' +
+    'red = needs a human · orange = the solver\'s span · boxed = you are here</span>';
+
+  // state panel
+  el('kv').innerHTML = [
+    ['Mode', S.mode === 'unattended' ? '<span class="tag gate">unattended — nobody awake</span>' : '<span class="tag good">attended</span>'],
+    ['Iteration', S.iteration],
+    ['Current step', S.completed ? '<span class="tag good">complete</span>' : `<strong>${S.step}</strong>` + (GATED_STEPS.has(S.step) ? ' <span class="tag gate">gated</span>' : '')],
+    ['Batches run this iteration', S.batchesRun],
+    ['Records persisted', S.flushed.length],
+    ['Records waiting to persist', S.pending.length + (S.pending.length ? ' <span class="tag warn">unflushed</span>' : '')],
+    ['Candidates dropped', S.declined.length],
+    ['Human rejections held', S.rejections.length],
+  ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+
+  el('lastmsg').innerHTML = S.lastMsg
+    ? `<div style="font-size:14px;">${esc(S.lastMsg)}</div>`
+    : '<span class="empty">Nothing yet — press a button.</span>';
+
+  // action buttons
+  for (const [box, list] of Object.entries(ACTIONS)) {
+    el(box).innerHTML = list.map(a => {
+      const v = legality(S, a.id);
+      return `<div>
+        <button data-act="${a.id}" ${v.ok ? '' : 'disabled'} class="${a.primary && v.ok ? 'primary' : ''}">${esc(a.label)}</button>
+        ${!v.ok && v.why ? `<p class="whynot">${esc(v.why)}</p>` : ''}
+        ${v.ok && v.warn ? `<p class="whynot" style="color:var(--accent)">${esc(v.warn)}</p>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  // tabs
+  el('tabs').innerHTML = SCENARIOS.map((sc, i) => `<button data-tab="${i}" class="${i === tab ? 'on' : ''}">${esc(sc.name)}</button>`).join('');
+  el('scenario-desc').innerHTML = `<p class="lede">${esc(SCENARIOS[tab].blurb)}</p>`;
+  el('scenario-steps').innerHTML = SCENARIOS[tab].steps.map((sid, i) => {
+    const label = Object.values(ACTIONS).flat().find(a => a.id === sid)?.label ?? sid;
+    const cls = i < cursor ? 'done' : (i === cursor ? 'next' : '');
+    return `<div class="stepline ${cls}"><span class="n">${i + 1}</span>
+      <button data-walk="${i}" ${i === cursor ? '' : 'disabled'}>${esc(label)}</button></div>`;
+  }).join('');
+
+  // batches
+  el('batches').innerHTML = S.batches.length === 0
+    ? '<p class="empty">No batch has run yet.</p>'
+    : S.batches.map(b => `
+      <div style="margin-bottom:26px;">
+        <h3>Batch ${b.n}${b.reused ? ' <span class="tag">re-uses batch 2\'s table — only two are scripted</span>' : ''}</h3>
+        <p style="margin-bottom:6px;"><strong>Mechanism claimed:</strong> ${esc(b.mechanism)}
+          <span class="tag ${b.mechanismStatus === 'REFUTED' ? 'gate' : 'good'}">${b.mechanismStatus}</span></p>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+          Drove <code>${esc(b.drivenSpan)}</code> · evaluated ${b.evaluatedCount} of ${b.budget} ·
+          stopped on <strong>${esc(b.stopReason)}</strong>${b.stopDetail ? ' — ' + esc(b.stopDetail) : ''}</p>
+        <table><thead><tr><th>Candidate</th><th>Predicted</th><th>Scored</th><th>Prediction</th></tr></thead><tbody>
+        ${b.candidates.map(c => `<tr>
+          <td>${esc(c.name)}</td>
+          <td class="num">${c.predicted === null ? '<span class="empty">none</span>' : c.predicted + ' ±' + c.tol}</td>
+          <td class="num">${c.actual.toFixed(2)}</td>
+          <td><span class="tag ${c.prediction.status === 'CONFIRMED' ? 'good' : c.prediction.status === 'REFUTED' ? 'gate' : 'warn'}">${esc(c.prediction.status)}</span>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px;">${esc(c.prediction.note)}</div></td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>`).join('');
+
+  el('flushed').innerHTML = recList(S.flushed, 'Nothing persisted yet. ADR-0011 flushes only at an iteration boundary.');
+  el('pending').innerHTML = recList(S.pending, 'Nothing waiting.');
+  el('declined').innerHTML = S.declined.length === 0
+    ? '<p class="empty">Nothing dropped yet.</p>'
+    : S.declined.map(d => `<div style="padding:6px 0;border-bottom:1px solid var(--rule);font-size:13.5px;">
+        <strong>${esc(d.what)}</strong> — ${esc(d.why)}<div style="color:var(--gate);font-size:12px;">${esc(d.fate)}</div></div>`).join('');
+  el('rejections').innerHTML = S.rejections.length === 0
+    ? '<p class="empty">None held.</p>'
+    : S.rejections.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--rule);font-size:13.5px;">
+        <strong>${esc(r.what)}</strong> — ${esc(r.why)} <span class="tag">${esc(r.when)}</span></div>`).join('');
+
+  el('findings').innerHTML = S.findings.length === 0
+    ? '<li class="empty">Run a walkthrough and findings will collect here.</li>'
+    : S.findings.map(f => `<li>${md(f)}</li>`).join('');
+
+  el('log').innerHTML = S.log.length === 0
+    ? '<span class="empty">empty</span>'
+    : S.log.map(l => `<div class="${l.cls || ''}">${esc(l.msg)}</div>`).join('');
+  el('log').scrollTop = el('log').scrollHeight;
+}
+
+function recList(rows, emptyMsg) {
+  if (!rows.length) return `<p class="empty">${emptyMsg}</p>`;
+  return rows.map(r => `<div style="padding:6px 0;border-bottom:1px solid var(--rule);font-size:13.5px;">
+    <strong>${esc(r.step)}</strong> <span class="tag">${esc(r.kind)}</span>
+    <div style="color:var(--muted);">${esc(r.note)}</div>
+    ${r.alternatives ? `<div style="color:var(--gate);font-size:12px;">alternatives: ${esc(r.alternatives)}</div>` : ''}</div>`).join('');
+}
+
+const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const md = (t) => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+document.addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]');
+  if (act) { S = apply(S, act.dataset.act); render(); return; }
+
+  const t = e.target.closest('[data-tab]');
+  if (t) { tab = +t.dataset.tab; cursor = 0; S = initialState(); render(); return; }
+
+  const w = e.target.closest('[data-walk]');
+  if (w) {
+    const i = +w.dataset.walk;
+    S = apply(S, SCENARIOS[tab].steps[i]);
+    cursor = i + 1;
+    render();
+  }
+});
+
+render();
+</script>
+</body>
+</html>
