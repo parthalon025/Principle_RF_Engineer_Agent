@@ -234,7 +234,15 @@ def _flush_target_for(
                 "design_id": design_id,
                 "record_key": record_key,
                 "decision": decision.input["decision"],
-                "alternatives": [],
+                # issue #205: read the caller's actual alternatives instead
+                # of hardcoding an empty list -- every other field on this
+                # call reads from decision.input, this one silently didn't,
+                # discarding the data at the flush with nothing downstream
+                # able to recover it later. `.get`, not `[...]`: "decision"
+                # and "rationale" are required keys on this decision kind,
+                # "alternatives" is not, so a direct index would turn a
+                # caller that legitimately supplied none into a KeyError.
+                "alternatives": decision.input.get("alternatives", []),
                 "rationale": decision.input["rationale"],
                 "evidence": [],
                 "design_family": design_family,

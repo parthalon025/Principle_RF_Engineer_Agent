@@ -151,6 +151,26 @@ approval_self_gated:
   - lookup_nexar_component
 
 ingestion_auto:
+  # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule join
+  # ingest_arxiv_paper here, not approval_self_gated below, for the same
+  # reason ingest_arxiv_paper itself is here rather than there (see
+  # knowledge/sourcing/arxiv.py's module docstring, quoted in part below).
+  # approval_self_gated exists for a tool that ALREADY enforces its own
+  # independent gate before it runs -- concretely, knowledge/
+  # sourcing_common.py's require_external_network_tools_enabled()
+  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the three distributor lookups
+  # (lookup_digikey_component/lookup_mouser_component/lookup_nexar_component)
+  # call because each places a real, CREDENTIALED call to a third party
+  # (an API key/secret read from the environment) the instant it runs. None
+  # of the three new sourcing clients do that, or need to: 3GPP's FTP
+  # archive, ETSI's deliver-path PDFs, and the FCC's eCFR versioner API are
+  # each confirmed (in the sourcing clients' own module docstrings, from
+  # each standards body's own documentation) to need no registration, no API
+  # key, and no account of any kind -- "same ungated posture" as arXiv,
+  # arxiv.py's own words. There is no self-gate to categorize them under
+  # here; putting them in approval_self_gated anyway, with nothing behind
+  # it, would misrepresent what actually happens at call time.
+  #
   # issue #219: ingest_patent sits here, ungated, for exactly the reason
   # ingest_arxiv_paper does -- and deliberately NOT in approval_self_gated
   # beside the three distributor lookups. The distinction that category
@@ -169,6 +189,9 @@ ingestion_auto:
   # without a human saying yes).
   - ingest_document
   - ingest_arxiv_paper
+  - ingest_3gpp_spec
+  - ingest_etsi_standard
+  - ingest_fcc_rule
   - ingest_patent
   - index_document
   - extract_components

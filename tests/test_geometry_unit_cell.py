@@ -38,7 +38,10 @@ gdstk = pytest.importorskip(
 )
 
 from geometry.unit_cell import (  # noqa: E402 -- must follow the importorskip guard above
+    SymbolNotFoundError,
+    block_size_from_sizing_rule,
     combine_shapes,
+    generate_coded_unit_cell_array,
     generate_metamaterial_array,
     generate_unit_cell_array,
 )
@@ -525,3 +528,257 @@ def test_generate_unit_cell_array_grid_size_is_product_not_sum():
     unit_cell = {"shape": "box", "p1_m": [0, 0, 0], "p2_m": [1, 1, 1]}
     result = generate_unit_cell_array(unit_cell, spacing_m=(2, 2), count=(4, 5))
     assert len(result) == math.prod((4, 5))
+
+
+# ---------------------------------------------------------------------------
+# block_size_from_sizing_rule -- docs/supercell-sizing-rule.md Sec 5.5
+# (issue #212). Cross-checked against that document's own worked numbers
+# rather than only against the code's own arithmetic.
+# ---------------------------------------------------------------------------
+
+
+def test_block_size_from_sizing_rule_reproduces_doc_10db_window_floor():
+    """Fixed-edge interior-tuned family, 0.5 lambda pitch, 10 dB requirement,
+    6 lambda coupon: docs/supercell-sizing-rule.md Sec 4's table gives the
+    window "2-16" -- the smallest (finest-control) feasible block is 2x2."""
+    result = block_size_from_sizing_rule(
+        delta_phi_max_deg=12.0,
+        rcsr_db=10.0,
+        pitch_m=(0.5, 0.5),
+        wavelength_m=1.0,
+        panel_size_m=(6.0, 6.0),
+    )
+    assert result == (2, 2)
+
+
+def test_block_size_from_sizing_rule_reproduces_doc_no_n_works_on_coupon():
+    """Variable-size square patch, 0.4 lambda pitch, 20 dB requirement, 6
+    lambda coupon: Sec 4/5.5 documents this as "no N works" (panel-fit caps
+    N around 7, coupling-error floor needs N >= 21) -- raises rather than
+    returning a block size that would not actually meet the requirement."""
+    with pytest.raises(ValueError, match="no block size"):
+        block_size_from_sizing_rule(
+            delta_phi_max_deg=85.0,
+            rcsr_db=20.0,
+            pitch_m=(0.4, 0.4),
+            wavelength_m=1.0,
+            panel_size_m=(6.0, 6.0),
+        )
+
+
+def test_block_size_from_sizing_rule_same_case_feasible_on_larger_panel():
+    """Sec 5.5's own point: the "no N works" verdict above is conditional on
+    panel size, not fixed -- the identical alphabet/requirement becomes
+    feasible on a 30 lambda panel because the panel-fit ceiling relaxes."""
+    result = block_size_from_sizing_rule(
+        delta_phi_max_deg=85.0,
+        rcsr_db=20.0,
+        pitch_m=(0.4, 0.4),
+        wavelength_m=1.0,
+        panel_size_m=(30.0, 30.0),
+        max_n=40,
+    )
+    nx, ny = result
+    assert nx >= 2 and ny >= 2
+    # Must actually fit on the panel at least twice per axis (Amendment 4).
+    assert 2 * nx * 0.4 <= 30.0
+    assert 2 * ny * 0.4 <= 30.0
+
+
+def test_block_size_from_sizing_rule_stricter_requirement_needs_bigger_block():
+    """A harder RCS-reduction target shrinks the phase budget (Sec 2.2), so
+    it should never produce a smaller-or-equal block than a looser one at
+    otherwise identical inputs -- the rule responding to the requirement,
+    not returning a fixed number regardless of it."""
+    common = dict(
+        delta_phi_max_deg=21.0, pitch_m=(0.015, 0.015), wavelength_m=0.03, panel_size_m=(0.4, 0.4)
+    )
+    lenient = block_size_from_sizing_rule(rcsr_db=6.0, max_n=20, **common)
+    strict = block_size_from_sizing_rule(rcsr_db=20.0, max_n=20, **common)
+    assert strict[0] * strict[1] > lenient[0] * lenient[1]
+
+
+def test_block_size_from_sizing_rule_never_returns_below_hard_floor_of_2():
+    """Sec 3's hard floor: N=1 has no propagating diffraction order at all,
+    so neither axis of a returned block size may be 1."""
+    result = block_size_from_sizing_rule(
+        delta_phi_max_deg=1.0,  # a trivially easy alphabet
+        rcsr_db=1.0,  # a trivially loose requirement
+        pitch_m=(0.5, 0.5),
+        wavelength_m=1.0,
+        panel_size_m=(6.0, 6.0),
+    )
+    assert result[0] >= 2
+    assert result[1] >= 2
+
+
+def test_block_size_from_sizing_rule_rejects_non_positive_wavelength():
+    with pytest.raises(ValueError, match="wavelength_m"):
+        block_size_from_sizing_rule(
+            delta_phi_max_deg=12.0,
+            rcsr_db=10.0,
+            pitch_m=(0.5, 0.5),
+            wavelength_m=0.0,
+            panel_size_m=(6.0, 6.0),
+        )
+
+
+# ---------------------------------------------------------------------------
+# generate_coded_unit_cell_array -- placing unlike symbols side by side
+# (issue #212). generate_unit_cell_array itself is exercised, unmodified,
+# by every test above this section; nothing here changes its behaviour.
+# ---------------------------------------------------------------------------
+
+_SYMBOL_A = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.005, 0.005, 0.001]}
+_SYMBOL_B = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.006, 0.004, 0.001]}
+
+# A fixed-edge-family, 10 dB, 6-lambda-coupon case that resolves to a 2x2
+# block (see test_block_size_from_sizing_rule_reproduces_doc_10db_window_floor
+# above) at a realistic X-band pitch/wavelength (0.5 lambda at 10 GHz).
+_TWO_BY_TWO_SIZING = {
+    "delta_phi_max_deg": 12.0,
+    "rcsr_db": 10.0,
+    "pitch_m": (0.015, 0.015),
+    "wavelength_m": 0.03,
+    "panel_size_m": (0.18, 0.18),
+}
+
+
+def test_generate_coded_unit_cell_array_places_two_distinct_symbols():
+    """The whole point of #212: symbol A at block (0, 0), a DIFFERENT symbol
+    B at block (1, 0) -- something generate_unit_cell_array cannot do at
+    all, since it tiles one cell identically everywhere."""
+    layout = [["A", "B"]]  # one row (j=0), two block columns i=0, i=1
+    symbol_library = {"A": _SYMBOL_A, "B": _SYMBOL_B}
+
+    result = generate_coded_unit_cell_array(
+        layout, symbol_library, name_prefix="block", **_TWO_BY_TWO_SIZING
+    )
+
+    # 2 blocks x (2x2 cells each) x 1 primitive per symbol.
+    assert len(result) == 8
+    by_name = {p["name"]: p for p in result}
+    assert len(by_name) == 8  # every primitive uniquely named
+
+    # Block (0, 0)'s (0, 0) cell is symbol A, untranslated.
+    a00 = by_name["block_0_0_0_0"]
+    assert a00["p1_m"] == pytest.approx([0.0, 0.0, 0.0])
+    assert a00["p2_m"] == pytest.approx([0.005, 0.005, 0.001])
+
+    # Block (0, 0)'s (1, 1) cell is symbol A, shifted one fine-pitch cell in
+    # both x and y (still inside block 0).
+    a11 = by_name["block_0_0_1_1"]
+    assert a11["p1_m"] == pytest.approx([0.015, 0.015, 0.0])
+    assert a11["p2_m"] == pytest.approx([0.02, 0.02, 0.001])
+
+    # Block (1, 0) is symbol B (a DIFFERENT shape than A), offset by one
+    # whole 2-cell block width (2 * 0.015 m) in x.
+    b00 = by_name["block_1_0_0_0"]
+    assert b00["p1_m"] == pytest.approx([0.03, 0.0, 0.0])
+    assert b00["p2_m"] == pytest.approx([0.036, 0.004, 0.001])
+    block_1_0_prims = [p for name, p in by_name.items() if name.startswith("block_1_0_")]
+    assert len(block_1_0_prims) == 4
+    assert all(p["p2_m"][0] - p["p1_m"][0] == pytest.approx(0.006) for p in block_1_0_prims)
+
+
+def test_generate_coded_unit_cell_array_uses_generate_unit_cell_array_for_tiling():
+    """A single-symbol, single-block layout must reproduce exactly what
+    calling generate_unit_cell_array directly on that symbol's geometry
+    would -- confirming composition rather than a re-implementation with its
+    own (potentially diverging) translation math."""
+    layout = [["A"]]
+    symbol_library = {"A": _SYMBOL_A}
+    # Block (0, 0)'s inner generate_unit_cell_array call is built with
+    # name_prefix=f"{name_prefix}_{i}_{j}" == "block_0_0" (see
+    # generate_coded_unit_cell_array's own docstring) -- match that here.
+    coded = generate_coded_unit_cell_array(
+        layout, symbol_library, name_prefix="block", **_TWO_BY_TWO_SIZING
+    )
+    direct = generate_unit_cell_array(
+        _SYMBOL_A, spacing_m=(0.015, 0.015), count=(2, 2), name_prefix="block_0_0"
+    )
+    assert coded == direct
+
+
+def test_generate_coded_unit_cell_array_missing_symbol_raises_not_silently_substituted():
+    layout = [["A", "Z"]]
+    symbol_library = {"A": _SYMBOL_A}  # "Z" is not in the library
+    with pytest.raises(SymbolNotFoundError, match=r"\['Z'\]"):
+        generate_coded_unit_cell_array(
+            layout, symbol_library, name_prefix="block", **_TWO_BY_TWO_SIZING
+        )
+
+
+def test_generate_coded_unit_cell_array_missing_symbol_error_names_known_symbols():
+    layout = [["Z"]]
+    symbol_library = {"A": _SYMBOL_A, "B": _SYMBOL_B}
+    with pytest.raises(SymbolNotFoundError, match="'A', 'B'"):
+        generate_coded_unit_cell_array(
+            layout, symbol_library, name_prefix="block", **_TWO_BY_TWO_SIZING
+        )
+
+
+def test_symbol_not_found_error_is_a_value_error():
+    """Matches the house convention for a "name given doesn't resolve" miss
+    (designs.design_families.UnknownDesignFamilyError): a ValueError
+    subclass, not a bare KeyError."""
+    assert issubclass(SymbolNotFoundError, ValueError)
+
+
+def test_generate_coded_unit_cell_array_empty_layout_raises():
+    with pytest.raises(ValueError, match="non-empty"):
+        generate_coded_unit_cell_array([], {}, name_prefix="block", **_TWO_BY_TWO_SIZING)
+
+
+def test_generate_coded_unit_cell_array_ragged_layout_raises():
+    layout = [["A", "B"], ["A"]]
+    symbol_library = {"A": _SYMBOL_A, "B": _SYMBOL_B}
+    with pytest.raises(ValueError, match="rectangular"):
+        generate_coded_unit_cell_array(
+            layout, symbol_library, name_prefix="block", **_TWO_BY_TWO_SIZING
+        )
+
+
+def test_generate_coded_unit_cell_array_block_size_follows_the_rule_not_a_constant():
+    """A stricter RCS-reduction requirement must derive (and use) a bigger
+    block -- if the block size were a hardcoded constant, the two calls
+    below would produce the same element count regardless of rcsr_db."""
+    common = dict(
+        delta_phi_max_deg=21.0, pitch_m=(0.015, 0.015), wavelength_m=0.03, panel_size_m=(0.4, 0.4)
+    )
+    layout = [["A"]]
+    symbol_library = {"A": _SYMBOL_A}
+
+    lenient_block = block_size_from_sizing_rule(rcsr_db=6.0, max_n=20, **common)
+    strict_block = block_size_from_sizing_rule(rcsr_db=20.0, max_n=20, **common)
+    assert lenient_block != strict_block  # sanity: the two cases really differ
+
+    lenient_result = generate_coded_unit_cell_array(
+        layout, symbol_library, rcsr_db=6.0, max_block_n=20, name_prefix="block", **common
+    )
+    strict_result = generate_coded_unit_cell_array(
+        layout, symbol_library, rcsr_db=20.0, max_block_n=20, name_prefix="block", **common
+    )
+    assert len(lenient_result) == lenient_block[0] * lenient_block[1]
+    assert len(strict_result) == strict_block[0] * strict_block[1]
+    assert len(strict_result) > len(lenient_result)
+
+
+def test_generate_coded_unit_cell_array_multi_primitive_symbol_gets_indexed_names():
+    """A symbol whose library entry is itself a list of primitives (e.g. a
+    combine_shapes() output that stayed split into several disjoint
+    polygons) is passed straight through to generate_unit_cell_array's own
+    multi-primitive handling, unchanged."""
+    symbol_library = {
+        "A": [
+            {"shape": "polygon", "points_m": [[0.0, 0.0], [0.001, 0.0], [0.0005, 0.001]]},
+            {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.0002, 0.0002, 0.0002]},
+        ]
+    }
+    result = generate_coded_unit_cell_array(
+        [["A"]], symbol_library, name_prefix="block", **_TWO_BY_TWO_SIZING
+    )
+    assert len(result) == 2 * 2 * 2  # 2x2 block, 2 primitives per symbol
+    names = {p["name"] for p in result}
+    assert "block_0_0_0_0_0" in names
+    assert "block_0_0_0_0_1" in names
