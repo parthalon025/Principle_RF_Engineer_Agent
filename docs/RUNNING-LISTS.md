@@ -333,6 +333,18 @@ adopting these results will hit the same thing.
     perfectly reflecting backing (correction 26), so #129's Example 3 headroom
     figures rest on an assumption that example does not satisfy.
 
+    **Landed in the document 2026-09-08** (#203, under ADR-0024): all four
+    sites corrected in `absorber-scoring-conventions.md`. The general
+    convention was left standing — the one-port collapse really is valid for
+    a ground-backed absorber, and ADR-0017 makes the programme's own skins
+    exactly that. What was removed is the claim that the **anchor** is one of
+    them. Because the error is re-derivable (anyone applying the programme's
+    own default would make it again), the corrected passage carries an inline
+    inoculation naming ADR-0017 and this entry, per ADR-0024's format. §5.3's
+    dependent conclusion — *"the Rozanov limit is not binding for Example 3"* —
+    was re-aimed rather than deleted: it is sound for a ground-backed skin and
+    was never a fact about the anchor, which Rozanov does not govern at all
+    (correction 26).
 26. **Rozanov (2000) has now been read first-hand, and it is metal-backed by
     assumption.** The bound's own opening sentence, verbatim: *"We consider a
     slab of thickness d, permittivity ε = ε′ − iε″, and permeability
