@@ -100,6 +100,9 @@ def test_principal_role_is_scoped_not_broad():
     assert "calculate_wavelength" not in names
     assert "ingest_document" not in names
     assert "ingest_arxiv_paper" not in names
+    assert "ingest_3gpp_spec" not in names
+    assert "ingest_etsi_standard" not in names
+    assert "ingest_fcc_rule" not in names
     assert "extract_components" not in names
     assert "analyze_touchstone_file" not in names
     # Design-record/lifecycle tools: still principal-exclusive, still direct.
@@ -152,6 +155,22 @@ def test_systems_role_gets_calculations_and_knowledge_authoring():
     assert "analyze_touchstone_file" not in names
     # knowledge-auditing tool belongs to verification, not systems
     assert "extract_components" not in names
+
+
+def test_systems_role_gets_standards_body_sourcing_tools():
+    # issue #215: 3GPP/ETSI/FCC-eCFR standards ingestion is the same
+    # knowledge-authoring concern as ingest_document/ingest_arxiv_paper --
+    # "bring an external document into the knowledge base", each with its
+    # own fetch/extraction step ahead of it.
+    names = _tool_names(ROLES["systems"])
+    assert "ingest_3gpp_spec" in names
+    assert "ingest_etsi_standard" in names
+    assert "ingest_fcc_rule" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "ingest_3gpp_spec" not in role_names
+        assert "ingest_etsi_standard" not in role_names
+        assert "ingest_fcc_rule" not in role_names
 
 
 def test_systems_role_gets_component_sourcing_tools():
