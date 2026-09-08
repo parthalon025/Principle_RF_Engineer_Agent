@@ -1095,7 +1095,10 @@ def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
 # directory, matching how a real Palace run would.
 # ---------------------------------------------------------------------------
 
-_FAKE_PALACE_CSV_HEADER = ["f (GHz)", "|S[P1(0,0)TE][1]| (dB)", "arg(S[P1(0,0)TE][1]) (deg.)"]
+# Palace separates the two diffraction-order indices with a SEMICOLON in its
+# CSV header cells ("S[P1(0;0)TE][1]"), not a comma -- confirmed against its
+# own published reference output, see tests/test_palace.py and issue #210.
+_FAKE_PALACE_CSV_HEADER = ["f (GHz)", "|S[P1(0;0)TE][1]| (dB)", "arg(S[P1(0;0)TE][1]) (deg.)"]
 _FAKE_PALACE_CSV_ROW = ["10.000000e+00", "-6.0206", "0.0"]
 
 
@@ -1266,7 +1269,8 @@ def test_run_palace_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert result["s_parameters"]["frequency_hz"] == pytest.approx([10e9])
-    assert "S11" in result["s_parameters"]["specular"]
+    # Key carries the polarization: Palace reports every order in both.
+    assert "S11_TE" in result["s_parameters"]["specular"]
 
 
 # ---------------------------------------------------------------------------

@@ -1110,6 +1110,7 @@ def run_palace_simulation(
     sweep: dict | None = None,
     num_processes: int = 1,
     timeout_s: int = 3600,
+    solver_order: int = 1,
 ) -> dict:
     """Simulate a periodic metamaterial unit cell with Palace, a full-wave finite-element
     solver with NATIVE Floquet/periodic-boundary ports -- the only simulator in this
@@ -1123,23 +1124,28 @@ def run_palace_simulation(
     polarization/max_order overrides -- see simulation.palace.generate_palace_mesh and
     generate_palace_config for the full shape), runs it via the real `palace` binary,
     and parses port-floquet-S.csv into structured per-diffraction-order S-parameter
-    data (plus a "specular" S11/S21-style convenience view for the fundamental order).
-    Returns "SIMULATED" provenance. Embedded PEC conductor patches (a metallic
-    metasurface, as opposed to an all-dielectric grating/photonic-crystal unit cell)
-    are NOT supported in this pass -- an explicitly-scoped gap, see simulation/
-    palace.py's module docstring. Config/mesh format verified against Palace's own
-    primary documentation and MFEM's own mesh-format documentation (see simulation/
-    palace.py's module docstring for the full citation list, several facts there
-    graded as reasoned-by-analogy rather than independently confirmed byte-exact) but
-    NOT against a real palace binary -- none is installed in this environment; treat
-    any result as unverified end-to-end until it has been run against the real tool at
-    least once."""
+    data (plus a "specular" convenience view keyed "S11_TE"/"S21_TE"/... for the
+    fundamental order -- the key carries the polarization because Palace reports both,
+    and the co-polarized one is whichever matches the polarization you asked for).
+    `solver_order` is the finite-element order: 1 (Palace's own default) is fast and
+    approximate, 2 is what Palace's own worked example uses and what reproduced its
+    published answers. Returns "SIMULATED" provenance. Embedded PEC conductor patches
+    (a metallic metasurface, as opposed to an all-dielectric grating/photonic-crystal
+    unit cell) are NOT supported in this pass -- an explicitly-scoped gap, see
+    simulation/palace.py's module docstring. This adapter HAS been run end to end
+    against a real palace binary (issue #210): driving Palace's own "Floquet Ports for
+    a Dielectric Grating" example through this exact function reproduced Palace's
+    published S-parameters to within 0.056 dB and 0.91 degrees, and agreed on which
+    diffraction orders propagate. That is one all-dielectric geometry at one incidence
+    angle, and it is still a simulation agreeing with a simulation -- nothing here has
+    been checked against a bench measurement. See docs/palace-floquet-validation.md."""
     return _run_palace_simulation(
         geometry=geometry,
         frequency_hz=frequency_hz,
         sweep=sweep,
         num_processes=num_processes,
         timeout_s=timeout_s,
+        solver_order=solver_order,
     )
 
 
