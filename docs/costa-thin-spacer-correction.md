@@ -224,6 +224,13 @@ not a different result — but it carries `ε₀ε_r` where the 2013 paper carri
 **Consequence for this repo:** carry both. The recomputation in §7 reports
 both, and they bracket the answer. The `ε₀` form is the conservative floor and
 the `ε₀ε_r` form the ceiling; the true bias is one of the two, not between them.
+**The bracket is narrower than first reported** — the forms differ by
+`ε_r/ε_eff` = 1.487, not by `ε_r`, because the 2021 correction bypasses the
+`ε_eff` loading rather than compounding with it (see §7's correction note).
+That also strengthens the physical argument above: a patch-to-ground
+capacitance whose field lies wholly inside the substrate *should* carry `ε_r`
+where the air-straddling gap capacitance carries `ε_eff`, and the two entering
+at different points is exactly what that asymmetry predicts.
 Resolving it needs the original — §5, §8.
 
 ---
@@ -388,10 +395,32 @@ coincidence that makes the arithmetic checkable by hand: `CALCULATED`
 
 ### The capacitance bias
 
-| Form of eq (10) | Correction `ΔC` | As % of `C₀` |
-|---|---|---|
-| **2013, `2Dε₀/π`** | +1.494 fF | **+2.17%** |
-| **2021, `2Dε₀ε_r/π`** | +4.333 fF | **+6.28%** |
+> **CORRECTED 2026-09-08.** The `ε₀ε_r` row below previously read **+6.28%**,
+> and every figure derived from it (a `−3.01%` frequency shift, a `+85 µm` gap,
+> and the claim that the 2021 form **"triples"** the bias) was wrong. The error
+> was **not** in the transcription — it was in the composition, and §3 of this
+> very document already had it right: *"Their eqs (7)–(8) also apply the
+> correction to an already-loaded capacitance, so no later `ε_r` arrives."*
+> §7 then divided the 2021 correction by the **unloaded** `C₀` anyway, which
+> double-counts the permittivity. Settled from the 2021 paper's **LaTeX
+> source** (arXiv:2102.10666, `paper_arxiv_v2.tex`) — its `C_patch` already
+> carries `ε_eff`, and `eq_C_refined` subtracts the correction from *that*.
+> **The two published forms differ by `ε_r/ε_eff` = 1.487 at `ε_r` = 2.9, not
+> by `ε_r` = 2.9.** `LITERATURE-SUPPORTED` (read from the authors' own source).
+
+Two reference capacitances matter, and the earlier error came from mixing them:
+`C₀` **unloaded** = 69.00 fF, and `C₀ · ε_eff` **loaded** = 134.55 fF at
+`ε_eff` = 1.95. The 2013 correction enters *before* the `ε_eff` loading; the
+2021 correction enters *after* it.
+
+| Form of eq (10) | Enters | `ΔC` on the loaded capacitance | As % of loaded `C₀·ε_eff` |
+|---|---|---|---|
+| **2013, `2Dε₀/π`** | before `ε_eff` loading | +2.913 fF (= `ε_eff·δ`) | **+2.17%** |
+| **2021, `2Dε₀ε_r/π`** | after `ε_eff` loading | +4.333 fF (= `ε_r·δ`) | **+3.22%** |
+
+where `δ = (2pε₀/π)·[−ln(1−e^(−4πd/p))]` = **1.4940 fF** is the base term,
+independent of `ε_r`. The 2013 row's percentage is unchanged from the original
+table because numerator and denominator both scale by `ε_eff`.
 
 ### The frequency bias
 
@@ -404,10 +433,17 @@ exactly 10.000 GHz, then applying the correction at that same geometry:
 |---|---|---|---|
 | uncorrected | 10.000 GHz | — | 0.6158 mm |
 | **2013, `ε₀`** | **9.893 GHz** | **−0.107 GHz (−1.07%)** | 0.6439 mm (**+28 µm**, +4.6%) |
-| **2021, `ε₀ε_r`** | **9.699 GHz** | **−0.301 GHz (−3.01%)** | 0.7009 mm (**+85 µm**, +13.8%) |
+| **2021, `ε₀ε_r`** | **9.843 GHz** | **−0.157 GHz (−1.57%)** | ≈ 0.658 mm (**≈ +42 µm**) |
 
-Cross-check against the rule of thumb `Δf/f ≈ −½·ΔC/C`: predicts −1.21% and
-−3.50%. The solved values are slightly smaller because the slab's reactance
+The 2021 gap figure is a **first-order scaling** from the 2013 row
+(`42 ≈ 28 × 3.22/2.17`), not an independent solve — flagged rather than
+presented as exact, since the exact value comes out of the implementation
+(#245). The conclusion it feeds is unaffected: the correction still widens the
+gap, still moves *away* from the 0.2 mm feature floor, and still does not
+rescue the 4 mm cell.
+
+Cross-check against the rule of thumb `Δf/f ≈ −½·ΔC/C`: predicts −1.08% and
+−1.61%. The solved values are slightly smaller because the slab's reactance
 `tan(k₀d√ε_r)` rises faster than a pure inductor's, which stiffens the
 resonance. The two agree to within a quarter of a percentage point, so neither
 is a blunder.

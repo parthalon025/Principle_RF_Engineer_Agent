@@ -627,6 +627,54 @@ this list.
     one question that matters when equipment changes. ADR-0027 adds a
     **Process record** and keys on a reference to it.
 
+### Found by searching for the formula rather than trusting our own recomputation (2026-09-08)
+
+40. **Costa's eq (10): the two published forms differ by `ε_r/ε_eff` = 1.487,
+    not by `ε_r` = 2.9 — the "triples the bias" claim was wrong.**
+    `costa-thin-spacer-correction.md` §7, #190's resolution comment, #234 and
+    the #245 spec all reported the 2021 `ε₀ε_r` form as **+6.28%** capacitance
+    and a **−3.01%** frequency shift (9.699 GHz), against **+2.17%** / −1.07%
+    for the 2013 `ε₀` form. The correct figures are **+3.22%** and **−1.57%**
+    (9.843 GHz).
+
+    **The transcription was never wrong; the composition was.** The 2013 form
+    substitutes into the **unloaded** `C₀`, which eq (6) then multiplies by
+    `ε_eff = (ε_r+1)/2`. The 2021 form subtracts from the **already-loaded**
+    capacitance, so no `ε_eff` ever reaches it. Computing the 2021 correction
+    as a fraction of the *unloaded* `C₀` — as §7 did — double-counts the
+    permittivity. Net effect on the loaded capacitance is `ε_eff·δ` for 2013
+    and `ε_r·δ` for 2021, where `δ` = 1.4940 fF is the shared base term.
+
+    *In plain terms: both papers say the same thing about how much extra
+    charge the cell stores. They disagree about whether the substrate's
+    permittivity has already been applied by the time you add it, and we
+    applied it twice.*
+
+    **What makes this a documentation failure rather than a research one:**
+    §3 of `costa-thin-spacer-correction.md` **already stated it correctly** —
+    *"Their eqs (7)–(8) also apply the correction to an already-loaded
+    capacitance, so no later `ε_r` arrives"* — and §7 of the same document
+    then computed it the other way. The document contradicted itself for a
+    day, and the wrong half was the half that got quoted into three issues
+    and a spec.
+
+    Settled from the 2021 paper's **LaTeX source** (arXiv:2102.10666,
+    `paper_arxiv_v2.tex`), which states both the correction and the equation
+    consuming it verbatim — `LITERATURE-SUPPORTED`, an upgrade on the eye-read
+    400 dpi render the equation itself rests on. **A web-search summary of the
+    same paper dropped the `ε_r` entirely**, which would have sent the
+    correction the other way; the source settled it and the summary did not.
+    *Search results are a pointer to a primary source, never a substitute for
+    reading it.*
+
+    **It also narrows #234 and tilts it.** The dispute is worth 1.49×, not 3×.
+    And the physical argument now has a mechanism behind it: a patch-to-ground
+    capacitance whose field lies wholly inside the substrate should carry
+    `ε_r`, where the air-straddling gap capacitance carries `ε_eff` — the two
+    entering the circuit at different points is exactly what that asymmetry
+    predicts, which is a point in the 2021 form's favour rather than a coin
+    flip.
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
