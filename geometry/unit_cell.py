@@ -77,6 +77,24 @@ against the real library in tests, not a fake/stub):
     explicitly to gdstk.boolean() rather than relying on gdstk's own
     default.
 
+CODED (HETEROGENEOUS-SYMBOL) PLACEMENT (issue #212). Both functions above
+tile ONE unit cell identically across the whole grid -- the right primitive
+for a Supercell (CONTEXT.md: "a block of identical Symbols repeated side by
+side"), but structurally incapable of a coded surface, which by definition
+mixes unlike Symbols (`docs/supercell-sizing-rule.md` line 108: "Real coded
+surfaces mix letters"). `generate_coded_unit_cell_array` (below) is the new
+function issue #104 named this needs -- per-position symbol selection, not a
+parameter on the existing tiler. It places BLOCKS (each an N x M run of one
+Symbol, per `docs/supercell-sizing-rule.md` Sec 5.5's sizing rule -- see
+`block_size_from_sizing_rule`), resolves each layout entry through an
+injected Element/Coding-Alphabet symbol library rather than accepting raw
+geometry inline (#109), and reports a cache miss as a hard `SymbolNotFoundError`
+rather than silently substituting a default (CONTEXT.md: a Symbol not in the
+library isn't drawable, full stop -- there is no plausible substitute
+geometry). Both compose `generate_unit_cell_array` for their actual
+per-block/per-cell tiling rather than duplicating its translation logic;
+`generate_unit_cell_array` itself is unchanged by this addition.
+
 HONEST CAVEAT: this module's gdstk usage has been exercised against the
 real, installed gdstk 1.0.1 library (see tests/test_geometry_unit_cell.py)
 -- so, unlike this repo's simulator adapters, there is no "not verified
@@ -92,6 +110,8 @@ performed.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import gdstk
@@ -356,3 +376,350 @@ def generate_metamaterial_array(
         origin_m=origin_m,
         name_prefix=name_prefix,
     )
+
+
+# ---------------------------------------------------------------------------
+# Coded (heterogeneous-symbol) placement -- issue #212.
+#
+# A Supercell (CONTEXT.md) is a block of IDENTICAL Symbols; generate_unit_
+# cell_array above is exactly that primitive and stays untouched. A coded
+# surface is built from several DIFFERENT Symbol blocks laid out next to each
+# other (docs/supercell-sizing-rule.md: "Real coded surfaces mix letters"),
+# which needs (a) a per-position symbol assignment, (b) each symbol's
+# geometry resolved from the Element/Coding-Alphabet library rather than
+# handed in as raw shapes (#109), and (c) a block size derived from the
+# requirement rather than guessed (docs/supercell-sizing-rule.md Sec 5.5).
+# The two functions below are that support, in that order.
+# ---------------------------------------------------------------------------
+
+
+class SymbolNotFoundError(ValueError):
+    """Raised by `generate_coded_unit_cell_array` when a layout names a
+    symbol id with no matching entry in the `symbol_library` mapping it was
+    given.
+
+    Named and raised the same way this repo's other "the name given doesn't
+    resolve" cases are (`designs.design_families.UnknownDesignFamilyError`):
+    a `ValueError` subclass naming exactly what was looked for and what IS
+    available, never a bare `KeyError`.
+
+    Deliberately a hard error, not a warning. CLAUDE.md's "warn, never
+    block" convention covers a judgment call the model can make with a
+    caveat attached (a provisional value, an unread bound); it does not
+    cover this case, because there is no plausible geometry to substitute
+    for a symbol that was never characterised -- CONTEXT.md's Element/
+    Coding-Alphabet library entry is explicit that "only a printed letter is
+    in the library" (ADR-0027), so a miss here means the shape genuinely
+    does not exist yet. Silently drawing *something* in its place would
+    misrepresent a hypothesis as a printable design; refusing and naming the
+    gap is what lets a human go print and measure the missing symbol.
+    """
+
+
+def _resolve_symbol_library(
+    symbol_ids: Sequence[str],
+    symbol_library: Mapping[str, dict[str, Any] | list[dict[str, Any]]],
+) -> dict[str, dict[str, Any] | list[dict[str, Any]]]:
+    """Look up every distinct symbol id a layout uses, all at once, so one
+    `generate_coded_unit_cell_array` call reports every missing symbol in a
+    single `SymbolNotFoundError` rather than failing on the first miss,
+    forcing a fix-one-run-again-fix-the-next loop through a large layout."""
+    missing = sorted({sid for sid in symbol_ids if sid not in symbol_library})
+    if missing:
+        known = sorted(symbol_library) if symbol_library else []
+        raise SymbolNotFoundError(
+            f"symbol id(s) {missing} have no entry in the Element/Coding-Alphabet "
+            f"symbol_library given to generate_coded_unit_cell_array. "
+            f"Known symbol ids: {known if known else '(symbol_library is empty)'}. "
+            "A symbol enters this library only once it has been printed and "
+            "measured (ADR-0027) -- this is a cache miss to go resolve (print "
+            "and characterise the symbol, or fix the layout's spelling), not "
+            "something to guess past with placeholder geometry."
+        )
+    return {sid: symbol_library[sid] for sid in set(symbol_ids)}
+
+
+def _require_positive_finite(field_name: str, value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a real number, got {value!r}")
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric <= 0:
+        raise ValueError(f"{field_name} must be finite and > 0, got {value!r}")
+    return numeric
+
+
+def _boundary_fraction(nx: int, ny: int) -> float:
+    """docs/supercell-sizing-rule.md Sec 5.5 Amendment 1: the fraction of an
+    Nx x Ny block's cells that touch a foreign (unlike-symbol) block --
+    `f(Nx, Ny) = 1 - (Nx-2)(Ny-2)/(Nx*Ny)` for Nx, Ny >= 2, or 1.0 (every
+    cell is a boundary cell) if either is 1. Verified in that document to
+    reduce to the square-cell `(4N-4)/N**2` when Nx == Ny; reproduced here:
+    1 - (N-2)**2/N**2 == (N**2 - (N-2)**2)/N**2 == (4N-4)/N**2."""
+    if nx < 1 or ny < 1:
+        raise ValueError(f"nx and ny must be >= 1, got ({nx!r}, {ny!r})")
+    if nx == 1 or ny == 1:
+        return 1.0
+    return 1.0 - (nx - 2) * (ny - 2) / (nx * ny)
+
+
+def _phase_budget_deg(rcsr_db: float) -> float:
+    """docs/supercell-sizing-rule.md Sec 2.2: the unlike-neighbour phase
+    error a coding block's two symbols can tolerate and still deliver a
+    stated RCS-reduction requirement -- `delta_budget = 2*arcsin(10**(-RCSR_dB
+    / 20))`. E.g. RCSR_dB=10 -> 36.9 degrees, the "180 +/- 37 degrees"
+    criterion from the chessboard RCS-reduction literature the document
+    cites as a cross-check."""
+    ratio = 10.0 ** (-rcsr_db / 20.0)
+    ratio = min(ratio, 1.0)  # guard a pathological rcsr_db < 0 from asin(>1)
+    return 2.0 * math.degrees(math.asin(ratio))
+
+
+def _diffraction_sin_theta(
+    nx: int, ny: int, pitch_m: tuple[float, float], wavelength_m: float
+) -> float:
+    """docs/supercell-sizing-rule.md Sec 5.5 Amendment 2: the sine of the
+    angle the chessboard pattern's dominant diffraction lobe leaves at,
+    `sin(theta) = (lambda/2) * sqrt(1/ax**2 + 1/ay**2)` with `ax = Nx*px`,
+    `ay = Ny*py`. Reduces to `lambda/(a*sqrt(2))` when ax == ay (the
+    document's own square-cell check). A value > 1 means no propagating
+    diffraction order exists at all at this block size (Amendment 3) --
+    the block redirects nothing, so this cannot satisfy the ceiling."""
+    px_m, py_m = pitch_m
+    ax_m = nx * px_m
+    ay_m = ny * py_m
+    return (wavelength_m / 2.0) * math.sqrt(1.0 / ax_m**2 + 1.0 / ay_m**2)
+
+
+def block_size_from_sizing_rule(
+    delta_phi_max_deg: float,
+    rcsr_db: float,
+    pitch_m: tuple[float, float],
+    wavelength_m: float,
+    panel_size_m: tuple[float, float],
+    theta_min_deg: float | None = None,
+    max_n: int = 32,
+) -> tuple[int, int]:
+    """Derive a coding super-cell's block size `(Nx, Ny)`, in cells, from the
+    requirement -- docs/supercell-sizing-rule.md Sec 5.5's two-index sizing
+    rule -- rather than a hardcoded constant (issue #212's acceptance
+    criterion).
+
+    Four constraints, all from that document, must hold simultaneously:
+
+      - **Hard floor N >= 2** (Sec 3): a 1x1 "checkerboard" has no
+        propagating diffraction order at all, so no block dimension may be
+        1 (this function never returns 1 in either axis).
+      - **Propagates at all** (Sec 5.5 Amendment 3): the diffraction sine
+        `_diffraction_sin_theta(...)` must be <= 1 -- otherwise the block
+        redirects nothing and the whole cancellation mechanism this rule
+        exists for does not apply.
+      - **The floor** (Sec 2): unlike-neighbour coupling error, bounded by
+        `delta_phi_max_deg * _boundary_fraction(Nx, Ny)`, must not exceed
+        the phase budget `_phase_budget_deg(rcsr_db)` the stated RCS-
+        reduction requirement implies -- a small block whose symbols are too
+        different from each other won't cancel down to the target dB.
+      - **The ceiling** (Sec 3 and Sec 5.5 Amendment 4): the redirected lobe
+        (`_diffraction_sin_theta`, converted to an angle) must clear
+        `theta_min_deg` -- the panel's own specular lobe, defaulted here
+        from the SMALLER of `panel_size_m`'s two sides via the document's
+        `theta_min ~= lambda / (2 * L)` (Sec 3's "how far off is far
+        enough", using the more binding of the two panel dimensions, per
+        that section's own "the coupon is the hard case" reading) unless
+        the caller states a different bistatic-angle requirement -- AND the
+        block must physically fit on the panel at least twice per axis
+        (Amendment 4: `2*Nx*px <= Lx`, `2*Ny*py <= Ly`), which Sec 5.5 shows
+        is the constraint that actually binds on a small coupon.
+
+    Among every `(Nx, Ny)` satisfying all four (searched over `2..max_n` in
+    both axes), returns the SMALLEST by cell count (ties broken by the
+    smaller Nx, then Ny) -- the finest spatial control over the coded
+    pattern the requirement allows (Sec 4: "an N=2 design can vary its
+    pattern twice as finely in each direction as N=4").
+
+    Raises `ValueError` naming the phase budget, ceiling angle and panel-fit
+    numbers actually computed if no block size up to `max_n` x `max_n`
+    satisfies all four -- Sec 4/5.5's "no N works" outcome, which that
+    document shows is conditional on panel size and alphabet, not a fixed
+    verdict, so the message says as much rather than presenting the miss as
+    final.
+    """
+    delta_phi_max_deg = _require_positive_finite("delta_phi_max_deg", delta_phi_max_deg)
+    wavelength_m = _require_positive_finite("wavelength_m", wavelength_m)
+    px_m = _require_positive_finite("pitch_m[0]", pitch_m[0])
+    py_m = _require_positive_finite("pitch_m[1]", pitch_m[1])
+    lx_m = _require_positive_finite("panel_size_m[0]", panel_size_m[0])
+    ly_m = _require_positive_finite("panel_size_m[1]", panel_size_m[1])
+    if (
+        not isinstance(rcsr_db, (int, float))
+        or isinstance(rcsr_db, bool)
+        or not math.isfinite(rcsr_db)
+    ):
+        raise ValueError(f"rcsr_db must be a finite real number, got {rcsr_db!r}")
+    if not isinstance(max_n, int) or max_n < 2:
+        raise ValueError(f"max_n must be an int >= 2, got {max_n!r}")
+
+    delta_budget_deg = _phase_budget_deg(rcsr_db)
+    if theta_min_deg is None:
+        theta_min_deg = math.degrees(wavelength_m / (2.0 * min(lx_m, ly_m)))
+    else:
+        theta_min_deg = _require_positive_finite("theta_min_deg", theta_min_deg)
+
+    best: tuple[int, int] | None = None
+    best_area: int | None = None
+    for nx in range(2, max_n + 1):
+        if 2 * nx * px_m > lx_m:
+            break  # panel-fit only gets tighter as nx grows further
+        for ny in range(2, max_n + 1):
+            if 2 * ny * py_m > ly_m:
+                break
+            sin_theta = _diffraction_sin_theta(nx, ny, (px_m, py_m), wavelength_m)
+            if sin_theta > 1.0:
+                continue  # evanescent -- this block redirects nothing
+            if delta_phi_max_deg * _boundary_fraction(nx, ny) > delta_budget_deg:
+                continue  # coupling error exceeds what the requirement allows
+            theta_deg = math.degrees(math.asin(sin_theta))
+            if theta_deg < theta_min_deg:
+                continue  # lobe would fall back inside the panel's own specular return
+            area = nx * ny
+            if best_area is None or area < best_area:
+                best_area = area
+                best = (nx, ny)
+
+    if best is None:
+        raise ValueError(
+            "no block size up to "
+            f"{max_n}x{max_n} cells satisfies docs/supercell-sizing-rule.md Sec 5.5's "
+            f"floor and ceiling together: phase budget from rcsr_db={rcsr_db!r} dB is "
+            f"{delta_budget_deg:.1f} deg (needs delta_phi_max_deg={delta_phi_max_deg!r} "
+            f"* boundary_fraction(Nx, Ny) <= this), ceiling theta_min={theta_min_deg:.2f} "
+            f"deg, panel_size_m={panel_size_m!r}, pitch_m={pitch_m!r}, "
+            f"wavelength_m={wavelength_m!r}. Per that document Sec 5.5 this is "
+            "conditional on panel size and alphabet, not a fixed verdict -- a larger "
+            "panel_size_m, a lower rcsr_db target, or an alphabet with a smaller "
+            "delta_phi_max_deg may admit a feasible block."
+        )
+    return best
+
+
+def generate_coded_unit_cell_array(
+    layout: Sequence[Sequence[str]],
+    symbol_library: Mapping[str, dict[str, Any] | list[dict[str, Any]]],
+    pitch_m: tuple[float, float],
+    delta_phi_max_deg: float,
+    rcsr_db: float,
+    wavelength_m: float,
+    panel_size_m: tuple[float, float],
+    theta_min_deg: float | None = None,
+    max_block_n: int = 32,
+    origin_m: tuple[float, float] = (0.0, 0.0),
+    name_prefix: str = "block",
+) -> list[dict[str, Any]]:
+    """Place a coded surface: a grid of super-cell BLOCKS, each holding one
+    Symbol from `symbol_library` tiled `block_size_from_sizing_rule(...)`
+    cells across, laid out per `layout` -- the function issue #212 (and Map
+    #104 before it) says `generate_unit_cell_array` structurally cannot be,
+    because that function copies ONE unit cell to every position and a coded
+    surface by definition mixes unlike symbols.
+
+    `layout`: a non-empty, rectangular 2D sequence of symbol ids, one row
+    per outer entry -- `layout[j][i]` naming the symbol placed at BLOCK
+    position `(i, j)`, where `i` is the column (x) index within a row and
+    `j` is the row (y, outer-list) index, so `layout[0]` is the row of
+    blocks at y-index 0 and so on. `(i, j)` is the same axis convention
+    `generate_unit_cell_array`'s own per-cell naming uses. Every row must be
+    the same length. Each entry is a symbol id (a key into
+    `symbol_library`), never raw geometry -- placement is selection, not
+    authoring (CONTEXT.md: Symbol alphabet).
+
+    `symbol_library`: the Element/Coding-Alphabet library entries this call
+    may draw from, as `{symbol_id: unit_cell_primitives}` -- each value
+    already in `generate_unit_cell_array`'s own `unit_cell` shape (a single
+    "box"/"polygon" primitive dict, or a list of them, e.g.
+    `combine_shapes()`'s return value). This function never invents or
+    assumes a symbol's geometry inline (#109): every id `layout` names is
+    looked up here, and every id with no entry raises `SymbolNotFoundError`
+    (all misses reported together, not one at a time -- see
+    `_resolve_symbol_library`) rather than silently substituting a default.
+    In production this mapping is expected to come from a real Element/
+    Coding-Alphabet library lookup (no such persistent store exists in this
+    tree yet -- see this module's module docstring and CONTEXT.md's Element/
+    Coding-Alphabet library entry); a caller wires that source in here, the
+    same "caller fetches, this function only resolves" seam
+    `designs.material_properties.resolve_material_property` already uses for
+    its own accumulate-once-and-reuse library.
+
+    `pitch_m`: the FINE (single-cell) lattice pitch within a block --
+    `generate_unit_cell_array`'s own `spacing_m`, not the block pitch.
+
+    `delta_phi_max_deg`, `rcsr_db`, `wavelength_m`, `panel_size_m`,
+    `theta_min_deg`, `max_block_n`: forwarded to
+    `block_size_from_sizing_rule` to derive the block size actually used --
+    see that function's docstring. The requirement drives the block size;
+    nothing here hardcodes one (issue #212's acceptance criterion).
+
+    `origin_m`, `name_prefix`: as `generate_unit_cell_array`.
+
+    Each block is generated by ONE `generate_unit_cell_array` call (that
+    block's resolved symbol geometry, `spacing_m=pitch_m`,
+    `count=block_size`, `origin_m` offset to that block's own corner,
+    `name_prefix=f"{name_prefix}_{i}_{j}"`) -- this function places blocks
+    and resolves symbols; `generate_unit_cell_array` still does every bit of
+    the actual per-cell coordinate translation, unchanged.
+
+    Returns a flat list of primitive dicts covering the whole coded surface,
+    each uniquely named `f"{name_prefix}_{i}_{j}_..."` (the block's own
+    per-cell/per-primitive suffix from `generate_unit_cell_array`
+    appended).
+
+    Raises `ValueError` if `layout` is empty or ragged, `SymbolNotFoundError`
+    (a `ValueError` subclass) if `layout` names a symbol id absent from
+    `symbol_library`, and whatever `block_size_from_sizing_rule` /
+    `generate_unit_cell_array` themselves raise for invalid sizing-rule
+    inputs or invalid resolved symbol geometry.
+    """
+    rows = [list(row) for row in layout]
+    if not rows or not rows[0]:
+        raise ValueError("layout must be a non-empty, non-ragged 2D sequence of symbol ids")
+    row_len = len(rows[0])
+    if any(len(row) != row_len for row in rows):
+        raise ValueError(
+            "layout must be rectangular -- every row must name the same number of "
+            f"block columns, got row lengths {[len(row) for row in rows]}"
+        )
+
+    # layout[j][i] holds the symbol for block column i, row j (see this
+    # function's own docstring); flatten to validate and resolve every
+    # distinct id in one pass regardless of grid shape.
+    all_ids = [sid for row in rows for sid in row]
+    resolved = _resolve_symbol_library(all_ids, symbol_library)
+
+    block_size = block_size_from_sizing_rule(
+        delta_phi_max_deg=delta_phi_max_deg,
+        rcsr_db=rcsr_db,
+        pitch_m=pitch_m,
+        wavelength_m=wavelength_m,
+        panel_size_m=panel_size_m,
+        theta_min_deg=theta_min_deg,
+        max_n=max_block_n,
+    )
+    block_nx, block_ny = block_size
+    px_m, py_m = pitch_m
+    ox_m, oy_m = origin_m
+
+    primitives: list[dict[str, Any]] = []
+    for j, row in enumerate(rows):
+        for i, symbol_id in enumerate(row):
+            block_origin = (
+                ox_m + i * block_nx * px_m,
+                oy_m + j * block_ny * py_m,
+            )
+            primitives.extend(
+                generate_unit_cell_array(
+                    resolved[symbol_id],
+                    spacing_m=pitch_m,
+                    count=block_size,
+                    origin_m=block_origin,
+                    name_prefix=f"{name_prefix}_{i}_{j}",
+                )
+            )
+    return primitives
