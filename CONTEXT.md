@@ -57,8 +57,20 @@ and a glossary that churns with it stops being trustworthy (see
   all," which is why they are not in the running.*
 - **Source type**: the classification of an ingested knowledge document —
   `datasheet`, `application_note`, `standard`, `textbook`, `paper`,
-  `patent`, or `design_record`. Fixed at ingest time; determines the
-  document's default provenance and authority rank.
+  `patent`, `partner_research`, or `design_record`. Fixed at ingest time;
+  determines the document's default provenance and authority rank.
+- **Partner research** (a source type): unpublished technical work received
+  from an outside research partner — a proposed design, a memo, an internal
+  report someone shares. Resolves to `LITERATURE-SUPPORTED` like a `paper`
+  or a `patent`, but ranks below both and above `design_record`
+  (ADR-0029). Below, because nothing examined it: no peer review, no patent
+  office. Above internal history, because it is genuinely outside work
+  rather than the team's own prior write-up. The two obvious alternatives
+  are both wrong in ways that propagate — filing it as a `paper` puts an
+  unreviewed proposal ahead of a granted patent in every search, and filing
+  it as a `design_record` makes the corpus claim a partner's work as ours.
+  *In plain terms: a partner's good idea is worth more than our own old
+  notes and less than something a journal or an examiner has checked.*
 - **Patent** (a source type): a granted patent or published application.
   Sits at the authoritative-reference tier like a `paper`, but ranks
   deliberately *below* one: a patent office examines for novelty,
@@ -426,6 +438,21 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: element library — this project's alphabet specifically admits
   only symbols that have been printed, measured, and validity-boxed; a
   generic "library" doesn't carry that admission bar.
+- **Letter**: a **Symbol** that has passed admission and is an entry in the
+  **Element/Coding-Alphabet library**. The two words are not
+  interchangeable: every letter is a symbol, but a symbol described in a
+  paper, or drawn and simulated but never printed, is not a letter. The
+  distinction is the whole content of ADR-0027 — a shape from the
+  literature enters as a candidate in the **Considered-and-dropped
+  ledger**, and only printing, measuring and characterising it here makes
+  it a letter. Because identity includes the process, *"the same outline
+  printed in carbon and in MXene is two letters, not one letter under two
+  conditions"* (#132).
+  *In plain terms: a letter is a shape you have actually printed and
+  measured. Anything else is a shape you have read about.*
+  _Avoid_: using "letter" for a proposed or simulated element — that is a
+  **Symbol** at best, and a candidate at worst. The looser usage is what
+  ADR-0027 exists to prevent.
 - **Validity box**: the stated set of conditions a symbol's or alphabet's
   characterised numbers hold under — pitch, substrate, ink, pass count,
   cure schedule, incidence-angle range, and the neighbour set it was
@@ -439,6 +466,22 @@ and a glossary that churns with it stops being trustworthy (see
   swapped for the alphabet's extremes. Sets the phase budget a coding
   block's size must satisfy against the requirement's own RCS-reduction
   target (#130).
+- **Ligature**: characterising a whole **Supercell** as one unit — solving
+  the block full-wave rather than assembling it from its symbols'
+  individual characterised responses. The name and the pattern are adopted
+  from published practice, which reaches for it for the same reason this
+  project does: once a cell sits beside unlike neighbours, its own
+  characterisation stops holding
+  (`docs/element-library-prior-art.md` §5). **The pattern is adopted; the
+  sizing rule is this project's own** — every block size found in the
+  literature was set by something other than a coupling-error budget, so
+  `docs/supercell-sizing-rule.md` derives it here from the requirement's
+  RCS-reduction target instead.
+  *In plain terms: when tiles misbehave next to unlike tiles, you stop
+  modelling one tile and start modelling the whole patch.*
+  _Avoid_: treating it as a synonym for **Supercell** — the supercell is
+  the block of identical symbols; the ligature is the decision to
+  characterise that block as a single object.
 - **Design family**: the classification of a design's target physics and
   topology (e.g. absorber, reflection-phase steering surface, polarization
   converter, diffusive-backscatter surface, plain patch antenna) that
@@ -526,8 +569,7 @@ and a glossary that churns with it stops being trustworthy (see
   `PALACE_FLOQUET` would silently get a wrong-but-plausible answer.
 - **Element/Coding-Alphabet library**: a persistent, cross-run store of
   characterized symbol-alphabet elements (Tier B design families only, see
-  #130), keyed by `(element family, substrate stack, frequency band,
-  incidence-angle range)` — the same accumulate-once-and-reuse shape as the
+  #130) — the same accumulate-once-and-reuse shape as the
   **Material-property library**, holding each symbol's characterized
   response so it is looked up rather than re-solved by every design that
   shares its band and substrate. Keyed by `(element family, symbol,
