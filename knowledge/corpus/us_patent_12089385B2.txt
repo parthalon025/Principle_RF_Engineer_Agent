@@ -22,7 +22,12 @@ do_ocr=True), but running it needs Postgres and the project's Python
 dependencies, neither of which was available when this file was fetched.
 
 So: claims and description prose can be cited from this file. Figure-derived
-numbers cannot, and remain hand-transcribed until the scan is OCR'd.
+numbers cannot be cited from THIS file -- but they no longer have to be
+hand-transcribed either. See knowledge/corpus/us_patent_pub_20220192066A1.txt:
+the pre-grant publication of this same application (17/123,902) has a real text
+layer that includes the text drawn on the figure pages, and it confirms
+Example 1's 250 - 1.25j (FIG. 5C), Example 2's 294 - 0.5j (FIG. 6C), and
+Example 5's permittivity sweep. Cite figure numbers from there.
 
 Title: Highly-conformal, pliable thin electromagnetic skin
 Patent Number: US12089385B2
@@ -88,7 +93,9 @@ Q. Nguyen and A.I. Zaghloul, “Impedance Matching Metamaterials Composed of ELC
 A.I. Zaghloul, Q. Nguyen, T.K. Anthony, S.J. Weiss, and E.D. Adler, “First-Principle versus NRW Retrieval of Metamaterial-Insert Constitutive Parameters Using Measured Scattering Matrix,” IEEE International Symposium on Antennas and Propagation, Boston, Massachusetts, Jul. 2018.
 Attorney, Agent or Firm:
 U S ARMY RESEARCH LABORATORY
-Inventors: not listed by this source; see the USPTO scan
+Inventors: Amir I. Zaghloul; Quang Minh Nguyen; Eric D. Adler
+  (not listed by FreePatentsOnline; taken from the pre-grant publication
+   US 2022/0192066 A1, same application 17/123,902)
 
 === ABSTRACT ===
 
