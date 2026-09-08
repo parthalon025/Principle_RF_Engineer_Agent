@@ -985,15 +985,16 @@ def grid_gap_loss_tangent(eps_r: float, tan_delta: float) -> float:
 # it comes from the arXiv LaTeX source. See
 # docs/costa-thin-spacer-correction.md.
 
-THIN_SPACER_PREFACTOR_FORMS = ("eps0", "eps0_epsr")
+COSTA_EQ10_FORMS = ("eps0", "eps0_epsr")
 """The two published statements of Costa eq (10). See #234.
 
-Each name is a whole form -- prefactor AND composition point -- not just a
-prefactor, because the two papers differ in both. `_compose_thin_spacer_
+Each name is a whole form -- prefactor AND composition point -- because the
+two papers differ in both, which is why these are `..._FORMS` and not
+`..._PREFACTORS`. `_compose_thin_spacer_
 capacitance` is where the second half of that distinction lives.
 """
 
-COSTA_EQ10_PREFACTOR = "eps0"
+COSTA_EQ10_FORM = "eps0"
 """Which of the two forms this programme uses. Module-level, deliberately.
 
 Settling #234 is a one-line change here. It is NOT a per-call argument on
@@ -1003,16 +1004,15 @@ candidate in front of them, which is a thumb on the scale.
 """
 
 
-def _resolve_thin_spacer_prefactor(prefactor: str | None) -> str:
+def _resolve_thin_spacer_form(form: str | None) -> str:
     """`None` means the module-level selection; anything unrecognised is an
     error rather than a silent fall-back to the default."""
-    form = COSTA_EQ10_PREFACTOR if prefactor is None else prefactor
-    if form not in THIN_SPACER_PREFACTOR_FORMS:
+    resolved = COSTA_EQ10_FORM if form is None else form
+    if resolved not in COSTA_EQ10_FORMS:
         raise ValueError(
-            f"Unknown eq (10) prefactor {prefactor!r}; expected one of "
-            f"{THIN_SPACER_PREFACTOR_FORMS} (see #234)."
+            f"Unknown eq (10) form {form!r}; expected one of {COSTA_EQ10_FORMS} (see #234)."
         )
-    return form
+    return resolved
 
 
 def _compose_thin_spacer_capacitance(
@@ -1051,7 +1051,7 @@ def thin_spacer_capacitance_correction_f(
     period_m: float,
     spacer_thickness_m: float,
     eps_r: float,
-    prefactor: str | None = None,
+    form: str | None = None,
 ) -> float:
     """The extra sheet capacitance (F per square) a nearby ground plane adds.
 
@@ -1107,8 +1107,8 @@ def thin_spacer_capacitance_correction_f(
     hazard with nothing physical behind it. This is a reasoned deviation
     from a literal reading of the paper, not an oversight (#245).
 
-    `prefactor` selects between the two published forms (#234) and defaults
-    to the module-level `COSTA_EQ10_PREFACTOR`. As a bare term, the "eps0"
+    `form` selects between the two published forms (#234) and defaults
+    to the module-level `COSTA_EQ10_FORM`. As a bare term, the "eps0"
     form does not depend on `eps_r` and the "eps0_epsr" form is exactly
     `eps_r` times it -- but see above: they do not land in the same place.
     """
@@ -1116,7 +1116,7 @@ def thin_spacer_capacitance_correction_f(
     d = _require_positive_length("spacer_thickness_m", spacer_thickness_m)
     if eps_r < 1:
         raise ValueError(f"eps_r must be >= 1; got {eps_r!r}.")
-    form = _resolve_thin_spacer_prefactor(prefactor)
+    form = _resolve_thin_spacer_form(form)
     permittivity = EPS0 if form == "eps0" else EPS0 * eps_r
     log_term = -math.log1p(-math.exp(-4 * math.pi * d / p))
     return (2 * p * permittivity / math.pi) * log_term
@@ -1127,7 +1127,7 @@ def capacitive_grid_sheet_capacitance_f(
     gap_m: float,
     eps_r: float,
     spacer_thickness_m: float | None = None,
-    prefactor: str | None = None,
+    form: str | None = None,
 ) -> float:
     """Sheet capacitance (farads per square) of a capacitive patch grid.
 
@@ -1172,7 +1172,7 @@ def capacitive_grid_sheet_capacitance_f(
         # corrected branch below would move the rounding by one bit on some
         # inputs, and "bit-for-bit unchanged" above is meant literally.
         return EPS0 * eps_eff * (2 * p / math.pi) * log_factor
-    form = _resolve_thin_spacer_prefactor(prefactor)
+    form = _resolve_thin_spacer_form(form)
     unloaded = EPS0 * (2 * p / math.pi) * log_factor
     correction = thin_spacer_capacitance_correction_f(p, spacer_thickness_m, eps_r, form)
     return _compose_thin_spacer_capacitance(unloaded, correction, eps_r, form)

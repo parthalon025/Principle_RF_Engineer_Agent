@@ -74,7 +74,7 @@ by eps_r -- because the 2021 form never meets eq (6)'s eps_eff loading. At
 #128's design point that is 9.893 GHz against 9.843 GHz, from an uncorrected
 10.000 GHz. Responses inside the thin-spacer regime carry
 `thin_spacer_prefactor_disputed`, and every response records which form
-produced it in `costa_eq10_prefactor`. Per this project's charter the model
+produced it in `costa_eq10_form`. Per this project's charter the model
 reports and proceeds; it never refuses to return a number. See
 `docs/costa-thin-spacer-correction.md`.
 """
@@ -85,9 +85,8 @@ import cmath
 import math
 from typing import Any
 
-from rf_tools import physical_bounds
+from rf_tools import calculations, physical_bounds
 from rf_tools.calculations import (
-    COSTA_EQ10_PREFACTOR,
     capacitive_grid_sheet_capacitance_f,
     grid_effective_permittivity,
     grid_gap_loss_tangent,
@@ -180,6 +179,16 @@ def patterned_sheet_impedance(
     knob, and it spans three orders of magnitude where printable film
     thickness spans about eight to one. A continuous sheet is 1 square by
     definition, so `squares` should be 1.0 when `gap_m` is None.
+
+    `spacer_thickness_m` is the grounded dielectric beneath the pattern, and
+    it is optional only because a free-standing sheet has no ground plane to
+    couple to. Supplied, it turns on Costa's eq (10) thin-spacer correction
+    inside the grid capacitance (#245): evanescent Floquet modes bouncing off
+    the ground plane store extra charge the plain grid formula does not admit,
+    which pulls the resonance down. **Omitting it on a stack that does have a
+    ground plane silently reproduces the pre-#245 bias** -- the model is then
+    reporting a resonance higher than the stack's own. `absorptivity` always
+    passes it; a direct caller must too.
     """
     _require_positive("frequency_hz", frequency_hz)
     _require_positive("sheet_resistance_ohm_sq", sheet_resistance_ohm_sq)
@@ -267,7 +276,7 @@ def absorber_band_response(
     `validity` list naming every assumption that is load-bearing for THIS
     stack. `validity` never blocks the result; it travels with it.
 
-    It also returns `costa_eq10_prefactor`: which of the two published forms
+    It also returns `costa_eq10_form`: which of the two published forms
     of Costa's thin-spacer correction produced these numbers (#234, #245).
     That is a module-level choice in `rf_tools.calculations`, not an argument
     here -- a caller free to vary it design-by-design could pick whichever
@@ -321,7 +330,7 @@ def absorber_band_response(
                     f"spacer-to-period ratio is {ratio:.3f}, below "
                     f"{THIN_SPACER_RATIO}, so Costa's eq (10) thin-spacer "
                     "correction is numerically significant here. It IS applied "
-                    f"(#245), in the '{COSTA_EQ10_PREFACTOR}' form -- Costa et "
+                    f"(#245), in the '{calculations.COSTA_EQ10_FORM}' form -- Costa et "
                     "al. 2013, arXiv:1211.1902 eq (10), prefactor 2D*eps_0/pi "
                     "substituted into the unloaded grid capacitance. The same "
                     "author publishes a second form -- Costa & Borgese 2021, "
@@ -331,17 +340,23 @@ def absorber_band_response(
                     "loaded capacitance. Which is right is unresolved (#234). "
                     "In plain terms: both papers agree extra charge builds up "
                     "between the pattern and the ground plane, and disagree by "
-                    "about half again over how much"
+                    "about half again over how much. The equation itself is "
+                    "INFERRED on CONTEXT.md's ladder, not LITERATURE-SUPPORTED: "
+                    "the 2013 form was read by eye off a 400 dpi render because "
+                    "the paper carries no machine-readable maths, and the "
+                    "original both papers cite has never been obtained. So this "
+                    "number is CALCULATED from an INFERRED input, and inherits "
+                    "the weaker rung"
                 ),
                 "costs": (
-                    "if the other form is the right one this stack resonates "
-                    "lower still, by roughly another half a per cent in "
-                    "frequency: at #128's design point an uncorrected 10.000 "
-                    "GHz becomes 9.893 GHz under this form and 9.843 GHz under "
-                    "the other, and the gap needed to hold a target frequency "
-                    "widens by about another 14 um. That is a trim to a "
-                    "geometry, not a different design -- but it is larger than "
-                    "the tolerance a printed gap is drawn to"
+                    "the gap needed to hold a target frequency widens by about "
+                    "another 14 um if the other form is the right one -- larger "
+                    "than the tolerance a printed gap is drawn to, so it "
+                    "changes the geometry that gets printed. In frequency: at "
+                    "#128's design point an uncorrected 10.000 GHz becomes "
+                    "9.893 GHz under this form and 9.843 GHz under the other. "
+                    "A trim to a geometry rather than a different design, but "
+                    "not one the drawing can absorb"
                 ),
                 "cheapest_test": (
                     "read the original both papers cite -- Tretyakov & Simovski "
@@ -412,7 +427,12 @@ def absorber_band_response(
         # #234 is a live question and settling it moves every resonance in
         # this file; a result that does not say which form it used cannot be
         # compared against one computed before or after that change.
-        "costa_eq10_prefactor": COSTA_EQ10_PREFACTOR,
+        # Read through the module, never `from ... import COSTA_EQ10_FORM`:
+        # a by-value import freezes the name at import time, so overriding
+        # the selection would move every number here while this key went on
+        # reporting the old form -- the "two runs disagree with no way to
+        # reconstruct why" failure this key exists to prevent.
+        "costa_eq10_form": calculations.COSTA_EQ10_FORM,
         "validity": validity,
         "provenance": "CALCULATED",
     }

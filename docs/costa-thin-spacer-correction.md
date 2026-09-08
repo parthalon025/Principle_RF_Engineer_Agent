@@ -462,8 +462,12 @@ is a blunder.
 - **It does not rescue the 4 mm cell.** #186 found that at `p = 4.0 mm` the gap
   the physics wants is 0.120 mm, below the floor. At `p = 4.0, d = 1.50` the
   ratio is `d/p = 0.375` — **outside** eq (10)'s regime — so the correction is
-  tiny: the required gap moves from 0.1639 mm to 0.1654 mm (`ε₀`) or 0.1682 mm
-  (`ε₀ε_r`). Still below 0.2 mm. **#186's "the feature floor sets a minimum
+  tiny: the required gap moves from 0.1639 mm to 0.1654 mm (`ε₀`) or ≈0.1661 mm
+  (`ε₀ε_r`). Still below 0.2 mm. *(The `ε₀ε_r` figure read 0.1682 mm until
+  2026-09-08: it carried the superseded ×`ε_r` scaling that §7's correction
+  note retracts. ×`ε_r/ε_eff` gives 0.1661 mm. The conclusion is unchanged —
+  both are below the floor — which is exactly why the stale number survived
+  the first pass over this document.)* **#186's "the feature floor sets a minimum
   cell size, and hence a minimum spacer thickness" finding survives intact.**
   `CALCULATED`
 

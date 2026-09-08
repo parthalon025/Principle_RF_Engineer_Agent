@@ -14,8 +14,8 @@ import math
 import pytest
 
 from rf_tools.calculations import (
-    COSTA_EQ10_PREFACTOR,
-    THIN_SPACER_PREFACTOR_FORMS,
+    COSTA_EQ10_FORM,
+    COSTA_EQ10_FORMS,
     capacitive_grid_sheet_capacitance_f,
     grid_effective_permittivity,
     grid_gap_loss_tangent,
@@ -225,7 +225,7 @@ def test_the_thin_spacer_correction_matches_the_hand_checked_anchor():
     correction is 1.4940 fF. Asserted tightly on purpose -- this is the test
     that catches a mis-transcribed sign, prefactor or exponent."""
     correction = thin_spacer_capacitance_correction_f(
-        ANCHOR_PERIOD_M, ANCHOR_SPACER_M, ANCHOR_EPS_R, prefactor="eps0"
+        ANCHOR_PERIOD_M, ANCHOR_SPACER_M, ANCHOR_EPS_R, form="eps0"
     )
     assert correction * 1e15 == pytest.approx(1.4940, rel=1e-4)
     # And the log factor it is built from, isolated from the prefactor.
@@ -242,7 +242,7 @@ def test_the_correction_is_2_2_percent_of_the_anchor_cells_capacitance():
     c0_unloaded = capacitive_grid_sheet_capacitance_f(ANCHOR_PERIOD_M, ANCHOR_GAP_M, eps_r=1.0)
     assert c0_unloaded * 1e15 == pytest.approx(68.998, rel=1e-4)
     eps0_form = thin_spacer_capacitance_correction_f(
-        ANCHOR_PERIOD_M, ANCHOR_SPACER_M, ANCHOR_EPS_R, prefactor="eps0"
+        ANCHOR_PERIOD_M, ANCHOR_SPACER_M, ANCHOR_EPS_R, form="eps0"
     )
     assert 100 * eps0_form / c0_unloaded == pytest.approx(2.165, rel=1e-3)
 
@@ -333,8 +333,8 @@ def test_both_published_prefactor_terms_are_pinned_and_the_default_is_eps0():
     second is exactly eps_r times the first; where each one lands is the
     subject of the composition tests below. Carry both; default to the
     conservative 2013 form."""
-    assert THIN_SPACER_PREFACTOR_FORMS == ("eps0", "eps0_epsr")
-    assert COSTA_EQ10_PREFACTOR == "eps0"
+    assert COSTA_EQ10_FORMS == ("eps0", "eps0_epsr")
+    assert COSTA_EQ10_FORM == "eps0"
     eps0_form = thin_spacer_capacitance_correction_f(6.0e-3, 1.5e-3, 2.9, "eps0")
     epsr_form = thin_spacer_capacitance_correction_f(6.0e-3, 1.5e-3, 2.9, "eps0_epsr")
     assert epsr_form == pytest.approx(2.9 * eps0_form, rel=1e-12)
@@ -391,8 +391,30 @@ def test_the_eps0_epsr_form_does_not_double_count_the_permittivity():
     assert actual == pytest.approx(eps_eff * c0_unloaded + epsr_term, rel=1e-12)
 
 
-def test_an_unknown_prefactor_form_is_rejected():
-    with pytest.raises(ValueError, match="prefactor"):
+def test_the_four_mm_cell_is_not_rescued_by_the_correction():
+    """#245 story 22 / #186: at `p` = 4.0 mm with a 1.50 mm spacer the ratio
+    is `d/p` = 0.375, outside the regime where eq (10) bites, so the
+    correction cannot lift the gap the physics wants (~0.164 mm) over the
+    printer's 0.2 mm feature floor. Confirmed here rather than assumed.
+
+    In plain terms -- the smaller cell still needs a gap finer than the
+    printer can draw, and carrying the correction does not change that.
+    """
+    period_m, spacer_m, eps_r = 4.0e-3, 1.50e-3, 2.9
+    assert spacer_m / period_m == pytest.approx(0.375)
+
+    gap_m = 0.1639e-3
+    uncorrected = capacitive_grid_sheet_capacitance_f(period_m, gap_m, eps_r)
+    for form in COSTA_EQ10_FORMS:
+        corrected = capacitive_grid_sheet_capacitance_f(period_m, gap_m, eps_r, spacer_m, form=form)
+        moved = (corrected - uncorrected) / uncorrected
+        # Under 1% either way: far too small to close a 0.164 -> 0.200 mm
+        # gap, which is a 22% move.
+        assert 0 < moved < 0.01, form
+
+
+def test_an_unknown_eq10_form_is_rejected():
+    with pytest.raises(ValueError, match="Unknown eq \\(10\\) form"):
         thin_spacer_capacitance_correction_f(6.0e-3, 1.5e-3, 2.9, "eps_eff")
 
 

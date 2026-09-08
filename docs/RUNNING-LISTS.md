@@ -629,7 +629,7 @@ this list.
 
 ### Found by searching for the formula rather than trusting our own recomputation (2026-09-08)
 
-40. **Costa's eq (10): the two published forms differ by `ε_r/ε_eff` = 1.487,
+43. **Costa's eq (10): the two published forms differ by `ε_r/ε_eff` = 1.487,
     not by `ε_r` = 2.9 — the "triples the bias" claim was wrong.**
     `costa-thin-spacer-correction.md` §7, #190's resolution comment, #234 and
     the #245 spec all reported the 2021 `ε₀ε_r` form as **+6.28%** capacitance
