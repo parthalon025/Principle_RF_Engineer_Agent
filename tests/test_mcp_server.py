@@ -155,6 +155,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #145 adds 1 more (advance_design_status): 80 + 1 = 81.
     #
     # arxiv-doc-builder integration adds 1 more (ingest_arxiv_paper): 81 + 1 = 82.
+    #
+    # issue #219 adds 1 more (ingest_patent, the USPTO patent/published-
+    # application fetcher): 82 + 1 = 83.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -183,6 +186,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #143: synthesize_filter_prototype
         + 1  # issue #145: advance_design_status
         + 1  # arxiv-doc-builder integration: ingest_arxiv_paper
+        + 1  # issue #219: ingest_patent
     )
     assert len(registered_names) == expected
 
@@ -198,6 +202,11 @@ def test_component_sourcing_tools_are_registered():
 def test_ingest_arxiv_paper_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "ingest_arxiv_paper" in registered_names
+
+
+def test_ingest_patent_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "ingest_patent" in registered_names
 
 
 def test_correlate_simulated_and_measured_is_registered():

@@ -31,6 +31,7 @@ from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
+from knowledge.sourcing.patent import ingest_patent as _ingest_patent
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1370,6 +1371,42 @@ def ingest_arxiv_paper(
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_patent(
+    patent_number: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+    render_page_images: bool = True,
+) -> dict:
+    """Fetch a US patent document from the USPTO and ingest it as
+    source_type='patent'. Takes either a granted patent number ("US12089385B2",
+    "12089385") or the pre-grant publication number of the same application
+    ("US 2022/0192066 A1", "20220192066") -- the same invention published at two
+    moments, often worth ingesting both. It cannot look one number up from the
+    other, and it does not search: call it once per number you have.
+    Which conversion runs depends on what is in the file, not on which number
+    you gave. Every USPTO PDF measured so far is a scan -- a photograph of the
+    page with no machine-readable text -- so the usual path hands the PDF to the
+    normal ingest pipeline, whose OCR transcribes it, and renders every page to
+    an image so the drawings can be read by eye. A PDF that does carry real text
+    is converted to Markdown two columns at a time, the way a patent is printed,
+    with the front-page fields (title, inventors, assignee, dates, application
+    number) parsed into its header; anything the page did not yield stays empty
+    rather than guessed. render_page_images=False skips the image rendering.
+    authority_rank is NOT overridden: source_type='patent' already defaults below
+    a peer-reviewed paper. A patent's CLAIMS are legal boundary-setting, never
+    design guidance. Pass supersedes_document_id to declare this a newer revision
+    of a stored document (never inferred)."""
+    return _ingest_patent(
+        patent_number,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+        render_page_images=render_page_images,
     )
 
 

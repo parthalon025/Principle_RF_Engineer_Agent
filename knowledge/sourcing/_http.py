@@ -1,9 +1,9 @@
-"""Minimal stdlib HTTP GET helper shared by this package's four thin
-ingestion clients (threegpp.py, etsi.py, fcc_ecfr.py, arxiv.py).
+"""Minimal stdlib HTTP GET helper shared by this package's five thin
+ingestion clients (threegpp.py, etsi.py, fcc_ecfr.py, arxiv.py, patent.py).
 
 Uses `urllib.request` from the standard library rather than adding a new
 HTTP dependency: `requests` is not in this project's dependency tree
-(see pyproject.toml), and none of the four sources this package talks to
+(see pyproject.toml), and none of the five sources this package talks to
 need anything beyond a plain unauthenticated GET -- confirmed individually
 per source, see each calling module's own docstring. Matches this repo's
 "improve before adding" convention of not pulling in a new third-party
@@ -18,7 +18,7 @@ _DEFAULT_TIMEOUT_S = 60
 
 # arXiv's own Terms of Use (https://info.arxiv.org/help/api/tou.html) ask
 # automated clients to send "a descriptive User-Agent string". Applied here
-# as a general good-citizen default for all four sources this package
+# as a general good-citizen default for all five sources this package
 # talks to, not just arXiv.
 _USER_AGENT = (
     "PrincipalRFEngineerAgent-knowledge-sourcing/1.0 "
