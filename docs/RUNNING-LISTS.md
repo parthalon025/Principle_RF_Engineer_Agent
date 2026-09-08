@@ -678,6 +678,79 @@ this list.
     predicts, which is a point in the 2021 form's favour rather than a coin
     flip.
 
+44. **Two of three author lists in `example3-inventor-publications.md` were
+    invented, under a label claiming they came verbatim from the patent.**
+    The doc recorded the patent's three cited absorber papers as *"Gu, Chen,
+    Zhang, Xu, Ma, Wang, Zhang & Zhao"*, *"Ghosh, Bhattacharyya, Chaurasiya &
+    Srivastava"* and *"Singh, Tyler, Zhang, Azad & Chen"*, labelled **"Cited
+    verbatim from the patent's References Cited."** Checked against Crossref's
+    publisher-deposited metadata (#246):
+
+    | Paper | Recorded | Actual |
+    |---|---|---|
+    | Gu | Gu, Chen, Zhang, Xu, Ma, Wang, Zhang & Zhao | **Gu, Barrett, Hand, Popa & Cummer** (Duke ECE) |
+    | Ghosh | …**Chaurasiya**… | …**Kaiprath**… (other three correct) |
+    | Singh | Singh, Tyler, Zhang, Azad & Chen | **Singh, Korolev, Afsar & Sonkusale** (Tufts) |
+
+    **The label was wrong twice over.** The patent prints only *"Gu et al."*,
+    *"Ghosh et al."* and *"Singh et al."* — **no author lists at all**, at
+    either `us_patent_12089385B2.txt` line 83 or line 1022. So names described
+    as cited verbatim from it could not have come from it. Titles, journals,
+    volumes, issues, pages and years were all correct; only the authors, the
+    one field the patent never supplied, were wrong.
+
+    *In plain terms: where the source said nothing, the note filled the gap in
+    and then claimed the source for it.*
+
+    **The failure is the label, not the names.** A wrong author list is a
+    nuisance; a wrong list wearing a provenance claim is a trap, because the
+    next reader has no reason to re-check it. The substituted names are
+    plausible — "Chaurasiya" is a real frequent co-author of Ghosh,
+    Bhattacharyya and Srivastava on other papers, and "Azad & Chen" are real
+    co-authors on the patent's *Grady et al., Science* reference two lines
+    away — which is exactly what makes them survive a skim.
+
+    **Blast radius, recorded because it is the argument for the rule.** The
+    error propagated into issue #246's body and was then briefed to three
+    research agents as fact. Two of them independently found it while
+    verifying their own paper. Nothing downstream depended on the names, so
+    the cost was one wasted access route — a sibling agent hunted OSTI and
+    LANL for Singh on the strength of the fabricated "Azad & Chen" Los Alamos
+    attribution, for a Tufts paper with no DOE tie.
+
+    Fixed at the claim with the wrong lists struck through and DOIs added, per
+    **ADR-0024**.
+
+45. **The patent's three cited absorber papers are cited as alternatives it
+    did *not* build, not as Example 3's source.** `example3-frequency-
+    discrepancy.md` §2.4 said they sit *"precisely where a reader would expect
+    the source of the design to be named"*, and #246 was written on that
+    premise. Read directly at `us_patent_12089385B2.txt` lines 1020–1027, the
+    citation is a generic *"See, e.g."* hung on *"In other embodiments… other
+    combinations such as electrically coupled LC resonator (ELC) and split
+    ring resonators (SRRs)"* — topologies the patent explicitly did not use —
+    one sentence after it states Example 3 is ERR-plus-wire-resonator.
+
+    *In plain terms: we read the footnote as pointing at where the design came
+    from. It was pointing at things the patent considered and didn't do.*
+
+    **The absence of Landy is unaffected and still real**; what fell is the
+    inference hung on the citations' position. #246 read all three papers
+    anyway and excluded all three on frequency and topology, so the premise
+    error cost nothing but confirmed the ticket's own stated counterweight —
+    *citation is not derivation* — which had been written in as a caution and
+    turned out to be the answer.
+
+    Two findings survive the correction and cut the other way: **all three
+    cited papers cite Landy** (Gu ref 9, Ghosh ref 3, Singh ref 1, each
+    verified by DOI), and **Gu's authors are Duke ECE — Landy's own
+    department**. The patent adopts all three *"in their entireties"*, so its
+    cited literature leads straight to Landy while its reference list omits
+    him.
+
+    Fixed at the claim in `example3-frequency-discrepancy.md` §2.4 per
+    ADR-0024. Full account: `example3-cited-absorber-papers.md`.
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
