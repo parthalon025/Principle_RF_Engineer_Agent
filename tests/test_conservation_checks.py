@@ -514,9 +514,7 @@ def test_palace_integration_specular_only_view_would_have_looked_fine():
     bad_csv = _build_grating_csv(corrupt_order1=True)
     parsed_good = parse_palace_output(good_csv)
     parsed_bad = parse_palace_output(bad_csv)
-    assert parsed_good.get("computed") is True, (
-        f"csv_text={good_csv!r} parsed={parsed_good!r}"
-    )
+    assert parsed_good.get("computed") is True, f"csv_text={good_csv!r} parsed={parsed_good!r}"
     assert parsed_bad.get("computed") is True, f"csv_text={bad_csv!r} parsed={parsed_bad!r}"
     assert "specular" in parsed_good, f"parsed_good={parsed_good!r}"
     assert "specular" in parsed_bad, f"parsed_bad={parsed_bad!r}"
