@@ -13,6 +13,7 @@ from knowledge.db import (
     write_chunk_embeddings,
 )
 from knowledge.models import ChunkDraft, Classification, DocumentDraft, SourceType
+from knowledge.provenance import default_authority_rank
 from knowledge.search import search_design_records, search_knowledge
 
 load_dotenv()
@@ -316,6 +317,38 @@ def test_search_knowledge_orders_by_authority_rank_first(cleanup_documents):
     assert doc_ids_in_order.index(high_authority["id"]) < doc_ids_in_order.index(
         low_authority["id"]
     )
+
+
+def test_search_knowledge_ranks_patent_above_partner_research(cleanup_documents):
+    """ADR-0029: partner_research must not outrank a patent. Seed one
+    partner_research chunk and one patent chunk, both at their real
+    source-type default authority ranks (not an arbitrary override, unlike
+    test_search_knowledge_orders_by_authority_rank_first above -- this test
+    is specifically about the two new/existing source-type defaults), that
+    match the same query -- the patent must sort first."""
+    partner_doc = _seed_committed_doc(
+        checksum="a9" * 32,
+        contents=["Beamforming lens array partner proposal partner proposal partner proposal."],
+        authority_rank=default_authority_rank(SourceType.PARTNER_RESEARCH),
+        source_type=SourceType.PARTNER_RESEARCH,
+    )
+    cleanup_documents.append(partner_doc["id"])
+    patent_doc = _seed_committed_doc(
+        checksum="aa" * 32,
+        contents=["Beamforming lens array."],
+        authority_rank=default_authority_rank(SourceType.PATENT),
+        source_type=SourceType.PATENT,
+    )
+    cleanup_documents.append(patent_doc["id"])
+
+    results = search_knowledge(
+        "beamforming lens array",
+        embed_local=_Spy(raises=Exception()),
+        embed_external=_Spy(raises=Exception()),
+    )
+
+    doc_ids_in_order = [r["document_id"] for r in results]
+    assert doc_ids_in_order.index(patent_doc["id"]) < doc_ids_in_order.index(partner_doc["id"])
 
 
 def test_search_knowledge_surfaces_lexical_only_match(cleanup_documents):
