@@ -359,7 +359,10 @@ PERIODIC_ABSORBER_VALIDITY: tuple[dict[str, str], ...] = (
 #
 #   * A free-standing resistive sheet has an exact closed form (a shunt Rs
 #     across free space, peak absorptance 0.5 at Rs = eta0/2 = 188.365).
-#     Meep returns A = 0.4999 there, and puts the maximum at exactly that Rs.
+#     Meep returns A = 0.4999 there, and puts the maximum at exactly that
+#     Rs. (That is the 80 px/mm, 0.2 mm sweep; the committed runner uses a
+#     coarser mesh and returns 0.4971. Both pass, and both are quoted in
+#     the document -- the difference is the sheet's own discretisation.)
 #   * A Salisbury screen (377 ohm/sq at a quarter wave over a ground plane)
 #     agrees with rf_tools/absorber.py to within 0.001 across 6-14 GHz, both
 #     peaking at 1.0000 at the design frequency.

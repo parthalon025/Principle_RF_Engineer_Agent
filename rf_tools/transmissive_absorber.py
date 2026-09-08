@@ -63,7 +63,13 @@ absorbs at most **exactly one half** of the power that hits it, and does so
 when its sheet resistance is exactly eta0/2 = 188.365 ohm/sq. This is an
 exact closed-form maximum, not an approximation, and
 docs/meep-absorber-validation.md case 1 confirms it against an FDTD solver
-(0.4999 measured against 0.5000 exact). In plain terms: a single resistive
+(0.4971 measured against 0.5000 exact, and 0.4999 on a finer mesh). Case 4
+there confirms THIS MODULE's own numbers against the same run: at Rs =
+eta0/2 the closed form below returns R = T = 0.2500 and A = 0.5000 to
+floating-point, against a full-wave 0.2899 / 0.2130 / 0.4971 -- so the two
+methods agree on the absorbed total to 0.003 and disagree on the split by
+more than ten times that, all of it the grid's doing rather than the
+model's. In plain terms: a single resistive
 film hanging in air throws away at least half the power that reaches it,
 whatever ink you print it with -- half bounces or passes, and no sheet
 resistance changes that. A requirement above 50 % needs a different
@@ -820,7 +826,9 @@ def _validity(
                     "sweep sheet resistance across a decade in this same model: "
                     "the peak will sit at eta0/2 and reach 0.5, and no value will "
                     "beat it. Confirmed independently against FDTD in "
-                    "docs/meep-absorber-validation.md case 1 (0.4999 vs 0.5000)"
+                    "docs/meep-absorber-validation.md case 1 (0.4971 from the "
+                    "committed runner, 0.4999 from a finer mesh, against an "
+                    "exact 0.5000)"
                 ),
             }
         )
