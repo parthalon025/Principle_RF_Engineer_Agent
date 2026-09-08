@@ -706,9 +706,10 @@ def parse_palace_output(csv_text: str) -> dict[str, Any]:
         return {
             "computed": False,
             "note": (
-                "no column header matched the documented Floquet mode "
-                "label 'S[P<port>(<m>,<n>)<pol>][<exc>]' (see "
+                "no column header matched the documented Floquet mode label "
+                "'S[P<port>(<m>,<n>)<pol>][<exc>]' (see "
                 "simulation/palace.py's module docstring citation) -- "
+                f"{len(header) - 1} non-frequency column(s) checked, 0 recognized -- "
                 f"header was: {header!r}"
             ),
         }
