@@ -33,6 +33,7 @@ from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
+from knowledge.sourcing.patent import ingest_patent as _ingest_patent
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
@@ -1492,6 +1493,52 @@ def ingest_fcc_rule(
         license=license,
         classification=classification,
         title=title,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_patent(
+    patent_number: str,
+    license: str,
+    classification: str,
+    related_number: str | None = None,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch a US patent grant and/or pre-grant publication by number from
+    USPTO's own print endpoint (no authentication, no registration) and
+    ingest each into the knowledge base as source_type='patent'.
+    Fetch-by-identifier only, not search -- you must already know the
+    identifier(s):
+    patent_number: a grant number (e.g. "12089385" or "US12089385B2") OR a
+    publication number (e.g. "2022/0192066" or "US20220192066A1") -- which
+    kind it is gets auto-detected.
+    related_number: optional; the SIBLING identifier of the opposite kind
+    (a publication alongside a grant, or vice versa), when you already know
+    it -- a patent number does not mechanically determine its own
+    publication number (or vice versa) without a search, which this tool
+    does not perform. Passing two numbers of the same kind raises an error.
+    Grants are routinely scanned images with no text layer; some pre-grant
+    publications are too (confirmed directly against the live endpoint,
+    contrary to the general expectation that publications are text-native)
+    -- this is handled as a normal case, not an error: a document with a
+    real text layer is extracted via two-column text extraction, one with
+    none has every page rendered to PNG (default 1200 DPI) for manual/
+    vision-based transcription instead, with the ingested text saying so
+    plainly rather than inventing body content. Bibliographic metadata
+    (title/inventors/assignee/dates) is parsed from the front page's own
+    text when one exists; fields render as unknown, not guessed, otherwise.
+    license must be the reuse terms that actually apply; this tool does not
+    assume a default. Pass supersedes_document_id to declare the
+    patent_number document (not related_number's) a newer revision of an
+    existing document (never inferred from title); omit it for a plain new,
+    independent document. Returns {"grant": ..., "publication": ...},
+    whichever was actually fetched."""
+    return _ingest_patent(
+        patent_number,
+        license=license,
+        classification=classification,
+        related_number=related_number,
         supersedes_document_id=supersedes_document_id,
     )
 

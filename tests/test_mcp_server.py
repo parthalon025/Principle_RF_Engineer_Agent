@@ -159,6 +159,8 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #215 adds 3 more (ingest_3gpp_spec, ingest_etsi_standard,
     # ingest_fcc_rule -- wiring three already-implemented sourcing clients
     # onto the tool surface): 82 + 3 = 85.
+    #
+    # issue #219 adds 1 more (ingest_patent): 85 + 1 = 86.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -188,6 +190,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #145: advance_design_status
         + 1  # arxiv-doc-builder integration: ingest_arxiv_paper
         + 3  # issue #215: ingest_3gpp_spec, ingest_etsi_standard, ingest_fcc_rule
+        + 1  # issue #219: ingest_patent
     )
     assert len(registered_names) == expected
 
@@ -298,6 +301,48 @@ def test_ingest_fcc_rule_calls_through(monkeypatch):
         "license": "Public Domain",
         "classification": "PUBLIC",
         "title": 47,
+        "supersedes_document_id": None,
+    }
+
+
+def test_ingest_patent_is_registered():
+    # issue #219: knowledge/sourcing/patent.py's ingest_patent, wired onto
+    # the MCP tool surface alongside its ingest_arxiv_paper/ingest_3gpp_spec/
+    # ingest_etsi_standard/ingest_fcc_rule siblings.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "ingest_patent" in registered_names
+
+
+def test_ingest_patent_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real fetch/parse/convert logic
+    # is exercised in tests/test_sourcing_patent.py; this only confirms the
+    # MCP wrapper forwards its arguments to knowledge.sourcing.patent.
+    captured = {}
+
+    def fake_ingest(
+        patent_number, *, license, classification, related_number, supersedes_document_id
+    ):
+        captured.update(
+            patent_number=patent_number,
+            license=license,
+            classification=classification,
+            related_number=related_number,
+            supersedes_document_id=supersedes_document_id,
+        )
+        return {"grant": {"status": "ok", "document_id": 4}, "publication": None}
+
+    monkeypatch.setattr(server, "_ingest_patent", fake_ingest)
+
+    result = server.ingest_patent(
+        "US12089385B2", license="US Government Work", classification="PUBLIC"
+    )
+
+    assert result == {"grant": {"status": "ok", "document_id": 4}, "publication": None}
+    assert captured == {
+        "patent_number": "US12089385B2",
+        "license": "US Government Work",
+        "classification": "PUBLIC",
+        "related_number": None,
         "supersedes_document_id": None,
     }
 

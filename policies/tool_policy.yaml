@@ -170,11 +170,22 @@ ingestion_auto:
   # arxiv.py's own words. There is no self-gate to categorize them under
   # here; putting them in approval_self_gated anyway, with nothing behind
   # it, would misrepresent what actually happens at call time.
+  #
+  # issue #219: ingest_patent joins the same bucket for the same reason.
+  # Its one endpoint (USPTO's image-ppubs print/downloadPdf) was confirmed
+  # directly, live, during this ticket's research to need no API key, no
+  # account, and no registration -- a real, unauthenticated PDF download,
+  # the same posture as arXiv's own API. (Google Patents was tried and
+  # rejected as a source -- it 503s to this network's IPs -- so it plays no
+  # role here either way.) Nothing about ingest_patent reads a credential
+  # or secret at call time, so, like its four siblings above, there is no
+  # self-gate to categorize it under approval_self_gated.
   - ingest_document
   - ingest_arxiv_paper
   - ingest_3gpp_spec
   - ingest_etsi_standard
   - ingest_fcc_rule
+  - ingest_patent
   - index_document
   - extract_components
   - reconcile_component_sources
