@@ -6,12 +6,21 @@ skill, and `ingest_document` -- are each stubbed, the same way
 tests/test_sourcing_arxiv.py stubs `convert_fn` and tests/test_nec2pp.py
 stubs a fake executable.
 
-The front-page fixtures below are NOT invented. They are the real output of
-`pdf_converter_lib.extract_page_content` run over the real US 2022/0192066
-A1 front sheet, trimmed to the lines each test needs -- OCR spacing damage
-("(4 3 )", "sub -w avelength", "HIGHLY - CONFORMAL") preserved exactly,
-because parsing has to survive that damage rather than a cleaned-up version
-of it.
+The two publication front-page fixtures are NOT invented: they are the real
+output of `pdf_converter_lib.extract_page_content` run over the real US
+2022/0192066 A1 front sheet, trimmed to the lines each test needs -- OCR
+spacing damage ("(4 3 )", "sub -w avelength", "HIGHLY - CONFORMAL")
+preserved exactly, because parsing has to survive that damage rather than a
+cleaned-up version of it.
+
+`GRANT_FRONT_PAGE` IS DIFFERENT AND THE DIFFERENCE MATTERS. No text-layer
+granted patent was available to extract: every USPTO-served grant measured
+during this ticket is a scan with no text at all, so there was nothing to
+copy. It is written by hand from US 12,089,385 B2's real bibliographic
+values in the layout a grant prints -- (45) Date of Patent and (73) Assignee
+where a publication prints (43) and (71). So these grant tests prove the
+parser reads the grant's INID codes; they do NOT prove it survives whatever
+a real grant's text extraction looks like, because nobody here has seen one.
 """
 
 from __future__ import annotations
@@ -103,8 +112,9 @@ ELECTROMAGNETIC SKIN CPC H05K 9/0081 ( 2013.01 )
 ( 71 ) Applicant: U.S. Army Combat Capabilities ( 2013.01 )
 """
 
-# A granted patent's front sheet uses (45) for its date and (73) for the
-# assignee where a publication uses (43) and (71).
+# Hand-written, not extracted -- see this module's docstring. A granted
+# patent's front sheet uses (45) for its date and (73) for the assignee
+# where a publication uses (43) and (71).
 GRANT_FRONT_PAGE = """( 12 ) United States Patent
 
 ( 10 ) Patent No .: US 12,089,385 B2
