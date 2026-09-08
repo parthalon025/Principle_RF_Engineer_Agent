@@ -61,7 +61,9 @@ from orchestration.design_loop import (
     advance_loop_step,
     start_design_loop,
 )
-from simulation.base import SimulatorError
+from simulation.meep import (
+    PERIODIC_ABSORBER_VALIDITY as MEEP_PERIODIC_ABSORBER_VALIDITY,
+)
 from simulation.meep import (
     periodic_absorber_capability_gaps as meep_periodic_absorber_capability_gaps,
 )
@@ -1448,61 +1450,96 @@ def test_patch_declares_nec2_and_absorber_declares_meep():
     assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
 
 
-def test_absorber_simulation_refuses_rather_than_returning_a_lossless_answer():
-    """simulation/meep.py models conductors as ideal PEC and dielectrics as
-    lossless, with no periodic boundary. A run would report that every
-    absorber absorbs nothing -- confidently wrong, not merely uncertain."""
+def test_absorber_simulation_runs_meep_with_a_periodic_cell(monkeypatch):
+    """#230/#231: the three capability gaps are closed, so the absorber path
+    now runs rather than refusing. It must reach Meep -- never NEC2 -- and it
+    must make the cell periodic, because a unit cell IS an infinite array and
+    forgetting that fails silently."""
+    captured = {}
+
+    def fake_run(geometry, characteristic_length_m, nfreq, workdir):
+        captured["geometry"] = geometry
+        return {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [9e9, 10e9], "reflectance": [0.2, 0.01]},
+        }
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", fake_run)
+
     state = start_design_loop(REQUIREMENTS)
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
     state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
-    assert state.current_step == DesignStep.SIMULATION.value
+    state = advance_loop_step(
+        state, {"geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]}, "frequency_hz": 10e9}
+    )
 
-    with pytest.raises(SimulatorError) as excinfo:
-        advance_loop_step(
-            state,
-            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
-        )
-    message = str(excinfo.value)
-    for gap in ("no_periodic_boundary", "no_lossy_dielectric", "no_resistive_sheet"):
-        assert gap in message
+    assert captured["geometry"]["periodic_axes"] == ["x", "y"]
+    result = state.decisions[-1].result
+    assert result["function"] == "run_meep_simulation"
+    # Ground-backed: nothing transmits, so every watt not reflected was
+    # dissipated. A = 1 - R is legitimate only for that reason.
+    assert result["absorption"] == pytest.approx([0.8, 0.99])
+    assert result["worst_absorption"] == pytest.approx(0.8)
+    assert state.decisions[-1].provenance == "SIMULATED"
 
 
-def test_the_absorbers_closed_form_analysis_survives_the_simulation_refusal():
-    """#111's two tiers: the fast closed form is this candidate's evidence
-    and stays recorded; what is unavailable is the confirmation above it."""
+def test_absorber_simulation_never_silently_falls_back_to_nec2(monkeypatch):
+    """The failure this whole dispatch exists to remove: quietly running the
+    wire solver on a metamaterial cell and reporting success."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError("NEC2 must never be reached for an ABSORBER")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.05]},
+        },
+    )
     state = start_design_loop(REQUIREMENTS)
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
     state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
-    analysis = state.decisions[-1]
-
-    with pytest.raises(SimulatorError):
-        advance_loop_step(
-            state,
-            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
-        )
-    # The refusal raised; it did not erase what was already established.
-    assert state.decisions[-1] is analysis
-    assert analysis.result["function"] == "absorber_band_response"
-    assert analysis.provenance == "CALCULATED"
+    state = advance_loop_step(state, {"geometry": {}, "frequency_hz": 10e9})
+    assert state.decisions[-1].result["simulator"] == "MEEP"
 
 
-def test_every_declared_capability_gap_names_cost_and_a_cheapest_test():
-    """The charter's bar for a warning: what is assumed, what it costs if
-    that is wrong, and the cheapest way to find out."""
-    gaps = meep_periodic_absorber_capability_gaps()
-    assert gaps
-    for gap in gaps:
-        assert gap["gap"] and gap["assumed"] and gap["costs"] and gap["cheapest_test"]
-
-
-def test_families_with_no_declared_adapter_still_fall_back_to_nec2():
-    """DIFFUSIVE, POLARIZATION_CONVERTER and REFLECTION_PHASE declare no
-    adapter and so keep NEC2 -- the behaviour they had before this dispatch
-    existed. That is deliberately unchanged here and deliberately not an
-    endorsement: they are periodic metasurfaces too, and NEC2 cannot express
-    one. Pointing them at MEEP_FLOQUET is #230's call to make, not a silent
-    side effect of the absorber fix."""
+def test_the_absorbers_closed_form_analysis_is_kept_alongside_the_full_wave_run(monkeypatch):
+    """#111's two tiers: the cheap closed form screens, the expensive
+    full-wave run confirms. Both stay in the trail -- the point of a
+    cross-check is that you can compare them."""
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.05]},
+        },
+    )
     state = start_design_loop(REQUIREMENTS)
-    for family in ("DIFFUSIVE", "POLARIZATION_CONVERTER", "REFLECTION_PHASE"):
-        advanced = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
-        assert _simulation_adapter_for(advanced) == "NEC2"
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(state, {"geometry": {}, "frequency_hz": 10e9})
+
+    kinds = [(d.step, d.result.get("function")) for d in state.decisions]
+    assert ("analysis", "absorber_band_response") in kinds
+    assert ("simulation", "run_meep_simulation") in kinds
+
+
+def test_no_capability_gaps_remain_and_the_survivors_are_honest_caveats():
+    """The three gaps (#230) are closed and verified against real Meep. What
+    is left is approximate rather than absent, and each survivor still owes
+    the charter's three things: what is assumed, what it costs, the cheapest
+    way to find out."""
+    assert meep_periodic_absorber_capability_gaps() == []
+    assert MEEP_PERIODIC_ABSORBER_VALIDITY
+    for entry in MEEP_PERIODIC_ABSORBER_VALIDITY:
+        assert entry["flag"] and entry["assumed"] and entry["costs"] and entry["cheapest_test"]

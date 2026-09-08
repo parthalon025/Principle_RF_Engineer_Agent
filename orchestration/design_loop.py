@@ -151,8 +151,12 @@ from rf_tools.correlation import (
 )
 from simulation.base import SimulatorError as _SimulatorError
 from simulation.meep import (
+    PERIODIC_ABSORBER_VALIDITY as _MEEP_PERIODIC_ABSORBER_VALIDITY,
+)
+from simulation.meep import (
     periodic_absorber_capability_gaps as _meep_periodic_absorber_capability_gaps,
 )
+from simulation.meep import run_meep_simulation as _run_meep_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 
 from .approval import LoopStepApprovalReceipt, OrchestrationError, check_loop_step_approval_gate
@@ -799,16 +803,42 @@ def _simulate_meep_floquet(
             "that would raise it to SIMULATED. See simulation/meep.py's "
             "periodic_absorber_capability_gaps() for how to close each one."
         )
-    # Deliberately NOT a fallback to NEC2. Once #230 closes the gaps above,
-    # this branch becomes reachable and must call Meep -- quietly running the
-    # wire solver instead would be the exact defect this dispatch exists to
-    # remove, and it would look like success.
-    raise NotImplementedError(
-        "simulation/meep.py reports no remaining capability gaps for a "
-        "periodic absorber, so this path must now call run_meep_simulation "
-        "with a Floquet unit cell (#230). Wire that call here; do not fall "
-        "back to NEC2."
+
+    _require_fields(step_input, {"geometry", "frequency_hz"}, "simulation")
+    geometry = dict(step_input["geometry"])
+    # A unit cell is periodic in the plane by definition. The caller may
+    # override, but it must not have to remember: forgetting this is the
+    # difference between an infinite surface and one lonely element, and it
+    # fails silently rather than loudly.
+    geometry.setdefault("periodic_axes", ["x", "y"])
+
+    result = _run_meep_simulation(
+        geometry=geometry,
+        characteristic_length_m=step_input.get("characteristic_length_m", 1e-3),
+        nfreq=int(step_input.get("nfreq", 1)),
+        workdir=step_input.get("workdir"),
     )
+
+    s_parameters = result.get("s_parameters") or {}
+    reflectance = s_parameters.get("reflectance") or []
+    # Ground-backed, so nothing is transmitted and every watt not reflected
+    # was dissipated. This is the ONLY reason A = 1 - R is legitimate here,
+    # and it is why the same arithmetic must not be used on a two-port cell.
+    absorption = [1.0 - float(r) for r in reflectance]
+
+    recorded = {
+        "function": "run_meep_simulation",
+        "simulator": result.get("simulator"),
+        "status": result.get("status"),
+        "frequency_hz": s_parameters.get("frequency_hz"),
+        "reflectance": reflectance,
+        "absorption": absorption,
+        "worst_absorption": min(absorption) if absorption else None,
+        "periodic_axes": geometry["periodic_axes"],
+        "validity": [dict(entry) for entry in _MEEP_PERIODIC_ABSORBER_VALIDITY],
+        "provenance": result.get("provenance", "SIMULATED"),
+    }
+    return "simulation", recorded, recorded["provenance"]
 
 
 def _simulate_nec2(

@@ -33,6 +33,9 @@ This file's tests fall into three groups:
 
 from __future__ import annotations
 
+import json
+import math
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -42,12 +45,19 @@ from simulation.base import SimulationResult, SimulatorError
 from simulation.meep import (
     _SPEED_OF_LIGHT_M_S,
     MeepSimulator,
+    _boundaries_and_k_point,
+    _build_geometry_list,
+    _conductor_medium,
     _hz_to_meep_freq,
     _import_meep,
     _m_to_meep,
     _meep_freq_to_hz,
     _primitive_to_meep,
+    _run_in_meep_interpreter,
+    conductivity_from_sheet_resistance,
     run_meep_simulation,
+    sigma_d_from_conductivity,
+    sigma_d_from_loss_tangent,
 )
 
 # ---------------------------------------------------------------------------
@@ -563,3 +573,190 @@ def test_missing_meep_keeps_the_install_message_when_meep_python_is_unset(monkey
     with pytest.raises(SimulatorError) as excinfo:
         _import_meep()
     assert "meep is not installed" in str(excinfo.value)
+
+
+# --- #230/#231: lossy materials, resistive conductors, periodic cells,
+# --- and running under an interpreter that actually has Meep --------------
+
+
+class _CapabilityFakeMeep(_MinimalFakeMeepForPrimitives):
+    """Adds the pieces the new capabilities touch: Medium's D_conductivity,
+    PML's direction, the axis constants, and mp.metal."""
+
+    X, Y, Z = "X", "Y", "Z"
+    metal = "IDEAL_PEC"
+
+    def Medium(self, epsilon=1.0, mu=1.0, D_conductivity=0.0):
+        return {"epsilon": epsilon, "mu": mu, "D_conductivity": D_conductivity}
+
+    def PML(self, thickness, direction=None):
+        return {"thickness": thickness, "direction": direction}
+
+
+def test_conductivity_conversion_matches_the_value_verified_against_real_meep():
+    """sigma_D = sigma_SI * a / (c * eps0). A 188.365 ohm/sq sheet 0.2 mm
+    thick is 26.54 S/m, which is sigma_D = 9.998 at a = 1 mm -- the value a
+    real Meep 1.34.0 run reproduced the exact 0.5 absorptance maximum at."""
+    sigma_si = conductivity_from_sheet_resistance(188.365, 0.2e-3)
+    assert sigma_si == pytest.approx(26.54, rel=1e-3)
+    assert sigma_d_from_conductivity(sigma_si, 1e-3) == pytest.approx(9.998, rel=1e-3)
+
+
+def test_loss_tangent_conversion_is_omega_times_tan_delta():
+    fcen = 0.0333  # ~10 GHz at a = 1 mm
+    assert sigma_d_from_loss_tangent(0.1, fcen) == pytest.approx(2 * math.pi * fcen * 0.1)
+    assert sigma_d_from_loss_tangent(0.0, fcen) == 0.0
+
+
+def test_sheet_resistance_without_thickness_is_refused():
+    """Ohms per square is a property of a film OF SOME THICKNESS; the
+    conductivity a solver needs is 1/(Rs*t) and cannot be formed without t."""
+    with pytest.raises(ValueError, match="thickness_m"):
+        _conductor_medium(_CapabilityFakeMeep(), {"sheet_resistance_ohm_sq": 377.0}, 1e-3)
+
+
+def test_stating_conductivity_two_ways_at_once_is_refused():
+    with pytest.raises(ValueError, match="not both"):
+        _conductor_medium(
+            _CapabilityFakeMeep(),
+            {"conductivity_s_m": 100.0, "sheet_resistance_ohm_sq": 377.0, "thickness_m": 1e-4},
+            1e-3,
+        )
+
+
+def test_a_conductor_that_states_nothing_stays_an_ideal_pec():
+    """Back-compat: every existing caller keeps mp.metal exactly as before."""
+    assert _conductor_medium(_CapabilityFakeMeep(), {"shape": "box"}, 1e-3) == "IDEAL_PEC"
+
+
+def test_a_conductor_with_sheet_resistance_becomes_a_lossy_medium():
+    medium = _conductor_medium(
+        _CapabilityFakeMeep(),
+        {"sheet_resistance_ohm_sq": 376.730313412, "thickness_m": 0.1e-3},
+        1e-3,
+    )
+    assert medium["epsilon"] == 1.0
+    assert medium["D_conductivity"] > 0
+
+
+def test_a_lossless_material_builds_exactly_the_medium_it_always_did():
+    objects = _build_geometry_list(
+        _CapabilityFakeMeep(),
+        {
+            "materials": [
+                {"shape": "box", "p1_m": [0, 0, 0], "p2_m": [1e-3, 1e-3, 1e-3], "epsilon_r": 4.4}
+            ]
+        },
+        a_m=1e-3,
+        include_conductors=False,
+    )
+    assert objects[0]["material"]["D_conductivity"] == 0.0
+
+
+def test_a_lossy_material_needs_the_band_centre_frequency():
+    with pytest.raises(ValueError, match="band-centre"):
+        _build_geometry_list(
+            _CapabilityFakeMeep(),
+            {
+                "materials": [
+                    {
+                        "shape": "box",
+                        "p1_m": [0, 0, 0],
+                        "p2_m": [1e-3, 1e-3, 1e-3],
+                        "epsilon_r": 2.9,
+                        "loss_tangent": 0.1,
+                    }
+                ]
+            },
+            a_m=1e-3,
+            include_conductors=False,
+            fcen_meep=None,
+        )
+
+
+def test_no_periodic_axes_keeps_pml_on_every_side_and_no_k_point():
+    layers, k_point = _boundaries_and_k_point(_CapabilityFakeMeep(), {}, 1.0)
+    assert len(layers) == 1 and layers[0]["direction"] is None
+    assert k_point is None
+
+
+def test_periodic_axes_put_pml_only_on_the_open_axis_and_add_a_k_point():
+    """A unit cell IS an infinite array represented by one cell. Without a
+    k_point it is simulated as a lone element between absorbing walls, and
+    the neighbour coupling that sets the resonance is simply absent."""
+    fake = _CapabilityFakeMeep()
+    layers, k_point = _boundaries_and_k_point(fake, {"periodic_axes": ["x", "y"]}, 1.0)
+    assert [layer["direction"] for layer in layers] == ["Z"]
+    assert k_point == (0.0, 0.0, 0.0)
+
+
+def test_periodic_on_every_axis_is_refused():
+    with pytest.raises(ValueError, match="no absorbing boundary"):
+        _boundaries_and_k_point(_CapabilityFakeMeep(), {"periodic_axes": ["x", "y", "z"]}, 1.0)
+
+
+def test_unknown_periodic_axis_is_refused():
+    with pytest.raises(ValueError, match="x/y/z"):
+        _boundaries_and_k_point(_CapabilityFakeMeep(), {"periodic_axes": ["w"]}, 1.0)
+
+
+def test_meep_python_pointing_elsewhere_makes_the_simulator_delegate(monkeypatch):
+    monkeypatch.setenv("MEEP_PYTHON", "/opt/conda/envs/mp/bin/python3")
+    assert MeepSimulator()._delegates_to_another_interpreter() is True
+
+
+def test_meep_python_pointing_at_this_interpreter_is_not_a_delegation(monkeypatch):
+    monkeypatch.setenv("MEEP_PYTHON", sys.executable)
+    assert MeepSimulator()._delegates_to_another_interpreter() is False
+
+
+def test_an_injected_meep_module_always_wins_over_meep_python(monkeypatch):
+    """The test seam must not start shelling out just because the
+    environment happens to name another interpreter."""
+    monkeypatch.setenv("MEEP_PYTHON", "/opt/conda/envs/mp/bin/python3")
+    assert MeepSimulator(meep_module=object())._delegates_to_another_interpreter() is False
+
+
+def test_delegating_to_a_missing_interpreter_says_so(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEEP_PYTHON", str(tmp_path / "nope" / "python3"))
+    with pytest.raises(SimulatorError, match="does not exist"):
+        _run_in_meep_interpreter(str(tmp_path / "nope" / "python3"), {}, 1e-3, 1, {}, tmp_path)
+
+
+def test_the_runner_reads_its_job_and_writes_its_result(tmp_path):
+    """Exercise the subprocess mechanics against a fake interpreter, the way
+    tests/test_gprmax.py does for GPRMAX_PYTHON. The physics is not run here
+    -- the point is that the job crosses the boundary and the result comes
+    back."""
+    fake_interpreter = tmp_path / "fake_python"
+    fake_interpreter.write_text(
+        "#!/bin/sh\n"
+        'python3 -c "import json,sys; '
+        "json.dump({'reflectance':[0.25],'frequency_hz':[1e10]}, open(sys.argv[2],'w'))\" "
+        '"$2" "$3"\n'
+    )
+    fake_interpreter.chmod(0o755)
+
+    result = _run_in_meep_interpreter(
+        str(fake_interpreter), {"cell_size_m": [1, 1, 1]}, 1e-3, 1, {}, tmp_path
+    )
+    assert result == {"reflectance": [0.25], "frequency_hz": [1e10]}
+    # The job really did cross the boundary as a file.
+    assert (tmp_path / "_meep_job.json").exists()
+    assert json.loads((tmp_path / "_meep_job.json").read_text())["a_m"] == 1e-3
+
+
+def test_a_runner_that_exits_nonzero_surfaces_its_stderr(tmp_path):
+    failing = tmp_path / "failing_python"
+    failing.write_text("#!/bin/sh\necho 'meep exploded' >&2\nexit 3\n")
+    failing.chmod(0o755)
+    with pytest.raises(SimulatorError, match="meep exploded"):
+        _run_in_meep_interpreter(str(failing), {}, 1e-3, 1, {}, tmp_path)
+
+
+def test_a_runner_that_exits_clean_but_writes_nothing_is_an_error(tmp_path):
+    silent = tmp_path / "silent_python"
+    silent.write_text("#!/bin/sh\nexit 0\n")
+    silent.chmod(0o755)
+    with pytest.raises(SimulatorError, match="wrote no result"):
+        _run_in_meep_interpreter(str(silent), {}, 1e-3, 1, {}, tmp_path)

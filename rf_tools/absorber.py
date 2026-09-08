@@ -104,28 +104,52 @@ def grounded_slab_impedance(
 def patterned_sheet_impedance(
     frequency_hz: float,
     period_m: float,
-    gap_m: float,
+    gap_m: float | None,
     eps_r: float,
     tan_delta: float,
     sheet_resistance_ohm_sq: float,
     squares: float,
 ) -> complex:
-    """Impedance of the printed patterned layer: its own resistance in
-    series with the capacitance of the gaps between neighbouring elements.
+    """Impedance of the printed conductive layer.
+
+    Patterned (`gap_m` a length): the element's own resistance in series
+    with the capacitance of the gaps between neighbouring elements.
 
         Z_s = R_s * N_squares + 1 / (omega*C*tan_d_gap + j*omega*C)
+
+    Unpatterned (`gap_m=None`): a continuous sheet with no gaps anywhere,
+    so there is no gap capacitance and the layer is purely resistive.
+
+        Z_s = R_s * N_squares
+
+    `gap_m=None` is NOT the same as a very small gap, and cannot be reached
+    by shrinking one. Luukkonen's grid capacitance diverges only
+    logarithmically -- `ln(1/sin(pi*g/2p))` -- so even a 1 nm gap on a 3 mm
+    period leaves about 65 ohm of reactance at 10 GHz, enough to drag a
+    resonance a full GHz. A continuous sheet is a different structure, not
+    a limiting case, and it needs its own branch.
+
+    Found by cross-checking a Salisbury screen against a Meep FDTD run: the
+    closed form put the absorption peak at 9 GHz where Meep (and theory)
+    put it at 10. Without this branch the model could not reproduce the
+    canonical absorber at all, which also meant it could not be validated
+    against one.
 
     `squares` is how many square tiles long the current path is, which is
     what turns a printable sheet resistance into a useful one: a narrow ring
     multiplies it, a short wide bridge divides it. It is the design's loss
     knob, and it spans three orders of magnitude where printable film
-    thickness spans about eight to one.
+    thickness spans about eight to one. A continuous sheet is 1 square by
+    definition, so `squares` should be 1.0 when `gap_m` is None.
     """
     _require_positive("frequency_hz", frequency_hz)
     _require_positive("sheet_resistance_ohm_sq", sheet_resistance_ohm_sq)
     _require_positive("squares", squares)
 
     r_eff = path_resistance_from_squares(sheet_resistance_ohm_sq, squares)
+    if gap_m is None:
+        return complex(r_eff, 0.0)
+
     c_sheet = capacitive_grid_sheet_capacitance_f(period_m, gap_m, eps_r)
     tan_gap = grid_gap_loss_tangent(eps_r, tan_delta)
 
@@ -142,7 +166,7 @@ def absorptivity(
     tan_delta: float,
     thickness_m: float,
     period_m: float,
-    gap_m: float,
+    gap_m: float | None,
     sheet_resistance_ohm_sq: float,
     squares: float,
 ) -> float:
@@ -170,7 +194,7 @@ def absorber_band_response(
     tan_delta: float,
     thickness_m: float,
     period_m: float,
-    gap_m: float,
+    gap_m: float | None,
     sheet_resistance_ohm_sq: float,
     squares: float,
     points: int = 41,
