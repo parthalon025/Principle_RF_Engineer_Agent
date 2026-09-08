@@ -499,6 +499,16 @@ this list.
     separated, the other how thin a single line can be, and they were being
     used interchangeably.* They are enforced at different points in a
     design rule, so the conflation is not cosmetic. Found on #115.
+    **Landed in the document 2026-09-08** (#203, under ADR-0024): all ten
+    citations corrected. The attribution was verified first-hand against
+    PMC9184614 rather than taken from this entry — that record confirms
+    **Shao** as first author of *Nat. Commun.* **13**, 3223 (2022),
+    DOI 10.1038/s41467-022-30648-2, and confirms all three figures
+    (120 µm line width; "line gaps ranging from 3 to 30 μm"; 6260 S cm⁻¹ at
+    N = 2, rising to 6900 in low humidity). Everything in the original
+    citation except the surname was already correct. The gap-versus-width
+    half of this correction was **already** handled in the document at
+    :8, :79 and :90, and needed no change.
 
 36. **Rejected alternatives are destroyed, not merely unindexed.**
     `orchestration/tooling.py:223` hardcodes `"alternatives": []` into every
