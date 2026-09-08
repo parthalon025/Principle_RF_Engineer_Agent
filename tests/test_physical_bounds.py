@@ -558,6 +558,15 @@ def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
     The one deliberate exception is a string a test uses precisely BECAUSE it
     is invalid, which is listed rather than pattern-matched so a genuine typo
     cannot hide behind the exemption.
+
+    THE SCAN MUST SEE THE SAME TREE CI SEES. It skips `.venv`/site-packages
+    for the obvious reason, and `.claude/worktrees` for a much less obvious
+    one: a git worktree checked out INSIDE the repo puts a second copy of
+    every .py file under the scan root. That copy is at whatever commit the
+    worktree sits on, so the scan silently reads spellings that the branch
+    under test does not contain. This is not hypothetical -- it is exactly how
+    this test passed locally and failed in CI at #239: the spelling asserted
+    below had been deleted from the branch and survived only in a worktree.
     """
     import re
     from pathlib import Path
@@ -568,17 +577,25 @@ def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
 
     found: dict[str, list[str]] = {}
     for path in repo_root.rglob("*.py"):
-        if ".venv" in path.parts or "site-packages" in path.parts:
+        # See the docstring: worktrees hold a second copy of the tree at a
+        # different commit, and CI has none of them.
+        if {".venv", "site-packages", "worktrees"} & set(path.parts):
             continue
         for name in pattern.findall(path.read_text(encoding="utf-8", errors="ignore")):
             found.setdefault(name, []).append(str(path.relative_to(repo_root)))
 
     assert found, "the scan found no design_family literals at all -- it has stopped working"
-    # The two spellings this scan is known to protect. If either disappears
-    # the scan has silently narrowed, which is the failure mode that let the
-    # first miss through.
+    # Canaries: spellings that ARE in the tree and are not the canonical
+    # registry names, so if either stops being found the scan has silently
+    # narrowed -- the failure mode that let the first miss through.
+    #
+    # "reflection_phase_surface" used to be the second canary. #239 removed
+    # the last use of it: REFLECTION_PHASE declares no analysis model, so the
+    # loop can no longer be driven end to end with it and the test that did
+    # so now uses a second PATCH alias. "reflection_phase" (a non-canonical
+    # spelling still live in tests/test_design_loop.py) replaces it.
     assert "patch_antenna" in found
-    assert "reflection_phase_surface" in found
+    assert "reflection_phase" in found
 
     unresolvable = {
         name: sites
