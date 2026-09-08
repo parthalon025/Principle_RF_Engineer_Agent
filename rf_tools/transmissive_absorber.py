@@ -191,6 +191,31 @@ class GroundBackedModelMisappliedError(ValueError):
     """
 
 
+def declared_port_count(family: Any) -> int:
+    """The family's declared `port_count`, or a raise if it has none.
+
+    Deliberately NOT `getattr(family, "port_count", 1)`. A default of 1 picks
+    the one-port collapse A = 1 - R for anything that failed to say how many
+    ports it has -- which is the silent fallback every function below exists
+    to forbid, reintroduced at the one place nobody would look for it. An
+    object with no declared port count is a state to report, not to guess
+    past (issues #216, #243).
+    """
+    ports = getattr(family, "port_count", None)
+    if ports is None:
+        name = getattr(family, "name", repr(family))
+        raise GroundBackedModelMisappliedError(
+            f"Design family {name!r} declares no port_count, so which absorption "
+            "sum applies to it cannot be decided. A ground-backed surface is "
+            "port_count=1 and uses A = 1 - R; an unbacked one is port_count=2 "
+            "and uses A = 1 - R - T. Declare it in designs/design_families.py. "
+            "This is not defaulted to 1: assuming a ground plane nobody stated "
+            "is exactly how power that escaped out the back gets booked as heat "
+            "(issues #216, #243)."
+        )
+    return int(ports)
+
+
 def refuse_ground_backed_model(family: Any) -> None:
     """Refuse to run `rf_tools.absorber` against a family that transmits.
 
@@ -226,7 +251,7 @@ def refuse_ground_backed_model(family: Any) -> None:
     Returns None when the family is genuinely ground-backed.
     """
     ground_backed = bool(getattr(family, "requires_ground_plane", False))
-    ports = int(getattr(family, "port_count", 1))
+    ports = declared_port_count(family)
     if ground_backed and ports == 1:
         return None
     name = getattr(family, "name", repr(family))
@@ -282,7 +307,7 @@ def one_port_absorption(family: Any, reflectance: Sequence[float]) -> list[float
     kind no caveat can rescue, because a reader cannot tell it apart from a
     right one.
     """
-    ports = int(getattr(family, "port_count", 1))
+    ports = declared_port_count(family)
     if ports != 1:
         name = getattr(family, "name", repr(family))
         ground_backed = bool(getattr(family, "requires_ground_plane", False))
@@ -709,6 +734,14 @@ def transmissive_absorber_band_response(
 
     return {
         "function": "transmissive_absorber_band_response",
+        # Which sum produced this number, carried on the result itself (#243).
+        # The SIMULATION record states this too, but a reader may only ever see
+        # THIS one: when the full-wave step refuses, the closed-form result is
+        # what survives as the candidate's evidence, and a bare absorption
+        # figure does not say whether the power that left out the back was
+        # subtracted or counted as heat.
+        "port_count": 2,
+        "absorption_formula": "A = 1 - R - T",
         "worst_absorption": worst["absorption"],
         "worst_frequency_hz": worst["frequency_hz"],
         "reflection_at_worst": worst["reflection"],
@@ -867,9 +900,9 @@ def _validity(
                 "flag": "grid_capacitance_unvalidated",
                 "assumed": (
                     f"Luukkonen's grid capacitance represents the {gap_m * 1e3:.3f} mm "
-                    "gaps between neighbouring printed elements. Both cases this "
+                    "gaps between neighbouring printed elements. EVERY case this "
                     "programme has validated against an independent solver "
-                    "(docs/meep-absorber-validation.md) are UNIFORM sheets, which "
+                    "(docs/meep-absorber-validation.md) is a UNIFORM sheet, which "
                     "switch that term off entirely -- so the term a patterned cell "
                     "depends on is precisely the part no solver has checked here"
                 ),

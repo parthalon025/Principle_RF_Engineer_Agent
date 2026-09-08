@@ -39,12 +39,15 @@ from rf_tools.transmissive_absorber import (
     MATCHED_SHEET_RESISTANCE_OHM_SQ,
     GroundBackedModelMisappliedError,
     cascade,
+    declared_port_count,
     dielectric_slab_abcd,
+    one_port_absorption,
     refuse_ground_backed_model,
     s_parameters,
     shunt_sheet_abcd,
     stack_response,
     transmissive_absorber_band_response,
+    two_port_absorption,
 )
 
 SPEED_OF_LIGHT_M_S = 299_792_458.0
@@ -555,3 +558,77 @@ def test_the_guard_reads_the_declared_ports_not_the_family_name():
 
     with pytest.raises(GroundBackedModelMisappliedError, match="SOMETHING_NEW"):
         refuse_ground_backed_model(_Fake())
+
+
+# ---------------------------------------------------------------------------
+# A family that never said how many ports it has (code review of #243).
+# ---------------------------------------------------------------------------
+
+
+def test_a_family_with_no_declared_port_count_raises_rather_than_assuming_one():
+    """`getattr(family, "port_count", 1)` would default to the ONE-PORT
+    collapse for anything that failed to declare itself -- reintroducing the
+    exact silent fallback this module exists to forbid, at the one place
+    nobody would look for it. An undeclared port count is a state to report."""
+
+    class Undeclared:
+        name = "NEVER_SAID"
+        requires_ground_plane = False
+
+    with pytest.raises(GroundBackedModelMisappliedError) as exc:
+        declared_port_count(Undeclared())
+    message = str(exc.value)
+    assert "NEVER_SAID" in message
+    assert "port_count" in message
+    # The message must say which sum goes with which structure, or a reader
+    # cannot act on it.
+    assert "1 - R - T" in message
+
+
+def test_only_the_dangerous_direction_guards_on_port_count():
+    """The guard is deliberately asymmetric, and the asymmetry is the point.
+
+    `one_port_absorption` must know the port count, because A = 1 - R applied
+    to a surface that transmits books escaped power as heat -- it OVERSTATES,
+    and a too-high absorption number reads as success. So it refuses a family
+    that never declared itself rather than defaulting to one port.
+
+    `two_port_absorption` needs no such guard. A = 1 - R - T applied to a
+    genuinely ground-backed surface subtracts a transmitted share that is
+    structurally zero, giving exactly the same answer as A = 1 - R. The
+    two-port sum cannot flatter a candidate; there is nothing to protect
+    against, and adding a guard would be ceremony rather than safety."""
+
+    class Undeclared:
+        name = "NEVER_SAID"
+        requires_ground_plane = False
+
+    with pytest.raises(GroundBackedModelMisappliedError, match="port_count"):
+        one_port_absorption(Undeclared(), [0.2])
+
+    # The safe direction stays usable, and agrees with the one-port sum when
+    # nothing is transmitted -- which is why it needs no guard.
+    assert two_port_absorption(Undeclared(), [0.2], [0.0]) == pytest.approx([0.8])
+    assert two_port_absorption(ABSORBER, [0.2], [0.0]) == pytest.approx(
+        one_port_absorption(ABSORBER, [0.2])
+    )
+
+
+def test_the_closed_form_result_states_which_sum_produced_it():
+    """#243: the result reports the port count the arithmetic assumed. The
+    SIMULATION record does too, but this is the one a reader may be left with
+    -- when the full-wave step refuses, the closed form is what survives as
+    the candidate's evidence."""
+    r = transmissive_absorber_band_response(
+        f_low_hz=8e9,
+        f_high_hz=12e9,
+        eps_r=1.0,
+        tan_delta=0.0,
+        thickness_m=None,
+        period_m=3e-3,
+        gap_m=None,
+        sheet_resistance_ohm_sq=ETA0_OHM / 2,
+        squares=1.0,
+    )
+    assert r["port_count"] == 2
+    assert r["absorption_formula"] == "A = 1 - R - T"

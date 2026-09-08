@@ -4,7 +4,7 @@
 
 ## What changed, in one line
 
-Four reference cases have now been run against a real solver, and checked against answers that exist independently of this code — two of them through the committed adapter, and the last of those through the design loop's own two-port absorption sum as well.
+Four cases are recorded below and have been run against a real solver, checked against answers that exist independently of this code — two of them through the committed adapter, and the last of those through the design loop's own two-port absorption sum as well. Three are registered `ReferenceCase` entries (all the MEEP ones); Case 3, the conductive slab, is a check of the adapter rather than a registered case. The registry's fourth entry, the NEC2 dipole, has **not** been run — see `verification/simulator_reference_cases.py`.
 
 > **Correction to this document's first version**, which opened *"until now every simulator adapter here was tested against a hand-built fake."* **That was already false when written.** #210 had driven `simulation/palace.py` against a real compiled Palace binary and found two genuine defects (comma-vs-semicolon column labels, and `specular` returning −158 dB noise where the true reflection was −18.9 dB), recorded in [`docs/palace-floquet-validation.md`](palace-floquet-validation.md). The claim was written on a branch cut before that work merged, and the two branches could not see each other — which is the mundane cause, not an excuse for the claim.
 

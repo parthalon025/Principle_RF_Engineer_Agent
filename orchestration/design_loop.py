@@ -176,6 +176,9 @@ from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
 from rf_tools.transmissive_absorber import (
+    declared_port_count as _declared_port_count,
+)
+from rf_tools.transmissive_absorber import (
     energy_balance_violations as _energy_balance_violations,
 )
 from rf_tools.transmissive_absorber import (
@@ -1130,7 +1133,7 @@ def _require_transmission_monitor_for_two_port(family: Any, geometry: dict[str, 
     discover something already knowable from the step_input, and because the
     message can then say exactly which key to add.
     """
-    if int(getattr(family, "port_count", 1)) == 1:
+    if _declared_port_count(family) == 1:
         # One port: nothing gets through by construction, so asking for the
         # monitor would only buy solver time to confirm a structural zero.
         return
@@ -1163,7 +1166,7 @@ def _meep_absorption_for_family(family: Any, s_parameters: dict[str, Any]) -> di
     """
     reflectance = s_parameters.get("reflectance") or []
     measurement = s_parameters.get("transmittance")
-    ports = int(getattr(family, "port_count", 1))
+    ports = _declared_port_count(family)
 
     if ports == 1:
         # Ground-backed, so nothing is transmitted and every watt not

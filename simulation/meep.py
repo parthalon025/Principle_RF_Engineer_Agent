@@ -147,9 +147,14 @@ HAS ANY OF THIS BEEN RUN FOR REAL? Partly, and the parts differ:
     "verified" notes in the capability-gap and conversion sections below)
     and the optional transmission monitor (#240, which reproduced the
     closed-form reflectance AND transmittance of a resolved lossy slab to
-    within 0.005). Those runs are NOT committed as repeatable artifacts:
-    they are development checks someone did once, not a standing guarantee,
-    and nothing re-runs them. Committing one is worth doing.
+    within 0.005). Two of those checks ARE now committed as repeatable
+    artifacts and drive this adapter's public entry point through the real
+    MEEP_PYTHON subprocess handoff: verification/
+    meep_adapter_transmittance_check.py (a conductive slab, exact R and T)
+    and verification/meep_two_port_absorption_check.py (a free-standing
+    sheet, through the loop's two-port sum as well). CI runs neither -- it
+    has no solver -- so they are a standing check someone must run, not an
+    automatic one.
   - Everything else -- any geometry unlike those cases, and every API
     detail not touched by them -- rests on the primary-source citations
     above and on tests against a hand-written fake matching the subset of

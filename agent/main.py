@@ -1393,13 +1393,15 @@ def run_meep_simulation(
     scale geometry); geometry/units translation verified against MEEP's own primary
     documentation (see simulation/meep.py's module docstring for the citation), and
     the underlying physics recipe and unit conversions have been checked against a
-    real pymeep 1.34.0 install on two reference cases with known answers
-    (docs/meep-absorber-validation.md) -- but MEEP is not installed in the
-    interpreter this application runs under (no PyPI wheel, no native Windows
+    real pymeep 1.34.0 install on three reference cases with known answers
+    (docs/meep-absorber-validation.md), two of them driving THIS adapter's own path
+    end to end via verification/meep_adapter_transmittance_check.py and
+    verification/meep_two_port_absorption_check.py -- but MEEP is not installed in
+    the interpreter this application runs under (no PyPI wheel, no native Windows
     support: conda-forge only, WSL required on Windows; the Dockerfile puts it in a
     separate conda env named by MEEP_PYTHON, which this adapter shells out to), and
-    no committed artifact re-runs this adapter's own path against it, so treat a
-    result on a geometry unlike those reference cases as unverified end-to-end."""
+    CI has no solver at all, so treat a result on a geometry unlike those reference
+    cases as unverified end-to-end."""
     return _run_meep_simulation(
         geometry=geometry, characteristic_length_m=characteristic_length_m, nfreq=nfreq
     )
