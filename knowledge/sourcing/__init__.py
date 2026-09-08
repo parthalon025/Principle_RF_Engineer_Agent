@@ -8,13 +8,18 @@
 - `arxiv.py` -- arXiv preprints (`source_type='paper'`, authority rank
   explicitly overridden below the peer-reviewed default -- see
   `knowledge.provenance.arxiv_preprint_authority_rank`)
+- `patent.py` -- US granted patents and pre-grant publications from the
+  USPTO (`source_type='patent'`, issue #219). No authority-rank override:
+  `patent` already carries its own lower default
+  (`knowledge.provenance.PATENT_AUTHORITY_RANK`). Fetch by number only --
+  patent *search* is not built here or anywhere in this repo.
 
-None of these four sources require API authentication -- confirmed
+None of these five sources require API authentication -- confirmed
 individually against each source's own access-terms/API documentation
 during this ticket's research, not assumed; see each module's own
 docstring for its specific citation.
 
-**IEEE Xplore is deliberately not one of these four.** It is confirmed
+**IEEE Xplore is deliberately not one of these five.** It is confirmed
 genuinely paywalled with no broad free-developer tier analogous to the
 above (IEEE's own subscriptions page,
 https://www.ieee.org/publications/subscriptions/index.html, quotes

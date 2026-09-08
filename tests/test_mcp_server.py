@@ -155,6 +155,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #145 adds 1 more (advance_design_status): 80 + 1 = 81.
     #
     # arxiv-doc-builder integration adds 1 more (ingest_arxiv_paper): 81 + 1 = 82.
+    #
+    # issue #219 adds 1 more (ingest_patent, the USPTO patent/published-
+    # application fetcher): 82 + 1 = 83.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -183,6 +186,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #143: synthesize_filter_prototype
         + 1  # issue #145: advance_design_status
         + 1  # arxiv-doc-builder integration: ingest_arxiv_paper
+        + 1  # issue #219: ingest_patent
     )
     assert len(registered_names) == expected
 
@@ -198,6 +202,11 @@ def test_component_sourcing_tools_are_registered():
 def test_ingest_arxiv_paper_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "ingest_arxiv_paper" in registered_names
+
+
+def test_ingest_patent_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "ingest_patent" in registered_names
 
 
 def test_correlate_simulated_and_measured_is_registered():
@@ -1095,7 +1104,10 @@ def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
 # directory, matching how a real Palace run would.
 # ---------------------------------------------------------------------------
 
-_FAKE_PALACE_CSV_HEADER = ["f (GHz)", "|S[P1(0,0)TE][1]| (dB)", "arg(S[P1(0,0)TE][1]) (deg.)"]
+# Palace separates the two diffraction-order indices with a SEMICOLON in its
+# CSV header cells ("S[P1(0;0)TE][1]"), not a comma -- confirmed against its
+# own published reference output, see tests/test_palace.py and issue #210.
+_FAKE_PALACE_CSV_HEADER = ["f (GHz)", "|S[P1(0;0)TE][1]| (dB)", "arg(S[P1(0;0)TE][1]) (deg.)"]
 _FAKE_PALACE_CSV_ROW = ["10.000000e+00", "-6.0206", "0.0"]
 
 
@@ -1266,7 +1278,8 @@ def test_run_palace_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["status"] == "COMPLETED"
     assert result["s_parameters"]["computed"] is True
     assert result["s_parameters"]["frequency_hz"] == pytest.approx([10e9])
-    assert "S11" in result["s_parameters"]["specular"]
+    # Key carries the polarization: Palace reports every order in both.
+    assert "S11_TE" in result["s_parameters"]["specular"]
 
 
 # ---------------------------------------------------------------------------

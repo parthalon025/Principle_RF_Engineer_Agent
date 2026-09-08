@@ -263,7 +263,11 @@ survey behind these choices.
   multiphysics EM cross-check. `simulation/elmer.py`
 - **Palace** ([awslabs/palace](https://github.com/awslabs/palace)) — full-wave FEM with
   native Floquet/periodic-port boundaries, for periodic metamaterial unit cells. Manual
-  source/binary install, no pyproject extra. `simulation/palace.py`
+  source/binary install, no pyproject extra. `simulation/palace.py`. The adapter has
+  been run end to end against a real `palace` binary and reproduces Palace's own
+  published dielectric-grating results to within 0.056 dB — see
+  [`docs/palace-floquet-validation.md`](docs/palace-floquet-validation.md), which also
+  records how Palace was built.
 - **gprMax** — ground-coupled / lossy-half-space FDTD. Needs conda plus a C compiler with
   OpenMP, then `python setup.py build && python setup.py install`; not pip-installable.
   See `simulation/gprmax.py`'s module docstring.
