@@ -318,10 +318,26 @@ retrieved in full — contains:
 Metamaterial Absorber", "Phys. Rev. Lett. 100" or "207402" appear anywhere in the retrieved
 full text of either document. `LITERATURE-SUPPORTED`.
 
-The absence is pointed rather than neutral. Paragraph [0077] cites **three** metamaterial
+~~The absence is pointed rather than neutral. Paragraph [0077] cites **three** metamaterial
 absorber papers — Gu, Ghosh and Singh — precisely where a reader would expect the source of the
-design to be named. The one paper whose numbers Example 3 reproduces digit for digit is the one
+design to be named.~~ The one paper whose numbers Example 3 reproduces digit for digit is the one
 that is not cited.
+
+> **CORRECTED 2026-09-08 (#246).** The struck sentence overstated where those citations sit.
+> Read directly at lines 1020–1027, the patent cites Gu, Ghosh and Singh in a generic
+> *"**See, e.g.**"* attached to *"**In other embodiments**, the functional inserts might also
+> include **other combinations such as electrically coupled LC resonator (ELC) and split ring
+> resonators (SRRs)**"* — topologies the patent explicitly did **not** use — one sentence after
+> stating that Example 3 is ERR-on-top plus wire-resonator-underneath. They are cited as
+> **alternatives it did not build**, not as the design's source, and the sentence closes with
+> incorporation-by-reference boilerplate.
+>
+> **The absence of Landy is unaffected and still real.** What changes is the inference that was
+> hung on the three citations' *position*. #246 read all three papers on the strength of it and
+> excluded all three — see [`example3-cited-absorber-papers.md`](./example3-cited-absorber-papers.md).
+>
+> **All three cite Landy themselves**, and Gu's authors are Duke ECE — Landy's own department —
+> so the patent's cited literature leads straight to him while its own reference list omits him.
 
 *In plain terms: the patent lists eighteen references, including three other papers about
 exactly this kind of absorber, but not the paper whose absorber it appears to have copied.*

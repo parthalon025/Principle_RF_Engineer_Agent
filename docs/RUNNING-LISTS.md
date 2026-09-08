@@ -718,6 +718,36 @@ this list.
     Fixed at the claim with the wrong lists struck through and DOIs added, per
     **ADR-0024**.
 
+45. **The patent's three cited absorber papers are cited as alternatives it
+    did *not* build, not as Example 3's source.** `example3-frequency-
+    discrepancy.md` §2.4 said they sit *"precisely where a reader would expect
+    the source of the design to be named"*, and #246 was written on that
+    premise. Read directly at `us_patent_12089385B2.txt` lines 1020–1027, the
+    citation is a generic *"See, e.g."* hung on *"In other embodiments… other
+    combinations such as electrically coupled LC resonator (ELC) and split
+    ring resonators (SRRs)"* — topologies the patent explicitly did not use —
+    one sentence after it states Example 3 is ERR-plus-wire-resonator.
+
+    *In plain terms: we read the footnote as pointing at where the design came
+    from. It was pointing at things the patent considered and didn't do.*
+
+    **The absence of Landy is unaffected and still real**; what fell is the
+    inference hung on the citations' position. #246 read all three papers
+    anyway and excluded all three on frequency and topology, so the premise
+    error cost nothing but confirmed the ticket's own stated counterweight —
+    *citation is not derivation* — which had been written in as a caution and
+    turned out to be the answer.
+
+    Two findings survive the correction and cut the other way: **all three
+    cited papers cite Landy** (Gu ref 9, Ghosh ref 3, Singh ref 1, each
+    verified by DOI), and **Gu's authors are Duke ECE — Landy's own
+    department**. The patent adopts all three *"in their entireties"*, so its
+    cited literature leads straight to Landy while its reference list omits
+    him.
+
+    Fixed at the claim in `example3-frequency-discrepancy.md` §2.4 per
+    ADR-0024. Full account: `example3-cited-absorber-papers.md`.
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
