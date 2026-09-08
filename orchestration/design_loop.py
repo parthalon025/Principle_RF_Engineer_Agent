@@ -7,20 +7,23 @@ optimization -> verification -> measurement -> correlation -> redesign
 in Phases 1-11 by CALLING INTO the real functions those tickets already
 built and tested -- not reimplementing any of them:
 
-  - ANALYSIS    dispatches on the `design_family` ARCHITECTURE recorded
-                (issue #191). ABSORBER calls rf_tools.absorber.
-                absorber_band_response -- the Costa/Luukkonen equivalent-
-                circuit stack adopted at #111 -- and is scored on the single
-                worst-absorbing frequency in the required band (#110's
-                minimax rule). EVERY OTHER family keeps
-                rf_tools.calculations.patch_resonant_frequency_hz (Phase 1)
-                exactly as before, so the dispatch is additive: PATCH uses
-                it legitimately, and a family with no analysis of its own
-                falls back to it unchanged. Before #191 the patch formula
-                ran for every family including ABSORBER, which does not
-                return a wrong number so much as a number about a different
-                device -- a resonant transmit frequency for a surface whose
-                whole job is to transmit nothing.
+  - ANALYSIS    runs the model the design family DECLARES -- its
+                `analysis_model` in designs/design_families.py (issue #239),
+                not its name. ABSORBER declares ABSORBER_BAND_RESPONSE and
+                calls rf_tools.absorber.absorber_band_response -- the
+                Costa/Luukkonen equivalent-circuit stack adopted at #111 --
+                scored on the single worst-absorbing frequency in the
+                required band (#110's minimax rule). PATCH declares
+                PATCH_RESONANT_FREQUENCY and calls
+                rf_tools.calculations.patch_resonant_frequency_hz (Phase 1).
+                Both return exactly what they returned before. A family that
+                declares no model is a reported failure here, never a
+                fall-through: #191 dispatched by comparing the family name
+                against the string "ABSORBER", so every other family --
+                including ABSORBER_TRANSMISSIVE, a surface with no ground
+                plane behind it -- silently received a patch antenna's
+                resonant transmit frequency, which is not a wrong number so
+                much as a number about a different device.
                 ONE named calculation per family, not an arbitrary callable
                 crossing the tool boundary -- same reasoning
                 optimization/rf_objectives.py's module docstring gives for
@@ -41,8 +44,13 @@ built and tested -- not reimplementing any of them:
                 separate ticket rather than decided inline here.
   - SIMULATION  dispatches on the design family's declared
                 `simulation_adapter` (issue #229; ADR-0018 declared the
-                field, nothing read it). NEC2 is the default and PATCH
-                declares it by name: simulation.nec2pp.run_nec2_simulation
+                field, nothing read it). There is no default any more
+                (issue #241): a family with no settled adapter raises,
+                naming itself and what is missing, instead of falling back
+                to NEC2 -- a thin-wire code that cannot express a periodic
+                surface at all, so the fallback was a wrong answer waiting
+                to be produced confidently. PATCH declares NEC2 by name:
+                simulation.nec2pp.run_nec2_simulation
                 (Phase 6), then (issue #101) derives VSWR/return loss from
                 that call's own feed-point impedance against an explicit
                 reference_impedance_ohms -- see _simulate_nec2's own
@@ -132,7 +140,13 @@ from enum import StrEnum
 from typing import Any
 
 from designs.design_families import (
+    UndeclaredAnalysisModelError as _UndeclaredAnalysisModelError,
+)
+from designs.design_families import (
     UnknownDesignFamilyError as _UnknownDesignFamilyError,
+)
+from designs.design_families import (
+    UnsettledSimulationAdapterError as _UnsettledSimulationAdapterError,
 )
 from designs.design_families import get_design_family as _get_design_family
 from measurement.external import record_external_measurement as _record_external_measurement
@@ -597,28 +611,85 @@ def _family_of_record(state: DesignLoopState) -> str | None:
     return decision.input.get("design_family")
 
 
+def _registry_family_of_record(state: DesignLoopState, step_name: str) -> Any:
+    """The Design family registry entry this iteration's ARCHITECTURE
+    decision named, or a raise saying why there isn't one.
+
+    A step that needs to know what KIND of device this is -- which analysis
+    to run, which solver can even pose the question -- reads it here, from
+    the registry, and never infers it from a name or a default. With no
+    ARCHITECTURE decision recorded there is no family, and therefore nothing
+    to read: that is a state to report, not to guess past (issues #239,
+    #241).
+    """
+    family_name = _family_of_record(state)
+    if family_name is None:
+        raise DesignLoopValidationError(
+            f"{step_name} cannot proceed: this iteration has recorded no "
+            "ARCHITECTURE decision, so no design_family has been named and there "
+            "is nothing to read a model or a solver off. Record the ARCHITECTURE "
+            "decision (which states design_family) before this step. The loop "
+            "never picks a family itself -- CONTEXT.md: selection stays "
+            "human-authored."
+        )
+    try:
+        return _get_design_family(family_name)
+    except _UnknownDesignFamilyError as exc:
+        # Unreachable in a normal loop -- ARCHITECTURE validates the name at
+        # the step that stated it -- but a hand-assembled state can reach
+        # here, and a named wrong family is still better than a silent one.
+        raise DesignLoopValidationError(str(exc)) from exc
+
+
 def _handle_analysis(
     state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    """Dispatch ANALYSIS on the design family ARCHITECTURE recorded.
+    """Run the analysis the design family DECLARES (issue #239).
 
-    Issue #191: this step used to compute a patch-antenna resonant
-    frequency for EVERY family, including an absorber, whose designed
-    behaviour is dissipation rather than resonant radiation. A patch
-    formula applied to an absorber does not return a wrong number -- it
-    returns a number about a different device. In plain terms: it was
-    answering "what frequency does this antenna transmit at?" for a
-    surface whose entire job is to transmit nothing.
+    Issue #191 first split this step in two, but it chose between the halves
+    by comparing the family's NAME against the single string "ABSORBER":
+    everything else got the patch-antenna resonant-frequency formula,
+    whether or not it was a patch antenna. That is how ABSORBER_TRANSMISSIVE
+    (#216) came to be analysed as a transmitting antenna the moment it was
+    created -- its name simply is not the word "ABSORBER". In plain terms:
+    the loop was reading the label on the box to decide which instrument to
+    reach for.
 
-    ABSORBER gets the equivalent-circuit absorption model
-    (`rf_tools.absorber`, adopted at #111). Every other family keeps the
-    patch formula it had, unchanged -- PATCH legitimately, and any family
-    with no analysis of its own falling back to it exactly as before, so
-    this is additive.
+    It now reads `analysis_model` off the registry entry
+    (`designs/design_families.py`) and looks that name up in
+    `_ANALYSIS_MODELS` below. ABSORBER and PATCH declare exactly the models
+    they already ran, so both return identical results to before.
+
+    A family that declares no model raises here rather than borrowing
+    another family's. That is deliberate and is NOT the charter's "warn,
+    never block" being broken -- that rule governs withholding a candidate
+    design from a reader, and nothing is withheld here. What is refused is
+    manufacturing a number the programme cannot stand behind: an analysis
+    that answers a question about a different device produces a confidently
+    wrong number, not an uncertain one, and no warning attached to it would
+    tell a reader which it was.
     """
-    if _family_of_record(state) == "ABSORBER":
-        return _handle_analysis_absorber(step_input)
-    return _handle_analysis_patch(step_input)
+    family = _registry_family_of_record(state, "analysis")
+    try:
+        model = family.declared_analysis_model()
+    except _UndeclaredAnalysisModelError as exc:
+        # Re-raised as this loop's own error type, message intact, the same
+        # way _handle_architecture re-raises UnknownDesignFamilyError: a
+        # caller of advance_loop_step should not have to know the registry's
+        # exception vocabulary to learn that a step could not run. The
+        # registry error stays attached as __cause__ for anyone who does.
+        raise DesignLoopValidationError(str(exc)) from exc
+    handler = _ANALYSIS_MODELS.get(model.name)
+    if handler is None:
+        raise DesignLoopValidationError(
+            f"Design family {family.name!r} declares analysis_model "
+            f"{model.name!r} ({model.function}), and this loop has no handler "
+            "wired for it. Add one to _ANALYSIS_MODELS in "
+            "orchestration/design_loop.py, or correct the declaration in "
+            "designs/design_families.py -- running a different family's model "
+            "instead is the exact defect issue #239 removed."
+        )
+    return handler(step_input)
 
 
 def _handle_analysis_absorber(
@@ -720,29 +791,44 @@ def _handle_analysis_patch(
     return "calculation", result, "CALCULATED"
 
 
-DEFAULT_SIMULATION_ADAPTER = "NEC2"
+# The dispatch table `_handle_analysis` reads. One named calculation per
+# declared model name -- never an arbitrary callable crossing the tool
+# boundary, the same reasoning optimization/rf_objectives.py gives for wiring
+# one named objective. A family declaring a name that is not a key here is a
+# reported failure, not a fallback.
+_ANALYSIS_MODELS: dict[str, Any] = {
+    "ABSORBER_BAND_RESPONSE": _handle_analysis_absorber,
+    "PATCH_RESONANT_FREQUENCY": _handle_analysis_patch,
+}
+
+
+# There is no default simulation adapter, deliberately (issue #241). The
+# `DEFAULT_SIMULATION_ADAPTER = "NEC2"` that used to sit here caught every
+# family that declared no solver and sent it to a thin-wire method-of-moments
+# code whose entire geometry vocabulary is wires over an optional ground
+# plane. A periodic printed surface is not a hard case for NEC2 -- it is one
+# you cannot write an input file for. Nothing else in this repo needed the
+# constant, so it is gone rather than kept unused: a default nobody chose is
+# precisely what #241 removed.
 
 
 def _simulation_adapter_for(state: DesignLoopState) -> str:
-    """Which solver this iteration's design family calls for.
+    """The NAME of the solver this iteration's design family declares.
 
-    Reads `simulation_adapter` off the Design family registry entry
-    (ADR-0018 declared the field; nothing read it until #229). A family that
-    declares none, or an iteration with no ARCHITECTURE decision yet, falls
-    back to NEC2 -- the solver every family used before this dispatch
-    existed, so nothing that worked before changes behaviour.
+    Read off `simulation_adapter` in the Design family registry
+    (`designs/design_families.py`), which holds either a settled
+    `SimulationAdapter` or an explicit `UnsettledSimulationAdapter` saying
+    the question is open -- never a bare `None`, and never a default. A
+    family with no settled adapter, and an iteration that has not recorded an
+    ARCHITECTURE decision at all, both raise here naming what is missing.
     """
-    family_name = _family_of_record(state)
-    if family_name is None:
-        return DEFAULT_SIMULATION_ADAPTER
+    family = _registry_family_of_record(state, "simulation")
     try:
-        family = _get_design_family(family_name)
-    except _UnknownDesignFamilyError:
-        # ARCHITECTURE validates the name against the registry, so this is
-        # unreachable in a normal loop; falling back beats raising from a
-        # step that is not the one that named the family.
-        return DEFAULT_SIMULATION_ADAPTER
-    return family.simulation_adapter or DEFAULT_SIMULATION_ADAPTER
+        return family.declared_simulation_adapter().name
+    except _UnsettledSimulationAdapterError as exc:
+        # Re-raised as this loop's own error type with the registry's message
+        # intact, the same way _handle_architecture and _handle_analysis do.
+        raise DesignLoopValidationError(str(exc)) from exc
 
 
 def _handle_simulation(
@@ -759,14 +845,28 @@ def _handle_simulation(
     infinite repeating surface using a tool whose entire vocabulary is
     single wires.
 
-    NEC2 remains the default and PATCH keeps it by name. ABSORBER declares
-    MEEP_FLOQUET, whose handler reports honestly on what that adapter can
-    and cannot yet do.
+    PATCH declares NEC2 by name and ABSORBER declares MEEP_FLOQUET, so both
+    route exactly as they did. What changed at #241 is what happens to
+    everything else: a family with no settled adapter raises (see
+    `_simulation_adapter_for`) instead of quietly becoming a NEC2 run, and a
+    family declaring a solver this loop has no handler for is reported by
+    name below rather than answered by whichever handler happened to be
+    last. Both refusals are deliberate: a solver that cannot represent the
+    structure returns a confidently wrong number, not an uncertain one, and
+    no caveat attached to it would tell a reader which it was.
     """
     adapter = _simulation_adapter_for(state)
-    if adapter == "MEEP_FLOQUET":
-        return _simulate_meep_floquet(step_input)
-    return _simulate_nec2(step_input)
+    handler = _SIMULATION_ADAPTERS.get(adapter)
+    if handler is None:
+        raise _SimulatorError(
+            f"Design family {_family_of_record(state)!r} declares "
+            f"simulation_adapter {adapter!r}, and this loop has no handler wired "
+            f"for it -- it can drive {sorted(_SIMULATION_ADAPTERS)}. Wire one in "
+            "orchestration/design_loop.py's _SIMULATION_ADAPTERS, or correct the "
+            "declaration in designs/design_families.py. Running a different "
+            "solver instead is the exact defect issue #241 removed."
+        )
+    return handler(step_input)
 
 
 def _simulate_meep_floquet(
@@ -914,6 +1014,18 @@ def _simulate_nec2(
         "single_frequency_prediction": True,
     }
     return "simulation", result, result.get("provenance", "SIMULATED")
+
+
+# The dispatch table `_handle_simulation` reads, keyed by the adapter name a
+# family declares. Every solver this loop can actually drive is listed here
+# and nothing else runs: an adapter name with no entry is reported by name,
+# never quietly served by another solver (issue #241). Palace, for instance,
+# is implemented in simulation/palace.py and validated against a real binary
+# (#210) but has no entry yet -- so a family declaring it would be told so.
+_SIMULATION_ADAPTERS: dict[str, Any] = {
+    "NEC2": _simulate_nec2,
+    "MEEP_FLOQUET": _simulate_meep_floquet,
+}
 
 
 def _handle_optimization(

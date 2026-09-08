@@ -40,6 +40,7 @@ import pytest
 import skrf as rf
 from conftest import make_fake_executable
 
+import designs.design_families as design_families_module
 import orchestration.design_loop as design_loop_module
 from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
 from measurement.external import ExternalMeasurementError
@@ -49,7 +50,6 @@ from orchestration.approval import (
     request_loop_step_approval,
 )
 from orchestration.design_loop import (
-    DEFAULT_SIMULATION_ADAPTER,
     GATED_STEPS,
     REDESIGN_ACTIONS,
     STEP_ORDER,
@@ -61,6 +61,7 @@ from orchestration.design_loop import (
     advance_loop_step,
     start_design_loop,
 )
+from simulation.base import SimulatorError as _SimulatorError
 from simulation.meep import (
     PERIODIC_ABSORBER_VALIDITY as MEEP_PERIODIC_ABSORBER_VALIDITY,
 )
@@ -1433,13 +1434,102 @@ def test_absorber_analysis_reports_a_range_for_a_bracketed_permittivity():
     assert result["worst_absorption_low"] <= result["worst_absorption_high"]
 
 
+# --- #239: ANALYSIS dispatches on what the family DECLARES, not on its name --
+#
+# Before #239 this step compared the family's NAME against the single string
+# "ABSORBER" and handed the patch-antenna resonant-frequency formula to
+# everything else. In plain terms: it read the label on the box to decide
+# which instrument to reach for, so any family not spelled "ABSORBER" was
+# measured as though it were a transmitting antenna -- which is how
+# ABSORBER_TRANSMISSIVE (#216) came to be analysed as one the moment it was
+# created.
+
+
+_PATCH_ANALYSIS_INPUT = {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016, "l_m": 0.029}
+
+# Every family that declares no analysis model today. Each is a deliberate
+# declaration recorded in designs/design_families.py, not an omission -- see
+# that file for why each one has nothing to declare yet.
+_FAMILIES_DECLARING_NO_ANALYSIS = [
+    "ABSORBER_TRANSMISSIVE",
+    "DIFFUSIVE",
+    "POLARIZATION_CONVERTER",
+    "REFLECTION_PHASE",
+]
+
+
+@pytest.mark.parametrize("family", _FAMILIES_DECLARING_NO_ANALYSIS)
+def test_a_family_declaring_no_analysis_fails_loudly_instead_of_becoming_a_patch(family):
+    """The negative case is the whole point of #239: a family with no
+    analysis of its own must produce a recognisable, reported state, not a
+    resonant frequency for a device it is not."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(state, dict(_PATCH_ANALYSIS_INPUT))
+
+    message = str(exc.value)
+    assert family in message
+    assert "analysis_model" in message
+    assert "designs/design_families.py" in message
+    # Nothing was recorded and the loop did not move on: a refusal, not a
+    # silently wrong number.
+    assert state.current_step == DesignStep.ANALYSIS.value
+    assert all(d.step != DesignStep.ANALYSIS.value for d in state.decisions)
+
+
+def test_the_transmissive_absorbers_analysis_failure_names_the_ticket_that_will_fix_it():
+    """#239 only removes the wrong dispatch; the two-port absorption model
+    is #242. So ABSORBER_TRANSMISSIVE is EXPECTED to land on this path, and
+    the message has to say so rather than reading like an oversight."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER_TRANSMISSIVE")
+    )
+    with pytest.raises(DesignLoopValidationError, match="242"):
+        advance_loop_step(state, dict(_PATCH_ANALYSIS_INPUT))
+
+
+def test_analysis_follows_the_declared_model_even_when_the_family_name_disagrees(monkeypatch):
+    """Proof the name comparison is really gone. The registry entry this
+    ARCHITECTURE step resolves to declares the absorber model but is named
+    something else entirely, and the step_input names the family "PATCH" --
+    so the old string comparison would have run the patch formula here and
+    failed on its missing w_m/h_m/l_m. Reading the declaration instead gets
+    the absorber model."""
+    renamed = _dc_replace(design_families_module.ABSORBER, name="NOT_SPELLED_ABSORBER")
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: renamed)
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    assert state.decisions[-1].result["function"] == "absorber_band_response"
+
+
+def test_analysis_needs_an_architecture_decision_before_it_can_choose_a_model():
+    """With no ARCHITECTURE decision there is no declared family, so there is
+    nothing to read a model off. Guessing one is exactly what #239 removes."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.ANALYSIS)
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        advance_loop_step(state, dict(_PATCH_ANALYSIS_INPUT))
+
+
 # --- #229: SIMULATION dispatches on the family's declared adapter -----------
 
 
-def test_simulation_adapter_defaults_to_nec2_with_no_architecture_decision():
-    """Nothing that worked before this dispatch existed changes behaviour."""
+def test_no_architecture_decision_means_there_is_no_adapter_to_read(monkeypatch):
+    """#241: with no ARCHITECTURE decision no family has been named, so
+    nothing declares a solver. The old code answered NEC2 here -- a wire
+    solver picked by default for a design nobody had described yet."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError("NEC2 must never be reached by default")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
     state = start_design_loop(REQUIREMENTS)
-    assert _simulation_adapter_for(state) == DEFAULT_SIMULATION_ADAPTER == "NEC2"
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        _simulation_adapter_for(state)
 
 
 def test_patch_declares_nec2_and_absorber_declares_meep():
@@ -1448,6 +1538,91 @@ def test_patch_declares_nec2_and_absorber_declares_meep():
     absorber = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
     assert _simulation_adapter_for(patch) == "NEC2"
     assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
+
+
+# --- #241: an undeclared simulation adapter is a loud failure, not NEC2 -----
+#
+# NEC2 is a thin-wire method-of-moments solver: its whole geometry vocabulary
+# is wires over an optional ground plane -- no dielectrics, no sheet
+# impedance, no periodicity. A periodic surface is not a HARD case for it, it
+# is one you cannot write an input file for. So falling back to it was never
+# a conservative default; it was a wrong answer waiting to be produced
+# confidently.
+
+# Every family with no settled adapter today. Each states WHY in
+# designs/design_families.py rather than being left silently unset.
+_FAMILIES_WITH_NO_SETTLED_ADAPTER = [
+    "ABSORBER_TRANSMISSIVE",
+    "DIFFUSIVE",
+    "POLARIZATION_CONVERTER",
+    "REFLECTION_PHASE",
+]
+
+
+def _at_simulation(family: str) -> DesignLoopState:
+    """An iteration whose ARCHITECTURE named `family`, positioned at
+    SIMULATION. ANALYSIS is stepped over rather than run, because these
+    families declare no analysis either (#239) -- this test is about the
+    solver choice, not about that."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+    return _advance_to(state, DesignStep.SIMULATION)
+
+
+@pytest.mark.parametrize("family", _FAMILIES_WITH_NO_SETTLED_ADAPTER)
+def test_a_family_with_no_settled_adapter_refuses_to_simulate(family, monkeypatch):
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError(f"NEC2 must never be reached for {family}")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    state = _at_simulation(family)
+
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(
+            state,
+            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+        )
+    message = str(exc.value)
+    assert family in message
+    assert "simulation_adapter" in message
+    assert "designs/design_families.py" in message
+    assert state.current_step == DesignStep.SIMULATION.value
+    assert all(d.step != DesignStep.SIMULATION.value for d in state.decisions)
+
+
+def test_the_transmissive_absorbers_adapter_failure_names_the_ticket_that_settles_it():
+    """#243 is the ticket that gives this family MEEP_FLOQUET. Recorded in
+    the refusal so the next reader does not read it as an omission."""
+    state = _at_simulation("ABSORBER_TRANSMISSIVE")
+    with pytest.raises(DesignLoopValidationError, match="243"):
+        advance_loop_step(
+            state,
+            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+        )
+
+
+def test_a_declared_adapter_this_loop_cannot_drive_is_reported_not_routed_to_nec2(monkeypatch):
+    """The other half of the same defect: a family may declare a solver this
+    loop has no handler wired for. That must be said, not silently answered
+    by whichever handler happens to be last."""
+    palace = _dc_replace(
+        design_families_module.ABSORBER,
+        simulation_adapter=design_families_module.SimulationAdapter(
+            name="PALACE_FLOQUET", reason="a solver this loop has no handler for yet"
+        ),
+    )
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: palace)
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError("NEC2 must never stand in for an unwired adapter")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    state = _at_simulation("ABSORBER")
+    with pytest.raises(_SimulatorError, match="PALACE_FLOQUET"):
+        advance_loop_step(
+            state,
+            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+        )
 
 
 def test_absorber_simulation_runs_meep_with_a_periodic_cell(monkeypatch):

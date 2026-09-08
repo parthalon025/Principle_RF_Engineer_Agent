@@ -657,12 +657,29 @@ def test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration(
     a redesign_decision row is recorded against the family its own
     iteration's ARCHITECTURE decision actually declared, not left NULL.
 
-    This drives TWO iterations that each declare a DIFFERENT design_family
-    (an engineer abandoning one family for another between iterations) to
-    prove that carry-forward is scoped to each flush's own batch of
-    decisions -- iteration 2's redesign_decision row must show iteration
+    This drives TWO iterations that each state a DIFFERENT design_family
+    string to prove that carry-forward is scoped to each flush's own batch
+    of decisions -- iteration 2's redesign_decision row must show iteration
     2's family, never iteration 1's stale one left over from the previous,
-    already-committed flush."""
+    already-committed flush.
+
+    WHY TWO SPELLINGS OF ONE FAMILY RATHER THAN TWO FAMILIES. This test
+    used to abandon a patch for "reflection_phase_surface". Issue #239
+    stopped ANALYSIS from falling through to the patch formula for a family
+    that declares no analysis model of its own, and REFLECTION_PHASE
+    declares none -- it is designed by its per-cell reflection PHASE and no
+    closed form here returns a phase -- so the loop can no longer be driven
+    end to end with it, by design. `_drive_to_redesign_decision` also feeds
+    patch-shaped ANALYSIS inputs and a NEC2 run, which only PATCH declares.
+
+    Nothing under test is weakened by the swap: the carry-forward this
+    guards is over the design_family STRING, which `_handle_architecture`
+    records verbatim as the caller wrote it, and "patch_antenna" and
+    "microstrip_patch" are two different strings (both registry aliases of
+    PATCH). The leak #167 fixed -- iteration 1's already-flushed value
+    reappearing on iteration 2's row -- fails this test exactly as before.
+    Restoring a genuine cross-family change here needs a second family that
+    is drivable end to end, which is what issues #242/#243 are adding."""
     state = start_new_design_loop(
         "TOOL-FAMILY-ITER", "Design Family Carry-Forward Test", "A", REQUIREMENTS
     )
@@ -671,16 +688,16 @@ def test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration(
 
     state = _drive_to_redesign_decision(state, tmp_path, design_family="patch_antenna")
     iterate_input = {
-        "decision": "abandon the patch, try a reflection-phase surface instead",
-        "rationale": "patch antenna cannot meet the beam-steering requirement",
+        "decision": "abandon this patch variant, try another patch geometry instead",
+        "rationale": "the first geometry cannot meet the gain target",
         "next_action": "iterate",
     }
     state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, iterate_input)
 
-    state = _drive_to_redesign_decision(state, tmp_path, design_family="reflection_phase_surface")
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="microstrip_patch")
     accept_input = {
-        "decision": "accept the reflection-phase surface design",
-        "rationale": "meets the beam-steering requirement with margin",
+        "decision": "accept the second patch geometry",
+        "rationale": "meets the gain requirement with margin",
         "next_action": "accept_design",
     }
     state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, accept_input)
@@ -699,11 +716,11 @@ def test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration(
 
     assert _row("iter1", "architecture")["design_family"] == "patch_antenna"
     assert _row("iter1", "redesign_decision")["design_family"] == "patch_antenna"
-    assert _row("iter2", "architecture")["design_family"] == "reflection_phase_surface"
+    assert _row("iter2", "architecture")["design_family"] == "microstrip_patch"
     # The real regression this test guards: iteration 2's redesign_decision
     # must show iteration 2's OWN family, not iteration 1's already-flushed
     # "patch_antenna" leaking forward across a flush boundary.
-    assert _row("iter2", "redesign_decision")["design_family"] == "reflection_phase_surface"
+    assert _row("iter2", "redesign_decision")["design_family"] == "microstrip_patch"
 
 
 # ---------------------------------------------------------------------------
