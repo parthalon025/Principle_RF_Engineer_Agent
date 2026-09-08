@@ -96,9 +96,7 @@ def test_partner_research_ranks_above_design_record():
 
 
 def test_partner_research_default_rank_needs_no_per_document_override():
-    assert (
-        default_authority_rank(SourceType.PARTNER_RESEARCH) == PARTNER_RESEARCH_AUTHORITY_RANK
-    )
+    assert default_authority_rank(SourceType.PARTNER_RESEARCH) == PARTNER_RESEARCH_AUTHORITY_RANK
 
 
 # All four (extraction_confidence, physically_valid) combinations (ticket

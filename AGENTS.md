@@ -7,6 +7,35 @@ is for and how it must behave. It is deliberately ahead of the code in
 places. Never cite it as evidence that something is built — for that, read
 `README.md`, open the file, or check GitHub Issues.
 
+### The problem, physically
+
+Metal reflects radio waves upside down. Most external surfaces — a vehicle, an
+aircraft, a wall — are primarily conducting, and such a surface is *"reflective
+with 180-degree phase shift and zero transmission"* (US12089385B2, [0003]).
+Lay an antenna flat against it and the returning wave comes back inverted, so
+*"a planar or conformal antenna situated slightly above such surface will have
+its signal cancelled on axis"* ([0058]). The classical fix is to hold the
+antenna a quarter-wavelength clear, so the round trip adds another half
+wavelength and the cancellation becomes reinforcement — but then the standoff
+is part of the design, and the part is no longer thin.
+
+A surface engineered to reflect with **0° phase shift instead** — a magnetic
+mirror — *"produces the same full reflection with 0° phase shift, with doubling
+the signal strength"*, flat against the antenna ([0058]).
+
+*In plain terms: metal makes an antenna lying on it deaf. A surface like this
+makes it loud instead, while staying thin enough to bend around whatever it is
+stuck to.*
+
+That is one behaviour among several — absorbing, transmitting, steering,
+scattering — but it is the clearest statement of the general problem: **a host
+surface imposes whatever electromagnetic behaviour its material happens to
+have, and the job is to replace that with the behaviour the requirement asks
+for, in something thin and flexible enough to conform.** Every design this
+program proposes is an answer to that, and the trade-off is nearly always the
+same one — the behaviour you want versus the thickness, bandwidth and
+manufacturability you can afford.
+
 ### The purpose
 
 Take a stated problem or end state for an antenna and return **several

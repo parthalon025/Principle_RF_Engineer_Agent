@@ -1057,6 +1057,7 @@ def run_palace_simulation(
     sweep: dict | None = None,
     num_processes: int = 1,
     timeout_s: int = 3600,
+    solver_order: int = 1,
 ) -> dict:
     """Simulate a periodic metamaterial unit cell with Palace, a full-wave finite-element
     solver with NATIVE Floquet/periodic-boundary ports -- the only simulator in this
@@ -1070,20 +1071,28 @@ def run_palace_simulation(
     polarization/max_order overrides -- see simulation.palace.generate_palace_mesh and
     generate_palace_config for the full shape), runs it via the real `palace` binary,
     and parses port-floquet-S.csv into structured per-diffraction-order S-parameter
-    data (plus a "specular" S11/S21-style convenience view for the fundamental order).
-    Returns "SIMULATED" provenance. Embedded PEC conductor patches (a metallic
-    metasurface, as opposed to an all-dielectric grating/photonic-crystal unit cell)
-    are NOT supported in this pass -- see simulation/palace.py's module docstring.
-    Config/mesh format verified against Palace's own primary documentation and MFEM's
-    own mesh-format documentation (see simulation/palace.py's module docstring for the
-    full citation list) but NOT against a real palace binary -- none is installed in
-    this environment."""
+    data (plus a "specular" convenience view keyed "S11_TE"/"S21_TE"/... for the
+    fundamental order -- the key carries the polarization because Palace reports both,
+    and the co-polarized one is whichever matches the polarization you asked for).
+    `solver_order` is the finite-element order: 1 (Palace's own default) is fast and
+    approximate, 2 is what Palace's own worked example uses and what reproduced its
+    published answers. Returns "SIMULATED" provenance. Embedded PEC conductor patches
+    (a metallic metasurface, as opposed to an all-dielectric grating/photonic-crystal
+    unit cell) are NOT supported in this pass -- see simulation/palace.py's module
+    docstring. This adapter HAS been run end to end against a real palace binary
+    (issue #210): driving Palace's own "Floquet Ports for a Dielectric Grating"
+    example through this exact function reproduced Palace's published S-parameters to
+    within 0.056 dB and 0.91 degrees, and agreed on which diffraction orders
+    propagate. That is one all-dielectric geometry at one incidence angle, and it is
+    still a simulation agreeing with a simulation -- nothing here has been checked
+    against a bench measurement. See docs/palace-floquet-validation.md."""
     return _run_palace_simulation(
         geometry=geometry,
         frequency_hz=frequency_hz,
         sweep=sweep,
         num_processes=num_processes,
         timeout_s=timeout_s,
+        solver_order=solver_order,
     )
 
 
@@ -1502,44 +1511,34 @@ def ingest_patent(
     patent_number: str,
     license: str,
     classification: str,
-    related_number: str | None = None,
     supersedes_document_id: int | None = None,
+    render_page_images: bool = True,
 ) -> dict:
-    """Fetch a US patent grant and/or pre-grant publication by number from
-    USPTO's own print endpoint (no authentication, no registration) and
-    ingest each into the knowledge base as source_type='patent'.
-    Fetch-by-identifier only, not search -- you must already know the
-    identifier(s):
-    patent_number: a grant number (e.g. "12089385" or "US12089385B2") OR a
-    publication number (e.g. "2022/0192066" or "US20220192066A1") -- which
-    kind it is gets auto-detected.
-    related_number: optional; the SIBLING identifier of the opposite kind
-    (a publication alongside a grant, or vice versa), when you already know
-    it -- a patent number does not mechanically determine its own
-    publication number (or vice versa) without a search, which this tool
-    does not perform. Passing two numbers of the same kind raises an error.
-    Grants are routinely scanned images with no text layer; some pre-grant
-    publications are too (confirmed directly against the live endpoint,
-    contrary to the general expectation that publications are text-native)
-    -- this is handled as a normal case, not an error: a document with a
-    real text layer is extracted via two-column text extraction, one with
-    none has every page rendered to PNG (default 1200 DPI) for manual/
-    vision-based transcription instead, with the ingested text saying so
-    plainly rather than inventing body content. Bibliographic metadata
-    (title/inventors/assignee/dates) is parsed from the front page's own
-    text when one exists; fields render as unknown, not guessed, otherwise.
-    license must be the reuse terms that actually apply; this tool does not
-    assume a default. Pass supersedes_document_id to declare the
-    patent_number document (not related_number's) a newer revision of an
-    existing document (never inferred from title); omit it for a plain new,
-    independent document. Returns {"grant": ..., "publication": ...},
-    whichever was actually fetched."""
+    """Fetch a US patent document from the USPTO and ingest it as
+    source_type='patent'. Takes either a granted patent number ("US12089385B2",
+    "12089385") or the pre-grant publication number of the same application
+    ("US 2022/0192066 A1", "20220192066") -- the same invention published at two
+    moments, often worth ingesting both. It cannot look one number up from the
+    other, and it does not search: call it once per number you have.
+    Which conversion runs depends on what is in the file, not on which number
+    you gave. Every USPTO PDF measured so far is a scan -- a photograph of the
+    page with no machine-readable text -- so the usual path hands the PDF to the
+    normal ingest pipeline, whose OCR transcribes it, and renders every page to
+    an image so the drawings can be read by eye. A PDF that does carry real text
+    is converted to Markdown two columns at a time, the way a patent is printed,
+    with the front-page fields (title, inventors, assignee, dates, application
+    number) parsed into its header; anything the page did not yield stays empty
+    rather than guessed. render_page_images=False skips the image rendering.
+    authority_rank is NOT overridden: source_type='patent' already defaults below
+    a peer-reviewed paper. A patent's CLAIMS are legal boundary-setting, never
+    design guidance. Pass supersedes_document_id to declare this a newer revision
+    of a stored document (never inferred)."""
     return _ingest_patent(
         patent_number,
         license=license,
         classification=classification,
-        related_number=related_number,
         supersedes_document_id=supersedes_document_id,
+        render_page_images=render_page_images,
     )
 
 

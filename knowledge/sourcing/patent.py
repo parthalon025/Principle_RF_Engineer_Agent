@@ -1,103 +1,85 @@
-"""Thin client: US patent/publication -> knowledge base (ticket #219),
-reusing arxiv-doc-builder's generic PDF converters via the same subprocess
-seam `knowledge/sourcing/arxiv.py` established (commit 0274b42).
+"""Thin client: US patent document -> knowledge base (issue #219), converted
+via the vendored arxiv-doc-builder skill's PDF converters
+(`.claude/skills/arxiv-doc-builder`).
 
-Endpoint, verified directly against the live USPTO endpoint during this
-ticket's research (not reconstructed from memory):
+Fetch by identifier only, like every other client in this package. Patent
+*search* -- "find me patents about conformal metamaterial skins" -- is not
+built here or anywhere in this repo.
 
-    GET https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/{number}
+SOURCE, VERIFIED DIRECTLY, NOT RECONSTRUCTED FROM MEMORY
+--------------------------------------------------------
+    https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/<number>
 
-returns a grant or a pre-grant publication as `application/pdf`, HTTP 200,
-no API key, no registration -- confirmed with a real unauthenticated GET
-against both a real grant number ("12089385" -> US12089385B2) and a real
-publication number ("20220192066" -> US 2022/0192066 A1). `{number}` must
-be BARE DIGITS -- also confirmed directly: "US12089385" and "12089385" both
-return 200; "US12089385B2" (kind code attached) returns 400. This module's
-`_normalize_patent_number` always strips the "US" prefix and any trailing
-kind-code letter+digit suffix (e.g. "B2", "A1") before building the URL, so
-callers can pass a number in any of the forms a real citation uses.
+returns `application/pdf`, HTTP 200, with no API key, no account and no
+credential of any kind. Confirmed live against five documents during this
+ticket: grants 12089385 (32 pages), 11000000 (8 pages), and pre-grant
+publications 20220192066 (31 pages), 20240001234 (18 pages). `<number>` is
+bare digits: the endpoint returns HTTP 400 for "US12089385B2", which is why
+`normalize_patent_number` strips the country code and kind code before
+building the URL.
 
-Google Patents (`patents.google.com`) was tried and rejected as a source:
-it returns HTTP 503 to this network (an anti-bot response to datacenter
-IPs, not a real "not found"), confirmed directly during this ticket's
-research -- not a viable, reliably-fetchable source.
+Google Patents is NOT used and must not be added: it answers HTTP 503 to
+this network (anti-bot filtering on datacenter IP ranges), so anything built
+on it would work on a laptop and fail everywhere this project actually runs.
 
-**Scanned vs. text-layer is a per-document fact, not a per-source-type
-one -- this module routes on it, never assumes it from "grant" vs.
-"publication".** The common expectation (grants are always scanned images;
-pre-grant publications usually carry a real text layer) does NOT hold
-universally: fetching the real US12089385B2 grant AND its real pre-grant
-publication US 2022/0192066 A1 from the live endpoint above during this
-ticket's research, both came back as scanned images with pypdf/pdfplumber
-extracting ZERO characters from every page of both. So this module (like
-`.claude/skills/arxiv-doc-builder`'s own convert_paper.py LaTeX-vs-PDF
-router) detects the document's own actual character -- "does this specific
-PDF have a real text layer" -- and branches per-document, not per source
-type; a no-text-layer PDF is a NORMAL case handled without error, exactly
-as ticket #219 specifies, for a grant AND (as it turns out, sometimes) for
-a publication alike.
+EVERY USPTO PDF SAMPLED IS A SCANNED IMAGE -- AN HONEST WARNING
+---------------------------------------------------------------
+All five PDFs above come back with a **zero-character text layer**: they are
+page images produced by "USPTO PDF Builder", not digital text. That includes
+the pre-grant publications, which is worth stating plainly because it
+contradicts the reasonable assumption that a modern application publication
+is born digital. An OCR'd copy of the *same* disclosure obtained elsewhere
+(e.g. US 2022/0192066 A1 as distributed by Google's patent-image mirror)
+does carry a text layer -- 71,864 characters over 31 pages -- so the two
+kinds of document genuinely both exist; they just do not both come from this
+endpoint today.
 
-**Fetch BOTH documents where they exist, by identifier only -- never by
-search.** A caller passing only a grant number gets only the grant; a
-caller who also already knows the sibling publication number (there is no
-confirmed public, unauthenticated API to look one up from the other --
-patent SEARCH is explicitly out of scope for every client in this package,
-same as 3GPP/ETSI/FCC) passes it as `related_number` and gets both,
-ingested as two independent `source_type='patent'` documents. `patent_number`
-may itself be either a grant number or a publication number -- both are
-"a patent/publication number" per ticket #219's own phrasing -- and
-`related_number`, when given, must resolve to the *other* kind; passing two
-numbers of the same kind is a caller error (`ValueError`).
+*In plain terms: what USPTO hands back is a photograph of the patent, not
+the words of it. You can see it; a text search cannot read it until
+something transcribes it.*
 
-**Conversion seam, mirroring arxiv.py's subprocess pattern exactly, but
-through a different door.** `arxiv.py` shells out to arxiv-doc-builder's
-OWN `convert-paper` CLI (a project script). This module instead shells out
-to `knowledge/sourcing/_patent_pdf_convert.py` -- a script that lives in
-THIS package, never under `.claude/skills/arxiv-doc-builder/` (excluded
-from ruff per commit 2f8f894; never edited) -- run via `uv run --project
-.claude/skills/arxiv-doc-builder --extra pdf --no-dev` so it executes
-against that vendored project's own installed pdfplumber/pdf2image/pypdf/
-pillow stack (its `pdf` optional-dependency group) without adding any of
-those four heavy PDF libraries to THIS project's own dependencies. That
-script imports only the vendored library's document-agnostic functions --
-`pdf_converter_lib.extract_page_content` (two-column extraction with
-running-header/footer stripping -- exactly the shape a patent's body pages
-need) and `pdf_image_lib.convert_pdf_to_images` (page-to-PNG rendering) --
-and NEVER `arxiv_doc_builder.arxiv_metadata` or `pdf_converter_lib.
-convert_pdf_to_markdown`, both of which hard-code arXiv-shaped frontmatter
-(title/authors/version/DOI/journal/categories). Patent bibliographic
-metadata (number, title, assignee, inventors, dates) is parsed HERE, by
-`_parse_patent_frontmatter`, from the page-1 text `_patent_pdf_convert.py`
-hands back -- keyed on WIPO ST.9 INID field codes ((54) title, (72)
-inventors, (73) assignee, ...) every USPTO front page carries regardless of
-exact label wording -- never by touching the vendored `arxiv_metadata`
-module, which has no patent-shaped fields to offer anyway.
+This is why the route below is decided by **what the file actually
+contains**, never by whether the number is a grant or a publication:
 
-Figure/body pages of a scanned document are rendered to PNG at
-`_DEFAULT_DPI` (1200 -- ticket #219: "the original hand-authored work used
-1200 dpi for a similar case", see docs/ishape-interior-tuning.md) rather
-than transcribed: no OCR or vision call happens anywhere in this repo's
-automated ingestion path. The ingested Markdown says this plainly and lists
-every rendered image's path, so a human (or a later vision-capable session)
-can read them -- this repo's "warn, never block" charter rule, applied to a
-gap this module cannot itself close.
+  - **Text-layer route** (`TEXT_LAYER_ROUTE`). The PDF has real text. The
+    vendored `pdf_converter_lib.extract_page_content(..., is_double_column=
+    True)` reads it two columns at a time and strips running headers/footers
+    -- exactly a patent's printed layout -- and the resulting Markdown, with
+    a patent frontmatter block on top, is what gets ingested.
+  - **Scanned/vision route** (`SCANNED_VISION_ROUTE`). The PDF has no text
+    to read. Two things then happen, and both matter:
+      * the **original PDF** is handed to `ingest_document`, whose docling
+        pipeline runs OCR (`knowledge/extraction.py`, `do_ocr=True`), so the
+        document still becomes searchable text in the knowledge base; and
+      * every page, plus its two column crops, is rendered to PNG by the
+        vendored `pdf_image_lib.convert_pdf_to_images`, because OCR reads
+        prose far better than it reads a drawing sheet, and this project's
+        load-bearing numbers live in the figures. Settling one digit in
+        FIG. 11C of US12089385B2 took exactly this rendering step.
+    Rendering needs poppler installed (pdf2image shells out to it). If it is
+    missing, the ingest still happens and the failure is recorded rather
+    than raised -- warn, never block. The images are an aid to reading, not
+    the document.
 
-Authority rank: untouched. `patent` already has its own
-`PATENT_AUTHORITY_RANK` in `knowledge/provenance.py` (ticket #103); this
-module passes no `authority_rank_override`, unlike `arxiv.py`'s downgrade
-for unreviewed preprints -- a granted/published patent's rank is exactly
-what `default_authority_rank(SourceType.PATENT)` already gives it.
+NO AUTHORITY-RANK OVERRIDE IS PASSED, DELIBERATELY. Unlike
+`knowledge/sourcing/arxiv.py`, this client sets no `authority_rank_override`:
+`source_type='patent'` already defaults to `PATENT_AUTHORITY_RANK` (50) in
+`knowledge/provenance.py`, ranked below a peer-reviewed paper because a
+patent office examines for novelty and candor, not for whether a stated
+number reproduces. Passing an override here would restate that default in a
+second place, where the two could drift apart.
 
-Tool-policy category: `ingestion_auto`, alongside `ingest_arxiv_paper`/
-`ingest_3gpp_spec`/`ingest_etsi_standard`/`ingest_fcc_rule` -- justified the
-same way those four are (see `policies/tool_policy.yaml`'s own comment,
-quoted in part here): the USPTO print endpoint above needs no API key, no
-account, and no registration of any kind, confirmed directly against the
-live endpoint, the same "real, unauthenticated download" posture as
-arXiv's API -- not a credentialed third-party call like the three
-distributor lookups (`approval_self_gated`), which have their own
-independent `ALLOW_EXTERNAL_NETWORK_TOOLS` gate this module has no
-equivalent need for.
+READ A PATENT'S CLAIMS AS LEGAL TEXT, NEVER AS DESIGN GUIDANCE. Chunking is
+by text and cannot tell a claim from a worked example (see
+`knowledge/provenance.py`). This client cannot fix that and does not pretend
+to; it is repeated here because this is the module that puts patents into
+the corpus in the first place.
+
+Not gated behind ALLOW_EXTERNAL_NETWORK_TOOLS: that gate
+(`knowledge/sourcing_common.py`) exists for the three CREDENTIALED
+distributor APIs. USPTO, like this package's 3GPP/ETSI/FCC/arXiv siblings,
+needs no account or credential -- same ungated posture as those, and the
+same `ingestion_auto` category in `policies/tool_policy.yaml`.
 """
 
 from __future__ import annotations
@@ -107,6 +89,7 @@ import re
 import subprocess
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -116,322 +99,449 @@ import yaml
 from knowledge.ingest import ingest_document
 from knowledge.sourcing._http import download_bytes
 
+_USPTO_PDF_URL_BASE = "https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf"
+
 # .claude/skills/arxiv-doc-builder from this file's location:
 # knowledge/sourcing/patent.py -> knowledge/sourcing -> knowledge -> repo root.
-_ARXIV_DOC_BUILDER_DIR = (
-    Path(__file__).resolve().parents[2] / ".claude" / "skills" / "arxiv-doc-builder"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ARXIV_DOC_BUILDER_DIR = _REPO_ROOT / ".claude" / "skills" / "arxiv-doc-builder"
+_CONVERT_SCRIPT = Path(__file__).resolve().parent / "_patent_convert.py"
+
+# Same generous bound as arxiv.py's convert-paper call: enough for a cold
+# `uv sync` of the skill's environment plus a full-document pass, without
+# hanging the caller forever on a stalled subprocess.
+_PATENT_CONVERT_TIMEOUT_S = 600
+
+GRANT = "grant"
+PRE_GRANT_PUBLICATION = "pre_grant_publication"
+
+TEXT_LAYER_ROUTE = "text_layer"
+SCANNED_VISION_ROUTE = "scanned_vision"
+
+# Route threshold, in mean extracted characters per page. The gap this sits
+# in is enormous, not marginal: every USPTO-served PDF measured here scores
+# 0, and a real text layer scores ~2,300 (the OCR'd US 2022/0192066 A1:
+# 71,864 characters over 31 pages, its thinnest drawing sheet still 87 and
+# its body pages ~7,000). 100 is a fence in empty ground -- it is not
+# claiming that 99 means scanned and 101 means readable.
+#
+# The mean, not the per-page minimum, is what is tested: a patent's drawing
+# sheets carry only reference numerals even in a perfectly readable
+# document, so a per-page rule would call a good document scanned.
+_MIN_MEAN_TEXT_CHARS_PER_PAGE = 100
+
+# INID codes -- the parenthesised numbers printed on a patent's front sheet
+# (WIPO Standard ST.9), which label each bibliographic field the same way in
+# every country. These are the ones this client reads.
+_INID_TITLE = "54"
+_INID_DOCUMENT_NUMBER = "10"
+_INID_PUBLICATION_DATE = "43"  # pre-grant publication
+_INID_GRANT_DATE = "45"  # granted patent
+_INID_APPLICATION_NUMBER = "21"
+_INID_FILING_DATE = "22"
+_INID_APPLICANT = "71"
+_INID_INVENTORS = "72"
+_INID_ASSIGNEE = "73"
+_INID_ABSTRACT = "57"
+
+# A marker as it survives extraction: "( 54 )", "(43)", and -- seen for real
+# on the US 2022/0192066 A1 front sheet -- "(4 3 )", where the space fell
+# between the two digits.
+_INID_MARKER_RE = re.compile(r"\(\s*(\d)\s*(\d)\s*\)")
+
+# The printed label that follows a marker and is not part of the value.
+_INID_LABELS: dict[str, re.Pattern[str]] = {
+    _INID_DOCUMENT_NUMBER: re.compile(r"^(?:Pub|Patent)\s*\.?\s*No\s*\.?\s*:?\s*", re.I),
+    _INID_PUBLICATION_DATE: re.compile(r"^Pub\s*\.?\s*Date\s*\.?\s*:?\s*", re.I),
+    _INID_GRANT_DATE: re.compile(r"^Date\s+of\s+Patent\s*:?\s*", re.I),
+    _INID_APPLICATION_NUMBER: re.compile(r"^Appl\s*\.?\s*No\s*\.?\s*:?\s*", re.I),
+    _INID_FILING_DATE: re.compile(r"^(?:Filed|PCT\s+Filed)\s*:?\s*", re.I),
+    _INID_APPLICANT: re.compile(r"^Applicants?\s*:?\s*", re.I),
+    _INID_INVENTORS: re.compile(r"^Inventors?\s*:?\s*", re.I),
+    _INID_ASSIGNEE: re.compile(r"^Assignee\s*:?\s*", re.I),
+    _INID_ABSTRACT: re.compile(r"^ABSTRACT\s*", re.I),
+}
+
+# Fields printed on one line. Anything after that line belongs to whatever
+# comes next on the sheet, not to this field.
+_SINGLE_LINE_INIDS = frozenset(
+    {
+        _INID_DOCUMENT_NUMBER,
+        _INID_PUBLICATION_DATE,
+        _INID_GRANT_DATE,
+        _INID_APPLICATION_NUMBER,
+        _INID_FILING_DATE,
+    }
 )
 
-# Our own conversion driver -- lives beside this module, never under
-# _ARXIV_DOC_BUILDER_DIR (see this module's docstring).
-_PATENT_PDF_CONVERT_SCRIPT = Path(__file__).resolve().parent / "_patent_pdf_convert.py"
+# Section headings that end a multi-line field even though no new INID
+# marker has appeared yet.
+_SECTION_HEADINGS = (
+    "publication classification",
+    "prior publication data",
+    "related u.s. application data",
+    "foreign application priority data",
+    "references cited",
+    "field of classification search",
+    "primary examiner",
+    "assistant examiner",
+    "attorney, agent",
+)
 
-_DOWNLOAD_URL_TEMPLATE = "https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/{digits}"
+_CLAIMS_LINE_RE = re.compile(r"^\d+\s+claims\b", re.I)
 
-# Ticket #219: "the original hand-authored work used 1200 dpi for a similar
-# case" -- see docs/ishape-interior-tuning.md, which rendered US12089385B2's
-# own FIG. 7E at up to 2400 dpi to read a halftone scan numerically. 1200 is
-# this module's own default; callers needing more can override via `dpi`.
-_DEFAULT_DPI = 1200
+# A line with no letters at all is not prose. On a front sheet it is the
+# drawing bleeding into the text layer -- the real US 2022/0192066 A1
+# extraction ends its abstract with "1*1?," and "$" picked up off FIG. 1 --
+# so a multi-line field stops there rather than carrying the artifact into
+# the stored abstract.
+_HAS_LETTER_RE = re.compile(r"[A-Za-z]")
 
-# Same generous bound as arxiv.py's _CONVERT_PAPER_TIMEOUT_S -- a cold `uv
-# sync` of the pdf extra plus whatever pdfplumber/pdf2image actually takes
-# for a real multi-page patent PDF, without hanging indefinitely on a
-# runaway conversion.
-_CONVERT_TIMEOUT_S = 600
-
-# --- patent/publication number validation -----------------------------
-#
-# Mirrors arxiv_id.py's style (strict regex, canonicalize, raise ValueError
-# with an actionable message) applied to USPTO's two numbering schemes:
-#
-#   grant:       4-8 digits, e.g. "12089385" (a modern utility grant; US
-#                grant numbers crossed 8 digits in June 2018 and have never
-#                had more than 8), optionally "US"-prefixed and/or carrying
-#                a trailing kind code ("B1"/"B2"/...).
-#   publication: a 4-digit year plus a 7-digit sequence, written either
-#                slash-separated ("2022/0192066", the human-citation form)
-#                or run together ("20220192066", 11 digits total, the form
-#                the download endpoint itself accepts), optionally
-#                "US"-prefixed and/or carrying a trailing kind code
-#                ("A1"/"A2"/...).
-#
-# Design/plant/reissue-prefixed numbers ("D123456", "PP12345", "RE12345")
-# are out of scope (ticket #219's own worked examples are both modern
-# utility numbers) and are rejected cleanly: the leading letter fails the
-# "digits (and an optional single '/') only" match below.
-_NUMBER_RE = re.compile(r"^(?P<digits>[\d/]+)(?P<kind_code>[A-Z]{1,2}\d{0,2})?$")
+# Frontmatter keys promoted to their own `ingest_document` parameter rather
+# than riding along in extra_metadata -- same split arxiv.py makes.
+_PROMOTED_FRONTMATTER_KEYS = frozenset({"title", "inventors", "kind_code"})
 
 
-def normalize_patent_number(raw: str) -> tuple[str, str, str | None]:
-    """Validate and canonicalize a grant or publication number.
+class PatentNumberError(ValueError):
+    """The given identifier is not a US patent or publication number this
+    client will fetch. Raised before any network call."""
 
-    Returns ``(digits, kind, kind_code)``: `digits` is the bare numeric
-    string the download endpoint accepts (no "US" prefix, no kind code, no
-    slash); `kind` is ``"grant"`` or ``"publication"``; `kind_code` is the
-    trailing letter+digit suffix as given (e.g. ``"B2"``, ``"A1"``), or
-    ``None`` if the caller didn't include one.
 
-    Raises ``ValueError`` for anything that isn't plausibly one of the two
-    schemes above -- a sanity check against garbage/malicious input, not a
-    guarantee the number exists at USPTO.
+@dataclass(frozen=True)
+class PatentIdentifier:
+    """One US patent document, in the three forms this client needs.
+
+    `number` is bare digits, which is the only form the USPTO endpoint
+    accepts. `kind_code` is the letter-and-digit suffix that says what
+    *kind* of document it is -- "A1" a published application, "B2" a granted
+    patent that was published as an application first, "B1" one that was
+    not -- and is `None` when the caller did not supply one. `display` is the
+    conventional written form, e.g. "US12089385B2".
     """
-    if not raw or not raw.strip():
-        raise ValueError(f"not a plausible patent/publication number: {raw!r}")
 
-    cleaned = re.sub(r"\s+", "", raw.strip().upper())
-    if cleaned.startswith("US"):
-        cleaned = cleaned[2:]
+    number: str
+    kind_code: str | None
+    document_kind: str
+    display: str
 
-    m = _NUMBER_RE.match(cleaned)
-    if not m:
-        raise ValueError(
-            f"not a plausible patent/publication number: {raw!r}. Expected a "
-            "grant number (e.g. \"12089385\" or \"US12089385B2\") or a "
-            "publication number (e.g. \"2022/0192066\" or "
-            '"US20220192066A1"), optionally "US"-prefixed and/or carrying a '
-            "trailing kind code."
-        )
 
-    digits_part = m.group("digits")
-    kind_code = m.group("kind_code")
+def _digits_kind(digits: str) -> str:
+    """Grant or pre-grant publication, decided by how many digits there are.
 
-    if "/" in digits_part:
-        year, seq = digits_part.split("/", 1)
-        if len(year) != 4 or len(seq) != 7:
-            raise ValueError(
-                f"not a plausible publication number: {raw!r}. Expected "
-                'YYYY/NNNNNNN (4-digit year, 7-digit sequence, e.g. "2022/0192066").'
+    A US publication number is 11 digits -- a four-digit year followed by a
+    seven-digit serial (20220192066 is the 192,066th publication of 2022).
+    A granted US patent number is a plain running count, 7 or 8 digits at
+    today's numbers (12,089,385 was granted in 2024). Nothing else is
+    accepted, because nothing else was verified against the endpoint.
+    """
+    if len(digits) == 11:
+        year = int(digits[:4])
+        if not 2001 <= year <= 2099:
+            raise PatentNumberError(
+                f"{digits!r} looks like an 11-digit publication number but its year "
+                f"({year}) is outside 2001-2099; US pre-grant publication began in "
+                "March 2001."
             )
-        return year + seq, "publication", kind_code
-
-    if len(digits_part) == 11:
-        return digits_part, "publication", kind_code
-    if 4 <= len(digits_part) <= 8:
-        return digits_part, "grant", kind_code
-
-    raise ValueError(
-        f"not a plausible patent/publication number: {raw!r}. A bare-digit "
-        f"number of length {len(digits_part)} is neither a grant number "
-        "(4-8 digits) nor a publication number (11 digits)."
+        return PRE_GRANT_PUBLICATION
+    if len(digits) in (7, 8):
+        return GRANT
+    raise PatentNumberError(
+        f"{digits!r} is neither a 7-8 digit US grant number nor an 11-digit US "
+        "pre-grant publication number. Reissue (RE), design (D), plant (PP) and "
+        "other prefixed series are refused here because their URL form was never "
+        "verified against the USPTO endpoint -- refusing beats fetching the wrong "
+        "document."
     )
 
 
-def _download_url(digits: str) -> str:
-    return _DOWNLOAD_URL_TEMPLATE.format(digits=digits)
+def normalize_patent_number(raw: str) -> PatentIdentifier:
+    """Turn a written patent number into the parts this client needs, or
+    raise `PatentNumberError` explaining what was wrong.
 
+    Accepts the forms people actually paste: "US12089385B2",
+    "US 12,089,385 B2", "12089385", "US 2022/0192066 A1", "20220192066".
+    Separators (spaces, commas, slashes, hyphens) carry no meaning in a
+    patent number, so they are dropped.
 
-# --- INID-code bibliographic parsing (page 1 text -> patent metadata) --
-#
-# Keyed on WIPO ST.9 INID codes, which every USPTO grant/publication front
-# page carries in parentheses regardless of exact label wording ("Patent
-# No." vs "Pat. No.", "Inventors" vs "Inventor") -- a fixed-string search
-# would miss label variants; the numeric code does not vary.
-_INID_FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
-    "title": re.compile(r"\(54\)\s*(.+)"),
-    "grant_number": re.compile(r"\(10\)\s*Pat(?:ent)?\.?\s*No\.?:?\s*(.+)", re.IGNORECASE),
-    "publication_number": re.compile(
-        r"\(10\)\s*Pub(?:lication)?\.?\s*No\.?:?\s*(.+)", re.IGNORECASE
-    ),
-    "date_of_patent": re.compile(r"\(45\)\s*Date of Patent:?\s*(.+)", re.IGNORECASE),
-    "publication_date": re.compile(r"\(43\)\s*Pub(?:lication)?\.?\s*Date:?\s*(.+)", re.IGNORECASE),
-    "applicant": re.compile(r"\(71\)\s*Applicant\S*:?\s*(.+)", re.IGNORECASE),
-    "inventors": re.compile(r"\(72\)\s*Inventors?:?\s*(.+)", re.IGNORECASE),
-    "assignee": re.compile(r"\(73\)\s*Assignee:?\s*(.+)", re.IGNORECASE),
-    "appl_no": re.compile(r"\(21\)\s*Appl\.?\s*No\.?:?\s*(.+)", re.IGNORECASE),
-    "filed": re.compile(r"\(22\)\s*Filed:?\s*(.+)", re.IGNORECASE),
-}
-
-
-def _parse_patent_frontmatter(front_page_text: str) -> dict[str, str | None]:
-    """Best-effort bibliographic-field extraction from a patent/
-    publication's page-1 text (see `_INID_FIELD_PATTERNS` for the field
-    codes matched).
-
-    Approximate, not authoritative: each field is captured to the end of
-    its own text line, so a value that wraps onto a second line (a long
-    inventor list, a multi-line assignee address) is truncated at the first
-    line break -- fine as a citable provenance hint, not for legal
-    reproduction. A field absent from the text (including every field, when
-    called with `""` for a scanned PDF with no text layer at all) comes
-    back `None` rather than a guess -- "unknown stays unknown", the same
-    convention `pdf_converter_lib.extract_metadata` (vendored) already uses
-    for a PDF's own embedded title/author.
+    Validated the way `arxiv_doc_builder/arxiv_id.py` validates an arXiv ID
+    -- strictly, and *before* the network call, so a typo produces a
+    sentence rather than a wrong document. In particular a kind code that
+    disagrees with the number's own shape is refused rather than ignored:
+    "US12089385A1" claims to be a published application while carrying a
+    grant number, and one of the two is a mistake.
     """
-    result: dict[str, str | None] = dict.fromkeys(_INID_FIELD_PATTERNS)
-    for key, pattern in _INID_FIELD_PATTERNS.items():
-        found = pattern.search(front_page_text)
-        if found:
-            value = found.group(1).strip()
-            result[key] = value or None
+    if not raw or not raw.strip():
+        raise PatentNumberError("no patent number given")
+
+    compact = re.sub(r"[\s,/\-.]", "", raw.strip().upper())
+
+    country = re.match(r"^([A-Z]{2})(?=\d)", compact)
+    if country and country.group(1) != "US":
+        raise PatentNumberError(
+            f"{raw!r} names a {country.group(1)} document; this client fetches US "
+            "documents only, because the endpoint it uses is the USPTO's."
+        )
+    if country:
+        compact = compact[2:]
+
+    match = re.fullmatch(r"(\d+)([A-Z]\d?)?", compact)
+    if not match:
+        raise PatentNumberError(
+            f"not a recognizable US patent or publication number: {raw!r}. Expected "
+            'e.g. "US12089385B2", "12089385", "US 2022/0192066 A1" or "20220192066".'
+        )
+
+    digits, kind_code = match.group(1), match.group(2)
+    document_kind = _digits_kind(digits)
+
+    if kind_code:
+        expected_letter = "A" if document_kind == PRE_GRANT_PUBLICATION else "BCEHPS"
+        if kind_code[0] not in expected_letter:
+            raise PatentNumberError(
+                f"{raw!r} carries kind code {kind_code!r}, which disagrees with the "
+                f"number itself ({digits} is a {document_kind.replace('_', ' ')}). "
+                "One of the two is wrong; this client will not guess which."
+            )
+
+    display = f"US{digits}{kind_code or ''}"
+    return PatentIdentifier(
+        number=digits, kind_code=kind_code, document_kind=document_kind, display=display
+    )
+
+
+def patent_pdf_url(identifier: PatentIdentifier) -> str:
+    """The USPTO download URL for this document. Bare digits only -- the
+    endpoint answers HTTP 400 to "US12089385B2"."""
+    return f"{_USPTO_PDF_URL_BASE}/{identifier.number}"
+
+
+def choose_conversion_route(text_chars: int, page_count: int) -> str:
+    """Decide how to read this PDF, from what it actually contains.
+
+    Returns `TEXT_LAYER_ROUTE` when the document carries enough real text to
+    read directly, `SCANNED_VISION_ROUTE` when it is page images and must be
+    OCR'd and looked at instead. Pure: no I/O, so the threshold is testable
+    on its own. See `_MIN_MEAN_TEXT_CHARS_PER_PAGE` for where the line sits
+    and why it is nowhere near either population.
+    """
+    if page_count <= 0:
+        return SCANNED_VISION_ROUTE
+    return (
+        TEXT_LAYER_ROUTE
+        if text_chars / page_count >= _MIN_MEAN_TEXT_CHARS_PER_PAGE
+        else SCANNED_VISION_ROUTE
+    )
+
+
+def _tidy(text: str) -> str:
+    """Collapse whitespace and close up the space PDF extraction leaves in
+    front of punctuation ("Zaghloul , Bethesda" -> "Zaghloul, Bethesda").
+
+    Deliberately conservative. Extraction also splits words at hyphens
+    ("HIGHLY - CONFORMAL") and inside them ("sub -w avelength"), and those
+    are left exactly as they came out: repairing them means guessing which
+    spaces were never in the printed document, and a guessed title that
+    reads well is worse than a scruffy one that is verifiably what the page
+    said.
+    """
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    collapsed = re.sub(r"\s+([,;:.])", r"\1", collapsed)
+    collapsed = re.sub(r"\(\s+", "(", collapsed)
+    collapsed = re.sub(r"\s+\)", ")", collapsed)
+    return collapsed.strip()
+
+
+def _is_boundary(line: str) -> bool:
+    """Whether `line` ends the multi-line field being accumulated."""
+    stripped = line.strip()
+    lowered = stripped.lower().rstrip(".")
+    if any(lowered.startswith(heading) for heading in _SECTION_HEADINGS):
+        return True
+    if _CLAIMS_LINE_RE.match(stripped):
+        return True
+    return not _HAS_LETTER_RE.search(stripped)
+
+
+def _split_inid_fields(text: str) -> dict[str, str]:
+    """Split front-sheet text into `{INID code: raw value}`.
+
+    A value runs from the end of its own marker to the start of the next
+    one, which is what makes this work on a line like "(12) Patent
+    Application Publication (10) Pub. No.: US 2022/0192066 A1" where two
+    fields share a line. Single-line fields are then cut back to their first
+    line, and multi-line fields are cut at the first section heading, so a
+    field never swallows the block printed after it.
+
+    Later markers do not overwrite earlier ones: the first occurrence of a
+    code wins, because a front sheet prints each field once and a repeat is
+    more likely to be a stray from the drawing or the classification block.
+    """
+    fields: dict[str, str] = {}
+    matches = list(_INID_MARKER_RE.finditer(text))
+    for index, match in enumerate(matches):
+        code = match.group(1) + match.group(2)
+        if code in fields:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        raw = text[match.end() : end]
+
+        label = _INID_LABELS.get(code)
+        if label:
+            raw = label.sub("", raw.lstrip())
+
+        lines = [line for line in (ln.strip() for ln in raw.splitlines()) if line]
+        if not lines:
+            continue
+        if code in _SINGLE_LINE_INIDS:
+            lines = lines[:1]
+        else:
+            kept: list[str] = []
+            for line in lines:
+                if _is_boundary(line):
+                    break
+                kept.append(line)
+            lines = kept
+        value = _tidy(" ".join(lines))
+        if value:
+            fields[code] = value
+    return fields
+
+
+def _split_inventors(value: str) -> list[str]:
+    """Names out of a front sheet's (72) Inventors block.
+
+    USPTO prints one inventor per entry as "Name, City, ST (US)", entries
+    separated by semicolons, so the name is what precedes the first comma.
+    That is a heuristic and it has a known failure: an inventor printed
+    surname-first, or with no residence, comes back wrong or whole. It is
+    used anyway because the alternative -- storing "Amir I. Zaghloul,
+    Bethesda, MD (US); ..." as the author -- is wrong for every document
+    rather than a few.
+    """
+    names: list[str] = []
+    for entry in value.split(";"):
+        name = _tidy(entry.split(",")[0])
+        if name:
+            names.append(name)
+    return names
+
+
+def parse_front_page_metadata(
+    double_column_text: str, single_column_text: str = ""
+) -> dict[str, Any]:
+    """Read a patent's bibliographic fields off its front sheet.
+
+    Both renderings of page 1 are consulted because neither is reliable
+    alone. The two-column crop reads the left block cleanly (title,
+    applicant, inventors, application number, filing date) but can cut the
+    full-width top band in half; the uncropped rendering keeps that band
+    intact but interleaves the two columns line by line. **The two-column
+    reading wins per field, and the uncropped one fills the gaps** -- one
+    rule, applied field by field, rather than a per-field table of which
+    source to trust.
+
+    Every key is always present, `None` where the sheet did not yield it --
+    the same total-schema contract the vendored `arxiv_metadata` keeps, and
+    for the same reason: "the front page had no assignee" and "nobody
+    looked" must not read identically downstream. A scanned document yields
+    every field as `None`, which is the honest answer, not a failure.
+    """
+    primary = _split_inid_fields(double_column_text)
+    fallback = _split_inid_fields(single_column_text) if single_column_text else {}
+
+    def field(code: str) -> str | None:
+        return primary.get(code) or fallback.get(code) or None
+
+    inventors_raw = field(_INID_INVENTORS)
+    return {
+        "title": field(_INID_TITLE),
+        "inventors": _split_inventors(inventors_raw) if inventors_raw else [],
+        "assignee": field(_INID_ASSIGNEE),
+        "applicant": field(_INID_APPLICANT),
+        "printed_document_number": field(_INID_DOCUMENT_NUMBER),
+        "publication_date": field(_INID_PUBLICATION_DATE) or field(_INID_GRANT_DATE),
+        "application_number": field(_INID_APPLICATION_NUMBER),
+        "filing_date": field(_INID_FILING_DATE),
+        "abstract": field(_INID_ABSTRACT),
+    }
+
+
+def build_patent_frontmatter(metadata: dict[str, Any]) -> str:
+    """Render `metadata` as a YAML frontmatter block for the converted
+    Markdown.
+
+    Written here rather than through the vendored
+    `arxiv_doc_builder.arxiv_metadata.build_frontmatter` on purpose: that
+    module's schema is arXiv's (arxiv_id, primary_category, journal, DOI),
+    and teaching it about assignees and INID codes would mean editing
+    vendored code that this repo deliberately keeps unmodified and
+    unlinted (commit 2f8f894). The shape it establishes -- one block, every
+    key always present, unknown rendered as null -- is kept.
+    """
+    return "---\n" + yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True) + "---\n\n"
+
+
+def _run_uv(args: list[str], *, what: str) -> subprocess.CompletedProcess[str]:
+    """Run `_patent_convert.py` inside the skill's own environment.
+
+    `uv run --project` rather than an import, matching arxiv.py exactly: the
+    PDF stack (pdfplumber / pypdf / pdf2image / pillow) is declared by the
+    skill's `pdf` extra and is not in this project's dependency tree, and
+    the skill is an independently-versioned package meant to be driven, not
+    vendored into an import graph.
+    """
+    command = [
+        "uv",
+        "run",
+        "--project",
+        str(_ARXIV_DOC_BUILDER_DIR),
+        "--extra",
+        "pdf",
+        "--no-dev",
+        "python",
+        str(_CONVERT_SCRIPT),
+        *args,
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=_PATENT_CONVERT_TIMEOUT_S
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{what} timed out after {_PATENT_CONVERT_TIMEOUT_S}s: {exc}") from exc
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{what} failed (exit {result.returncode}):\n{result.stdout}\n{result.stderr}"
+        )
     return result
 
 
-# --- PDF conversion (subprocess boundary) ------------------------------
+def _read_manifest(path: Path, *, what: str) -> dict[str, Any]:
+    if not path.exists():
+        raise RuntimeError(f"{what} reported success but {path} does not exist")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _run_pdf_convert(pdf_path: Path, work_dir: Path, *, dpi: int = _DEFAULT_DPI) -> dict[str, Any]:
-    """Run `_patent_pdf_convert.py` against `pdf_path`, against
-    arxiv-doc-builder's own installed `pdf`-extra environment (see this
-    module's docstring), and return the parsed JSON manifest it writes.
-
-    Raises `RuntimeError` (with the subprocess's own stdout/stderr
-    embedded) on any non-zero exit, a missing manifest, or a timeout --
-    same shape as `arxiv.py._run_convert_paper`.
-    """
-    manifest_path = work_dir / "manifest.json"
-    try:
-        result = subprocess.run(
-            [
-                "uv",
-                "run",
-                "--project",
-                str(_ARXIV_DOC_BUILDER_DIR),
-                "--extra",
-                "pdf",
-                "--no-dev",
-                str(_PATENT_PDF_CONVERT_SCRIPT),
-                str(pdf_path),
-                "--output-dir",
-                str(work_dir),
-                "--dpi",
-                str(dpi),
-                "--manifest",
-                str(manifest_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=_CONVERT_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"patent PDF conversion timed out after {_CONVERT_TIMEOUT_S}s for {pdf_path}: {exc}"
-        ) from exc
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"patent PDF conversion failed for {pdf_path} (exit {result.returncode}):\n"
-            f"{result.stdout}\n{result.stderr}"
-        )
-    if not manifest_path.exists():
-        raise RuntimeError(
-            f"patent PDF conversion reported success for {pdf_path} but "
-            f"{manifest_path} does not exist"
-        )
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
-
-
-# --- Markdown + frontmatter assembly -----------------------------------
-
-_PROMOTED_FIELDS = frozenset({"title", "inventors"})
-
-
-def _build_patent_markdown(
-    manifest: dict[str, Any],
-    *,
-    digits: str,
-    kind: str,
-    kind_code: str | None,
-    parsed: dict[str, str | None],
-    work_dir: Path,
-) -> Path:
-    """Write the final Markdown file `ingest_document` will parse: our own
-    patent-shaped YAML frontmatter (never arxiv_doc_builder.arxiv_metadata's
-    arXiv-shaped one -- see this module's docstring) followed by either the
-    real extracted body text (`manifest["route"] == "text"`) or an honest
-    "no text layer, here is where the rendered pages are" note plus every
-    image path (`manifest["route"] == "vision"`).
-    """
-    number_key = "grant_number" if kind == "grant" else "publication_number"
-    date = parsed.get("date_of_patent") or parsed.get("publication_date")
-    frontmatter_data = {
-        number_key: digits,
-        "kind": kind,
-        "kind_code": kind_code,
-        "title": parsed.get("title"),
-        "applicant": parsed.get("applicant"),
-        "inventors": parsed.get("inventors"),
-        "assignee": parsed.get("assignee"),
-        "appl_no": parsed.get("appl_no"),
-        "filed": parsed.get("filed"),
-        "date": date,
-        "conversion_route": manifest["route"],
-        "conversion_date": datetime.now(UTC).isoformat(),
-    }
-    frontmatter_yaml = yaml.safe_dump(frontmatter_data, sort_keys=False).strip()
-
-    parts = ["---", frontmatter_yaml, "---", ""]
-    if manifest["route"] == "text":
-        body_path = Path(manifest["markdown_path"])
-        parts.append(body_path.read_text(encoding="utf-8"))
-    else:
-        dpi = manifest.get("dpi")
-        page_count = manifest.get("page_count")
-        parts.append(
-            "## Scanned document -- no text layer\n\n"
-            f"This {kind} PDF ({page_count} pages) has no extractable text layer "
-            "(the USPTO print endpoint returned a scanned image, not a native PDF) "
-            "-- a normal case for a USPTO grant or publication PDF, not an error. "
-            f"Every page was rendered to PNG at {dpi} DPI for manual or "
-            "vision-based transcription; no OCR or automated transcription has "
-            "been run:\n"
-        )
-        parts.extend(f"- {image_path}" for image_path in manifest.get("image_paths", []))
-
-    md_path = work_dir / f"{digits}.md"
-    md_path.write_text("\n".join(parts), encoding="utf-8")
-    return md_path
-
-
-# --- ingest_patent -------------------------------------------------------
-
-
-def _ingest_one(
-    digits: str,
-    kind: str,
-    kind_code: str | None,
-    *,
-    license: str,
-    classification: str,
-    supersedes_document_id: int | None,
-    download_dir: str | None,
-    dpi: int,
-    fetch_fn: Callable[[str], bytes],
-    convert_fn: Callable[..., dict[str, Any]],
-) -> dict[str, Any]:
-    url = _download_url(digits)
-    pdf_bytes = fetch_fn(url)
-
-    work_dir = (
-        Path(download_dir) if download_dir else Path(tempfile.mkdtemp(prefix=f"patent_{kind}_"))
+def _run_patent_extract(pdf_path: Path, output_dir: Path) -> dict[str, Any]:
+    """Extract the PDF's text layer; returns `_patent_convert.py`'s manifest
+    (page_count, text_chars, body_path, and both front-page renderings)."""
+    _run_uv(
+        ["extract", str(pdf_path), "--output-dir", str(output_dir)],
+        what=f"patent text extraction for {pdf_path.name}",
     )
-    work_dir.mkdir(parents=True, exist_ok=True)
-    pdf_path = work_dir / f"{digits}.pdf"
-    pdf_path.write_bytes(pdf_bytes)
-
-    manifest = convert_fn(pdf_path, work_dir, dpi=dpi)
-    parsed = _parse_patent_frontmatter(manifest.get("front_page_text", "") or "")
-    md_path = _build_patent_markdown(
-        manifest, digits=digits, kind=kind, kind_code=kind_code, parsed=parsed, work_dir=work_dir
+    return _read_manifest(
+        output_dir / "manifest.json", what=f"patent text extraction for {pdf_path.name}"
     )
 
-    extra_metadata = {
-        "identifier": digits,
-        "kind": kind,
-        "kind_code": kind_code,
-        "conversion_route": manifest["route"],
-        **{key: value for key, value in parsed.items() if key not in _PROMOTED_FIELDS},
-    }
 
-    return ingest_document(
-        file_path=str(md_path),
-        source_type="patent",
-        license=license,
-        classification=classification,
-        supersedes_document_id=supersedes_document_id,
-        title_override=parsed.get("title"),
-        author=parsed.get("inventors"),
-        revision=kind_code,
-        extra_metadata=extra_metadata,
+def _run_patent_render(pdf_path: Path, output_dir: Path, dpi: int) -> dict[str, Any]:
+    """Render every page and column crop to PNG; returns the render
+    manifest (image_dir, image_count, dpi)."""
+    _run_uv(
+        ["render", str(pdf_path), "--output-dir", str(output_dir), "--dpi", str(dpi)],
+        what=f"patent page rendering for {pdf_path.name}",
+    )
+    return _read_manifest(
+        output_dir / "render_manifest.json", what=f"patent page rendering for {pdf_path.name}"
     )
 
 
@@ -440,99 +550,128 @@ def ingest_patent(
     *,
     license: str,
     classification: str,
-    related_number: str | None = None,
     supersedes_document_id: int | None = None,
     download_dir: str | None = None,
-    dpi: int = _DEFAULT_DPI,
+    render_page_images: bool = True,
+    image_dpi: int = 300,
     fetch_fn: Callable[[str], bytes] = download_bytes,
-    convert_fn: Callable[..., dict[str, Any]] = _run_pdf_convert,
+    extract_fn: Callable[[Path, Path], dict[str, Any]] = _run_patent_extract,
+    render_fn: Callable[[Path, Path, int], dict[str, Any]] = _run_patent_render,
 ) -> dict[str, Any]:
-    """Fetch a US patent grant and/or pre-grant publication by number and
-    ingest each as `source_type='patent'`.
+    """Fetch US patent document `patent_number` from the USPTO and ingest it
+    as `source_type='patent'`.
 
-    `patent_number` may be either a grant number (e.g. "12089385" or
-    "US12089385B2") or a publication number (e.g. "2022/0192066" or
-    "US20220192066A1") -- both are "a patent/publication number" per ticket
-    #219's own framing, and which one this is gets auto-detected (see
-    `normalize_patent_number`). Pass `related_number` when you already know
-    the SIBLING identifier of the opposite kind (there is no
-    search/lookup here -- see this module's docstring for why) to fetch and
-    ingest both the grant and the publication in one call; passing two
-    numbers of the same kind raises `ValueError`.
+    Accepts either kind of number, in any of the usual written forms -- a
+    granted patent ("US12089385B2", "12089385") or the pre-grant publication
+    of the same application ("US 2022/0192066 A1", "20220192066"). They are
+    the same disclosure at two moments in its life and differ enormously in
+    machine-readability, so ingesting both is often worth it; call this once
+    per number. **This client cannot derive one number from the other** --
+    that lookup needs a keyed USPTO/PatentsView API this project has no
+    credential for, and patent search is out of scope -- so the caller
+    supplies whichever numbers it has.
 
     `license` and `classification` are passed straight through to
-    `ingest_document` -- mandatory there (ADR-0001), so mandatory here too.
-    A granted US patent's specification text is conventionally treated as
-    freely reproducible, but this module does not assume that for you:
-    supply the license string that actually applies.
+    `ingest_document`, mandatory there (ADR-0001) and so mandatory here. US
+    patent documents carry no USPTO copyright claim, but a specific document
+    may contain third-party copyrighted material with a notice attached, so
+    the caller states the terms rather than this client assuming them.
 
-    `supersedes_document_id`, if given, applies only to the document
-    resolved from `patent_number` (the primary identifier) -- a grant and
-    its own pre-grant publication are two independent documents, and this
-    parameter cannot express "supersede two different documents at once"
-    without ambiguity, so it deliberately targets only the one the caller
-    named as primary. Pass `ingest_patent` again with the other identifier
-    as `patent_number` if the sibling document also needs to supersede
-    something.
+    Which conversion route ran is reported back, not hidden: the returned
+    dict is `ingest_document`'s own result plus a `patent_conversion` entry
+    naming the route, the page count, the characters of real text found, and
+    where the rendered page images landed. On the scanned route those images
+    are the only way to read a drawing sheet, so a caller that never learned
+    the directory could not use them. The same facts are stored on the
+    document as metadata.
 
-    `dpi` controls the page-image render resolution used only for a
-    document that turns out to have no text layer (default 1200 -- see
-    `_DEFAULT_DPI`). `fetch_fn`/`convert_fn` default to the real HTTP GET
-    and the real `uv run` subprocess call respectively, and exist so tests
-    can inject stubs instead of hitting the network or a subprocess.
-
-    Returns `{"grant": <ingest_document result> | None, "publication":
-    <ingest_document result> | None}` -- whichever of the two was actually
-    fetched.
+    `fetch_fn`, `extract_fn` and `render_fn` default to the real HTTP GET
+    and the two `uv run` subprocess calls, and exist so tests can drive
+    every route without a network, a subprocess, or a PDF -- the same seam
+    this package's other clients use.
     """
-    digits1, kind1, kind_code1 = normalize_patent_number(patent_number)
+    identifier = normalize_patent_number(patent_number)
+    url = patent_pdf_url(identifier)
 
-    # Validate related_number BEFORE fetching/ingesting anything, so a
-    # caller error (two numbers of the same kind) fails cleanly with no
-    # partial side effect (one document already fetched and ingested,
-    # the other rejected).
-    digits2 = kind2 = kind_code2 = None
-    if related_number is not None:
-        digits2, kind2, kind_code2 = normalize_patent_number(related_number)
-        if kind2 == kind1:
-            raise ValueError(
-                f"related_number {related_number!r} is also a {kind2} number; "
-                f"expected the sibling kind of patent_number {patent_number!r} "
-                f"({kind1}), e.g. a publication number alongside a grant number."
-            )
+    work_dir = Path(download_dir) if download_dir else Path(tempfile.mkdtemp(prefix="patent_"))
+    work_dir.mkdir(parents=True, exist_ok=True)
 
-    results: dict[str, Any] = {"grant": None, "publication": None}
-    primary_download_dir = (
-        str(Path(download_dir) / kind1) if download_dir is not None else None
+    pdf_bytes = fetch_fn(url)
+    if not pdf_bytes.startswith(b"%PDF"):
+        raise RuntimeError(
+            f"{url} did not return a PDF (first bytes: {pdf_bytes[:16]!r}). The USPTO "
+            "endpoint answers with an error page rather than a PDF for a number it "
+            "does not hold; nothing was ingested."
+        )
+    pdf_path = work_dir / f"{identifier.display}.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    manifest = extract_fn(pdf_path, work_dir)
+    page_count = int(manifest.get("page_count", 0))
+    text_chars = int(manifest.get("text_chars", 0))
+    route = choose_conversion_route(text_chars, page_count)
+
+    front_page = parse_front_page_metadata(
+        manifest.get("front_page_double_column", ""),
+        manifest.get("front_page_single_column", ""),
     )
-    results[kind1] = _ingest_one(
-        digits1,
-        kind1,
-        kind_code1,
+
+    conversion: dict[str, Any] = {
+        "route": route,
+        "page_count": page_count,
+        "text_chars": text_chars,
+        "page_images_dir": None,
+        "page_image_count": 0,
+        "page_image_error": None,
+    }
+
+    if route == SCANNED_VISION_ROUTE and render_page_images:
+        try:
+            render = render_fn(pdf_path, work_dir, image_dpi)
+        except (RuntimeError, OSError) as exc:
+            # Warn, never block. A missing poppler install costs the figure
+            # images; it does not cost the document, which docling still
+            # OCRs on its way into the knowledge base.
+            conversion["page_image_error"] = str(exc)
+        else:
+            conversion["page_images_dir"] = render.get("image_dir")
+            conversion["page_image_count"] = int(render.get("image_count", 0))
+
+    metadata: dict[str, Any] = {
+        "patent_number": identifier.display,
+        "uspto_number": identifier.number,
+        "kind_code": identifier.kind_code,
+        "document_kind": identifier.document_kind,
+        "source_url": url,
+        "source_type": "patent",
+        "conversion_date": datetime.now(UTC).isoformat(),
+        **front_page,
+        "conversion": conversion,
+    }
+
+    if route == TEXT_LAYER_ROUTE:
+        body = Path(manifest["body_path"]).read_text(encoding="utf-8")
+        ingest_path = work_dir / f"{identifier.display}.md"
+        ingest_path.write_text(build_patent_frontmatter(metadata) + body, encoding="utf-8")
+    else:
+        # No text to convert. docling's OCR gets the original PDF, which is
+        # strictly more than an empty Markdown file would carry.
+        ingest_path = pdf_path
+
+    extra_metadata = {
+        key: value for key, value in metadata.items() if key not in _PROMOTED_FRONTMATTER_KEYS
+    }
+    inventors = front_page["inventors"]
+
+    result = ingest_document(
+        file_path=str(ingest_path),
+        source_type="patent",
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,
-        download_dir=primary_download_dir,
-        dpi=dpi,
-        fetch_fn=fetch_fn,
-        convert_fn=convert_fn,
+        title_override=front_page["title"],
+        author=", ".join(inventors) if inventors else None,
+        revision=identifier.kind_code,
+        extra_metadata=extra_metadata,
     )
-
-    if related_number is not None:
-        related_download_dir = (
-            str(Path(download_dir) / kind2) if download_dir is not None else None
-        )
-        results[kind2] = _ingest_one(
-            digits2,
-            kind2,
-            kind_code2,
-            license=license,
-            classification=classification,
-            supersedes_document_id=None,
-            download_dir=related_download_dir,
-            dpi=dpi,
-            fetch_fn=fetch_fn,
-            convert_fn=convert_fn,
-        )
-
-    return results
+    return {**result, "patent_conversion": conversion}

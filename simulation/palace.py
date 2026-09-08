@@ -67,10 +67,13 @@ by confidence the same way simulation/hfss.py's module docstring does):
     its own "Index"; this array-of-objects shape (rather than an
     object-keyed-by-string-index, the form LumpedPort/WavePort reportedly
     use elsewhere) is inferred from "Index" being a real, separately-
-    documented field on each entry -- REASONED, not confirmed against a
-    full worked JSON example (repeated fetch attempts against
-    docs/src/examples/dielectric_grating.md's actual example config file
-    did not return its literal JSON body -- see HONEST CAVEAT below).
+    documented field on each entry -- and since CONFIRMED, twice over,
+    against Palace's own example config file
+    (examples/dielectric_grating/dielectric_grating_uniform.json, which
+    spells "FloquetPort" as exactly this array of Index-carrying objects)
+    and against scripts/schema/config-schema.json, which this module's
+    emitted config validates clean against. See VALIDATED AGAINST A REAL
+    PALACE BINARY below.
   - Boundary/port physical description -- "Floquet ports are available for
     frequency domain driven simulations on periodic structures (gratings,
     metasurfaces, photonic crystals)... require periodic boundary
@@ -99,8 +102,11 @@ by confidence the same way simulation/hfss.py's module docstring does):
     the port-floquet-S.csv output file. Each mode is labeled as
     S[P<port>(<m>,<n>)<pol>][<exc>]... values of nan [are] given to
     non-propagating modes": same docs/src/guide/boundaries.md section.
-    parse_palace_output() below matches this literal "S[P<m>,<n>..." label
-    substring with a tolerant regex (see HONEST CAVEAT).
+    CAREFUL -- that prose spells the label with a COMMA, and the CSV file
+    itself does not: the real header cell separates the two order indices
+    with a SEMICOLON, "S[P1(0;0)TE][1]". parse_palace_output() below now
+    matches the real spelling; see VALIDATED AGAINST A REAL PALACE BINARY
+    below for how the comma cost this module every real run's results.
   - The ordinary (non-Floquet) port-S.csv convention -- "Both the dB
     magnitude (20*log10(|Sij|)) and the phase (angle(Sij)) (in degrees) are
     written to the file" -- docs/src/guide/problem.md, fetched from
@@ -109,8 +115,10 @@ by confidence the same way simulation/hfss.py's module docstring does):
     same dB-magnitude/phase-degrees convention per mode column (REASONED by
     analogy -- both files are driven-solver S-parameter postprocessing
     output from the same code, and dB+degrees is Palace's one documented
-    S-parameter CSV convention -- but NOT independently confirmed for
-    port-floquet-S.csv specifically; see HONEST CAVEAT).
+    S-parameter CSV convention) -- and since CONFIRMED for
+    port-floquet-S.csv specifically against Palace's own published
+    reference output for the dielectric-grating example, and against a real
+    run of the binary. See VALIDATED AGAINST A REAL PALACE BINARY below.
   - config["Solver"]["Driven"]["Samples"][i] -- "Type": "Point" (explicit
     "Freq" GHz array) | "Linear" (required "MinFreq"/"MaxFreq" GHz, either
     "FreqStep" or "NSample") | "Log" (required "MinFreq"/"MaxFreq" GHz >
@@ -145,42 +153,77 @@ by confidence the same way simulation/hfss.py's module docstring does):
     reference-element source in this pass (that header was pointed to by
     mfem.org's own docs as the authoritative source but not itself fetched
     -- REASONED from the confirmed worked example, not read from the
-    primary geometry-definition source; see HONEST CAVEAT).
+    primary geometry-definition source; a real Palace run has since loaded
+    a mesh written this way and reported the right bounding box, element
+    count and periodic face matching, so the ordering is right in practice
+    even though the reference source was never read. See VALIDATED AGAINST
+    A REAL PALACE BINARY below).
   - License -- Apache License, Version 2.0: github.com/awslabs/palace/blob/
     main/LICENSE (fetched and confirmed to open "Apache License Version
     2.0, January 2004"), and the repository's own GitHub description/
     topics. Recorded in docs/LICENSE_MATRIX.md and README.md.
 
-HONEST CAVEAT -- read before trusting any of this end to end: the real
-`palace` binary is NOT installed in this environment (no MPI-parallel FEM
-solver install is present or feasible to add here) and was not available to
-run against anything this module generates. Four specific things above are
-REASONED from adjacent confirmed facts rather than independently verified
-byte-for-byte against Palace's own primary source, and are flagged as such
-at their point of use: (1) FloquetPort's JSON-array-vs-object-keyed-by-index
-shape, (2) port-floquet-S.csv's presumed dB-magnitude/phase-degrees column
-convention (carried over from the separately-documented ordinary
-port-S.csv), (3) the exact hex boundary-face vertex WINDING direction MFEM
-expects (this module always lists each boundary quad's four vertices as
-exactly the matching face of its adjacent hex element -- vertex membership
-is therefore certainly correct -- oriented outward-normal-consistent by
-this module's own convention, but whether MFEM's boundary reader cares
-about winding direction at all, versus deriving face orientation purely
-from the adjacent 3D element, was not confirmed), and (4) that Palace's own
-CSV writer RFC4180-quotes header cells containing a raw comma -- the
-documented mode label itself contains one ("(<m>,<n>)"), so
-parse_palace_output() below can only recover the intended column
-correspondence if that cell is quoted; REASONED (any CSV writer producing
-a self-consistent file with a comma-containing field would need to do
-this), not independently confirmed against a real Palace-written CSV (see
-tests/test_palace.py's _build_sample_floquet_csv for how this module's own
-tests construct valid quoted sample data). Deck/
-mesh generation and CSV parsing below are built to the letter of the
-documented/verified format above (each fact's confidence graded inline);
-tests exercise only the subprocess-invocation contract and the parser
-against a synthetic fake "palace" script (see tests/test_palace.py), never
-against a real Palace run. Treat any result as unverified end-to-end until
-it has actually been run against the real tool at least once.
+VALIDATED AGAINST A REAL PALACE BINARY (issue #210, 2026-09-08) -- this
+section replaces the "never run against a real binary" caveat this module
+carried from the day it was written. Palace was built from source at
+awslabs/palace commit 43a5483 (schema version 1-6-0) and Palace's own
+"Floquet Ports for a Dielectric Grating" example -- the very example this
+module was written against -- was run THROUGH run_palace_simulation(): this
+module emitted the JSON config, wrote its own MFEM ".mesh" file, shelled
+out to the real `palace` binary, and parsed the real port-floquet-S.csv it
+produced. The full record, including how Palace was built and every number
+compared, is in docs/palace-floquet-validation.md.
+
+What that run settled, replacing what used to be reasoned-by-analogy:
+
+  - FloquetPort IS a plain JSON array of objects each carrying its own
+    "Index" -- CONFIRMED; the emitted config validates clean against
+    Palace's own scripts/schema/config-schema.json and Palace ran it.
+  - port-floquet-S.csv DOES use dB magnitude and degrees phase, with
+    frequency in GHz in the first column -- CONFIRMED against Palace's own
+    published reference output for the example.
+  - The hex boundary-face vertex WINDING this module emits is accepted:
+    Palace loaded the mesh, reported the correct bounding box and element
+    count, matched the periodic donor/receiver faces, and configured both
+    Floquet ports without warning -- CONFIRMED by behaviour (MFEM never
+    complained), not by reading MFEM's reference-element source.
+  - The mode label is "S[P<port>(<m>;<n>)<pol>][<exc>]" -- SEMICOLON
+    between the two diffraction-order indices, NOT the comma this module
+    originally matched. That transcription error meant parse_palace_output()
+    returned computed=False for every real Palace run; it never surfaced
+    because the tests fed it text this repo had written itself. Fixed, with
+    the fix pinned to columns copied verbatim out of Palace's own published
+    reference file. (Palace's per-iteration STDOUT does print the comma
+    form -- "S[P1(0,0)TE][1]" -- which is where the original reading came
+    from; only the CSV uses the semicolon.)
+  - The RFC4180-quoting worry is moot: because the label uses a semicolon,
+    no header cell ever contains the delimiter, and Palace quotes nothing.
+  - Palace writes BOTH polarizations of every diffraction order, so the
+    old "specular" convenience view -- keyed on port number alone -- had
+    two different modes competing for the key "S11" and silently kept
+    whichever Palace wrote last: the cross-polarized one, numerical noise
+    around -158 dB, in place of a true -18.9 dB reflection. The keys are
+    now polarization-qualified ("S11_TE", "S11_TM", ...). A second defect
+    that only a real run could expose.
+
+Numerical agreement, in one line: over the 216 mode-frequency points in
+the example's 2-12 GHz sweep, this module's own mesh and config agreed with
+Palace's published reference on all 176 points where a diffraction order
+does not propagate, and on the 28 points carrying real power matched to
+within 0.056 dB in magnitude (0.013 dB mean) and 0.91 degrees in phase.
+(The remaining 12 points are cross-polarized channels sitting on the
+solver's numerical noise floor, hundreds of dB down, where both answers are
+"nothing" and a dB comparison is meaningless.) In plain terms -- asked how
+much of a radio wave a periodic dielectric grating reflects and how much
+passes through, this adapter now returns the same answer the tool's own
+authors publish, to well within a percent.
+
+STILL NOT PROVEN: only this one all-dielectric geometry, at one incidence
+angle, has been run. Embedded PEC conductors are still unimplemented (see
+SCOPE below), no measured (as opposed to simulated) result has ever been
+compared against, and every result this module returns remains SIMULATED
+provenance -- a solver agreeing with another run of the same solver is not
+a bench measurement.
 
 SCOPE OF THIS IMPLEMENTATION: a single rectangular periodic unit cell,
 periodic (via config["Boundaries"]["Periodic"]) on its four x/y-normal
@@ -427,7 +470,8 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
 
     # Each boundary quad below lists exactly the four vertices of the
     # matching face of its adjacent hex element (see module docstring's
-    # HONEST CAVEAT on the unverified winding-direction subtlety) --
+    # note on the winding direction, which MFEM has since been observed to
+    # accept but whose reference source was never read) --
     # donor/min faces keep that element's own local face vertex order,
     # receiver/max faces reverse it, for an outward-normal-consistent quad.
     boundary: list[tuple[int, list[int]]] = []
@@ -522,6 +566,7 @@ def generate_palace_config(
     output_dir: str | Path,
     frequency_hz: float,
     sweep: dict[str, Any] | None = None,
+    solver_order: int = 1,
 ) -> dict[str, Any]:
     """Generate a Palace JSON config for a driven Floquet-port unit-cell
     simulation. `geometry` is the same dict passed to generate_palace_mesh
@@ -542,6 +587,15 @@ def generate_palace_config(
     int}, same shape as run_hfss_simulation's own sweep dict -- defaults to
     0.9x/1.1x frequency_hz over 51 points, matching simulation/hfss.py's
     own default.
+
+    `solver_order` (optional, default 1): the finite-element order, emitted
+    as config["Solver"]["Order"]. In plain terms this is how much detail
+    each mesh cell is allowed to represent: order 1 lets the field vary
+    linearly across a cell, order 2 lets it curve. Order 1 is Palace's own
+    default and is emitted explicitly rather than relied on. It is a real
+    accuracy knob, not a formality -- at order 1 the dielectric-grating
+    validation of issue #210 was still several dB off the published answer
+    on a mesh that order 2 got to within 0.02 dB (docs/palace-validation.md).
     """
     unit_cell = geometry.get("unit_cell")
     if not unit_cell:
@@ -563,6 +617,10 @@ def generate_palace_config(
             f"floquet polarization must be one of {_VALID_POLARIZATIONS}, got {polarization!r}"
         )
     max_order = int(floquet.get("max_order", 0))
+
+    solver_order = int(solver_order)
+    if solver_order < 1:
+        raise ValueError(f"solver_order must be >= 1 (finite-element order), got {solver_order}")
 
     sweep = sweep or {}
     start_hz = sweep.get("start_hz", frequency_hz * 0.9)
@@ -630,6 +688,10 @@ def generate_palace_config(
             ],
         },
         "Solver": {
+            # Emitted explicitly for the same reason as "L0" above: Palace's
+            # own default (1) is a silent accuracy ceiling, not a neutral
+            # choice. See the solver_order argument's docstring.
+            "Order": solver_order,
             "Driven": {
                 "Samples": [
                     {
@@ -639,7 +701,7 @@ def generate_palace_config(
                         "NSample": points,
                     }
                 ]
-            }
+            },
         },
     }
 
@@ -651,11 +713,26 @@ def generate_palace_config(
 # dB-magnitude/phase-degrees column convention.
 # ---------------------------------------------------------------------------
 
-# Matches Palace's documented Floquet mode label, e.g. "S[P1(0,0)TE][1]",
-# wherever it appears inside a CSV column header (which also carries a
-# "|...| (dB)" / "arg(...) (deg.)" decoration this module does not assume
-# an exact spelling for -- see module docstring HONEST CAVEAT).
-_MODE_RE = re.compile(r"S\[P(\d+)\((-?\d+),(-?\d+)\)([A-Za-z]+)\]\[(\d+)\]")
+# Matches Palace's Floquet mode label, e.g. "S[P1(0;0)TE][1]", wherever it
+# appears inside a CSV column header (which also carries a "|...| (dB)" /
+# "arg(...) (deg.)" decoration).
+#
+# The two diffraction-order indices are separated by a SEMICOLON, not a
+# comma. In plain terms: the column is named after which way the wave went,
+# and the two numbers naming that direction are joined by ";" so that the
+# name survives being written into a comma-separated file. Palace's own
+# writer builds the header as
+#   format("|S[P{}({};{}){}][{}]| (dB)", port, m, n, pol, excitation)
+# and
+#   format("arg(S[P{}({};{}){}][{}]) (deg.)", port, m, n, pol, excitation)
+# -- palace/models/postoperatorcsv.cpp, InitializeFloquetPortS(), awslabs/
+# palace commit 43a5483 -- and its own published reference output for the
+# "Floquet Ports for a Dielectric Grating" example spells the cells exactly
+# that way (test/data/regression/ref/dielectric_grating/uniform/
+# port-floquet-S.csv). Issue #210: this module originally matched a comma
+# here, transcribed from the prose in Palace's boundaries.md, which made
+# this parser silently return computed=False for every real Palace run.
+_MODE_RE = re.compile(r"S\[P(\d+)\((-?\d+);(-?\d+)\)([A-Za-z]+)\]\[(\d+)\]")
 
 
 def parse_palace_output(csv_text: str) -> dict[str, Any]:
@@ -706,8 +783,8 @@ def parse_palace_output(csv_text: str) -> dict[str, Any]:
         return {
             "computed": False,
             "note": (
-                "no column header matched the documented Floquet mode label "
-                "'S[P<port>(<m>,<n>)<pol>][<exc>]' (see "
+                "no column header matched the documented Floquet mode "
+                "label 'S[P<port>(<m>;<n>)<pol>][<exc>]' (see "
                 "simulation/palace.py's module docstring citation) -- "
                 f"{len(header) - 1} non-frequency column(s) checked, 0 recognized -- "
                 f"header was: {header!r}"
@@ -720,11 +797,10 @@ def parse_palace_output(csv_text: str) -> dict[str, Any]:
         for label, meta in mode_columns.items()
     }
     for row in data_rows:
-        # Frequency assumed to be the first column, in GHz -- matching every
-        # other frequency field in Palace's own config file (MinFreq/
-        # MaxFreq/FloquetReferenceFrequency are all GHz); REASONED by
-        # convention, not independently confirmed for this specific output
-        # file (see module docstring HONEST CAVEAT).
+        # Frequency is the first column, in GHz -- matching every other
+        # frequency field in Palace's own config file (MinFreq/MaxFreq/
+        # FloquetReferenceFrequency are all GHz), and confirmed against a
+        # real port-floquet-S.csv, whose first header cell reads "f (GHz)".
         frequency_hz.append(float(row[0]) * 1e9)
         for label, meta in mode_columns.items():
             mag_col = meta.get("_magnitude_col")
@@ -762,10 +838,25 @@ def parse_palace_output(csv_text: str) -> dict[str, Any]:
     # module's own generate_palace_config which always excites port 1) --
     # the closest Floquet-port analog to a conventional S11/S21 pair, for
     # callers that just want the fundamental-order reflection/transmission.
+    #
+    # The key CARRIES THE POLARIZATION ("S11_TE", "S11_TM", ...) and this is
+    # load-bearing, not decoration: Palace writes a column pair for BOTH
+    # polarizations of every diffraction order, whichever one was launched,
+    # so "port 1, order (0,0), excitation 1" names two different modes, not
+    # one. In plain terms -- a grating can hand back some of the wave with
+    # its field turned 90 degrees, so "how much came back" has two answers,
+    # and they are not interchangeable. Keying on port alone silently kept
+    # whichever column Palace happened to write last: on the real
+    # dielectric-grating run of issue #210 that was the cross-polarized
+    # TM mode at -158 dB (numerical noise) standing in for a true -18.9 dB
+    # reflection -- a caller would have read the grating as swallowing
+    # everything. The co-polarized entry is the one whose suffix matches
+    # geometry["floquet"]["polarization"] (default "TE"); for a circular
+    # excitation Palace labels the pair "RHC"/"LHC" instead.
     specular: dict[str, list[Any]] = {}
     for meta in modes.values():
         if meta["m"] == 0 and meta["n"] == 0 and meta["excitation"] == 1:
-            specular[f"S{meta['port']}1"] = meta["value_complex"]
+            specular[f"S{meta['port']}1_{meta['polarization']}"] = meta["value_complex"]
 
     result: dict[str, Any] = {
         "computed": True,
@@ -785,10 +876,17 @@ def parse_palace_output(csv_text: str) -> dict[str, Any]:
     if specular:
         result["specular"] = specular
         result["specular_note"] = (
-            "specular['S<port>1'] is the (m=0,n=0) specular-order mode "
-            "excited from port 1 (this module's own config always excites "
-            "port 1 only) -- the closest Floquet-port analog to a "
-            "conventional Sij value; other diffraction orders are only in "
+            "specular['S<port>1_<pol>'] is the (m=0,n=0) specular-order "
+            "mode excited from port 1 (this module's own config always "
+            "excites port 1 only) -- the closest Floquet-port analog to a "
+            "conventional Sij value. The key carries the polarization "
+            "because Palace reports both polarizations of every order: the "
+            "co-polarized entry is the one whose suffix matches the "
+            "incident polarization requested in "
+            "geometry['floquet']['polarization'] (default 'TE'; a circular "
+            "excitation is reported as 'RHC'/'LHC'), and the other is "
+            "cross-polarized conversion, which is often numerical noise "
+            "hundreds of dB down. Other diffraction orders are only in "
             "'modes'."
         )
     return result
@@ -808,6 +906,7 @@ def run_palace_simulation(
     timeout_s: int = 3600,
     executable: str | None = None,
     workdir: str | None = None,
+    solver_order: int = 1,
 ) -> dict[str, Any]:
     """Generate a Palace mesh + JSON config for a periodic unit cell from
     structured geometry, run it via PalaceSimulator, and parse
@@ -840,6 +939,7 @@ def run_palace_simulation(
         output_dir=output_dir,
         frequency_hz=frequency_hz,
         sweep=sweep,
+        solver_order=solver_order,
     )
     config_file.write_text(json.dumps(config, indent=2))
 

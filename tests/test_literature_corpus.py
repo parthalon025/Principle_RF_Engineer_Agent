@@ -67,9 +67,15 @@ def test_corpus_source_files_exist_with_source_url_citation():
 def test_paper_source_type_resolves_to_literature_supported():
     """CONTEXT.md / knowledge/provenance.py: standard/textbook/paper sit at
     the LITERATURE-SUPPORTED tier. This corpus is ingested as source_type
-    "paper" (no dedicated "patent"/"government-solicitation" SourceType
-    exists -- see knowledge/models.py's fixed enum), so this is the mapping
-    that governs every document in it."""
+    "paper", so this is the mapping that governs every document in it.
+
+    This docstring used to add "no dedicated `patent`/`government-solicitation`
+    SourceType exists". That is no longer true of `patent`: `SourceType.PATENT`
+    is in the enum and `knowledge/provenance.py` maps it to
+    LITERATURE_SUPPORTED at its own lower `PATENT_AUTHORITY_RANK`. Whether the
+    two patent documents in this corpus should therefore be ingested as
+    `patent` rather than `paper` is a real open question, but it is a
+    behaviour change and not this test's to make."""
     assert provenance_tier_for(SourceType.PAPER) == LITERATURE_SUPPORTED
 
 

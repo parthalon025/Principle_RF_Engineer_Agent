@@ -450,18 +450,24 @@ def _build_grating_csv(corrupt_order1: bool) -> str:
     # replaces the +1 order's magnitude with a near-numerical-zero value,
     # the same PATTERN as issue #221's motivating defect (a real,
     # non-negligible return silently lost).
+    # Palace's own port-floquet-S.csv separates the two diffraction-order
+    # indices with a SEMICOLON, not a comma -- confirmed against a real
+    # Palace binary (issue #210); see simulation/palace.py's _MODE_RE
+    # docstring for the citation. A comma here would make this fixture test
+    # nothing, since parse_palace_output() would silently return
+    # computed=False for every row.
     order1_db = "-80.0" if corrupt_order1 else "-5.2288"
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
         [
             "f (GHz)",
-            "|S[P1(0,0)TE][1]| (dB)",
-            "arg(S[P1(0,0)TE][1]) (deg.)",
-            "|S[P2(0,0)TE][1]| (dB)",
-            "arg(S[P2(0,0)TE][1]) (deg.)",
-            "|S[P2(1,0)TE][1]| (dB)",
-            "arg(S[P2(1,0)TE][1]) (deg.)",
+            "|S[P1(0;0)TE][1]| (dB)",
+            "arg(S[P1(0;0)TE][1]) (deg.)",
+            "|S[P2(0;0)TE][1]| (dB)",
+            "arg(S[P2(0;0)TE][1]) (deg.)",
+            "|S[P2(1;0)TE][1]| (dB)",
+            "arg(S[P2(1;0)TE][1]) (deg.)",
         ]
     )
     writer.writerow(["10.000000e+00", "-10.0", "0.0", "-2.2185", "0.0", order1_db, "0.0"])
@@ -518,5 +524,9 @@ def test_palace_integration_specular_only_view_would_have_looked_fine():
     assert parsed_bad.get("computed") is True, f"csv_text={bad_csv!r} parsed={parsed_bad!r}"
     assert "specular" in parsed_good, f"parsed_good={parsed_good!r}"
     assert "specular" in parsed_bad, f"parsed_bad={parsed_bad!r}"
-    assert parsed_good["specular"].keys() == parsed_bad["specular"].keys() == {"S11", "S21"}
-    assert parsed_good["specular"]["S21"] == parsed_bad["specular"]["S21"]  # unchanged either way
+    # Polarization-qualified keys (issue #227's fix for #221's own motivating
+    # collision bug) -- both fixtures only exercise TE, so S11_TE/S21_TE.
+    assert parsed_good["specular"].keys() == parsed_bad["specular"].keys() == {"S11_TE", "S21_TE"}
+    assert (
+        parsed_good["specular"]["S21_TE"] == parsed_bad["specular"]["S21_TE"]
+    )  # unchanged either way

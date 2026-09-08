@@ -152,6 +152,7 @@ def test_systems_role_gets_calculations_and_knowledge_authoring():
     assert "calculate_cascade_gain" in names
     assert "ingest_document" in names
     assert "ingest_arxiv_paper" in names
+    assert "ingest_patent" in names
     # network-level (not systems-level) tool
     assert "analyze_touchstone_file" not in names
     # knowledge-auditing tool belongs to verification, not systems
@@ -211,6 +212,7 @@ def test_microwave_role_gets_network_and_component_analysis():
     # knowledge authoring is out of the microwave domain
     assert "ingest_document" not in names
     assert "ingest_arxiv_paper" not in names
+    assert "ingest_patent" not in names
 
 
 def test_antenna_role_gets_antenna_relevant_tools():
@@ -221,6 +223,7 @@ def test_antenna_role_gets_antenna_relevant_tools():
     assert "calculate_noise_figure" not in names
     assert "ingest_document" not in names
     assert "ingest_arxiv_paper" not in names
+    assert "ingest_patent" not in names
 
 
 def test_test_role_gets_verification_and_measurement_tools():
@@ -232,6 +235,7 @@ def test_test_role_gets_verification_and_measurement_tools():
     # test role validates hardware, it doesn't author the knowledge base
     assert "ingest_document" not in names
     assert "ingest_arxiv_paper" not in names
+    assert "ingest_patent" not in names
     assert "extract_components" not in names
 
 

@@ -277,6 +277,12 @@ SPINE_FIELDS = frozenset(
 # `ABSORBER_TRANSMISSIVE` is the ground-less, two-port sibling; see below.
 ABSORBER = DesignFamily(
     name="ABSORBER",
+    # #109 named MEEP_FLOQUET as this family's adapter: a unit cell needs a
+    # periodic boundary, and NEC2's thin-wire formulation cannot express one.
+    # The adapter is selected here and the loop honours it (#229); whether the
+    # adapter can yet DELIVER a periodic absorber run is its own question, and
+    # simulation/meep.py answers it honestly rather than this file guessing.
+    simulation_adapter="MEEP_FLOQUET",
     description=(
         "A ground-backed surface that dissipates incident power as heat. "
         "Bandwidth comes from loss, so its bound is a thickness-versus-"
@@ -345,6 +351,10 @@ ABSORBER_TRANSMISSIVE = DesignFamily(
 
 PATCH = DesignFamily(
     name="PATCH",
+    # Stated rather than left to the fallback: a wire-antenna solver is the
+    # RIGHT tool for a patch, and that should be a declaration, not a default
+    # nobody chose.
+    simulation_adapter="NEC2",
     description=(
         "A plain microstrip patch antenna: a radiator, not an absorber. "
         "Bandwidth comes from radiated power, so its bound is a quality-factor "
