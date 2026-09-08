@@ -207,7 +207,9 @@ and a glossary that churns with it stops being trustworthy (see
   settled fact merely by having been made before. Contrast **Material-
   property library** entry, the one kind of data this project deliberately
   does carry forward between passes, because it is a fact about a
-  material rather than about any one requirement.
+  material rather than about any one requirement
+  (`docs/requirement-derived-thresholds.md`, #110/#112/#115;
+  `designs/material_properties.py` names it as the contrast case).
 - **Material-property library**: a persistent store of physical material
   properties (permittivity, loss tangent, conductivity, etc.), keyed by
   `(material, frequency, property)` rather than by design or requirement —
@@ -278,7 +280,15 @@ and a glossary that churns with it stops being trustworthy (see
   parameter recommendation (e.g. unit-cell spacing, layer stack, expected
   gain) with rationale tracing back to CALCULATED results and/or
   LITERATURE-SUPPORTED sources. Not a fabrication-ready CAD file or mesh;
-  a human still builds the prototype from it.
+  a human still builds the prototype from it. This is the sense meant by
+  the rule that a patent's claim language is never design guidance
+  (`knowledge/provenance.py`, `agent/main.py`, `mcp_server/server.py`).
+  _Avoid_: using the bare phrase for a *ticket's* implementation advice —
+  several modules say "this ticket's own design guidance"
+  (`optimization/gradient.py`, `simulation/hfss.py`, and others) meaning
+  what the issue told the author to build, which is a different thing
+  entirely. Say "the ticket's guidance" for that and keep Design guidance
+  for what the agent hands the customer.
 - **Design/decision record**: an internally-authored write-up of what was
   decided for a prior design, why, and what alternatives were considered —
   ingested as an ordinary `documents` row (`source_type = design_record`,
