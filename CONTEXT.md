@@ -498,5 +498,49 @@ and a glossary that churns with it stops being trustworthy (see
   **Evidence hierarchy** above.
   _Avoid_: benchmark — that measures speed, not correctness.
 
+- **Run report**: what an unattended run hands the morning reviewer
+  (ADR-0025). Leads with the **trade space** — where the best candidate
+  sits against threshold and objective, which constraint is binding, and
+  what relaxing it would buy — with the ranked candidate list as
+  supporting detail, because a ranking is already legible in the numbers
+  and is silent on what to change next. Persisted, but stores only what
+  nothing else stores (predictions, the **Considered-and-dropped
+  ledger**, **Handoff records**, the stop reason, the diagnosis) and
+  references design/decision/engineering-result rows for the rest, so
+  the two cannot drift apart. Written inside ADR-0011's all-or-nothing
+  transaction, never appended after it. Cut by leverage on the result,
+  never by a fixed top-N — an option that was never tried has no score
+  and so could never rank into one.
+  _Avoid_: log, digest — both suggest a rendering of what happened,
+  where the load-bearing content is what *didn't*.
+- **Considered-and-dropped ledger**: the record, written at the moment a
+  batch is proposed and carried in ADR-0022's existing batch record, of
+  which families were weighed and which were set aside — per entry a
+  family, a kept/dropped flag, and one free-text reason (ADR-0025).
+  Structured rather than prose so a later proposal call can look an
+  entry up deterministically. It exists because `run_candidate_search`
+  receives its candidates as an argument and prunes nothing: the
+  narrowing happens in the LLM role that composes the list, upstream of
+  every module, and is otherwise unrecorded — making a thorough night
+  and a narrow one produce identical reports. No gate: a batch that
+  writes nothing here still runs, and the silence is itself recorded.
+- **Rejection record**: the stored fact that a human refused a specific
+  proposal, with who, when and the stated reason (ADR-0026). A named
+  exception to "a guess never becomes settled by repetition", on
+  ADR-0015's grounds — it is a fact about what a person decided, so
+  replaying it inherits no engineering guess. Stores the **refusal**,
+  never the conclusion: a later run may read that something was refused
+  and why, and must still re-derive the physics itself.
+  _Avoid_: rejected value, ruled-out material — both name the conclusion
+  this record deliberately does not carry.
+- **Handoff record**: role, question, answer and timestamp for one
+  Principal-to-specialist handoff (ADR-0025). Capture only: a
+  specialist's answer is an LLM inference sitting at the bottom of the
+  **Evidence hierarchy** and gets no provenance rung of its own, since
+  minting one would quietly promote it against the closed set above.
+  Exists because `SPECIALIST_HANDOFFS` transfers control one way and
+  nothing persists that it happened, so an overnight answer shaped by
+  six roles has no traceable author.
+
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).
