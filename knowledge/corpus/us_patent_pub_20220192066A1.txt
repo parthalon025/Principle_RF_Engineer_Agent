@@ -1,26 +1,29 @@
-Source URL: https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/20220192066
+Source URL: https://patents.google.com/patent/US20220192066A1/en
+Also retrievable at: https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/20220192066
 Document: US 2022/0192066 A1 — pre-grant publication of application 17/123,902,
 the application that issued as US12089385B2.
 
 PROVENANCE OF THIS TEXT — READ IT, THE TWO COPIES DIFFER
 --------------------------------------------------------
-The Source URL above is where this publication is publicly retrievable, and it
-was fetched and checked. **It is not where this file's text came from**, and
-saying so precisely is the point of ticket #33's no-fabrication rule.
+This file's text came from the Google Patents copy (the Source URL), which
+serves a text-layer PDF. That host returns HTTP 503 to this network — an
+anti-bot block on the datacenter IP — so the copy was supplied to the session
+rather than fetched by it, and its origin is recorded here on the supplier's
+word rather than from a fetch this session performed.
 
-Two renderings of the same 31-page publication exist and they are not the same
-file:
+The USPTO copy WAS fetched and checked, and it is a different file. Two
+renderings of the same 31-page publication exist:
 
-  fetched from the Source URL   31 pages, 0 characters extractable (a scan)
+  fetched from USPTO            31 pages, 0 characters extractable (a scan)
                                 sha256 bbe332bd6983a8ac5dca3fccd7f862556b9494764d62926c73a8f38fcff1c725
   parsed to produce this file   31 pages, 73,397 characters extractable
+  (the Google Patents copy)
                                 sha256 a60c2db2f6089b92266535d0f4babba9a372cc22cc2550736ab3f2de93610718
 
-The text below was extracted with pypdf from the second, a copy supplied
-locally to the session rather than fetched by it. The origin of that copy is
-not established — it is not the USPTO rendering. Anyone re-deriving this file
-should treat the Source URL as proof the document exists and says what it says,
-and the checksum above as the identity of the copy actually parsed.
+The text below was extracted with pypdf from the second. Anyone re-deriving
+this file should fetch the Source URL from a network Google Patents will serve,
+check the sha256 against the one above, and use the USPTO link as an
+independent confirmation that the document exists and says what it says.
 Published: 2022-06-16
 Title: Highly-Conformal, Pliable Thin Electromagnetic Skin
 Applicant: U.S. Army Combat Capabilities Development Command, Army Research Laboratory, Adelphi, MD
