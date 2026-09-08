@@ -1,14 +1,25 @@
 # Meep absorber validation: the first physics this repo has checked
 
-**Date:** 2026-09-08 · **Solver:** pymeep 1.34.0 (conda-forge, the same install path `Dockerfile` uses) · **Issues:** #230, #231, #191
+**Date:** 2026-09-08 · **Solver:** pymeep 1.34.0 (conda-forge, the same install path `Dockerfile` uses) · **Issues:** #230, #231, #191, #240, #244
 
 ## What changed, in one line
 
-Until now every simulator adapter here was tested against a hand-built fake. Those tests confirm we can *talk* to a solver. They say nothing about whether the solver told us the truth and we read it correctly — and only the second claim justifies the `SIMULATED` provenance tag.
+Four cases are recorded below and have been run against a real solver, checked against answers that exist independently of this code — two of them through the committed adapter, and the last of those through the design loop's own two-port absorption sum as well. Three are registered `ReferenceCase` entries (all the MEEP ones); Case 3, the conductive slab, is a check of the adapter rather than a registered case. The registry's fourth entry, the NEC2 dipole, has **not** been run — see `verification/simulator_reference_cases.py`.
 
-*In plain terms: we had been checking that we dialled the number correctly, never that anyone useful answered.*
+> **Correction to this document's first version**, which opened *"until now every simulator adapter here was tested against a hand-built fake."* **That was already false when written.** #210 had driven `simulation/palace.py` against a real compiled Palace binary and found two genuine defects (comma-vs-semicolon column labels, and `specular` returning −158 dB noise where the true reflection was −18.9 dB), recorded in [`docs/palace-floquet-validation.md`](palace-floquet-validation.md). The claim was written on a branch cut before that work merged, and the two branches could not see each other — which is the mundane cause, not an excuse for the claim.
 
-Two reference cases have now been run against a real solver.
+The narrower claim survives, and is the one worth making. The two efforts started on **different halves** — and the Meep half has since been carried across both, by the two adapter-driven cases at the end of this document:
+
+| | Adapter path (deck emission, shell-out, parsing) | Physics (does the answer match a known-correct one) |
+|---|---|---|
+| **#210, Palace** | ✅ validated against a real binary | ❌ its own §4 says the run is "no check at all on the physics" |
+| **This work, Meep** | ✅ cases 3 and 4, after the caveat below | ✅ against an exact answer and an independent method |
+
+*In plain terms: #210 proved we can talk to a solver correctly. This proves a solver told us the truth. Those are different claims and both are needed.*
+
+⚠️ **Caveat on the second row, and how it was closed.** `verification/meep_absorber_validation.py` deliberately builds `mp.Simulation` objects directly rather than calling `run_meep_simulation()`, and re-derives the unit conversions, so that the validation does not assume the thing it validates. The consequence is that **the adapter's own deck emission, subprocess handoff and result parsing are not what those numbers check.**
+
+That gap is now closed from the other side, twice. `verification/meep_adapter_transmittance_check.py` (#240) calls the real `run_meep_simulation` through the real `MEEP_PYTHON` subprocess path on a conductive slab (Case 3). `verification/meep_two_port_absorption_check.py` (#244) goes one step further and runs the design loop's SIMULATION step, so the absorption *sum* is scored by committed code too (Case 4). None of the three scripts replaces another: one validates the physics without the adapter, one validates the adapter's own path, and one validates the whole path a design run takes.
 
 ## Case 1 — free-standing resistive sheet (exact answer)
 
@@ -72,14 +83,113 @@ MEEP_PYTHON=/opt/conda/envs/mp/bin/python3 \
 
 Runs both cases and checks them against the tolerances in `verification/simulator_reference_cases.py`. Deliberately a script rather than a pytest test: it needs a solver CI does not have, and takes minutes rather than milliseconds. `tests/test_meep.py` covers the mechanics; this covers the physics.
 
+## Case 3 — conductive slab, through the adapter itself
+
+The first two cases prove the *physics* is right while bypassing the adapter. This one proves the **adapter** is right, by calling `run_meep_simulation` exactly as the design loop does — through the `MEEP_PYTHON` subprocess handoff — and checking what comes back against an answer derived on paper.
+
+A 3 mm slab of conductivity 0.5 S/m at 10 GHz, free space on both sides. Its complex permittivity is `1 − j·σ/(ωε₀)`, so one ABCD section gives exact R and T.
+
+| | R | T | A = 1 − R − T |
+|---|---|---|---|
+| **exact** | 0.0422 | 0.6034 | 0.3544 |
+| **adapter, real Meep** | 0.0425 | 0.6018 | 0.3557 |
+| delta | +0.0003 | −0.0016 | +0.0013 |
+
+**Why this case and not an absorber.** Transmittance is what #240 added, and the way a transmittance goes wrong is a **fixed multiplicative offset** — the wrong baseline plane, or a monitor area folded in twice — which shows up as a T uniformly 2× or 0.5× the truth, not as a small drift. Catching that needs a case that transmits *most* of its power and whose answer is exactly known. A uniform slab is that case, and unlike a thin resistive sheet its answer does not depend on how many grid cells land across it, so a disagreement is the adapter's fault rather than the mesh's.
+
+*In plain terms: a partly see-through slab. We can work out on paper exactly how much bounces back and how much comes out the far side, so if the adapter says anything else, the adapter is wrong. It agrees to a third of a percent.*
+
+## Case 4 — the two-port path, end to end, against a number physics fixes
+
+**Date:** 2026-09-08 · **Issue:** #244 · **Runner:** `verification/meep_two_port_absorption_check.py`
+
+The tickets before this one under spec #237 built the two-port absorber path: an adapter that measures transmitted power (#240), a closed-form two-port model (#242), and a design loop that picks its absorption sum from the design family's declared port count (#243). Every check on them so far compared this code against this code, or against a file recorded from this code's own output. This one does not.
+
+A thin resistive sheet hanging in free space absorbs **at most exactly one half** of the power that hits it, and does so when its sheet resistance is exactly η₀/2 = 188.365 Ω/sq. That is a closed-form maximum from network theory. It was true before this repository existed and it does not move.
+
+*In plain terms: a single grey film hanging in air can never swallow more than half of what lands on it, whatever ink you print it with. So if our machinery says otherwise, the machinery is wrong.*
+
+**Why this sheet and not an absorber.** It is genuinely a two-port problem — a quarter of the power comes back, a quarter carries straight on through, and the remaining half turns into heat. A ground-backed absorber cannot test the two-port path at all: its transmission is structurally zero, so `A = 1 − R − T` collapses into `A = 1 − R` whether the arithmetic is right or not.
+
+**What is under test, and what is not.** Case 1 runs this same sheet, but `verification/meep_absorber_validation.py` builds its own `mp.Simulation` objects on purpose so the physics check does not assume the adapter. Case 4 goes the other way: it calls `orchestration/design_loop.py`'s SIMULATION step, which calls `run_meep_simulation` through the real `MEEP_PYTHON` subprocess and then chooses the sum from `ABSORBER_TRANSMISSIVE`'s declared `port_count=2`. The committed path a real design run takes, in other words, checked against a number nothing here produced.
+
+| | R | T | A |
+|---|---|---|---|
+| **exact** | 0.2500 | 0.2500 | **0.5000** |
+| **full wave, through the adapter and the loop** | 0.2899 | 0.2130 | **0.4971** |
+| delta | +0.0399 | −0.0370 | **−0.0029** |
+
+Scored against `free-standing-resistive-sheet-two-port-10ghz`: **PASS** on all three (A within ±0.01, R and T within ±0.06 — see below for why those bands differ by a factor of six).
+
+### The absorbed total is converged. The split is not.
+
+This is the most useful thing the run says, and it would be lost if only the pass were reported. **A is accurate to 0.003. R is about 16 % high and T about 15 % low.** Those two errors are anti-correlated and very nearly cancel in `1 − R − T`.
+
+*In plain terms: this grid counts how much power vanished into the sheet accurately, and is much vaguer about which side of the sheet the surviving power left by.*
+
+Two consequences, both practical:
+
+- **Do not assert on R or T at the absorptance's tolerance.** Asking for the split at ±0.01 fails for a reason that has nothing to do with the arithmetic under test. The case's ±0.06 on each is six times the absorptance band and is documented as such rather than quietly widened. It still catches what it is for: a transmittance off by the factor of two a wrong normalisation plane produces (#240) lands at 0.5 or 0.125, a missing sheet gives R = 0, and a perfect-metal sheet gives R = 1.
+- **This case is forgiving of sheet-resistance error.** A(Rs) is flat near its maximum, so a sheet the grid renders as the wrong resistance still lands close to 0.5. By the closed form:
+
+  | Rs (Ω/sq) | 125.6 | 150 | 170 | **188.4** | 210 | 250 |
+  |---|---|---|---|---|---|---|
+  | A | 0.4800 | 0.4936 | 0.4987 | **0.5000** | 0.4985 | 0.4901 |
+
+  A sheet 15 % off the match still absorbs 0.4967 and sails through the ±0.01 band; it takes roughly a third off to fail. That flatness cuts both ways, and the honest reading is the unflattering one: **this case validates the arithmetic and the normalisation far more strongly than it validates the meshing.** A meshing error large enough to matter elsewhere could pass here barely noticed.
+
+### The same run, scored by the one-port collapse
+
+The reflectance from this run, put through the committed `one_port_absorption` aimed at the real ground-backed `ABSORBER` family:
+
+| sum | value |
+|---|---|
+| two-port, `A = 1 − R − T` | 0.4971 |
+| one-port collapse, `A = 1 − R` | **0.7101** |
+| overstatement | **1.428×** |
+
+**It is not "roughly double", and the reason is structural rather than a matter of precision.** At the matched sheet the power splits 25 / 25 / 50, so discarding the transmitted quarter inflates a half into three quarters: 1.5 exactly, on the exact numbers. The measured 1.428 is lower only because this mesh reflects slightly too much, and a high R pulls `1 − R` down faster than it pulls `1 − R − T` down. Half of what escapes this sheet escapes *backwards*, and the collapse already subtracts that — which is why the error is one and a half times, not twice.
+
+*What that means for a reader is worse than the ratio sounds: it presents a surface that passes a fifth of the arriving power straight through as though it had absorbed seven tenths of it.*
+
+No run can reach that number through the loop by accident: `one_port_absorption` refuses a family declaring `port_count=2` outright, and the runner records the refusal's own text. The 0.7101 above had to be asked for deliberately, by aiming the ground-backed family's arithmetic at this run — which is exactly the mistake #216 found in the tree.
+
+### Closed form beside full wave, disagreement stated rather than smoothed
+
+`rf_tools/transmissive_absorber.py` models the same bare sheet as a single shunt resistance across free space (`thickness_m=None`, `gap_m=None`, load = η₀):
+
+| | R | T | A |
+|---|---|---|---|
+| closed form (#242) | 0.2500 | 0.2500 | 0.5000 |
+| full wave, through the loop | 0.2899 | 0.2130 | 0.4971 |
+| **disagreement** | **+0.0399** | **−0.0370** | **−0.0029** |
+
+The closed form lands on the exact answer to every digit shown, so this disagreement row is the same discretisation delta as the table above. **That repetition is the finding, not a redundancy: every bit of the gap between the two methods belongs to the mesh, and none of it to the model.** The closed form gives the sheet no thickness at all; the grid gives it 0.1 mm across six pixels, and a resistive film of real thickness is a slightly different structure from a zero-thickness one. It shows up where you would expect — in the split between bouncing back and passing through, hardly at all in the total absorbed.
+
+### Reproducing
+
+```sh
+MEEP_PYTHON=/opt/conda/envs/mp/bin/python3 \
+  uv run --no-sync python -m verification.meep_two_port_absorption_check
+```
+
+A script rather than a pytest test, for the same reason as the others: it needs a solver CI does not have. `tests/test_simulator_reference_cases.py` covers the mechanics with no solver installed — the geometry it poses, the scoring, the collapse arithmetic, and the assertion that scoring this run at 0.7101 **fails** the case.
+
 ## What this does *not* establish
 
-- **Still `SIMULATED`, not `MEASURED`.** No VNA, no fixture, no bench (#133). Two solvers agreeing is not a measurement, and the provenance ceiling has not moved.
+- **Still `SIMULATED`, not `MEASURED`.** No VNA, no fixture, no bench (#133). Two solvers agreeing is not a measurement, a closed form agreeing with a full-wave run is not a measurement, and the provenance ceiling has not moved for any of the four cases.
 - **Normal incidence only.** `k_point` is zero. Nothing here says anything about oblique angles.
 - **Loss tangent pinned at band centre.** Meep's `D_conductivity` is one constant; a loss tangent is not. Exact at centre, slightly off at the edges.
-- **These are uniform sheets.** A *patterned* cell is the thing the programme actually designs, and the closed form's grid capacitance — the part these cases deliberately switch off — is exactly what is unvalidated. Costa's eq (10) thin-spacer correction (#190) remains unrecovered and still biases patterned results in a known direction.
+- **These are uniform sheets.** A *patterned* cell is the thing the programme actually designs, and the closed form's grid capacitance — the part these cases deliberately switch off with `gap_m=None` — is exactly what is unvalidated. Costa's eq (10) thin-spacer correction (#190) remains unrecovered and still biases patterned results in a known direction.
 
-That last one is the honest limit: **the canonical case is validated, the design case is not yet.** The next reference case should be a patterned cell with a published response.
+Case 4 adds four of its own, and they are worth reading before quoting its pass:
+
+- **The reflected and transmitted shares are not converged; only their difference from one is.** R is ~16 % high and T ~15 % low at this mesh. `A = 1 − R − T` is right to 0.003 because those errors point opposite ways and cancel. Nothing here validates a *reflectance* or a *transmittance* on its own to better than about ±0.06, and any downstream use of R or T separately — a return-loss claim, a shielding-effectiveness claim — is outside what has been checked.
+- **It validates the arithmetic and the normalisation much more than the meshing.** The half-power maximum is flat in sheet resistance, so a sheet the grid renders 15 % off still passes comfortably. Read the pass as "the sums, the flux normalisation and the port-count dispatch are right", not as "the mesh is fine".
+- **One structure, one frequency, one sum.** It exercises `A = 1 − R − T` at a single 10 GHz point on a bare sheet. It says nothing about a stack with a dielectric behind the sheet, about a band sweep, or about the energy-balance warning path (`R + T > 1`), which no case here has triggered.
+- **The 0.7101 collapse figure is a diagnostic, not a defect that survives in the tree.** It had to be asked for on purpose by aiming the ground-backed family's arithmetic at a two-port run; the loop itself refuses that combination. What it establishes is the *size* of the error #216 found, not that the error is still reachable.
+
+The oldest limit is still the important one: **the canonical case is validated, the design case is not yet.** The next reference case should be a patterned cell with a published response.
 
 ## Conversions, verified rather than derived-and-trusted
 

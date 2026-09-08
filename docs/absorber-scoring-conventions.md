@@ -73,6 +73,18 @@ actually is. `DesignFamily.__post_init__` now refuses to construct a family whos
 `requires_ground_plane` flag and `port_count` disagree, so this particular error cannot regenerate
 silently in code the way it did in this document.
 
+**And it is now enforced on SIMULATED numbers as well as calculated ones (issue #243).**
+`orchestration/design_loop.py`'s Meep step used to compute `A = 1 − R` for every family, with a
+comment saying that was legitimate only because the cell was ground-backed. It now reads the
+family's `port_count` and picks the matching sum: one port keeps `A = 1 − R`; two ports require the
+run to have actually measured the transmitted power and use `A = 1 − R − T`. A two-port run with no
+transmission monitor is refused before the solver starts, and a two-port run whose transmittance
+came back unmeasured is refused after it — in both cases because falling back to `1 − R` would
+report a *higher* absorption than the truth, and a too-high absorption reads as success rather than
+as a defect. The arithmetic and its refusal live in `rf_tools/transmissive_absorber.py`
+(`one_port_absorption`, `two_port_absorption`); `simulation/meep.py` deliberately computes neither,
+since `1 − R − T` belongs to whoever knows the two powers were measured on the same structure.
+
 ---
 
 ## 2. The threshold: −10 dB and 90% are the same number

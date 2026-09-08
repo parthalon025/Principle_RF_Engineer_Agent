@@ -20,12 +20,19 @@ from designs.design_families import (
     DIFFUSIVE,
     NO_PHYSICAL_BOUND,
     PATCH,
+    POLARIZATION_CONVERTER,
     REFLECTION_PHASE,
+    AnalysisModel,
     DesignFamily,
     PhysicalBound,
+    SimulationAdapter,
     SimulationTier,
+    UndeclaredAnalysisModel,
+    UndeclaredAnalysisModelError,
     UnknownDesignFamilyError,
     UnreadPhysicalBound,
+    UnsettledSimulationAdapter,
+    UnsettledSimulationAdapterError,
     get_design_family,
     is_known_design_family,
     known_family_names,
@@ -264,6 +271,10 @@ def test_a_design_family_refuses_to_construct_with_disagreeing_flags():
             description="a ground-backed family wrongly declaring two ports",
             simulation_tier=SimulationTier.TIER_A,
             physical_bound=NO_PHYSICAL_BOUND,
+            analysis_model=UndeclaredAnalysisModel(reason="a test fixture, not a real family"),
+            simulation_adapter=UnsettledSimulationAdapter(
+                reason="a test fixture, not a real family"
+            ),
             requires_ground_plane=True,
             port_count=2,
         )
@@ -273,6 +284,10 @@ def test_a_design_family_refuses_to_construct_with_disagreeing_flags():
             description="an unbacked family wrongly declaring one port",
             simulation_tier=SimulationTier.TIER_A,
             physical_bound=NO_PHYSICAL_BOUND,
+            analysis_model=UndeclaredAnalysisModel(reason="a test fixture, not a real family"),
+            simulation_adapter=UnsettledSimulationAdapter(
+                reason="a test fixture, not a real family"
+            ),
             requires_ground_plane=False,
             port_count=1,
         )
@@ -375,6 +390,169 @@ def test_no_bound_returns_infinity_nowhere_and_never_silently_zero():
 
 
 # ---------------------------------------------------------------------------
+# Issue #239: every family DECLARES which analysis it needs, in writing
+# ---------------------------------------------------------------------------
+
+
+def test_every_family_states_an_analysis_model_or_states_why_it_has_none():
+    """No family may be silent about this. In plain terms: either it says
+    which sum works this kind of surface out, or it says why nobody can."""
+    for name in known_family_names():
+        family = get_design_family(name)
+        assert isinstance(family.analysis_model, AnalysisModel | UndeclaredAnalysisModel)
+        if family.has_analysis_model:
+            assert family.analysis_model.name.strip()
+            assert family.analysis_model.function.strip()
+            # `answers` exists because the defect this field removed was a
+            # valid number answering a question about a different device.
+            assert family.analysis_model.answers.strip()
+        else:
+            assert family.analysis_model.reason.strip()
+
+
+def test_the_two_families_with_a_model_declare_the_ones_they_already_ran():
+    """#239 changes HOW the model is chosen, never WHICH one these two get."""
+    assert ABSORBER.declared_analysis_model().name == "ABSORBER_BAND_RESPONSE"
+    assert ABSORBER.declared_analysis_model().function == "rf_tools.absorber.absorber_band_response"
+    assert PATCH.declared_analysis_model().name == "PATCH_RESONANT_FREQUENCY"
+    assert (
+        PATCH.declared_analysis_model().function
+        == "rf_tools.calculations.patch_resonant_frequency_hz"
+    )
+
+
+def test_asking_a_family_with_no_model_raises_naming_the_family_and_the_file():
+    """The message has to be actionable on its own: which family, what is
+    missing, where to put it -- the standard UnknownDesignFamilyError and
+    UnreadPhysicalBound already set."""
+    for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE):
+        assert not family.has_analysis_model
+        with pytest.raises(UndeclaredAnalysisModelError) as exc:
+            family.declared_analysis_model()
+        message = str(exc.value)
+        assert family.name in message
+        assert "analysis_model" in message
+        assert "designs/design_families.py" in message
+        # The family's own recorded reason travels with the refusal -- a
+        # reader should not have to open this file to learn why.
+        assert family.analysis_model.reason[:40] in message
+
+
+def test_the_transmissive_absorber_declares_the_two_port_model():
+    """#239 removed the wrong dispatch and left this family with nothing to
+    declare; #242 gave it the unbacked two-port model. What the declaration
+    must NOT be is the ground-backed one -- that model's sum is legitimate
+    only because a ground plane guarantees nothing gets through."""
+    model = ABSORBER_TRANSMISSIVE.declared_analysis_model()
+    assert model.name == "TRANSMISSIVE_ABSORBER_BAND_RESPONSE"
+    assert model.function == ("rf_tools.transmissive_absorber.transmissive_absorber_band_response")
+    assert model.name != ABSORBER.declared_analysis_model().name
+    # The plain-language statement has to say what makes this family
+    # different: power leaves out the back and is not absorbed.
+    assert "S21" in model.answers
+
+
+def test_a_family_cannot_be_constructed_without_stating_its_analysis():
+    """Required with no default: forgetting is impossible rather than
+    invisible."""
+    with pytest.raises(TypeError, match="analysis_model"):
+        DesignFamily(
+            name="FORGOT_TO_SAY",
+            description="a family that never stated which analysis it needs",
+            simulation_tier=SimulationTier.TIER_A,
+            physical_bound=NO_PHYSICAL_BOUND,
+            simulation_adapter=UnsettledSimulationAdapter(reason="a test fixture"),
+            requires_ground_plane=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Issue #241: every family states a solver, or states that it is unsettled
+# ---------------------------------------------------------------------------
+
+
+def test_every_family_states_a_solver_or_states_that_the_choice_is_open():
+    """No family may be silently unset. In plain terms: either it names the
+    simulator that can describe this kind of surface, or it says out loud
+    that nobody has worked out which one can."""
+    for name in known_family_names():
+        family = get_design_family(name)
+        assert isinstance(family.simulation_adapter, SimulationAdapter | UnsettledSimulationAdapter)
+        assert family.simulation_adapter.reason.strip()
+        if family.has_settled_simulation_adapter:
+            assert family.simulation_adapter.name.strip()
+        else:
+            # An open question is only useful if it says what was considered
+            # and how to close it -- the charter's warning shape.
+            assert family.simulation_adapter.candidates
+            assert family.simulation_adapter.cheapest_test.strip()
+
+
+def test_the_settled_families_keep_the_solvers_they_already_routed_to():
+    """#241 changes what happens to families with nothing declared. It must
+    not move ABSORBER or PATCH. ABSORBER_TRANSMISSIVE joined them at #243,
+    once the adapter could report what passes THROUGH the surface as well as
+    what bounces off it."""
+    assert ABSORBER.declared_simulation_adapter().name == "MEEP_FLOQUET"
+    assert PATCH.declared_simulation_adapter().name == "NEC2"
+    assert ABSORBER_TRANSMISSIVE.declared_simulation_adapter().name == "MEEP_FLOQUET"
+
+
+def test_asking_an_unsettled_family_for_a_solver_raises_with_the_reason_and_the_way_out():
+    for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE):
+        assert not family.has_settled_simulation_adapter
+        with pytest.raises(UnsettledSimulationAdapterError) as exc:
+            family.declared_simulation_adapter()
+        message = str(exc.value)
+        assert family.name in message
+        assert "simulation_adapter" in message
+        assert "designs/design_families.py" in message
+        # The candidates and the cheapest test travel with the refusal: a
+        # reader is told what was considered and how to settle it.
+        for candidate in family.simulation_adapter.candidates:
+            assert candidate in message
+        assert family.simulation_adapter.cheapest_test in message
+
+
+def test_the_transmissive_absorbers_settled_solver_still_records_what_was_missing():
+    """#243 settled this family on MEEP_FLOQUET. The reason has to keep
+    saying WHY it was open until then -- that reflectance alone is half an
+    answer for a surface power can pass through -- or the next reader has no
+    way to tell a considered choice from a copied one."""
+    assert ABSORBER_TRANSMISSIVE.has_settled_simulation_adapter
+    reason = ABSORBER_TRANSMISSIVE.simulation_adapter.reason
+    assert "243" in reason
+    assert "S21" in reason
+
+
+def test_the_unsettled_families_do_not_all_share_one_copy_pasted_reason():
+    """Writing the same plausible name (or the same excuse) on every open
+    family would reintroduce #241's defect one layer up. Each family's
+    reason has to be about that family's own missing quantity."""
+    reasons = {
+        family.name: family.simulation_adapter.reason
+        for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE)
+    }
+    assert len(set(reasons.values())) == len(reasons)
+    # The quantity each one actually needs, named in its own words.
+    assert "phase" in reasons["REFLECTION_PHASE"]
+    assert "180 degrees" in reasons["DIFFUSIVE"]
+    assert "CROSS-polarised" in reasons["POLARIZATION_CONVERTER"]
+
+
+def test_a_family_cannot_be_constructed_without_stating_a_solver():
+    with pytest.raises(TypeError, match="simulation_adapter"):
+        DesignFamily(
+            name="FORGOT_THE_SOLVER",
+            description="a family that never stated which simulator can pose it",
+            simulation_tier=SimulationTier.TIER_A,
+            physical_bound=NO_PHYSICAL_BOUND,
+            analysis_model=UndeclaredAnalysisModel(reason="a test fixture"),
+            requires_ground_plane=True,
+        )
+
+
+# ---------------------------------------------------------------------------
 # The alias table guards itself against the tree
 # ---------------------------------------------------------------------------
 
@@ -394,6 +572,24 @@ def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
     The one deliberate exception is a string a test uses precisely BECAUSE it
     is invalid, which is listed rather than pattern-matched so a genuine typo
     cannot hide behind the exemption.
+
+    THE SCAN MUST SEE THE SAME TREE CI SEES. It skips `.venv`/site-packages
+    for the obvious reason, and `.claude/worktrees` for a much less obvious
+    one: a git worktree checked out INSIDE the repo puts a second copy of
+    every .py file under the scan root. That copy is at whatever commit the
+    worktree sits on, so the scan silently reads spellings that the branch
+    under test does not contain. This is not hypothetical -- it is exactly how
+    this test passed locally and failed in CI at #239: the spelling asserted
+    below had been deleted from the branch and survived only in a worktree.
+
+    That skip must be matched against the path RELATIVE to the repo root. The
+    first version compared absolute parts, which works from the main checkout
+    and breaks the moment the suite is RUN FROM a worktree: the root is then
+    itself `.../.claude/worktrees/agent-x/`, every file matches the skip, and
+    the scan finds nothing at all. The `assert found` below is what catches
+    that, and it is why that assertion is here rather than being obvious
+    belt-and-braces -- a scan that silently narrows to nothing still passes
+    every other assertion in this test.
     """
     import re
     from pathlib import Path
@@ -404,17 +600,29 @@ def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
 
     found: dict[str, list[str]] = {}
     for path in repo_root.rglob("*.py"):
-        if ".venv" in path.parts or "site-packages" in path.parts:
+        # Match on the path RELATIVE to the repo root, never its absolute
+        # parts: when this test itself runs from inside a worktree, the root
+        # is `.../.claude/worktrees/agent-x/`, so an absolute match skips
+        # every file in the tree and the scan silently finds nothing. See the
+        # docstring.
+        relative = path.relative_to(repo_root)
+        if {".venv", "site-packages", "worktrees"} & set(relative.parts):
             continue
         for name in pattern.findall(path.read_text(encoding="utf-8", errors="ignore")):
-            found.setdefault(name, []).append(str(path.relative_to(repo_root)))
+            found.setdefault(name, []).append(str(relative))
 
     assert found, "the scan found no design_family literals at all -- it has stopped working"
-    # The two spellings this scan is known to protect. If either disappears
-    # the scan has silently narrowed, which is the failure mode that let the
-    # first miss through.
+    # Canaries: spellings that ARE in the tree and are not the canonical
+    # registry names, so if either stops being found the scan has silently
+    # narrowed -- the failure mode that let the first miss through.
+    #
+    # "reflection_phase_surface" used to be the second canary. #239 removed
+    # the last use of it: REFLECTION_PHASE declares no analysis model, so the
+    # loop can no longer be driven end to end with it and the test that did
+    # so now uses a second PATCH alias. "reflection_phase" (a non-canonical
+    # spelling still live in tests/test_design_loop.py) replaces it.
     assert "patch_antenna" in found
-    assert "reflection_phase_surface" in found
+    assert "reflection_phase" in found
 
     unresolvable = {
         name: sites

@@ -40,6 +40,7 @@ import pytest
 import skrf as rf
 from conftest import make_fake_executable
 
+import designs.design_families as design_families_module
 import orchestration.design_loop as design_loop_module
 from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
 from measurement.external import ExternalMeasurementError
@@ -49,7 +50,6 @@ from orchestration.approval import (
     request_loop_step_approval,
 )
 from orchestration.design_loop import (
-    DEFAULT_SIMULATION_ADAPTER,
     GATED_STEPS,
     REDESIGN_ACTIONS,
     STEP_ORDER,
@@ -61,6 +61,7 @@ from orchestration.design_loop import (
     advance_loop_step,
     start_design_loop,
 )
+from simulation.base import SimulatorError as _SimulatorError
 from simulation.meep import (
     PERIODIC_ABSORBER_VALIDITY as MEEP_PERIODIC_ABSORBER_VALIDITY,
 )
@@ -1439,13 +1440,181 @@ def test_absorber_analysis_reports_a_range_for_a_bracketed_permittivity():
     assert result["worst_absorption_low"] <= result["worst_absorption_high"]
 
 
+# --- #239: ANALYSIS dispatches on what the family DECLARES, not on its name --
+#
+# Before #239 this step compared the family's NAME against the single string
+# "ABSORBER" and handed the patch-antenna resonant-frequency formula to
+# everything else. In plain terms: it read the label on the box to decide
+# which instrument to reach for, so any family not spelled "ABSORBER" was
+# measured as though it were a transmitting antenna -- which is how
+# ABSORBER_TRANSMISSIVE (#216) came to be analysed as one the moment it was
+# created.
+
+
+_PATCH_ANALYSIS_INPUT = {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016, "l_m": 0.029}
+
+# Every family that declares no analysis model today. Each is a deliberate
+# declaration recorded in designs/design_families.py, not an omission -- see
+# that file for why each one has nothing to declare yet.
+_FAMILIES_DECLARING_NO_ANALYSIS = [
+    # ABSORBER_TRANSMISSIVE was here until #242 gave it the two-port model.
+    "DIFFUSIVE",
+    "POLARIZATION_CONVERTER",
+    "REFLECTION_PHASE",
+]
+
+
+@pytest.mark.parametrize("family", _FAMILIES_DECLARING_NO_ANALYSIS)
+def test_a_family_declaring_no_analysis_fails_loudly_instead_of_becoming_a_patch(family):
+    """The negative case is the whole point of #239: a family with no
+    analysis of its own must produce a recognisable, reported state, not a
+    resonant frequency for a device it is not."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(state, dict(_PATCH_ANALYSIS_INPUT))
+
+    message = str(exc.value)
+    assert family in message
+    assert "analysis_model" in message
+    assert "designs/design_families.py" in message
+    # Nothing was recorded and the loop did not move on: a refusal, not a
+    # silently wrong number.
+    assert state.current_step == DesignStep.ANALYSIS.value
+    assert all(d.step != DesignStep.ANALYSIS.value for d in state.decisions)
+
+
+def test_the_transmissive_absorber_runs_the_two_port_model_not_the_patch_formula():
+    """The defect #239 existed to remove, now checked on the family that had
+    it: ABSORBER_TRANSMISSIVE reaches the unbacked two-port model (#242) and
+    its result carries a transmitted share -- the quantity a patch resonant
+    frequency has no notion of."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER_TRANSMISSIVE")
+    )
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+
+    result = state.decisions[-1].result
+    assert "resonant_frequency_hz" not in result
+    assert result["worst_absorption"] is not None
+    assert result["provenance"] == "CALCULATED"
+
+
+def test_the_same_stack_scores_lower_unbacked_because_power_leaves_out_the_back():
+    """The number this whole spec exists to correct. One printed stack,
+    scored under both families: the ground-backed sum credits every watt not
+    reflected as heat, which is legitimate ONLY because a ground plane means
+    nothing gets through. Take the ground plane away and some of that power
+    walked out the back -- so the honest score must be lower, by at least the
+    transmitted share."""
+
+    def _score(family: str) -> dict:
+        state = start_design_loop(REQUIREMENTS)
+        state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+        state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+        return state.decisions[-1].result
+
+    backed = _score("ABSORBER")
+    unbacked = _score("ABSORBER_TRANSMISSIVE")
+
+    assert unbacked["worst_absorption"] < backed["worst_absorption"]
+    # And the gap is not a tuning artefact: it is the power that got through.
+    # The ground-backed model has no such quantity to report at all, which is
+    # the structural difference between the two families.
+    assert unbacked["transmission_at_worst"] > 0.0
+    assert "transmission_at_worst" not in backed
+
+
+def test_the_transmissive_analysis_reports_its_bound_unread_and_never_names_rozanov():
+    """The bound is reported as UNREAD, never as absent -- absence of a
+    citation is not evidence that no bound exists. And the ground-backed
+    family's bound is not named anywhere in the result: its derivation fixes
+    a slab over a perfectly reflecting plane, this family has no such plane,
+    and issue #216's failure mode is somebody finding the familiar name
+    sitting beside a transmissive number and reapplying it."""
+    import json as _json
+
+    from designs.design_families import ABSORBER_TRANSMISSIVE as _AT
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER_TRANSMISSIVE")
+    )
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    result = state.decisions[-1].result
+
+    assert result["physical_bound"]["status"] == "unread_primary_source"
+    assert result["physical_bound"]["applies"] is False
+    assert "rozanov" not in _json.dumps(result, default=str).lower()
+    # The registry entry is where that explanation belongs, and it is there.
+    assert "Rozanov" in _AT.physical_bound.citation
+
+
+def test_the_ground_backed_model_refuses_a_transmissive_family_at_the_dispatch():
+    """The guard sits where a design family and a model first meet. Aimed at
+    the transmissive family, the ground-backed handler must raise rather than
+    return the high score it would happily compute for a stack that lets a
+    large share straight through."""
+    from designs.design_families import ABSORBER_TRANSMISSIVE as _AT
+    from rf_tools.transmissive_absorber import GroundBackedModelMisappliedError
+
+    with pytest.raises(GroundBackedModelMisappliedError, match="ABSORBER_TRANSMISSIVE"):
+        design_loop_module._handle_analysis_absorber(_AT, dict(_ABSORBER_ANALYSIS_INPUT))
+
+
+def test_the_ground_backed_absorber_result_is_byte_for_byte_what_it_always_was():
+    """#242 must not move ABSORBER. The loop's result has to equal a direct
+    call to the untouched `rf_tools.absorber.absorber_band_response` for the
+    same inputs -- not merely resemble it."""
+    from rf_tools.absorber import absorber_band_response as _abr
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    assert state.decisions[-1].result == _abr(**_ABSORBER_ANALYSIS_INPUT)
+
+
+def test_analysis_follows_the_declared_model_even_when_the_family_name_disagrees(monkeypatch):
+    """Proof the name comparison is really gone. The registry entry this
+    ARCHITECTURE step resolves to declares the absorber model but is named
+    something else entirely, and the step_input names the family "PATCH" --
+    so the old string comparison would have run the patch formula here and
+    failed on its missing w_m/h_m/l_m. Reading the declaration instead gets
+    the absorber model."""
+    renamed = _dc_replace(design_families_module.ABSORBER, name="NOT_SPELLED_ABSORBER")
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: renamed)
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    assert state.decisions[-1].result["function"] == "absorber_band_response"
+
+
+def test_analysis_needs_an_architecture_decision_before_it_can_choose_a_model():
+    """With no ARCHITECTURE decision there is no declared family, so there is
+    nothing to read a model off. Guessing one is exactly what #239 removes."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.ANALYSIS)
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        advance_loop_step(state, dict(_PATCH_ANALYSIS_INPUT))
+
+
 # --- #229: SIMULATION dispatches on the family's declared adapter -----------
 
 
-def test_simulation_adapter_defaults_to_nec2_with_no_architecture_decision():
-    """Nothing that worked before this dispatch existed changes behaviour."""
+def test_no_architecture_decision_means_there_is_no_adapter_to_read(monkeypatch):
+    """#241: with no ARCHITECTURE decision no family has been named, so
+    nothing declares a solver. The old code answered NEC2 here -- a wire
+    solver picked by default for a design nobody had described yet."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError("NEC2 must never be reached by default")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
     state = start_design_loop(REQUIREMENTS)
-    assert _simulation_adapter_for(state) == DEFAULT_SIMULATION_ADAPTER == "NEC2"
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        _simulation_adapter_for(state)
 
 
 def test_patch_declares_nec2_and_absorber_declares_meep():
@@ -1454,6 +1623,95 @@ def test_patch_declares_nec2_and_absorber_declares_meep():
     absorber = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
     assert _simulation_adapter_for(patch) == "NEC2"
     assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
+
+
+# --- #241: an undeclared simulation adapter is a loud failure, not NEC2 -----
+#
+# NEC2 is a thin-wire method-of-moments solver: its whole geometry vocabulary
+# is wires over an optional ground plane -- no dielectrics, no sheet
+# impedance, no periodicity. A periodic surface is not a HARD case for it, it
+# is one you cannot write an input file for. So falling back to it was never
+# a conservative default; it was a wrong answer waiting to be produced
+# confidently.
+
+# Every family with no settled adapter today. Each states WHY in
+# designs/design_families.py rather than being left silently unset.
+_FAMILIES_WITH_NO_SETTLED_ADAPTER = [
+    # ABSORBER_TRANSMISSIVE was here until #243 settled it on MEEP_FLOQUET.
+    "DIFFUSIVE",
+    "POLARIZATION_CONVERTER",
+    "REFLECTION_PHASE",
+]
+
+
+def _at_simulation(family: str) -> DesignLoopState:
+    """An iteration whose ARCHITECTURE named `family`, positioned at
+    SIMULATION. ANALYSIS is stepped over rather than run, because these
+    families declare no analysis either (#239) -- this test is about the
+    solver choice, not about that."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+    return _advance_to(state, DesignStep.SIMULATION)
+
+
+@pytest.mark.parametrize("family", _FAMILIES_WITH_NO_SETTLED_ADAPTER)
+def test_a_family_with_no_settled_adapter_refuses_to_simulate(family, monkeypatch):
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError(f"NEC2 must never be reached for {family}")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    state = _at_simulation(family)
+
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(
+            state,
+            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+        )
+    message = str(exc.value)
+    assert family in message
+    assert "simulation_adapter" in message
+    assert "designs/design_families.py" in message
+    assert state.current_step == DesignStep.SIMULATION.value
+    assert all(d.step != DesignStep.SIMULATION.value for d in state.decisions)
+
+
+def test_the_transmissive_absorber_now_routes_to_meep_and_never_to_nec2(monkeypatch):
+    """#243 settled it. The family that used to refuse to simulate at all --
+    because the adapter could not say how much power went THROUGH the
+    surface -- now names MEEP_FLOQUET, and must never reach NEC2, whose
+    entire geometry vocabulary is wires and which cannot express a repeating
+    surface at all."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError("NEC2 must never be reached for ABSORBER_TRANSMISSIVE")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    state = _at_simulation("ABSORBER_TRANSMISSIVE")
+    assert _simulation_adapter_for(state) == "MEEP_FLOQUET"
+
+
+def test_a_declared_adapter_this_loop_cannot_drive_is_reported_not_routed_to_nec2(monkeypatch):
+    """The other half of the same defect: a family may declare a solver this
+    loop has no handler wired for. That must be said, not silently answered
+    by whichever handler happens to be last."""
+    palace = _dc_replace(
+        design_families_module.ABSORBER,
+        simulation_adapter=design_families_module.SimulationAdapter(
+            name="PALACE_FLOQUET", reason="a solver this loop has no handler for yet"
+        ),
+    )
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: palace)
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError("NEC2 must never stand in for an unwired adapter")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    state = _at_simulation("ABSORBER")
+    with pytest.raises(_SimulatorError, match="PALACE_FLOQUET"):
+        advance_loop_step(
+            state,
+            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+        )
 
 
 def test_absorber_simulation_runs_meep_with_a_periodic_cell(monkeypatch):
@@ -1488,6 +1746,7 @@ def test_absorber_simulation_runs_meep_with_a_periodic_cell(monkeypatch):
     # dissipated. A = 1 - R is legitimate only for that reason.
     assert result["absorption"] == pytest.approx([0.8, 0.99])
     assert result["worst_absorption"] == pytest.approx(0.8)
+    assert result["port_count"] == 1  # #243: the arithmetic says what it assumed
     assert state.decisions[-1].provenance == "SIMULATED"
 
 
@@ -1549,3 +1808,251 @@ def test_no_capability_gaps_remain_and_the_survivors_are_honest_caveats():
     assert MEEP_PERIODIC_ABSORBER_VALIDITY
     for entry in MEEP_PERIODIC_ABSORBER_VALIDITY:
         assert entry["flag"] and entry["assumed"] and entry["costs"] and entry["cheapest_test"]
+
+
+# --- #243: the absorption sum is chosen by the family's declared ports ------
+#
+# `A = 1 - R` says "whatever did not bounce back was turned into heat". That
+# is only true when nothing can get through. On a surface with free space
+# behind it, some of the power walks out the back, and crediting that as
+# absorbed makes a design look better than it is -- with nothing in the
+# number to say so. So the sum is selected from the family's declared
+# `port_count`: one port (ground-backed) keeps `A = 1 - R`; two ports
+# (unbacked) must subtract the measured transmitted share as well.
+
+
+def _meep_result(reflectance, transmittance_entry=..., frequency_hz=(10e9,)):
+    """A fake `run_meep_simulation` return. `transmittance_entry` is the
+    adapter's own three-state entry (#240) -- left out entirely by default,
+    which is what a pre-#240 adapter would return."""
+    s_parameters = {"frequency_hz": list(frequency_hz), "reflectance": list(reflectance)}
+    if transmittance_entry is not ...:
+        s_parameters["transmittance"] = transmittance_entry
+    return {
+        "provenance": "SIMULATED",
+        "simulator": "MEEP",
+        "status": "COMPLETED",
+        "s_parameters": s_parameters,
+    }
+
+
+_TWO_PORT_GEOMETRY = {
+    "cell_size_m": [3e-3, 3e-3, 40e-3],
+    # The plane behind the structure at which the power that got through is
+    # counted. The loop cannot invent this: only whoever laid out the cell
+    # knows which side the source is on and where the PML ends.
+    "transmission_monitor_center_m": [0.0, 0.0, -8e-3],
+}
+
+
+def _run_two_port_simulation(monkeypatch, meep_result, geometry=None):
+    """Drive ABSORBER_TRANSMISSIVE through the real SIMULATION step with a
+    fake solver return, and hand back (state, captured geometry)."""
+    captured = {}
+
+    def fake_run(geometry, characteristic_length_m, nfreq, workdir):
+        captured["geometry"] = geometry
+        return meep_result
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", fake_run)
+    state = _at_simulation("ABSORBER_TRANSMISSIVE")
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": dict(_TWO_PORT_GEOMETRY if geometry is None else geometry),
+            "frequency_hz": 10e9,
+        },
+    )
+    return state, captured
+
+
+def test_a_two_port_familys_absorption_excludes_the_power_that_went_through(monkeypatch):
+    """The defect this ticket removes, stated as arithmetic. A fifth of the
+    power bounces back and just under a third passes straight through, so
+    what actually became heat is a half -- not the four fifths `1 - R` would
+    have reported."""
+    state, _ = _run_two_port_simulation(
+        monkeypatch,
+        _meep_result(
+            [0.2],
+            {"computed": True, "requested": True, "transmittance": [0.3]},
+        ),
+    )
+    result = state.decisions[-1].result
+    assert result["port_count"] == 2
+    assert result["absorption_formula"] == "A = 1 - R - T"
+    assert result["absorption"] == pytest.approx([0.5])
+    assert result["worst_absorption"] == pytest.approx(0.5)
+    assert result["transmittance"] == pytest.approx([0.3])
+    assert state.decisions[-1].provenance == "SIMULATED"
+
+
+def test_a_two_port_run_asks_the_adapter_for_the_transmitted_power(monkeypatch):
+    """Asking is not optional for a two-port family: the transmission
+    monitor has to reach the solver, or there is no T to subtract."""
+    _, captured = _run_two_port_simulation(
+        monkeypatch,
+        _meep_result([0.2], {"computed": True, "requested": True, "transmittance": [0.3]}),
+    )
+    assert captured["geometry"]["transmission_monitor_center_m"] == [0.0, 0.0, -8e-3]
+    assert captured["geometry"]["periodic_axes"] == ["x", "y"]
+
+
+def test_a_two_port_run_with_no_transmission_monitor_refuses_before_spending_solver_time(
+    monkeypatch,
+):
+    """Caught up front, not after a full-wave run: without a monitor plane
+    the answer cannot be computed however long the solver runs, and FDTD
+    time is the expensive thing here."""
+
+    def exploding_run(**kwargs):
+        raise AssertionError("the solver must not run when T can never be computed")
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", exploding_run)
+    state = _at_simulation("ABSORBER_TRANSMISSIVE")
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(
+            state, {"geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]}, "frequency_hz": 10e9}
+        )
+    message = str(exc.value)
+    assert "ABSORBER_TRANSMISSIVE" in message
+    assert "port_count=2" in message
+    assert "transmission_monitor_center_m" in message
+    assert state.current_step == DesignStep.SIMULATION.value
+    assert all(d.step != DesignStep.SIMULATION.value for d in state.decisions)
+
+
+@pytest.mark.parametrize(
+    "transmittance_entry",
+    [
+        # Asked for, and the adapter could not compute it (#240's middle state).
+        {"computed": False, "requested": True, "note": "the reference run's flux was empty"},
+        # Asked for by the loop, yet the result says nobody asked -- an
+        # adapter that ignored the monitor.
+        {"computed": False, "requested": False, "note": "no transmission monitor was requested"},
+        # No transmittance entry at all: an adapter from before #240.
+        ...,
+    ],
+)
+def test_a_two_port_family_whose_transmittance_is_missing_refuses(monkeypatch, transmittance_entry):
+    """Silently falling back to `1 - R` here is the precise defect #243
+    removes -- it would report 0.8 absorbed where the truth might be 0.5,
+    and the number would look like a success."""
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: _meep_result([0.2], transmittance_entry),
+    )
+    state = _at_simulation("ABSORBER_TRANSMISSIVE")
+    with pytest.raises(_SimulatorError) as exc:
+        advance_loop_step(state, {"geometry": dict(_TWO_PORT_GEOMETRY), "frequency_hz": 10e9})
+    message = str(exc.value)
+    assert "ABSORBER_TRANSMISSIVE" in message
+    assert "transmittance" in message
+    assert all(d.step != DesignStep.SIMULATION.value for d in state.decisions)
+
+
+def test_a_measured_zero_transmission_is_not_the_same_as_an_unmeasured_one(monkeypatch):
+    """The three states stay apart. A measured zero is a real result -- the
+    structure genuinely passes nothing at this frequency -- and it computes
+    the same number `1 - R` would have, honestly this time, because T was
+    actually looked at."""
+    state, _ = _run_two_port_simulation(
+        monkeypatch,
+        _meep_result([0.2], {"computed": True, "requested": True, "transmittance": [0.0]}),
+    )
+    result = state.decisions[-1].result
+    assert result["absorption"] == pytest.approx([0.8])
+    assert result["transmittance"] == pytest.approx([0.0])
+    assert result["transmittance_measurement"]["computed"] is True
+
+
+def test_the_one_port_collapse_raises_when_aimed_at_a_two_port_family():
+    """Named and refused, not warned about: `1 - R` on a transmitting
+    surface is a confidently wrong number, and no caveat attached to it
+    would tell a reader that it was."""
+    from designs.design_families import ABSORBER_TRANSMISSIVE as _AT
+    from rf_tools.transmissive_absorber import (
+        GroundBackedModelMisappliedError,
+        one_port_absorption,
+    )
+
+    with pytest.raises(GroundBackedModelMisappliedError) as exc:
+        one_port_absorption(_AT, [0.2])
+    message = str(exc.value)
+    assert "ABSORBER_TRANSMISSIVE" in message
+    assert "port_count=2" in message
+    assert "1 - R" in message
+
+
+def test_reflected_plus_transmitted_over_one_is_flagged_and_the_candidate_still_returned(
+    monkeypatch,
+):
+    """More power came back and got through than arrived, which cannot
+    physically happen -- so an assumption behind the run is wrong. That is
+    warned about and handed over, never withheld: the charter's "warn, never
+    block" governs keeping a candidate from a reader."""
+    state, _ = _run_two_port_simulation(
+        monkeypatch,
+        _meep_result([0.7], {"computed": True, "requested": True, "transmittance": [0.5]}),
+    )
+    decision = state.decisions[-1]
+    result = decision.result
+
+    # Returned and recorded, with the arithmetic shown rather than clipped.
+    assert decision.step == DesignStep.SIMULATION.value
+    assert result["absorption"] == pytest.approx([-0.2])
+    assert state.current_step == DesignStep.OPTIMIZATION.value
+
+    violations = result["energy_balance_violations"]
+    assert len(violations) == 1
+    assert violations[0]["reflected_plus_transmitted"] == pytest.approx(1.2)
+    assert violations[0]["frequency_hz"] == pytest.approx(10e9)
+
+    warning = next(
+        v for v in result["validity"] if v["flag"] == "reflected_plus_transmitted_exceeds_incident"
+    )
+    # The charter's three-part warning shape.
+    assert warning["assumed"] and warning["costs"] and warning["cheapest_test"]
+
+
+def test_a_physical_two_port_run_carries_no_energy_balance_warning(monkeypatch):
+    """A warning on every run is the same as no warning at all. It fires
+    only where the sum is actually impossible."""
+    state, _ = _run_two_port_simulation(
+        monkeypatch,
+        _meep_result([0.2], {"computed": True, "requested": True, "transmittance": [0.3]}),
+    )
+    result = state.decisions[-1].result
+    assert result["energy_balance_violations"] == []
+    assert all(
+        v["flag"] != "reflected_plus_transmitted_exceeds_incident" for v in result["validity"]
+    )
+
+
+def test_the_ground_backed_family_pays_nothing_for_the_two_port_machinery(monkeypatch):
+    """#243 must not move ABSORBER. Its absorption is the same `1 - R` it
+    always was, and its run does not ask for a transmission monitor it has
+    no use for -- with metal behind the surface, nothing gets through by
+    construction, and measuring that costs solver time for a known zero."""
+    captured = {}
+
+    def fake_run(geometry, characteristic_length_m, nfreq, workdir):
+        captured["geometry"] = geometry
+        return _meep_result([0.2, 0.01], frequency_hz=(9e9, 10e9))
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", fake_run)
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(
+        state, {"geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]}, "frequency_hz": 10e9}
+    )
+
+    assert "transmission_monitor_center_m" not in captured["geometry"]
+    result = state.decisions[-1].result
+    assert result["port_count"] == 1
+    assert result["absorption_formula"] == "A = 1 - R"
+    assert result["absorption"] == pytest.approx([0.8, 0.99])
+    assert result["transmittance"] is None
+    assert result["energy_balance_violations"] == []

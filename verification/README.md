@@ -73,9 +73,42 @@ The first case is a centre-fed thin half-wave dipole, whose feed impedance
 why 75-ohm coax exists) is among the most reproduced numbers in antenna
 engineering.
 
-**Status: never executed.** No full-wave solver is pip-installable and CI
-installs none, so `tests/test_simulator_reference_cases.py`'s real-solve test
-skips everywhere today. The case definitions, tolerances and checking logic are
-tested and ready; the first actual run is unproven. This is the test that would
-let `SIMULATED` mean *validated* simulation in `CONTEXT.md`'s evidence
-hierarchy.
+**Status: the three MEEP cases have been executed; the NEC2 case has not.**
+
+`salisbury-screen-10ghz` and `free-standing-resistive-sheet-10ghz` were run
+against a real pymeep 1.34.0 and reproduced their expected values -- 0.4971
+against an exact 0.5000, and agreement with `rf_tools/absorber.py` to within
+0.001 across 6-14 GHz. Numbers, method and limits in
+`docs/meep-absorber-validation.md`; re-run via
+`verification/meep_absorber_validation.py`.
+
+`free-standing-resistive-sheet-two-port-10ghz` is the same sheet again, and
+deliberately so: the runner above builds its own Meep objects, so the
+adapter and the design loop are untested by it. This case is posed *through*
+`simulation/meep.py` and scored by `orchestration/design_loop.py`'s two-port
+sum `A = 1 - R - T`, and it returned 0.4971 against the same exact 0.5000
+(R = 0.2899, T = 0.2130). Re-run via
+`verification/meep_two_port_absorption_check.py`. The same run scored by the
+ground-backed collapse `A = 1 - R` gives 0.7101 -- **1.43x** the truth, which
+is what a two-port surface filed under the one-port family would have
+reported. That script and
+`verification/meep_adapter_transmittance_check.py` are the two that drive
+the committed adapter rather than around it.
+
+`half-wave-dipole-300mhz` needs nec2++, which CI does not install, so
+`tests/test_simulator_reference_cases.py`'s real-solve test still skips there.
+It is **unrun, not unrunnable**: the Dockerfile builds nec2++, so it is
+takeable in the container. Tracked by #222.
+
+A case declares which adapter can pose it (`ReferenceCase.solver`), and
+runners must filter on that. A case is only meaningful to the solver its
+geometry is written for: a wire list means nothing to an FDTD grid, and an
+absorber stack means nothing to a thin-wire method-of-moments code.
+
+What this does and does not earn for `SIMULATED` provenance is stated in
+`docs/meep-absorber-validation.md` -- in short, the physics of the first two
+MEEP cases is checked against known-correct answers while the adapter's own
+deck emission and parsing are not what those numbers check, and the third
+case checks that adapter-and-loop path against the same known-correct
+answer. None of it moves the provenance ceiling: two methods agreeing is
+still not a measurement.

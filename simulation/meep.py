@@ -117,26 +117,50 @@ per-fact citations below):
     / Version 2, June 1991 / Copyright (C) 1989, 1991 Free Software
     Foundation, Inc." -- i.e. GPLv2 (recorded in docs/LICENSE_MATRIX.md).
 
-HONEST CAVEAT -- read before trusting any of this end to end: MEEP is NOT
-installed in this environment (confirmed via `import meep` failing at
-implementation time; see tests/test_meep.py's
-test_meep_is_genuinely_not_installed_in_this_environment) -- and unlike
-NEC2++/openEMS, where "the binary just happens to be missing" is the whole
-gap, this specific development sandbox is Windows, which MEEP's own
-Installation docs say has NO native-install path at all (conda-forge only,
-and only via WSL on Windows). This is NOT the same kind of structural block
-as HFSS's licensing gate (simulation/hfss.py) -- MEEP is free/open-source
-(GPLv2) and this project's own recommended deployment target is Ubuntu
-24.04 LTS (README.md's Requirements section), where the documented
-conda-forge install path is fully supported; there is no workstation-
-confinement gate in this module, only the same "not installed here, install
-it per its own docs before trusting a real run" honesty NEC2++/openEMS
-already carry. NONE of the Meep API call shapes below have been exercised
-against a real Meep install; they are built to the letter of the primary-
-source citations above and exercised in tests only against a hand-written
-fake object matching the subset of Meep's Python API this module actually
-calls (see tests/test_meep.py). Treat any result as unverified end-to-end
-until it has actually been run against a real Meep install at least once.
+HONEST CAVEAT -- read before trusting any of this end to end. Two separate
+questions get confused here, so they are answered separately.
+
+IS MEEP INSTALLED? Not in the interpreter this application normally runs
+under: tests/test_meep.py's
+test_meep_is_genuinely_not_installed_in_this_environment is a real, failing
+`import meep`, not a mock, and CI has no solver at all. There is no PyPI
+wheel and no native Windows install path (conda-forge only; WSL on Windows)
+-- see the Installation citation above. That is NOT the structural block
+HFSS's licensing gate is (simulation/hfss.py): Meep is free software, and
+this repo's own Dockerfile installs pymeep into a separate conda
+environment, which is exactly why the MEEP_PYTHON/`python_executable`
+subprocess delegation exists (#231).
+
+HAS ANY OF THIS BEEN RUN FOR REAL? Partly, and the parts differ:
+
+  - The physics recipe and the SI->Meep conversions below HAVE been run
+    against real pymeep 1.34.0 and agree with published/closed-form answers
+    -- a free-standing resistive sheet against its exact 0.5 absorptance
+    maximum, and a Salisbury screen against rf_tools/absorber.py's
+    independent equivalent-circuit model to within 0.001 across 6-14 GHz.
+    Recorded in docs/meep-absorber-validation.md, reproducible via
+    verification/meep_absorber_validation.py -- which deliberately builds
+    its own Meep objects rather than calling this adapter, so the
+    validation does not assume the thing it is validating.
+  - THIS ADAPTER's own call shapes have been driven end to end under a real
+    pymeep 1.34.0 during development -- the periodic/lossy path (#231, the
+    "verified" notes in the capability-gap and conversion sections below)
+    and the optional transmission monitor (#240, which reproduced the
+    closed-form reflectance AND transmittance of a resolved lossy slab to
+    within 0.005). Two of those checks ARE now committed as repeatable
+    artifacts and drive this adapter's public entry point through the real
+    MEEP_PYTHON subprocess handoff: verification/
+    meep_adapter_transmittance_check.py (a conductive slab, exact R and T)
+    and verification/meep_two_port_absorption_check.py (a free-standing
+    sheet, through the loop's two-port sum as well). CI runs neither -- it
+    has no solver -- so they are a standing check someone must run, not an
+    automatic one.
+  - Everything else -- any geometry unlike those cases, and every API
+    detail not touched by them -- rests on the primary-source citations
+    above and on tests against a hand-written fake matching the subset of
+    Meep's Python API this module calls (tests/test_meep.py). Those tests
+    prove the adapter says what it means to say to Meep; they cannot prove
+    Meep answered correctly.
 
 SCOPE OF THIS IMPLEMENTATION (explicitly narrower than a full Meep feature
 set, and explicitly narrower than openEMS's own S-parameter extraction --
@@ -144,12 +168,16 @@ each limit below is a genuine, stated gap, not silently glossed over):
 
   - Geometry primitives: axis-aligned Box and Cylinder only (matching
     simulation/openems.py's/simulation/hfss.py's own primitive scope).
-  - Materials: isotropic dielectric only (a single epsilon_r/mue_r applied
-    identically to X/Y/Z, matching openems.py's own isotropic-only scope)
-    -- no dispersion, conductivity, or Meep's real elemental-metal Drude
-    fits. Conductors are modeled as `mp.metal` (an IDEAL, lossless PEC,
-    epsilon = -infinity) -- a real copper/PEC structure's finite
-    conductivity loss is not modeled, an explicit simplification.
+  - Materials: isotropic only (a single epsilon_r/mue_r applied identically
+    to X/Y/Z, matching openems.py's own isotropic-only scope) -- no
+    dispersion and no Meep elemental-metal Drude fits. LOSS IS SUPPORTED
+    (#230): a material may state a `loss_tangent`, mapped to Meep's
+    D_conductivity at the band-centre frequency, and a conductor may state
+    `conductivity_s_m` or `sheet_resistance_ohm_sq` + `thickness_m` instead
+    of being an ideal PEC. A conductor that states neither is still
+    `mp.metal` -- an IDEAL, lossless PEC -- which remains the default and is
+    correct for a genuine ground plane but WRONG for a printed resistive
+    layer, which cannot dissipate anything if modelled that way.
   - PORT MODEL IS STRUCTURALLY DIFFERENT FROM openEMS/HFSS -- this is the
     single most important thing to understand before comparing results
     across solvers: Meep (a pure FDTD field solver) has no lumped-RLC-port
@@ -160,15 +188,24 @@ each limit below is a genuine, stated gap, not silently glossed over):
     a second caller-specified plane between the source and the structure
     under test. There is no reference-impedance (Z0) concept at all in
     this port model, unlike openEMS's/HFSS's Z0-normalized S-parameters.
-  - S-parameters: ONLY power reflectance (|S11|^2, via the officially-
-    documented flux-subtraction technique cited above) and its square
-    root (`s11_magnitude`, a real, non-negative |S11|) are computed. NO
-    complex phase, NO S21/multi-port transmission, and NO Touchstone
-    export (Touchstone requires complex per-frequency S-data, which this
-    pass does not produce) -- unlike openems.py's/hfss.py's computed=True
+  - S-parameters: POWER quantities only. Power reflectance (|S11|^2, via
+    the officially-documented flux-subtraction technique cited above) and
+    its square root (`s11_magnitude`, a real, non-negative |S11|) are
+    always computed. Power TRANSMITTANCE -- the share of the arriving
+    power that goes straight through and out the far side -- is computed
+    TOO, but only when the caller asks for it by naming a
+    `transmission_monitor_center_m` in `geometry` (#240); without that key
+    no transmission monitor is built and the result says so explicitly
+    rather than reporting a silent zero. Still NO complex phase, so no
+    complex S21 and no multi-port S-matrix, and NO Touchstone export
+    (Touchstone requires complex per-frequency S-data, which this pass
+    does not produce) -- unlike openems.py's/hfss.py's computed=True
     complex S-parameters. A caller cross-checking against openEMS's
     complex S11 can only compare |S11| magnitude against this module's
-    `s11_magnitude`, not phase.
+    `s11_magnitude`, not phase. And this module does NOT compute
+    absorption: `1 - R - T` is a reading of these numbers, not a
+    measurement, and belongs to the caller that knows both were measured
+    on the same structure (issue #243).
   - THE "REFERENCE RUN" DESIGN CHOICE: this module's reflectance baseline
     is established by running the SAME source/cell/PML/materials/port-
     monitors but WITH the `conductors` geometry list omitted (i.e. the
@@ -178,7 +215,14 @@ each limit below is a genuine, stated gap, not silently glossed over):
     the officially-documented straight-vs-bent-waveguide reflectance
     technique to an antenna-style single-port cross-check, NOT a
     documented Meep convention for antenna S11 extraction specifically.
-    Flagged explicitly rather than presented as a verified fact.
+    Flagged explicitly rather than presented as a verified fact. The
+    optional transmittance is normalized the same way, against the forward
+    flux this same conductor-free reference run delivers to the
+    TRANSMISSION plane -- so both numbers are "relative to the structure
+    without its conductors", not relative to empty vacuum. On a
+    conductors-only geometry the two are the same thing; with a thick
+    lossy substrate they are not, and the difference is the substrate's
+    own loss.
   - Far-field/gain: NOT computed -- would require Meep's own separate
     near-to-far-field post-processing machinery, not invoked here (same
     honest gap simulation/openems.py's module docstring already carries
@@ -252,6 +296,18 @@ _FIELD_COMPONENTS = frozenset({"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"})
 #     `sheet_resistance_ohm_sq` on a conductor. Verified against the exact
 #     free-standing-sheet result (peak absorptance 0.5 at Rs = eta0/2) and
 #     against rf_tools/absorber.py on a Salisbury screen.
+#
+# A fourth limit was never on this list, because a GROUND-BACKED absorber
+# does not have it: with metal behind the cell nothing passes through, so
+# "how much got through" is structurally zero and how much was absorbed is
+# just 1 - R. An absorber with free space behind it is a different problem
+# -- there, some power leaves out the back, and calling everything that did
+# not come back "absorbed" would flatter the design. #240 gives this adapter
+# an OPTIONAL transmission monitor for exactly that case
+# (`transmission_monitor_center_m`; see the SCOPE section). It stays
+# optional because measuring a structural zero costs solver time for
+# nothing, and the arithmetic that combines the two (A = 1 - R - T) is
+# deliberately NOT done here -- see #243.
 PERIODIC_ABSORBER_CAPABILITY_GAPS: tuple[dict[str, str], ...] = ()
 
 
@@ -308,7 +364,10 @@ PERIODIC_ABSORBER_VALIDITY: tuple[dict[str, str], ...] = (
 #
 #   * A free-standing resistive sheet has an exact closed form (a shunt Rs
 #     across free space, peak absorptance 0.5 at Rs = eta0/2 = 188.365).
-#     Meep returns A = 0.4999 there, and puts the maximum at exactly that Rs.
+#     Meep returns A = 0.4999 there, and puts the maximum at exactly that
+#     Rs. (That is the 80 px/mm, 0.2 mm sweep; the committed runner uses a
+#     coarser mesh and returns 0.4971. Both pass, and both are quoted in
+#     the document -- the difference is the sheet's own discretisation.)
 #   * A Salisbury screen (377 ohm/sq at a quarter wave over a ground plane)
 #     agrees with rf_tools/absorber.py to within 0.001 across 6-14 GHz, both
 #     peaking at 1.0000 at the design frequency.
@@ -729,10 +788,126 @@ def _compute_reflectance(
         "s11_magnitude": s11_magnitude,
         "note": (
             "s11_magnitude is |S11| power-reflectance magnitude ONLY -- no "
-            "complex phase, no S21/multi-port transmission, no Touchstone "
-            "export (see module docstring SCOPE section). Suitable for "
-            "comparing against the magnitude of openEMS's/HFSS's own "
-            "complex S11, not a full complex cross-check."
+            "complex phase, and so no complex S21 and no multi-port "
+            "S-matrix, no Touchstone export (see module docstring SCOPE "
+            "section). Suitable for comparing against the magnitude of "
+            "openEMS's/HFSS's own complex S11, not a full complex "
+            "cross-check. How much power goes THROUGH the structure is a "
+            "separate, optional measurement -- see this result's own "
+            "'transmittance' entry, which says whether it was asked for."
+        ),
+    }
+
+
+def _transmittance_not_requested() -> dict[str, Any]:
+    """The "nobody asked" state -- said out loud, never left blank.
+
+    Transmittance is the share of the arriving power that goes STRAIGHT
+    THROUGH the surface and carries on out the far side (as opposed to
+    reflectance, the share that bounces back). Measuring it costs a second
+    monitor plane in both runs, and for a ground-backed surface -- one with
+    metal behind it -- the answer is structurally zero, so it is opt-in.
+
+    Three states have to stay apart, and the middle one is why a bare `None`
+    or a bare `0.0` will not do:
+
+      * not requested          -> computed False, requested False (here)
+      * requested, uncomputable-> computed False, requested True  (below)
+      * measured, maybe zero   -> computed True, with the numbers
+
+    A measured zero and an unmeasured silence look identical if the absence
+    is left implicit -- the same failure `designs/design_families.py` guards
+    against with `UnreadPhysicalBound` vs `NO_PHYSICAL_BOUND` ("a silent
+    `None` would have made 'we never looked' indistinguishable from 'there
+    is nothing to look for'").
+    """
+    return {
+        "computed": False,
+        "requested": False,
+        "note": (
+            "No transmission monitor was requested, so how much power passes "
+            "THROUGH this structure was never measured -- this is silence, "
+            "not a measured zero. Ask for it by giving geometry a "
+            "'transmission_monitor_center_m' (a plane on the far side of the "
+            "structure from the source). Leaving it out is the right choice "
+            "for a ground-backed surface, where nothing gets through by "
+            "construction and measuring it would only cost solver time."
+        ),
+    }
+
+
+def _compute_transmittance(
+    frequency_hz_points: list[float],
+    transmitted_flux: list[float],
+    incident_forward_flux: list[float],
+) -> dict[str, Any]:
+    """Power transmittance at the requested monitor plane.
+
+        transmittance = transmitted_flux / incident_forward_flux
+
+    Both fluxes are read at the SAME plane: the numerator from the full run
+    (structure present), the denominator from the reference run at that same
+    plane, which is what the wave delivered there with the conductors
+    absent. Normalising against the reflection monitor's own baseline
+    instead would be wrong -- that baseline belongs to a different plane
+    (`reference_monitor_center_m`), and the two only coincide by accident.
+    `verification/meep_absorber_validation.py`'s `_reflectance_1d` is the
+    reference implementation of this recipe.
+
+    NOTE the reference run here is materials-only, NOT empty vacuum (see the
+    module docstring's REFERENCE RUN design-choice caveat) -- so this number
+    is transmittance RELATIVE TO the same structure without its conductors,
+    exactly as reflectance already is. On a bare dielectric that is the
+    familiar absolute transmittance; with a thick lossy substrate it is not,
+    and the difference is the substrate's own loss.
+
+    Unlike the reflected wave, the transmitted one needs no field
+    subtraction: nothing of the source's own outgoing pulse is cancelled at
+    a plane BEHIND the structure, so the total forward flux there already is
+    what got through.
+    """
+    if not incident_forward_flux or any(b == 0 for b in incident_forward_flux):
+        return {
+            "computed": False,
+            "requested": True,
+            "note": (
+                "A transmission monitor was requested, but the reference "
+                "run's forward-flux spectrum at that same plane is empty or "
+                "contains a zero -- there is nothing to normalize the "
+                "transmitted power against, so no transmittance is reported "
+                "(this is a failed measurement, not a measured zero). Check "
+                "that 'transmission_monitor_center_m' sits inside the cell, "
+                "clear of the PML, and on the far side of the structure from "
+                "the source, so the reference run's wave actually crosses it."
+            ),
+        }
+    transmittance = [t / b for t, b in zip(transmitted_flux, incident_forward_flux, strict=True)]
+    return {
+        "computed": True,
+        "requested": True,
+        "method": (
+            "Power transmittance via the same documented flux machinery as "
+            "reflectance (sim.add_flux/FluxRegion, mp.get_fluxes): "
+            "transmittance = full-run forward flux at "
+            "geometry['transmission_monitor_center_m'] / reference-run "
+            "forward flux at that SAME plane. No load_minus_flux_data is "
+            "applied there -- behind the structure the total forward flux "
+            "already is the transmitted wave. Matches the recipe in "
+            "verification/meep_absorber_validation.py's _reflectance_1d."
+        ),
+        "frequency_hz": frequency_hz_points,
+        "transmittance": transmittance,
+        "note": (
+            "Power transmittance ONLY -- the fraction of arriving power that "
+            "passes through, with no complex phase and so no complex S21 "
+            "(see the module docstring's SCOPE section). Normalized against "
+            "this module's own reference run (materials present, conductors "
+            "omitted), so it is transmittance relative to that structure, "
+            "not against empty vacuum. This module deliberately does NOT "
+            "compute absorption: A = 1 - R - T belongs to whoever knows "
+            "these two numbers were measured on the same structure at the "
+            "same frequencies, and an adapter reports what it measured, not "
+            "what it means."
         ),
     }
 
@@ -997,11 +1172,28 @@ def _run_reflectance_cross_check(
         monitor_size_m,
         a_m,
     )
+    # Optional third monitor (#240): the forward flux this same reference run
+    # delivers to the TRANSMISSION plane, which is what the full run's flux
+    # there has to be divided by. Absent when no transmission plane was
+    # asked for, so a run that does not want transmittance builds exactly the
+    # Simulation and monitors it always did -- and a ground-backed cell, whose
+    # transmission is structurally zero, pays nothing to learn that.
+    transmission_center_m = geometry.get("transmission_monitor_center_m")
+    incident_forward_monitor = (
+        None
+        if transmission_center_m is None
+        else _add_flux_monitor(
+            mp_module, ref_sim, fcen, fwidth, nfreq, transmission_center_m, monitor_size_m, a_m
+        )
+    )
     _run_until_decayed(
         mp_module, ref_sim, component_name, stop_point_m, a_m, decay_by, check_interval
     )
     saved_refl_data = ref_sim.get_flux_data(refl_flux_ref)
     baseline_flux = mp_module.get_fluxes(baseline_flux_monitor)
+    incident_forward_flux = (
+        None if incident_forward_monitor is None else mp_module.get_fluxes(incident_forward_monitor)
+    )
     flux_freqs_meep = mp_module.get_flux_freqs(refl_flux_ref)
     ref_sim.reset_meep()
 
@@ -1026,15 +1218,38 @@ def _run_reflectance_cross_check(
         monitor_size_m,
         a_m,
     )
+    transmission_monitor = (
+        None
+        if transmission_center_m is None
+        else _add_flux_monitor(
+            mp_module, full_sim, fcen, fwidth, nfreq, transmission_center_m, monitor_size_m, a_m
+        )
+    )
+    # Only the REFLECTION monitor gets the reference fields subtracted. That
+    # subtraction is what cancels the source's own outgoing pulse so the
+    # remainder is the reflected wave; applied behind the structure it would
+    # cancel the very thing being measured.
     full_sim.load_minus_flux_data(refl_flux_full, saved_refl_data)
     _run_until_decayed(
         mp_module, full_sim, component_name, stop_point_m, a_m, decay_by, check_interval
     )
     reflected_flux = mp_module.get_fluxes(refl_flux_full)
+    transmitted_flux = (
+        None if transmission_monitor is None else mp_module.get_fluxes(transmission_monitor)
+    )
     full_sim.reset_meep()
 
     frequency_hz_points = [_meep_freq_to_hz(f, a_m) for f in flux_freqs_meep]
-    return _compute_reflectance(frequency_hz_points, reflected_flux, baseline_flux)
+    s_parameters = _compute_reflectance(frequency_hz_points, reflected_flux, baseline_flux)
+    # Always present, in every branch: a reader must be able to ask "what
+    # about transmission?" and get an answer, even when reflectance itself
+    # could not be computed.
+    s_parameters["transmittance"] = (
+        _transmittance_not_requested()
+        if transmitted_flux is None or incident_forward_flux is None
+        else _compute_transmittance(frequency_hz_points, transmitted_flux, incident_forward_flux)
+    )
+    return s_parameters
 
 
 def run_meep_simulation(
@@ -1058,10 +1273,18 @@ def run_meep_simulation(
               {"name": str (optional), "shape": "box" (default) |
                "cylinder", "p1_m"/"p2_m" (box) or "center_m"/"radius_m"/
                "height_m"/"axis" (cylinder), "epsilon_r": float (default
-               1.0), "mue_r": float (default 1.0)}, ...
+               1.0), "mue_r": float (default 1.0), "loss_tangent": float
+               (optional, #230 -- how lossy the dielectric is, pinned at
+               the band-centre frequency)}, ...
           ],
-          "conductors": [                  # optional, ideal PEC (mp.metal)
-              same shape as materials, minus epsilon_r/mue_r
+          "conductors": [                  # optional; ideal PEC (mp.metal)
+              same shape as materials, minus epsilon_r/mue_r -- but a
+              conductor may instead state "conductivity_s_m", or
+              "sheet_resistance_ohm_sq" with its own "thickness_m" (#230),
+              which is what a PRINTED resistive layer actually is. Stating
+              neither leaves it an ideal, lossless perfect conductor, which
+              is right for a ground plane and wrong for anything meant to
+              absorb.
           ],
           "port": {                        # required
               "center_m": [x,y,z], "size_m": [x,y,z] (zero along
@@ -1073,14 +1296,43 @@ def run_meep_simulation(
           "reflection_monitor_center_m": [x,y,z],   # required
           "reference_monitor_center_m": [x,y,z],     # required
           "monitor_size_m": [x,y,z],   # optional, defaults to port size_m
+          "transmission_monitor_center_m": [x,y,z],  # OPTIONAL (#240) -- a
+              plane on the far side of the structure from the source. Give
+              it and the result also reports power transmittance (how much
+              of the arriving power went straight through and out the
+              back); leave it out and no transmission monitor is built at
+              all. Leaving it out is right for a ground-backed surface,
+              where nothing gets through by construction.
         }
 
+    Result: `s_parameters` carries reflectance/s11_magnitude as it always
+    did, plus a `transmittance` entry that is ALWAYS present and says which
+    of three things happened -- never a bare None and never a bare 0.0:
+
+        {"computed": False, "requested": False, "note": ...}  # nobody asked
+        {"computed": False, "requested": True,  "note": ...}  # asked, but
+            #   there was no forward flux to normalize against
+        {"computed": True,  "requested": True,  "transmittance": [...],
+         "frequency_hz": [...], "method": ..., "note": ...}   # measured,
+            #   possibly measured as (near) zero, which is a real answer
+
+    Absorption is deliberately NOT computed here: `1 - R - T` is a reading
+    of two measurements, and this adapter reports what it measured, not
+    what it means (issue #243).
+
     See this module's header comment for the format-verification citations
-    (Meep's own dimensionless unit system and Python API) and the honest
-    caveat/SCOPE sections: this is a POWER-REFLECTANCE-ONLY (|S11|
-    magnitude, no phase, no S21) cross-check against a real Meep run, built
-    to the documented API but not run against a real Meep install in this
-    environment.
+    (Meep's own dimensionless unit system and Python API) and its honest
+    caveat/SCOPE sections. In short: POWER quantities only -- |S11|
+    magnitude and, on request, power transmittance, with no phase and so no
+    complex S21. The physics recipe and unit conversions have been checked
+    against real pymeep 1.34.0 on two reference cases with known answers
+    (docs/meep-absorber-validation.md), and THIS adapter's own path -- deck
+    emission, subprocess handoff and result parsing -- is checked against a
+    conductive slab whose R and T are both exactly known, by
+    verification/meep_adapter_transmittance_check.py. CI runs neither: both
+    need a solver it does not have, so it exercises this module only against
+    a hand-written fake. Treat a result on a geometry unlike those reference
+    cases as unverified.
     """
     simulator = MeepSimulator(meep_module=meep_module)
     result = simulator.run(
