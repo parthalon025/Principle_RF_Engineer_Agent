@@ -469,8 +469,42 @@ and a glossary that churns with it stops being trustworthy (see
   incidence-angle range)` — the same accumulate-once-and-reuse shape as the
   **Material-property library**, holding each symbol's characterized
   response so it is looked up rather than re-solved by every design that
-  shares its band and substrate. A pitch or validity-box change
-  invalidates the whole alphabet's entries, not one symbol's.
+  shares its band and substrate. Keyed by `(element family, symbol,
+  band, incidence-angle range, process)` — the **Process record**
+  reference is what makes #132's rule expressible, that "the same
+  outline printed in carbon and in MXene is two letters, not one letter
+  under two conditions." **Only a printed letter is in the library**
+  (ADR-0027): a shape from the literature enters as a candidate in the
+  **Considered-and-dropped ledger**, never as an entry, since its
+  published response was measured inside someone else's validity box.
+  **Entries never expire; they stop matching** — a configuration that no
+  longer exists simply never matches a lookup, and the measurement stays
+  true about the ink and machine that produced it. An equipment change
+  therefore orphans the whole alphabet at once, which is a known and
+  accepted cost, not an oversight.
+  _Avoid_: invalidating an entry — an earlier version of this entry said
+  a pitch or validity-box change "invalidates the whole alphabet's
+  entries." That contradicted #132 and is superseded by ADR-0027
+  (`RUNNING-LISTS.md` §3 correction 42).
+- **Process record**: the named, stored answer to "how was this artifact
+  made" — machine, ink and grade, substrate stack, pass count, achieved
+  film thickness, and cure schedule (ADR-0027). It is the *stated box*
+  the standing preference means when it calls manufacturing and material
+  figures "measurements valid inside a stated box (pitch, ink, pass
+  count, cure, grade)" and warns that "quoted without their box they are
+  assumptions" — so an **Element/Coding-Alphabet library** entry with no
+  Process record reference is an assumption, not a measurement.
+  Distinct from a **Validity box**, and the two must not merge: the
+  validity box says where a response may be *used* (band, incidence
+  angle, neighbours), the Process record says how the thing was *made*.
+  One says what this is good for, the other says where it came from.
+  Because the library keys on it, an equipment change mints a new
+  Process record and leaves every prior entry intact and queryable,
+  which is what makes "what did we measure on the old machine" a lookup
+  rather than an archaeology exercise.
+  _Avoid_: process parameters, run config — this is a stored, referenced
+  identity, not a loose bag of settings.
+
 - **Verification item**: a `verification_items` row tracking one
   requirement's status (`NOT VERIFIED` default, `PASS`/`FAIL`/`MARGINAL`),
   auto-created per key in a design's `requirements` at design-creation time
