@@ -87,14 +87,21 @@ format, emitted the JSON config, invoked `palace`, and parsed
 run_palace_simulation(
     geometry={
         "unit_cell": {"lx_m": 0.04, "ly_m": 0.01, "lz_m": 0.08},
-        "materials": [{"name": "dielectric_bar",
-                       "p1_m": [0.010, 0.00250, 0.03750],
-                       "p2_m": [0.030, 0.00750, 0.04250],
-                       "epsilon_r": 7.0}],
+        "materials": [
+            {
+                "name": "dielectric_bar",
+                "p1_m": [0.010, 0.00250, 0.03750],
+                "p2_m": [0.030, 0.00750, 0.04250],
+                "epsilon_r": 7.0,
+            }
+        ],
         "mesh": {"nx": 3, "ny": 2, "nz": 6},
-        "floquet": {"wave_vector_1_per_m": [0.0, 104.79, 0.0],
-                    "reference_frequency_hz": 10e9,
-                    "polarization": "TE", "max_order": 1},
+        "floquet": {
+            "wave_vector_1_per_m": [0.0, 104.79, 0.0],
+            "reference_frequency_hz": 10e9,
+            "polarization": "TE",
+            "max_order": 1,
+        },
     },
     frequency_hz=10e9,
     sweep={"start_hz": 2e9, "stop_hz": 12e9, "points": 6},
