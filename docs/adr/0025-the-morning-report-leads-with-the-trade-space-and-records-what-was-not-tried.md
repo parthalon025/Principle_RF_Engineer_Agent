@@ -80,8 +80,9 @@ inside ADR-0022's existing batch record.** ADR-0022 already requires a
 batch to state a Prediction per candidate and one Mechanism claim, in
 the same tool call that launches the run. That record is extended with a
 **considered-and-dropped ledger**: per entry, the family, whether it was
-kept or dropped, and one free-text reason. No second mechanism is built;
-the notebook already sits at the right moment.
+kept or dropped, one free-text reason, and a **reason kind** — see the
+2026-09-08 correction below, which added that fourth field. No second
+mechanism is built; the notebook already sits at the right moment.
 
 The ledger is **structured, not prose**, and thin. The reason is
 read-back, not authorship: the rejection memory of ADR-0026 needs a
@@ -90,7 +91,7 @@ refused" is right most of the time — which is the worst available
 outcome, wrong occasionally and silently. A keyed entry is either found
 or not. The write cost that would normally argue for prose does not
 exist here: an LLM role emits these fields through a typed tool call, so
-three named fields cost it no more than a sentence.
+four named fields cost it no more than a sentence.
 
 **No gate**, per the map's *"the loop fills unknowns; it does not block
 on them"* and ADR-0022's own precedent for a missing prediction: a batch
@@ -209,3 +210,53 @@ as ADR-0015's Material-property library and the cache #151 is weighing.
 - This ADR designs an artifact for a mode that does not yet exist. That
   is deliberate (finding one), and it means the implementation ticket
   covers both.
+
+## Corrections
+
+### 2026-09-08 — a ledger entry must say what *kind* of reason it carries, or a capability verdict freezes into a permanent one
+
+**What this ADR said:**
+
+> That record is extended with a **considered-and-dropped ledger**: per
+> entry, the family, whether it was kept or dropped, and one free-text
+> reason.
+
+**Why three fields are not enough.** Those fields are correct for a
+*human* decision, and wrong for a *machine* verdict, because ADR-0026
+lets a later run read the ledger back to avoid re-proposing something
+already refused. A shape dropped because its features fall below the
+printer's feature floor lands in the ledger looking exactly like any
+other rejection — so a later run would skip it **even after a finer
+printer is in the room**.
+
+That directly contradicts **ADR-0021**, which makes fabricability a
+verdict evaluated per requirement against the *configured* capability at
+scoring time, one that *"changes by itself if a capability is added"*,
+and **#108**, which settled that *"band and fabrication capability are
+both per-requirement/per-config inputs, never constants"* across three
+independent stages (print / cure / laminate). *In plain terms: equipment
+changes, and a note saying "we couldn't build this" must expire when the
+machine that couldn't build it is replaced.*
+
+**What is true instead.** A ledger entry carries a fourth field, its
+**reason kind**, one of:
+
+- **`human-decision`** — a person refused it. Carries forward
+  permanently, under ADR-0026's named exception.
+- **`capability-verdict`** — the configured fabrication capability
+  cannot build it today. **Never read back as settled**; re-evaluated
+  against the current capability on every run, per ADR-0021.
+- **`engineering-judgment`** — the proposer set it aside on technical
+  grounds. Carries forward *with its reasoning attached* and is
+  overridable, since it is neither a person's decision nor a machine's
+  measurement.
+
+**The payoff beyond correctness.** The field makes the
+equipment-change question answerable by query: *list every entry ever
+dropped as a `capability-verdict`* is exactly the worklist of what a new
+machine unlocks. Without the field that list cannot be reconstructed,
+because the reason it would filter on was never recorded as data.
+
+This is an **amendment, not a supersede** (ADR-0020): the decision — a
+structured ledger written at the proposal boundary — stands unchanged.
+It gained a distinction it was missing.

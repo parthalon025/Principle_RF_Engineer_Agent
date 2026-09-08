@@ -516,9 +516,18 @@ and a glossary that churns with it stops being trustworthy (see
 - **Considered-and-dropped ledger**: the record, written at the moment a
   batch is proposed and carried in ADR-0022's existing batch record, of
   which families were weighed and which were set aside — per entry a
-  family, a kept/dropped flag, and one free-text reason (ADR-0025).
-  Structured rather than prose so a later proposal call can look an
-  entry up deterministically. It exists because `run_candidate_search`
+  family, a kept/dropped flag, one free-text reason, and a **reason
+  kind** (ADR-0025). Structured rather than prose so a later proposal
+  call can look an entry up deterministically. The reason kind is what
+  keeps a machine's verdict from hardening into a permanent one:
+  `human-decision` carries forward under ADR-0026, `capability-verdict`
+  never does and is re-evaluated against the current configured
+  fabrication capability every run (ADR-0021, #108 — equipment changes,
+  so "we could not build this" must expire with the machine that could
+  not build it), and `engineering-judgment` carries forward with its
+  reasoning and stays overridable. It also makes the equipment-change
+  worklist a query: every entry dropped as a `capability-verdict` is
+  exactly what a new machine unlocks. It exists because `run_candidate_search`
   receives its candidates as an argument and prunes nothing: the
   narrowing happens in the LLM role that composes the list, upstream of
   every module, and is otherwise unrecorded — making a thorough night
