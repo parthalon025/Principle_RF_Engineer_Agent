@@ -1,20 +1,35 @@
 """MEEP FDTD full-wave EM simulation -- an independent-method cross-check
 against openEMS (issue #60). Phase 12/ongoing-hardening ticket.
 
-CRITICAL DIFFERENCE FROM NEC2++/openEMS (simulation/nec2pp.py,
-simulation/openems.py): MEEP (github.com/NanoComp/meep) is driven here as a
-Python LIBRARY (`import meep as mp`), not an external binary shelled out to
-via subprocess -- confirmed from MEEP's own documentation (see SOURCES
-CONSULTED below): its Python interface is `import meep as mp` followed by
-constructing `mp.Simulation(...)` objects and calling methods/module
-functions on them, not a CLI tool invoked with a generated input file. This
-module therefore follows simulation/hfss.py's "guarded import + injectable
-factory" shape (an `_import_meep()` guarded import and a
-`meep_module`-injection constructor arg on MeepSimulator, mirroring
-HfssSimulator's `hfss_factory`), NOT nec2pp.py's/openems.py's
-subprocess+tempfile-input-file shape -- this is a deliberate, ticket-
-mandated interface-shape difference, not an inconsistency with those two
-modules.
+HOW MEEP IS DRIVEN (two paths, one implementation): MEEP
+(github.com/NanoComp/meep) is a Python LIBRARY (`import meep as mp`), not a
+CLI tool with an input file -- confirmed from its own documentation (see
+SOURCES CONSULTED below): the interface is `import meep as mp` followed by
+constructing `mp.Simulation(...)` objects and calling methods on them. So
+this module follows simulation/hfss.py's "guarded import + injectable
+factory" shape (an `_import_meep()` guarded import and a `meep_module`
+injection arg on MeepSimulator, mirroring HfssSimulator's `hfss_factory`)
+rather than nec2pp.py's/openems.py's generated-input-file shape.
+
+That was the whole story until #231. It does not survive contact with this
+repo's own container, where the Dockerfile installs pymeep into a conda
+environment and the application runs under a separate uv venv: an
+in-process `import meep` fails inside an image that genuinely has Meep in
+it. So MeepSimulator now ALSO accepts a `python_executable` (default: the
+MEEP_PYTHON environment variable the Dockerfile already exports) and, when
+that names a different interpreter, delegates the run to it as a
+subprocess -- exactly how simulation/gprmax.py resolves GPRMAX_PYTHON.
+
+Crucially this is NOT a second implementation. The generated runner
+(`_RUNNER_TEMPLATE`) imports THIS module's own
+`_run_reflectance_cross_check` and calls it, so the physics exists once and
+cannot drift between the two paths. Both this module and simulation/base.py
+import only the standard library, which is what lets a foreign interpreter
+holding none of the project's dependencies import them.
+
+A side benefit worth naming: the subprocess boundary also keeps MEEP's
+GPLv2 at arm's length, the same way every other GPL tool in
+docs/LICENSE_MATRIX.md is invoked. That is a consequence, not the reason.
 
 SOURCES CONSULTED (primary; all fetched directly from meep.readthedocs.io
 and github.com/NanoComp/meep during implementation, 2026-09 -- see the
@@ -176,7 +191,11 @@ each limit below is a genuine, stated gap, not silently glossed over):
     contract (simulation/base.py) and is not otherwise populated.
 """
 
+import json
 import math
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -203,6 +222,150 @@ _DEFAULT_CHARACTERISTIC_LENGTH_M = 1e-3
 _FIELD_COMPONENTS = frozenset({"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"})
 
 
+# ---------------------------------------------------------------------------
+# What this adapter CANNOT yet do for a periodic printed absorber (#229).
+#
+# #111 chose Meep over NEC2 for metamaterial unit cells and was right about
+# the direction: Meep the SIMULATOR supports Bloch-periodic boundaries,
+# complex permittivity and conductivity, all of which a unit cell needs and
+# NEC2's thin-wire formulation cannot express at all. But THIS ADAPTER is a
+# narrow slice of Meep (see SCOPE above), and three of the things it leaves
+# out are precisely an absorber's whole mechanism.
+#
+# Kept here, next to the code whose limits they describe, rather than in the
+# design loop -- an adapter is the only honest place to state what it can do.
+# ---------------------------------------------------------------------------
+
+# All three were closed and verified against real Meep 1.34.0 (see the
+# conversions section below for how each was checked). Kept as an empty tuple
+# with its history rather than deleted: this is the list orchestration/
+# design_loop.py consults before running an absorber, and a future change that
+# reopens one of these should have an obvious place to say so.
+#
+#   * no_periodic_boundary  -> closed by `_boundaries_and_k_point`, which sets
+#     Bloch-periodic boundaries and k_point on the named axes. Verified: a
+#     uniform sheet is translation-invariant, so a periodic cell of one must
+#     reproduce the 1-D answer, and it does.
+#   * no_lossy_dielectric   -> closed by `loss_tangent` on a material, mapped
+#     to Meep's D_conductivity at the band centre.
+#   * no_resistive_sheet    -> closed by `conductivity_s_m` /
+#     `sheet_resistance_ohm_sq` on a conductor. Verified against the exact
+#     free-standing-sheet result (peak absorptance 0.5 at Rs = eta0/2) and
+#     against rf_tools/absorber.py on a Salisbury screen.
+PERIODIC_ABSORBER_CAPABILITY_GAPS: tuple[dict[str, str], ...] = ()
+
+
+def periodic_absorber_capability_gaps() -> list[dict[str, str]]:
+    """The reasons this adapter cannot simulate a printed periodic absorber.
+
+    Empty since all three were closed and verified against real Meep 1.34.0
+    -- see PERIODIC_ABSORBER_CAPABILITY_GAPS above for what they were, and
+    PERIODIC_ABSORBER_VALIDITY below for what is approximate but present.
+    Kept as a function rather than deleted because orchestration/
+    design_loop.py asks it before running, and something that CAN go wrong
+    again should keep being asked.
+    """
+    return [dict(gap) for gap in PERIODIC_ABSORBER_CAPABILITY_GAPS]
+
+
+# What remains APPROXIMATE, as distinct from absent. These ride with every
+# result rather than blocking one, per the charter's warn-never-block rule.
+PERIODIC_ABSORBER_VALIDITY: tuple[dict[str, str], ...] = (
+    {
+        "flag": "normal_incidence_only",
+        "assumed": ("k_point is Vector3() -- zero -- so the wave arrives square-on to the surface"),
+        "costs": (
+            "an absorber's response changes with the angle it is hit from, and "
+            "this says nothing about any angle but straight-on"
+        ),
+        "cheapest_test": (
+            "set a non-zero k_point for one oblique angle and compare; the "
+            "machinery is here, the sweep is not"
+        ),
+    },
+    {
+        "flag": "loss_tangent_pinned_at_band_centre",
+        "assumed": (
+            "a dielectric's loss tangent is converted to Meep's single "
+            "frequency-independent D_conductivity at the band-centre frequency"
+        ),
+        "costs": (
+            "loss is exact at band centre and drifts slightly towards the "
+            "edges; a real material's loss tangent drifts with frequency too, "
+            "so this is the right shape of approximation, but it is one"
+        ),
+        "cheapest_test": ("narrow the band and confirm the answer at centre does not move"),
+    },
+)
+
+
+# ---------------------------------------------------------------------------
+# SI -> Meep material conversions.
+#
+# Meep is dimensionless: eps(w) = eps_inf * (1 + i*sigma_D/w), with w = 2*pi*f
+# and f in units of c/a. Both conversions below were VERIFIED against real
+# Meep 1.34.0, not derived on paper and trusted:
+#
+#   * A free-standing resistive sheet has an exact closed form (a shunt Rs
+#     across free space, peak absorptance 0.5 at Rs = eta0/2 = 188.365).
+#     Meep returns A = 0.4999 there, and puts the maximum at exactly that Rs.
+#   * A Salisbury screen (377 ohm/sq at a quarter wave over a ground plane)
+#     agrees with rf_tools/absorber.py to within 0.001 across 6-14 GHz, both
+#     peaking at 1.0000 at the design frequency.
+# ---------------------------------------------------------------------------
+
+_EPS0_F_M = 8.8541878128e-12
+
+
+def sigma_d_from_conductivity(sigma_s_m: float, a_m: float, eps_inf: float = 1.0) -> float:
+    """Meep's dimensionless `D_conductivity` from an SI conductivity (S/m).
+
+    Equating Meep's `eps_inf*(1 + i*sigma_D/w)` with SI's
+    `eps_r + i*sigma_SI/(w_SI*eps0)`, using `f_meep = f_SI * a / c`, the
+    frequency cancels and leaves
+
+        sigma_D = sigma_SI * a / (c * eps0 * eps_inf)
+
+    Frequency-independent, so this one is exact at every frequency.
+    """
+    if sigma_s_m < 0:
+        raise ValueError(f"sigma_s_m must be non-negative; got {sigma_s_m!r}.")
+    if eps_inf <= 0:
+        raise ValueError(f"eps_inf must be positive; got {eps_inf!r}.")
+    return sigma_s_m * a_m / (_SPEED_OF_LIGHT_M_S * _EPS0_F_M * eps_inf)
+
+
+def sigma_d_from_loss_tangent(tan_delta: float, fcen_meep: float) -> float:
+    """Meep's `D_conductivity` for a dielectric quoted as a loss tangent.
+
+        tan_d = eps_imag/eps_real = sigma_D/w  =>  sigma_D = 2*pi*f * tan_d
+
+    UNLIKE the conductivity conversion above, this one is frequency-
+    dependent, and Meep's `D_conductivity` is a single constant. Pinning it
+    at the band centre makes the loss tangent exact there and slightly off
+    towards the band edges -- a real material's tan_d drifts with frequency
+    anyway, so this is the right shape of approximation, but it is an
+    approximation and callers are told so in the result's `validity`.
+    """
+    if tan_delta < 0:
+        raise ValueError(f"tan_delta must be non-negative; got {tan_delta!r}.")
+    return 2 * math.pi * fcen_meep * tan_delta
+
+
+def conductivity_from_sheet_resistance(sheet_resistance_ohm_sq: float, thickness_m: float) -> float:
+    """Bulk conductivity (S/m) of a film of given sheet resistance and
+    thickness: `sigma = 1 / (R_s * t)`. This is how a printed layer's
+    measurable property (ohms per square, from a four-point probe) becomes
+    something a field solver can use."""
+    if sheet_resistance_ohm_sq <= 0:
+        raise ValueError(
+            f"sheet_resistance_ohm_sq must be positive; got {sheet_resistance_ohm_sq!r}."
+        )
+    if thickness_m <= 0:
+        raise ValueError(f"thickness_m must be positive; got {thickness_m!r}.")
+    return 1.0 / (sheet_resistance_ohm_sq * thickness_m)
+
+
 def _import_meep() -> Any:
     """Guarded `import meep as mp` -- deferred to inside this function
     (rather than a top-of-module `import`) because Meep genuinely will not
@@ -213,6 +376,26 @@ def _import_meep() -> Any:
     try:
         import meep as mp  # see module docstring citation
     except ImportError as exc:
+        # The container case, and the confusing one: this repo's Dockerfile
+        # DOES install pymeep, into its own conda environment, and exports
+        # MEEP_PYTHON pointing at that interpreter. But this adapter drives
+        # Meep in-process, so a separate interpreter is unreachable to it and
+        # the old message ("meep is not installed") was actively misleading
+        # -- Meep is installed, just not here. Say which of the two it is.
+        meep_python = os.getenv("MEEP_PYTHON")
+        if meep_python:
+            raise SimulatorError(
+                "meep is installed, but not in THIS interpreter. MEEP_PYTHON "
+                f"is set to {meep_python!r}, which is a different Python from "
+                f"the one running this code ({sys.executable!r}) -- the "
+                "Dockerfile installs pymeep into its own conda environment. "
+                "This adapter imports meep in-process and has no subprocess "
+                "handoff, so it cannot reach that interpreter; "
+                "simulation/gprmax.py is the pattern it would need (it runs "
+                "GPRMAX_PYTHON as a subprocess). Until that exists, either "
+                "install pymeep into this environment or run this code under "
+                "MEEP_PYTHON."
+            ) from exc
         raise SimulatorError(
             "meep is not installed. MEEP is used as a Python library "
             "(import meep), not an external binary -- install it per its "
@@ -298,7 +481,11 @@ def _primitive_to_meep(mp_module: Any, prim: dict[str, Any], a_m: float, materia
 
 
 def _build_geometry_list(
-    mp_module: Any, geometry: dict[str, Any], a_m: float, include_conductors: bool
+    mp_module: Any,
+    geometry: dict[str, Any],
+    a_m: float,
+    include_conductors: bool,
+    fcen_meep: float | None = None,
 ) -> list[Any]:
     """Materials (dielectric, always present) plus, when include_conductors
     is True, conductors (mapped to mp.metal -- an ideal PEC, see module
@@ -310,17 +497,110 @@ def _build_geometry_list(
         try:
             epsilon_r = float(mat.get("epsilon_r", 1.0))
             mue_r = float(mat.get("mue_r", 1.0))
-            medium = mp_module.Medium(epsilon=epsilon_r, mu=mue_r)
+            # A lossless Medium stays byte-for-byte what it was before loss
+            # was supported, so existing callers see no change at all.
+            tan_delta = float(mat.get("loss_tangent", 0.0))
+            if tan_delta:
+                if fcen_meep is None:
+                    raise ValueError(
+                        "loss_tangent needs the band-centre frequency to become a "
+                        "Meep D_conductivity; this call supplied none"
+                    )
+                medium = mp_module.Medium(
+                    epsilon=epsilon_r,
+                    mu=mue_r,
+                    D_conductivity=sigma_d_from_loss_tangent(tan_delta, fcen_meep),
+                )
+            else:
+                medium = mp_module.Medium(epsilon=epsilon_r, mu=mue_r)
             objects.append(_primitive_to_meep(mp_module, mat, a_m, medium))
         except ValueError as exc:
             raise ValueError(f"materials[{idx}]: {exc}") from exc
     if include_conductors:
         for idx, cond in enumerate(geometry.get("conductors", [])):
             try:
-                objects.append(_primitive_to_meep(mp_module, cond, a_m, mp_module.metal))
+                medium = _conductor_medium(mp_module, cond, a_m)
+                objects.append(_primitive_to_meep(mp_module, cond, a_m, medium))
             except ValueError as exc:
                 raise ValueError(f"conductors[{idx}]: {exc}") from exc
     return objects
+
+
+def _conductor_medium(mp_module: Any, conductor: dict[str, Any], a_m: float) -> Any:
+    """The material a conductor primitive is made of.
+
+    Default stays `mp.metal` -- an ideal, lossless perfect electric
+    conductor -- so nothing that worked before changes. A conductor that
+    states either `conductivity_s_m` or `sheet_resistance_ohm_sq` (with its
+    own `thickness_m`) instead becomes a finite-conductivity medium, which
+    is what a PRINTED layer actually is.
+
+    This is the difference between a mirror and an absorber: a perfect
+    conductor reflects everything by definition, so a stack modelled with
+    one cannot dissipate anything no matter what was designed.
+    """
+    sigma_s_m = conductor.get("conductivity_s_m")
+    sheet_resistance = conductor.get("sheet_resistance_ohm_sq")
+    if sigma_s_m is None and sheet_resistance is None:
+        return mp_module.metal
+    if sigma_s_m is not None and sheet_resistance is not None:
+        raise ValueError(
+            "state conductivity_s_m OR sheet_resistance_ohm_sq, not both -- they are "
+            "two ways of saying the same thing and cannot be reconciled if they disagree"
+        )
+    if sheet_resistance is not None:
+        thickness_m = conductor.get("thickness_m")
+        if thickness_m is None:
+            raise ValueError(
+                "sheet_resistance_ohm_sq needs thickness_m alongside it: ohms per "
+                "square is a property of a film OF SOME THICKNESS, and the "
+                "conductivity a solver needs is 1/(R_s*t)"
+            )
+        sigma_s_m = conductivity_from_sheet_resistance(float(sheet_resistance), float(thickness_m))
+    return mp_module.Medium(
+        epsilon=1.0, D_conductivity=sigma_d_from_conductivity(float(sigma_s_m), a_m)
+    )
+
+
+def _boundaries_and_k_point(
+    mp_module: Any, geometry: dict[str, Any], pml_thickness: float
+) -> tuple[list[Any], Any | None]:
+    """Boundary layers, and a Bloch k_point when the cell is periodic.
+
+    Default (no `periodic_axes`) is PML on every side, exactly as before: a
+    finite, isolated structure in free space.
+
+    With `periodic_axes` (e.g. `["x", "y"]`) the named axes get NO absorbing
+    layer and the simulation gets `k_point=Vector3()`, which is Meep's way
+    of saying the fields repeat identically from one cell to the next. That
+    turns one drawn cell into an infinite array of them -- which is what a
+    metamaterial unit cell IS. Without it, a unit cell is simulated as a
+    lone element between absorbing walls, and the coupling to its
+    neighbours, which is what sets the resonance, is simply absent.
+
+    `Vector3()` is zero, i.e. normal incidence. Oblique incidence needs a
+    non-zero k_point and is deliberately not offered here rather than
+    offered wrongly.
+    """
+    periodic = [str(axis).lower() for axis in geometry.get("periodic_axes", [])]
+    if not periodic:
+        return [mp_module.PML(pml_thickness)], None
+
+    directions = {"x": mp_module.X, "y": mp_module.Y, "z": mp_module.Z}
+    unknown = sorted(set(periodic) - set(directions))
+    if unknown:
+        raise ValueError(f"periodic_axes must be drawn from x/y/z; got {unknown}")
+    layers = [
+        mp_module.PML(pml_thickness, direction=directions[axis])
+        for axis in ("x", "y", "z")
+        if axis not in periodic
+    ]
+    if not layers:
+        raise ValueError(
+            "periodic_axes names every axis, leaving no absorbing boundary for the "
+            "wave to leave through -- at least one axis must stay open"
+        )
+    return layers, mp_module.Vector3()
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +745,7 @@ def _compute_reflectance(
 class MeepSimulator(Simulator):
     name = "MEEP"
 
-    def __init__(self, meep_module: Any | None = None):
+    def __init__(self, meep_module: Any | None = None, python_executable: str | None = None):
         """`meep_module`, if given, replaces the real guarded `import meep
         as mp` -- a test-only injection seam (mirroring HfssSimulator's
         `hfss_factory` constructor-injection pattern, see simulation/
@@ -474,11 +754,37 @@ class MeepSimulator(Simulator):
         the subset of Meep's real Python API this module calls (see
         tests/test_meep.py). The real run_meep_simulation()/agent/MCP tool
         wiring never passes it, so a real call always goes through the
-        real guarded import."""
+        real guarded import.
+
+        `python_executable` (default: the MEEP_PYTHON environment variable,
+        else None) names a DIFFERENT Python that has Meep installed. When
+        set, the run is delegated to it as a subprocess instead of importing
+        Meep here. That is not an optimisation -- it is the only way this
+        adapter works in this repo's own container, where the Dockerfile
+        installs pymeep into a conda environment and the application runs
+        under a separate uv venv (#231). simulation/gprmax.py resolves
+        GPRMAX_PYTHON exactly this way."""
         self._meep_module = meep_module
+        self._python_executable = python_executable or os.getenv("MEEP_PYTHON")
 
     def _real_meep_module(self) -> Any:
         return _import_meep()
+
+    def _delegates_to_another_interpreter(self) -> bool:
+        """True when Meep lives in a different interpreter from this one.
+
+        An injected `meep_module` always wins (that is the test seam), and
+        MEEP_PYTHON pointing at the interpreter already running is not a
+        delegation -- it is just a redundant way of naming this one."""
+        if self._meep_module is not None or not self._python_executable:
+            return False
+        try:
+            return Path(self._python_executable).resolve() != Path(sys.executable).resolve()
+        except OSError:
+            # An unresolvable path is still a stated intent to delegate; let
+            # the subprocess call fail with the real reason rather than
+            # silently importing a Meep the caller did not ask for.
+            return True
 
     def run(self, job: dict) -> SimulationResult:
         geometry = job.get("geometry")
@@ -497,14 +803,23 @@ class MeepSimulator(Simulator):
         port = geometry["port"]
         _validate_port(port)
 
-        mp_module = self._meep_module or self._real_meep_module()
+        mp_module = (
+            self._meep_module
+            if (self._meep_module is not None or self._delegates_to_another_interpreter())
+            else self._real_meep_module()
+        )
         a_m = float(job.get("characteristic_length_m", _DEFAULT_CHARACTERISTIC_LENGTH_M))
         nfreq = int(job.get("nfreq", 1))
 
         workdir = Path(job.get("workdir") or tempfile.mkdtemp(prefix="meep_"))
         workdir.mkdir(parents=True, exist_ok=True)
 
-        s_parameters = _run_reflectance_cross_check(mp_module, geometry, a_m, nfreq, job)
+        if self._delegates_to_another_interpreter():
+            s_parameters = _run_in_meep_interpreter(
+                str(self._python_executable), geometry, a_m, nfreq, job, workdir
+            )
+        else:
+            s_parameters = _run_reflectance_cross_check(mp_module, geometry, a_m, nfreq, job)
 
         return SimulationResult(
             simulator=self.name,
@@ -527,6 +842,106 @@ class MeepSimulator(Simulator):
         )
 
 
+_RUNNER_TEMPLATE = '''\
+"""Generated by simulation/meep.py -- runs one Meep job under an interpreter
+that has Meep installed, and writes the result back as JSON.
+
+Deliberately tiny: it imports the SAME `_run_reflectance_cross_check` the
+in-process path uses, so there is exactly one implementation of the physics
+and no second copy to drift out of step. simulation/meep.py and
+simulation/base.py both import only the standard library, so this works
+under a foreign interpreter that has none of the project's dependencies.
+"""
+
+import json
+import sys
+
+sys.path.insert(0, {repo_root!r})
+
+import meep as mp
+
+from simulation.meep import _run_reflectance_cross_check
+
+with open(sys.argv[1]) as handle:
+    payload = json.load(handle)
+
+result = _run_reflectance_cross_check(
+    mp, payload["geometry"], payload["a_m"], payload["nfreq"], payload["job"]
+)
+
+with open(sys.argv[2], "w") as handle:
+    json.dump(result, handle)
+'''
+
+
+def _run_in_meep_interpreter(
+    python_executable: str,
+    geometry: dict[str, Any],
+    a_m: float,
+    nfreq: int,
+    job: dict[str, Any],
+    workdir: Path,
+) -> dict[str, Any]:
+    """Run one job under a different Python that has Meep installed.
+
+    Why this exists: this repo's Dockerfile installs pymeep into its own
+    conda environment and exports MEEP_PYTHON, while the application itself
+    runs under a separate uv venv. An in-process `import meep` therefore
+    fails inside an image that genuinely has Meep in it (#231).
+
+    The subprocess boundary is also what keeps Meep's GPLv2 at arm's length,
+    the same way every other GPL tool in docs/LICENSE_MATRIX.md is invoked
+    -- a side benefit, not the reason.
+
+    `job` is filtered to JSON-serialisable entries: `workdir` is passed
+    separately and any injected object could not cross the boundary anyway.
+    """
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    runner = workdir / "_meep_runner.py"
+    payload_path = workdir / "_meep_job.json"
+    result_path = workdir / "_meep_result.json"
+
+    serialisable_job = {
+        key: value
+        for key, value in job.items()
+        if key in ("decay_by", "decay_check_interval", "stop_point_m")
+    }
+    payload_path.write_text(
+        json.dumps({"geometry": geometry, "a_m": a_m, "nfreq": nfreq, "job": serialisable_job})
+    )
+    runner.write_text(_RUNNER_TEMPLATE.format(repo_root=repo_root))
+
+    timeout_s = int(job.get("timeout_s", 3600))
+    try:
+        completed = subprocess.run(
+            [python_executable, str(runner), str(payload_path), str(result_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise SimulatorError(
+            f"MEEP_PYTHON points at {python_executable!r}, which does not exist. "
+            "It must be a Python interpreter with meep installed -- in this repo's "
+            "own image that is /opt/conda/envs/mp/bin/python3."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise SimulatorError(f"MEEP timed out after {timeout_s}s: {exc}") from exc
+
+    if completed.returncode != 0:
+        raise SimulatorError(
+            f"MEEP run under {python_executable!r} failed "
+            f"({completed.returncode}): {completed.stderr[-4000:]}"
+        )
+    if not result_path.exists():
+        raise SimulatorError(
+            f"MEEP run under {python_executable!r} exited 0 but wrote no result to "
+            f"{result_path}. stderr tail: {completed.stderr[-2000:]}"
+        )
+    return json.loads(result_path.read_text())
+
+
 def _run_reflectance_cross_check(
     mp_module: Any, geometry: dict[str, Any], a_m: float, nfreq: int, job: dict[str, Any]
 ) -> dict[str, Any]:
@@ -546,12 +961,21 @@ def _run_reflectance_cross_check(
 
     # --- Reference run: materials only, conductors omitted (see module
     # docstring's REFERENCE RUN design-choice caveat) ------------------
+    boundary_layers, k_point = _boundaries_and_k_point(mp_module, geometry, pml_thickness)
+    # k_point is only passed when the cell is actually periodic, so a
+    # non-periodic run constructs Simulation with exactly the arguments it
+    # always did (and the injected fake in tests needs no new kwarg).
+    periodic_kwargs = {} if k_point is None else {"k_point": k_point}
+
     ref_sim = mp_module.Simulation(
         cell_size=cell_size,
         resolution=resolution,
-        geometry=_build_geometry_list(mp_module, geometry, a_m, include_conductors=False),
+        geometry=_build_geometry_list(
+            mp_module, geometry, a_m, include_conductors=False, fcen_meep=fcen
+        ),
         sources=[_build_source(mp_module, port, a_m)],
-        boundary_layers=[mp_module.PML(pml_thickness)],
+        boundary_layers=boundary_layers,
+        **periodic_kwargs,
     )
     refl_flux_ref = _add_flux_monitor(
         mp_module,
@@ -585,9 +1009,12 @@ def _run_reflectance_cross_check(
     full_sim = mp_module.Simulation(
         cell_size=cell_size,
         resolution=resolution,
-        geometry=_build_geometry_list(mp_module, geometry, a_m, include_conductors=True),
+        geometry=_build_geometry_list(
+            mp_module, geometry, a_m, include_conductors=True, fcen_meep=fcen
+        ),
         sources=[_build_source(mp_module, port, a_m)],
-        boundary_layers=[mp_module.PML(pml_thickness)],
+        boundary_layers=boundary_layers,
+        **periodic_kwargs,
     )
     refl_flux_full = _add_flux_monitor(
         mp_module,
