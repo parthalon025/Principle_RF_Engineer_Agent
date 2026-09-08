@@ -118,21 +118,39 @@ entire corpus, #5 and #7, and both are permeability/retrieval papers.**
 Where the patent needed a citation for the absorber, it reached for **third-party** work, which
 is itself informative about where Example 3's design came from:
 
-- Gu, Chen, Zhang, Xu, Ma, Wang, Zhang & Zhao, "A broadband low-reflection metamaterial
-  absorber," *J. Appl. Phys.* **108**(6), 064913 (2010).
-- Ghosh, Bhattacharyya, Chaurasiya & Srivastava, "Bandwidth-enhanced polarization-insensitive
-  microwave metamaterial absorber and its equivalent circuit model," *J. Appl. Phys.* **115**(10),
-  104503 (2014).
-- Singh, Tyler, Zhang, Azad & Chen, "Single and dual band 77/95/110 GHz metamaterial absorbers
-  on flexible polyimide substrate," *Appl. Phys. Lett.* **99**(26), 264101 (2011).
+> **CORRECTED 2026-09-08 (#246). The author lists previously given here were wrong, and the
+> label claiming they came from the patent was wrong twice over.** The patent prints only
+> *"Gu et al."*, *"Ghosh et al."* and *"Singh et al."* — **no author lists at all**, at either
+> `knowledge/corpus/us_patent_12089385B2.txt` line 83 (References Cited) or line 1022 (the
+> citing sentence). So names described here as "cited verbatim from the patent" could not have
+> come from it. Two of the three were wholly wrong and the third had one name substituted.
+> Now taken from Crossref's publisher-deposited metadata (`LITERATURE-SUPPORTED`):
+>
+> | | Previously recorded here | Actual |
+> |---|---|---|
+> | Gu | ~~Gu, Chen, Zhang, Xu, Ma, Wang, Zhang & Zhao~~ | **Gu, Barrett, Hand, Popa & Cummer** |
+> | Ghosh | ~~…Chaurasiya…~~ | **…Kaiprath…** (other three correct) |
+> | Singh | ~~Singh, Tyler, Zhang, Azad & Chen~~ | **Singh, Korolev, Afsar & Sonkusale** |
 
-Cited verbatim from the patent's References Cited (`LITERATURE-SUPPORTED`, bibliographic detail
-as printed in the patent; not independently fetched). All three are conventional
-electric-resonator-plus-backing absorbers, and all three are the topology Example 3 uses. **If
-the reproduction wants a labelled-axis absorption curve from a source that actually explains its
-conventions, these are the papers to read — not the inventors'.** Their content was not read
-here (out of this ticket's scope), and any values taken from them would enter at
-`LITERATURE-SUPPORTED`.
+- **Gu, Barrett, Hand, Popa & Cummer**, "A broadband low-reflection metamaterial absorber,"
+  *J. Appl. Phys.* **108**(6), 064913 (2010). DOI [10.1063/1.3485808](https://doi.org/10.1063/1.3485808).
+  **Duke University, Dept. of Electrical and Computer Engineering and Center for Metamaterials
+  and Integrated Plasmonics** — Landy's own department.
+- **Ghosh, Bhattacharyya, Kaiprath & Srivastava**, "Bandwidth-enhanced polarization-insensitive
+  microwave metamaterial absorber and its equivalent circuit model," *J. Appl. Phys.* **115**(10),
+  104503 (2014). DOI [10.1063/1.4868577](https://doi.org/10.1063/1.4868577). IIT Kanpur.
+- **Singh, Korolev, Afsar & Sonkusale**, "Single and dual band 77/95/110 GHz metamaterial
+  absorbers on flexible polyimide substrate," *Appl. Phys. Lett.* **99**(26), 264101 (2011).
+  DOI [10.1063/1.3672100](https://doi.org/10.1063/1.3672100). Tufts University.
+
+Titles, journals, volumes, issues, pages and years are as printed in the patent and all three
+check out exactly against Crossref; only the author lists were wrong, and those the patent never
+gave. `LITERATURE-SUPPORTED` (Crossref publisher metadata, fetched 2026-09-08). All three are conventional
+electric-resonator-plus-backing absorbers, and all three are the topology Example 3 uses. ~~**If the reproduction wants a labelled-axis absorption curve from a source that actually
+explains its conventions, these are the papers to read — not the inventors'.**~~ **They have now
+been read (#246), and the answer is no** — see `docs/example3-cited-absorber-papers.md`. None is
+FIG. 7G's source, and the citing sentence turns out to attach them to *other embodiments the
+patent did not build*, not to Example 3's provenance.
 
 ---
 

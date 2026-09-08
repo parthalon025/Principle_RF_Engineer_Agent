@@ -675,6 +675,49 @@ this list.
     predicts, which is a point in the 2021 form's favour rather than a coin
     flip.
 
+44. **Two of three author lists in `example3-inventor-publications.md` were
+    invented, under a label claiming they came verbatim from the patent.**
+    The doc recorded the patent's three cited absorber papers as *"Gu, Chen,
+    Zhang, Xu, Ma, Wang, Zhang & Zhao"*, *"Ghosh, Bhattacharyya, Chaurasiya &
+    Srivastava"* and *"Singh, Tyler, Zhang, Azad & Chen"*, labelled **"Cited
+    verbatim from the patent's References Cited."** Checked against Crossref's
+    publisher-deposited metadata (#246):
+
+    | Paper | Recorded | Actual |
+    |---|---|---|
+    | Gu | Gu, Chen, Zhang, Xu, Ma, Wang, Zhang & Zhao | **Gu, Barrett, Hand, Popa & Cummer** (Duke ECE) |
+    | Ghosh | …**Chaurasiya**… | …**Kaiprath**… (other three correct) |
+    | Singh | Singh, Tyler, Zhang, Azad & Chen | **Singh, Korolev, Afsar & Sonkusale** (Tufts) |
+
+    **The label was wrong twice over.** The patent prints only *"Gu et al."*,
+    *"Ghosh et al."* and *"Singh et al."* — **no author lists at all**, at
+    either `us_patent_12089385B2.txt` line 83 or line 1022. So names described
+    as cited verbatim from it could not have come from it. Titles, journals,
+    volumes, issues, pages and years were all correct; only the authors, the
+    one field the patent never supplied, were wrong.
+
+    *In plain terms: where the source said nothing, the note filled the gap in
+    and then claimed the source for it.*
+
+    **The failure is the label, not the names.** A wrong author list is a
+    nuisance; a wrong list wearing a provenance claim is a trap, because the
+    next reader has no reason to re-check it. The substituted names are
+    plausible — "Chaurasiya" is a real frequent co-author of Ghosh,
+    Bhattacharyya and Srivastava on other papers, and "Azad & Chen" are real
+    co-authors on the patent's *Grady et al., Science* reference two lines
+    away — which is exactly what makes them survive a skim.
+
+    **Blast radius, recorded because it is the argument for the rule.** The
+    error propagated into issue #246's body and was then briefed to three
+    research agents as fact. Two of them independently found it while
+    verifying their own paper. Nothing downstream depended on the names, so
+    the cost was one wasted access route — a sibling agent hunted OSTI and
+    LANL for Singh on the strength of the fabricated "Azad & Chen" Los Alamos
+    attribution, for a Tufts paper with no DOE tie.
+
+    Fixed at the claim with the wrong lists struck through and DOIs added, per
+    **ADR-0024**.
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
