@@ -43,6 +43,7 @@ from simulation.meep import (
     _SPEED_OF_LIGHT_M_S,
     MeepSimulator,
     _hz_to_meep_freq,
+    _import_meep,
     _m_to_meep,
     _meep_freq_to_hz,
     _primitive_to_meep,
@@ -540,3 +541,25 @@ def test_meep_simulator_run_raises_simulator_error_with_no_injected_module():
 def test_run_meep_simulation_raises_simulator_error_with_no_injected_module():
     with pytest.raises(SimulatorError, match="meep is not installed"):
         run_meep_simulation(geometry=PATCH_GEOMETRY)
+
+
+def test_missing_meep_names_the_interpreter_mismatch_when_meep_python_is_set(monkeypatch):
+    """The Dockerfile installs pymeep into its own conda env and exports
+    MEEP_PYTHON. This adapter imports meep in-process, so that interpreter is
+    unreachable -- and the old message claimed meep was not installed, which
+    in a container is simply false and sends the reader looking for the wrong
+    problem."""
+    monkeypatch.setenv("MEEP_PYTHON", "/opt/conda/envs/mp/bin/python3")
+    with pytest.raises(SimulatorError) as excinfo:
+        _import_meep()
+    message = str(excinfo.value)
+    assert "not in THIS interpreter" in message
+    assert "/opt/conda/envs/mp/bin/python3" in message
+    assert "gprmax" in message.lower()
+
+
+def test_missing_meep_keeps_the_install_message_when_meep_python_is_unset(monkeypatch):
+    monkeypatch.delenv("MEEP_PYTHON", raising=False)
+    with pytest.raises(SimulatorError) as excinfo:
+        _import_meep()
+    assert "meep is not installed" in str(excinfo.value)

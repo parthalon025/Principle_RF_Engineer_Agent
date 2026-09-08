@@ -177,6 +177,8 @@ each limit below is a genuine, stated gap, not silently glossed over):
 """
 
 import math
+import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -291,6 +293,26 @@ def _import_meep() -> Any:
     try:
         import meep as mp  # see module docstring citation
     except ImportError as exc:
+        # The container case, and the confusing one: this repo's Dockerfile
+        # DOES install pymeep, into its own conda environment, and exports
+        # MEEP_PYTHON pointing at that interpreter. But this adapter drives
+        # Meep in-process, so a separate interpreter is unreachable to it and
+        # the old message ("meep is not installed") was actively misleading
+        # -- Meep is installed, just not here. Say which of the two it is.
+        meep_python = os.getenv("MEEP_PYTHON")
+        if meep_python:
+            raise SimulatorError(
+                "meep is installed, but not in THIS interpreter. MEEP_PYTHON "
+                f"is set to {meep_python!r}, which is a different Python from "
+                f"the one running this code ({sys.executable!r}) -- the "
+                "Dockerfile installs pymeep into its own conda environment. "
+                "This adapter imports meep in-process and has no subprocess "
+                "handoff, so it cannot reach that interpreter; "
+                "simulation/gprmax.py is the pattern it would need (it runs "
+                "GPRMAX_PYTHON as a subprocess). Until that exists, either "
+                "install pymeep into this environment or run this code under "
+                "MEEP_PYTHON."
+            ) from exc
         raise SimulatorError(
             "meep is not installed. MEEP is used as a Python library "
             "(import meep), not an external binary -- install it per its "
