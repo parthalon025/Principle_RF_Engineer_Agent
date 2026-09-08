@@ -4,11 +4,20 @@
 
 ## What changed, in one line
 
-Until now every simulator adapter here was tested against a hand-built fake. Those tests confirm we can *talk* to a solver. They say nothing about whether the solver told us the truth and we read it correctly — and only the second claim justifies the `SIMULATED` provenance tag.
+Two reference cases have now been run against a real solver, and checked against answers that exist independently of this code.
 
-*In plain terms: we had been checking that we dialled the number correctly, never that anyone useful answered.*
+> **Correction to this document's first version**, which opened *"until now every simulator adapter here was tested against a hand-built fake."* **That was already false when written.** #210 had driven `simulation/palace.py` against a real compiled Palace binary and found two genuine defects (comma-vs-semicolon column labels, and `specular` returning −158 dB noise where the true reflection was −18.9 dB), recorded in [`docs/palace-floquet-validation.md`](palace-floquet-validation.md). The claim was written on a branch cut before that work merged, and the two branches could not see each other — which is the mundane cause, not an excuse for the claim.
 
-Two reference cases have now been run against a real solver.
+The narrower claim survives, and is the one worth making. The two efforts validated **different halves**, and neither has done both:
+
+| | Adapter path (deck emission, shell-out, parsing) | Physics (does the answer match a known-correct one) |
+|---|---|---|
+| **#210, Palace** | ✅ validated against a real binary | ❌ its own §4 says the run is "no check at all on the physics" |
+| **This work, Meep** | ❌ see the caveat below | ✅ against an exact answer and an independent method |
+
+*In plain terms: #210 proved we can talk to a solver correctly. This proves a solver told us the truth. Those are different claims and both are needed.*
+
+⚠️ **Caveat on the second row.** `verification/meep_absorber_validation.py` deliberately builds `mp.Simulation` objects directly rather than calling `run_meep_simulation()`, and re-derives the unit conversions, so that the validation does not assume the thing it validates. The consequence is that **the adapter's own deck emission and result parsing are not what these numbers check.** The adapter path *was* driven end to end against real Meep during development — through `run_meep_simulation` into a subprocess interpreter, returning 0.9917 at 10 GHz — but that run is not committed as a repeatable artifact. Closing that gap is the obvious next step and belongs with #222.
 
 ## Case 1 — free-standing resistive sheet (exact answer)
 

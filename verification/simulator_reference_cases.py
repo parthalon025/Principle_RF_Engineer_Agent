@@ -108,6 +108,15 @@ class ReferenceCase:
     frequency_hz: float
     geometry: dict[str, Any]
     expected: tuple[ExpectedValue, ...] = field(default=())
+    #: Which adapter can pose this case. A case is only meaningful to the
+    #: solver its geometry is written for: the dipole's wire list means
+    #: nothing to an FDTD grid, and an absorber stack means nothing to a
+    #: thin-wire method-of-moments code. Runners MUST filter on this rather
+    #: than iterating every case -- without it the NEC2 runner would hand a
+    #: Salisbury screen's empty wire list to nec2++ the moment that binary
+    #: appeared on PATH, and "solve this absorber as a wire antenna" is a
+    #: question with no sensible answer.
+    solver: str = "NEC2"
 
 
 def half_wave_dipole_geometry(
@@ -238,7 +247,8 @@ SALISBURY_SCREEN = ReferenceCase(
         "once. EXECUTED against Meep 1.34.0 -- see this module's status note."
     ),
     frequency_hz=10e9,
-    geometry={},  # posed by simulation/meep.py; see docs/meep-absorber-validation.md
+    solver="MEEP",
+    geometry={},  # posed by verification/meep_absorber_validation.py
     expected=(
         ExpectedValue(
             name="absorptance",
@@ -268,6 +278,7 @@ FREE_STANDING_RESISTIVE_SHEET = ReferenceCase(
         "Meep 1.34.0, which returned 0.4999."
     ),
     frequency_hz=10e9,
+    solver="MEEP",
     geometry={},
     expected=(
         ExpectedValue(

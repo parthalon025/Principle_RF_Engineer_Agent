@@ -144,12 +144,16 @@ each limit below is a genuine, stated gap, not silently glossed over):
 
   - Geometry primitives: axis-aligned Box and Cylinder only (matching
     simulation/openems.py's/simulation/hfss.py's own primitive scope).
-  - Materials: isotropic dielectric only (a single epsilon_r/mue_r applied
-    identically to X/Y/Z, matching openems.py's own isotropic-only scope)
-    -- no dispersion, conductivity, or Meep's real elemental-metal Drude
-    fits. Conductors are modeled as `mp.metal` (an IDEAL, lossless PEC,
-    epsilon = -infinity) -- a real copper/PEC structure's finite
-    conductivity loss is not modeled, an explicit simplification.
+  - Materials: isotropic only (a single epsilon_r/mue_r applied identically
+    to X/Y/Z, matching openems.py's own isotropic-only scope) -- no
+    dispersion and no Meep elemental-metal Drude fits. LOSS IS SUPPORTED
+    (#230): a material may state a `loss_tangent`, mapped to Meep's
+    D_conductivity at the band-centre frequency, and a conductor may state
+    `conductivity_s_m` or `sheet_resistance_ohm_sq` + `thickness_m` instead
+    of being an ideal PEC. A conductor that states neither is still
+    `mp.metal` -- an IDEAL, lossless PEC -- which remains the default and is
+    correct for a genuine ground plane but WRONG for a printed resistive
+    layer, which cannot dissipate anything if modelled that way.
   - PORT MODEL IS STRUCTURALLY DIFFERENT FROM openEMS/HFSS -- this is the
     single most important thing to understand before comparing results
     across solvers: Meep (a pure FDTD field solver) has no lumped-RLC-port

@@ -143,22 +143,45 @@ def test_case_ids_match_their_registry_keys():
 # --- the real solve -------------------------------------------------------
 
 
-@pytest.mark.parametrize("case_id", sorted(REFERENCE_CASES))
-def test_reference_case_against_a_real_nec2_solve(case_id):
-    """Run the case through the real adapter and the real solver.
+NEC2_CASE_IDS = sorted(
+    case_id for case_id, case in REFERENCE_CASES.items() if case.solver == "NEC2"
+)
 
-    Skips when nec2++ is not installed, which is every environment this repo
-    currently runs in -- no full-wave solver is pip-installable, and CI
-    installs none (README.md). This test is the thing that would make
-    SIMULATED provenance mean 'validated simulation' in CONTEXT.md's evidence
-    hierarchy, and it has never yet been executed.
+
+def test_every_reference_case_names_a_solver_that_can_pose_it():
+    """A case is only meaningful to the adapter its geometry is written for.
+
+    This test exists because the registry was briefly iterated wholesale by
+    the NEC2 runner below, which would have handed an absorber stack's empty
+    wire list to nec2++ the moment that binary appeared on PATH. It skipped
+    everywhere, so nothing caught it -- a permanently-skipping test hides its
+    own bugs.
+    """
+    for case in REFERENCE_CASES.values():
+        assert case.solver in {"NEC2", "MEEP"}, case.case_id
+        if case.solver == "NEC2":
+            assert case.geometry, f"{case.case_id} must carry a deck for nec2++"
+
+
+@pytest.mark.parametrize("case_id", NEC2_CASE_IDS)
+def test_reference_case_against_a_real_nec2_solve(case_id):
+    """Run a NEC2 case through the real adapter and the real solver.
+
+    Only NEC2 cases: the MEEP cases in the registry are posed by
+    verification/meep_absorber_validation.py, which needs a solver CI does
+    not have and runs as a script rather than a test.
+
+    Skips when nec2++ is not installed, which is every environment CI runs
+    in. Note the Dockerfile DOES build nec2++, so this is takeable in the
+    container -- it is unrun, not unrunnable, and #222 tracks running it.
     """
     executable = shutil.which("nec2++")
     if executable is None:
         pytest.skip(
-            "nec2++ is not installed, so the reference case cannot be solved. "
-            "This is the unrun state issue #144 describes: install nec2++ and "
-            "re-run to actually validate the adapter against published values."
+            "nec2++ is not installed here, so this case cannot be solved. "
+            "The Dockerfile builds nec2++, so this is runnable in the "
+            "container -- see #222. The MEEP cases in this registry HAVE been "
+            "executed; see docs/meep-absorber-validation.md."
         )
 
     from simulation.nec2pp import run_nec2_simulation
