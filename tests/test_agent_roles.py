@@ -103,6 +103,7 @@ def test_principal_role_is_scoped_not_broad():
     assert "ingest_3gpp_spec" not in names
     assert "ingest_etsi_standard" not in names
     assert "ingest_fcc_rule" not in names
+    assert "ingest_patent" not in names
     assert "extract_components" not in names
     assert "analyze_touchstone_file" not in names
     # Design-record/lifecycle tools: still principal-exclusive, still direct.
@@ -171,6 +172,17 @@ def test_systems_role_gets_standards_body_sourcing_tools():
         assert "ingest_3gpp_spec" not in role_names
         assert "ingest_etsi_standard" not in role_names
         assert "ingest_fcc_rule" not in role_names
+
+
+def test_systems_role_gets_patent_sourcing_tool():
+    # issue #219: fetching a USPTO patent grant/publication is the same
+    # knowledge-authoring concern as ingest_arxiv_paper/ingest_3gpp_spec/
+    # ingest_etsi_standard/ingest_fcc_rule -- same bucket, same reasoning.
+    names = _tool_names(ROLES["systems"])
+    assert "ingest_patent" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "ingest_patent" not in role_names
 
 
 def test_systems_role_gets_component_sourcing_tools():

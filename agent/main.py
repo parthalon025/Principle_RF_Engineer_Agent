@@ -50,6 +50,7 @@ from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
+from knowledge.sourcing.patent import ingest_patent as _ingest_patent
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
@@ -1554,6 +1555,52 @@ def ingest_fcc_rule(
 
 
 @function_tool
+def ingest_patent(
+    patent_number: str,
+    license: str,
+    classification: str,
+    related_number: str | None = None,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch a US patent grant and/or pre-grant publication by number from
+    USPTO's own print endpoint (no authentication, no registration) and
+    ingest each into the knowledge base as source_type='patent'.
+    Fetch-by-identifier only, not search -- you must already know the
+    identifier(s):
+    patent_number: a grant number (e.g. "12089385" or "US12089385B2") OR a
+    publication number (e.g. "2022/0192066" or "US20220192066A1") -- which
+    kind it is gets auto-detected.
+    related_number: optional; the SIBLING identifier of the opposite kind
+    (a publication alongside a grant, or vice versa), when you already know
+    it -- a patent number does not mechanically determine its own
+    publication number (or vice versa) without a search, which this tool
+    does not perform. Passing two numbers of the same kind raises an error.
+    Grants are routinely scanned images with no text layer; some pre-grant
+    publications are too (confirmed directly against the live endpoint,
+    contrary to the general expectation that publications are text-native)
+    -- this is handled as a normal case, not an error: a document with a
+    real text layer is extracted via two-column text extraction, one with
+    none has every page rendered to PNG (default 1200 DPI) for manual/
+    vision-based transcription instead, with the ingested text saying so
+    plainly rather than inventing body content. Bibliographic metadata
+    (title/inventors/assignee/dates) is parsed from the front page's own
+    text when one exists; fields render as unknown, not guessed, otherwise.
+    license must be the reuse terms that actually apply; this tool does not
+    assume a default. Pass supersedes_document_id to declare the
+    patent_number document (not related_number's) a newer revision of an
+    existing document (never inferred from title); omit it for a plain new,
+    independent document. Returns {"grant": ..., "publication": ...},
+    whichever was actually fetched."""
+    return _ingest_patent(
+        patent_number,
+        license=license,
+        classification=classification,
+        related_number=related_number,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@function_tool
 def index_document(document_id: int, requested_backend: str | None = None) -> dict:
     """Embed a stored document's chunks and write the vectors to the knowledge base.
     SENSITIVE/RESTRICTED documents always use the self-hosted backend, with no
@@ -2191,7 +2238,10 @@ def run_candidate_search(
 #                   fetchers, same authoring bucket again: each is a thin,
 #                   fetch-by-identifier client with its own extraction step
 #                   ahead of ingest_document, exactly the ingest_arxiv_paper
-#                   shape), since standing up the knowledge base for
+#                   shape) -- and (issue #219) ingest_patent, the USPTO
+#                   grant/publication fetcher, same bucket and same
+#                   unauthenticated-endpoint posture as those four, since
+#                   standing up the knowledge base for
 #                   the team is systems-level work. Shares the cascaded-IP3/
 #                   IM3 tools with microwave -- linearity budgeting is both a
 #                   chain-level (systems) and single-stage (microwave)
@@ -2361,6 +2411,7 @@ _ALL_TOOLS = [
     ingest_3gpp_spec,
     ingest_etsi_standard,
     ingest_fcc_rule,
+    ingest_patent,
     index_document,
     read_document,
     search_knowledge,
@@ -2455,9 +2506,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "and standing up the knowledge base (ingesting and indexing "
             "documents, sourcing component datasheets directly from Digi-Key/"
             "Mouser/Nexar, fetching/converting arXiv preprints via "
-            "ingest_arxiv_paper, and fetching 3GPP specs/ETSI standards/FCC "
+            "ingest_arxiv_paper, fetching 3GPP specs/ETSI standards/FCC "
             "eCFR rule text via ingest_3gpp_spec/ingest_etsi_standard/"
-            "ingest_fcc_rule) other roles rely on. Defer network-level "
+            "ingest_fcc_rule, and fetching US patent grants/publications "
+            "via ingest_patent) other roles rely on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -2481,6 +2533,7 @@ ROLE_SPECS: list[RoleSpec] = [
             ingest_3gpp_spec,
             ingest_etsi_standard,
             ingest_fcc_rule,
+            ingest_patent,
             index_document,
             search_knowledge,
             lookup_digikey_component,
