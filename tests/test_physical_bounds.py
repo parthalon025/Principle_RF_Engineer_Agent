@@ -16,6 +16,7 @@ import pytest
 
 from designs.design_families import (
     ABSORBER,
+    ABSORBER_TRANSMISSIVE,
     DIFFUSIVE,
     NO_PHYSICAL_BOUND,
     PATCH,
@@ -209,6 +210,85 @@ def test_the_two_bounds_are_structurally_different_functions():
         # The absorber bound cannot even be CALLED with the patch bound's
         # inputs -- which is the point.
         ABSORBER.physical_bound(frequency_hz=2.45e9)
+
+
+def test_absorber_families_ground_plane_and_port_count_do_not_disagree():
+    """Issue #216: `ABSORBER` declared `requires_ground_plane=True` while
+    carrying US12089385B2 Example 3 -- a two-port, ground-less structure --
+    as its assigned reproduction anchor. A ground-backed absorber has zero
+    transmission by construction (one port fully describes it); an unbacked
+    one does not (a second port is required to close the energy balance,
+    docs/absorber-scoring-conventions.md section 1). So the two properties
+    are the same physical fact stated twice and must never disagree.
+
+    This asserts the resolution directly: `ABSORBER` is the ground-backed,
+    one-port family issue #216 says it should be, and `ABSORBER_TRANSMISSIVE`
+    -- the shape Example 3 actually is -- is ground-less and two-port.
+    """
+    assert ABSORBER.requires_ground_plane is True
+    assert ABSORBER.port_count == 1
+
+    assert ABSORBER_TRANSMISSIVE.requires_ground_plane is False
+    assert ABSORBER_TRANSMISSIVE.port_count == 2
+
+
+def test_every_registered_family_agrees_with_itself_on_ground_plane_and_ports():
+    """The general form of the same invariant, checked across the whole
+    registry rather than just the two absorber families -- so a future
+    family cannot reintroduce issue #216's contradiction under a different
+    name."""
+    for name in known_family_names():
+        family = get_design_family(name)
+        if family.requires_ground_plane:
+            assert family.port_count == 1, (
+                f"{family.name} requires a ground plane (zero transmission by "
+                f"construction) but declares port_count={family.port_count}, "
+                "not 1"
+            )
+        else:
+            assert family.port_count != 1, (
+                f"{family.name} has no ground plane (transmission not "
+                "guaranteed zero) but declares port_count=1, which cannot "
+                "close the absorption energy balance"
+            )
+
+
+def test_a_design_family_refuses_to_construct_with_disagreeing_flags():
+    """The invariant is enforced at construction time, not just satisfied by
+    the shipped families -- so a future edit that reintroduces issue #216's
+    contradiction fails immediately, at import time, rather than shipping
+    silently until a test happens to notice."""
+    with pytest.raises(ValueError, match="port_count"):
+        DesignFamily(
+            name="BROKEN_GROUND_BACKED_TWO_PORT",
+            description="a ground-backed family wrongly declaring two ports",
+            simulation_tier=SimulationTier.TIER_A,
+            physical_bound=NO_PHYSICAL_BOUND,
+            requires_ground_plane=True,
+            port_count=2,
+        )
+    with pytest.raises(ValueError, match="port_count"):
+        DesignFamily(
+            name="BROKEN_UNBACKED_ONE_PORT",
+            description="an unbacked family wrongly declaring one port",
+            simulation_tier=SimulationTier.TIER_A,
+            physical_bound=NO_PHYSICAL_BOUND,
+            requires_ground_plane=False,
+            port_count=1,
+        )
+
+
+def test_absorber_transmissive_bound_is_unread_not_rozanov():
+    """Rozanov's own derivation opens on a slab 'overlying a perfectly
+    reflecting plane' (docs/rozanov-bound-primary-source.md assumption (b)),
+    so it cannot be the bound cited for the ground-less
+    `ABSORBER_TRANSMISSIVE` family -- that would just relocate issue #216's
+    category error one field over."""
+    assert isinstance(ABSORBER_TRANSMISSIVE.physical_bound, UnreadPhysicalBound)
+    assert not ABSORBER_TRANSMISSIVE.has_physical_bound
+    with pytest.raises(NotImplementedError) as exc:
+        ABSORBER_TRANSMISSIVE.physical_bound(anything=1)
+    assert "not been read" in str(exc.value)
 
 
 def test_an_unread_bound_is_distinct_from_no_bound_at_all():
