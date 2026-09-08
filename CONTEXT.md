@@ -469,8 +469,42 @@ and a glossary that churns with it stops being trustworthy (see
   incidence-angle range)` — the same accumulate-once-and-reuse shape as the
   **Material-property library**, holding each symbol's characterized
   response so it is looked up rather than re-solved by every design that
-  shares its band and substrate. A pitch or validity-box change
-  invalidates the whole alphabet's entries, not one symbol's.
+  shares its band and substrate. Keyed by `(element family, symbol,
+  band, incidence-angle range, process)` — the **Process record**
+  reference is what makes #132's rule expressible, that "the same
+  outline printed in carbon and in MXene is two letters, not one letter
+  under two conditions." **Only a printed letter is in the library**
+  (ADR-0027): a shape from the literature enters as a candidate in the
+  **Considered-and-dropped ledger**, never as an entry, since its
+  published response was measured inside someone else's validity box.
+  **Entries never expire; they stop matching** — a configuration that no
+  longer exists simply never matches a lookup, and the measurement stays
+  true about the ink and machine that produced it. An equipment change
+  therefore orphans the whole alphabet at once, which is a known and
+  accepted cost, not an oversight.
+  _Avoid_: invalidating an entry — an earlier version of this entry said
+  a pitch or validity-box change "invalidates the whole alphabet's
+  entries." That contradicted #132 and is superseded by ADR-0027
+  (`RUNNING-LISTS.md` §3 correction 42).
+- **Process record**: the named, stored answer to "how was this artifact
+  made" — machine, ink and grade, substrate stack, pass count, achieved
+  film thickness, and cure schedule (ADR-0027). It is the *stated box*
+  the standing preference means when it calls manufacturing and material
+  figures "measurements valid inside a stated box (pitch, ink, pass
+  count, cure, grade)" and warns that "quoted without their box they are
+  assumptions" — so an **Element/Coding-Alphabet library** entry with no
+  Process record reference is an assumption, not a measurement.
+  Distinct from a **Validity box**, and the two must not merge: the
+  validity box says where a response may be *used* (band, incidence
+  angle, neighbours), the Process record says how the thing was *made*.
+  One says what this is good for, the other says where it came from.
+  Because the library keys on it, an equipment change mints a new
+  Process record and leaves every prior entry intact and queryable,
+  which is what makes "what did we measure on the old machine" a lookup
+  rather than an archaeology exercise.
+  _Avoid_: process parameters, run config — this is a stored, referenced
+  identity, not a loose bag of settings.
+
 - **Verification item**: a `verification_items` row tracking one
   requirement's status (`NOT VERIFIED` default, `PASS`/`FAIL`/`MARGINAL`),
   auto-created per key in a design's `requirements` at design-creation time
@@ -497,6 +531,59 @@ and a glossary that churns with it stops being trustworthy (see
   one is what would let `SIMULATED` mean *validated* simulation in the
   **Evidence hierarchy** above.
   _Avoid_: benchmark — that measures speed, not correctness.
+
+- **Run report**: what an unattended run hands the morning reviewer
+  (ADR-0025). Leads with the **trade space** — where the best candidate
+  sits against threshold and objective, which constraint is binding, and
+  what relaxing it would buy — with the ranked candidate list as
+  supporting detail, because a ranking is already legible in the numbers
+  and is silent on what to change next. Persisted, but stores only what
+  nothing else stores (predictions, the **Considered-and-dropped
+  ledger**, **Handoff records**, the stop reason, the diagnosis) and
+  references design/decision/engineering-result rows for the rest, so
+  the two cannot drift apart. Written inside ADR-0011's all-or-nothing
+  transaction, never appended after it. Cut by leverage on the result,
+  never by a fixed top-N — an option that was never tried has no score
+  and so could never rank into one.
+  _Avoid_: log, digest — both suggest a rendering of what happened,
+  where the load-bearing content is what *didn't*.
+- **Considered-and-dropped ledger**: the record, written at the moment a
+  batch is proposed and carried in ADR-0022's existing batch record, of
+  which families were weighed and which were set aside — per entry a
+  family, a kept/dropped flag, one free-text reason, and a **reason
+  kind** (ADR-0025). Structured rather than prose so a later proposal
+  call can look an entry up deterministically. The reason kind is what
+  keeps a machine's verdict from hardening into a permanent one:
+  `human-decision` carries forward under ADR-0026, `capability-verdict`
+  never does and is re-evaluated against the current configured
+  fabrication capability every run (ADR-0021, #108 — equipment changes,
+  so "we could not build this" must expire with the machine that could
+  not build it), and `engineering-judgment` carries forward with its
+  reasoning and stays overridable. It also makes the equipment-change
+  worklist a query: every entry dropped as a `capability-verdict` is
+  exactly what a new machine unlocks. It exists because `run_candidate_search`
+  receives its candidates as an argument and prunes nothing: the
+  narrowing happens in the LLM role that composes the list, upstream of
+  every module, and is otherwise unrecorded — making a thorough night
+  and a narrow one produce identical reports. No gate: a batch that
+  writes nothing here still runs, and the silence is itself recorded.
+- **Rejection record**: the stored fact that a human refused a specific
+  proposal, with who, when and the stated reason (ADR-0026). A named
+  exception to "a guess never becomes settled by repetition", on
+  ADR-0015's grounds — it is a fact about what a person decided, so
+  replaying it inherits no engineering guess. Stores the **refusal**,
+  never the conclusion: a later run may read that something was refused
+  and why, and must still re-derive the physics itself.
+  _Avoid_: rejected value, ruled-out material — both name the conclusion
+  this record deliberately does not carry.
+- **Handoff record**: role, question, answer and timestamp for one
+  Principal-to-specialist handoff (ADR-0025). Capture only: a
+  specialist's answer is an LLM inference sitting at the bottom of the
+  **Evidence hierarchy** and gets no provenance rung of its own, since
+  minting one would quietly promote it against the closed set above.
+  Exists because `SPECIALIST_HANDOFFS` transfers control one way and
+  nothing persists that it happened, so an overnight answer shaped by
+  six roles has no traceable author.
 
 `/domain-modeling` should keep extending this section as more terms and
 decisions get resolved (see `docs/agents/domain.md`).

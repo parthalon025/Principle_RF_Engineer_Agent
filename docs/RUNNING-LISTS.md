@@ -603,6 +603,27 @@ this list.
     that's a narrower claim than the document made. Corrected in PR #196; a
     full enumeration of the ~25 bounds is not yet done and is fog, not a
     ticket, until someone has reason to need the list.
+42. **`CONTEXT.md` said a process change "invalidates" alphabet entries;
+    #132 said entries never go stale. Both were on the page.** The
+    glossary's Element/Coding-Alphabet library entry read *"a pitch or
+    validity-box change invalidates the whole alphabet's entries, not one
+    symbol's"*, while #132 read *"this run does not produce results that
+    later 'go stale'; it produces entries that are valid for exactly the
+    conditions they were printed under, and a different condition is a
+    different entry."* One expires entries, the other says they merely
+    stop matching. **ADR-0027 adopts #132's model** and corrects the
+    glossary. *In plain terms: an old letter is not wrong now — it is
+    still right, about a machine you no longer own.*
+
+    **A second defect fell out of the same reading: the key could not
+    express the rule #132 calls mandatory.** It was `(element family,
+    substrate stack, frequency band, incidence-angle range)` — carrying
+    no ink, film thickness, cure or machine — so the carbon and MXene
+    versions of one shape, which #132 insists are *"two letters, not one
+    letter under two conditions"*, collided on a single key. The store
+    also could not answer "which entries came from the old printer," the
+    one question that matters when equipment changes. ADR-0027 adds a
+    **Process record** and keys on a reference to it.
 
 ---
 
