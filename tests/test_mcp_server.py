@@ -156,8 +156,12 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # arxiv-doc-builder integration adds 1 more (ingest_arxiv_paper): 81 + 1 = 82.
     #
+    # issue #215 adds 3 more (ingest_3gpp_spec, ingest_etsi_standard,
+    # ingest_fcc_rule -- wiring three already-implemented sourcing clients
+    # onto the tool surface): 82 + 3 = 85.
+    #
     # issue #219 adds 1 more (ingest_patent, the USPTO patent/published-
-    # application fetcher): 82 + 1 = 83.
+    # application fetcher): 85 + 1 = 86.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -186,6 +190,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #143: synthesize_filter_prototype
         + 1  # issue #145: advance_design_status
         + 1  # arxiv-doc-builder integration: ingest_arxiv_paper
+        + 3  # issue #215: ingest_3gpp_spec, ingest_etsi_standard, ingest_fcc_rule
         + 1  # issue #219: ingest_patent
     )
     assert len(registered_names) == expected
@@ -204,9 +209,143 @@ def test_ingest_arxiv_paper_is_registered():
     assert "ingest_arxiv_paper" in registered_names
 
 
+def test_standards_body_sourcing_tools_are_registered():
+    # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule were
+    # implemented and tested (knowledge/sourcing/threegpp.py, etsi.py,
+    # fcc_ecfr.py) but wired onto no tool surface -- this asserts they now are.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "ingest_3gpp_spec" in registered_names
+    assert "ingest_etsi_standard" in registered_names
+    assert "ingest_fcc_rule" in registered_names
+
+
+def test_ingest_3gpp_spec_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real fetch/parse logic is
+    # exercised in tests/test_sourcing_threegpp.py; this only confirms the
+    # MCP wrapper forwards its arguments to knowledge.sourcing.threegpp.
+    captured = {}
+
+    def fake_ingest(spec_number, version, *, license, classification, supersedes_document_id):
+        captured.update(
+            spec_number=spec_number,
+            version=version,
+            license=license,
+            classification=classification,
+            supersedes_document_id=supersedes_document_id,
+        )
+        return {"status": "ok", "document_id": 1}
+
+    monkeypatch.setattr(server, "_ingest_3gpp_spec", fake_ingest)
+
+    result = server.ingest_3gpp_spec(
+        "38.331", "h00", license="3GPP terms", classification="INTERNAL"
+    )
+
+    assert result == {"status": "ok", "document_id": 1}
+    assert captured == {
+        "spec_number": "38.331",
+        "version": "h00",
+        "license": "3GPP terms",
+        "classification": "INTERNAL",
+        "supersedes_document_id": None,
+    }
+
+
+def test_ingest_etsi_standard_calls_through(monkeypatch):
+    captured = {}
+
+    def fake_ingest(document_url, *, license, classification, supersedes_document_id):
+        captured.update(
+            document_url=document_url,
+            license=license,
+            classification=classification,
+            supersedes_document_id=supersedes_document_id,
+        )
+        return {"status": "ok", "document_id": 2}
+
+    monkeypatch.setattr(server, "_ingest_etsi_standard", fake_ingest)
+
+    result = server.ingest_etsi_standard(
+        "https://www.etsi.org/deliver/etsi_ts/119600_119699/119612/02.02.01_60/"
+        "ts_119612v020201p.pdf",
+        license="ETSI terms",
+        classification="INTERNAL",
+    )
+
+    assert result == {"status": "ok", "document_id": 2}
+    assert captured["document_url"].startswith("https://www.etsi.org/deliver/")
+    assert captured["license"] == "ETSI terms"
+    assert captured["classification"] == "INTERNAL"
+    assert captured["supersedes_document_id"] is None
+
+
+def test_ingest_fcc_rule_calls_through(monkeypatch):
+    captured = {}
+
+    def fake_ingest(part, *, license, classification, title, supersedes_document_id):
+        captured.update(
+            part=part,
+            license=license,
+            classification=classification,
+            title=title,
+            supersedes_document_id=supersedes_document_id,
+        )
+        return {"status": "ok", "document_id": 3}
+
+    monkeypatch.setattr(server, "_ingest_fcc_rule", fake_ingest)
+
+    result = server.ingest_fcc_rule(15, license="Public Domain", classification="PUBLIC")
+
+    assert result == {"status": "ok", "document_id": 3}
+    assert captured == {
+        "part": 15,
+        "license": "Public Domain",
+        "classification": "PUBLIC",
+        "title": 47,
+        "supersedes_document_id": None,
+    }
+
+
 def test_ingest_patent_is_registered():
+    # issue #219: knowledge/sourcing/patent.py's ingest_patent, wired onto
+    # the MCP tool surface alongside its ingest_arxiv_paper/ingest_3gpp_spec/
+    # ingest_etsi_standard/ingest_fcc_rule siblings.
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "ingest_patent" in registered_names
+
+
+def test_ingest_patent_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real fetch/parse/convert logic
+    # is exercised in tests/test_sourcing_patent.py; this only confirms the
+    # MCP wrapper forwards its arguments to knowledge.sourcing.patent.
+    captured = {}
+
+    def fake_ingest(
+        patent_number, *, license, classification, supersedes_document_id, render_page_images
+    ):
+        captured.update(
+            patent_number=patent_number,
+            license=license,
+            classification=classification,
+            supersedes_document_id=supersedes_document_id,
+            render_page_images=render_page_images,
+        )
+        return {"status": "ok", "document_id": 4}
+
+    monkeypatch.setattr(server, "_ingest_patent", fake_ingest)
+
+    result = server.ingest_patent(
+        "US12089385B2", license="US Government Work", classification="PUBLIC"
+    )
+
+    assert result == {"status": "ok", "document_id": 4}
+    assert captured == {
+        "patent_number": "US12089385B2",
+        "license": "US Government Work",
+        "classification": "PUBLIC",
+        "supersedes_document_id": None,
+        "render_page_images": True,
+    }
 
 
 def test_correlate_simulated_and_measured_is_registered():

@@ -22,13 +22,22 @@ in plain terms, it looks like a 73-ohm resistor in series with a small
 inductor, which is why 75-ohm coaxial cable exists and why practical dipoles
 are trimmed slightly short to cancel that leftover inductance.
 
-**Honest status: none of these cases has been executed.** No solver binary is
-installed in the environment this was written in, and CI installs none either
-(every full-wave solver here needs a manual or conda build -- see README.md).
-The expected values are transcribed from the cited references, and the runner
-below skips when the binary is absent. The first real run is therefore
-unproven, exactly like `simulation/hfss.py` and the distributor clients. What
-this module removes is the excuse that there was nothing to run.
+**Status: two of the three cases HAVE now been executed** against a real
+solver -- pymeep 1.34.0, installed from conda-forge exactly as this repo's
+own Dockerfile does it. `free-standing-resistive-sheet-10ghz` returned
+0.4999 against an exact 0.5, and `salisbury-screen-10ghz` returned 1.0000 at
+the design frequency and agreed with the independent closed-form model in
+`rf_tools/absorber.py` to within 0.001 across 6-14 GHz. Both are recorded in
+`docs/meep-absorber-validation.md` with the numbers and how to re-run them.
+
+That is the first time anything in this repository has been validated
+against physics rather than against a fake, and it is what the `SIMULATED`
+provenance tag has been claiming all along.
+
+`half-wave-dipole-300mhz` is still unexecuted: it needs NEC2++, which this
+repo's Dockerfile builds but CI does not. The expected values there remain
+transcribed from the citation, and the runner below still skips when the
+binary is absent.
 
 Tolerances are engineering judgement, not published error bars: a real NEC2
 solve of a finite-radius, finitely-segmented wire will not reproduce the
@@ -208,6 +217,76 @@ HALF_WAVE_DIPOLE = ReferenceCase(
     ),
 )
 
+_SALISBURY = (
+    "Salisbury screen: a 377 ohm/sq resistive sheet a quarter wavelength above a "
+    "ground plane. Standard textbook absorber (e.g. Munk, Frequency Selective "
+    "Surfaces, ch. 9); the quarter-wave spacer transforms the short at the ground "
+    "plane into an open circuit, leaving a sheet matched to free space."
+)
+_FREE_SHEET = (
+    "Free-standing resistive sheet at normal incidence: a shunt Rs across free "
+    "space. Z = Rs || eta0, Gamma = (Z-eta0)/(Z+eta0), A = 1 - |Gamma|^2 - "
+    "|1+Gamma|^2, maximised at exactly 0.5 when Rs = eta0/2 = 188.365 ohm/sq."
+)
+
+SALISBURY_SCREEN = ReferenceCase(
+    case_id="salisbury-screen-10ghz",
+    description=(
+        "Salisbury screen at 10 GHz: 376.73 ohm/sq sheet, 7.494 mm air spacer, "
+        "ground plane. The canonical absorber, and the case that exercises a "
+        "periodic boundary, a finite-conductivity sheet and a ground plane at "
+        "once. EXECUTED against Meep 1.34.0 -- see this module's status note."
+    ),
+    frequency_hz=10e9,
+    geometry={},  # posed by simulation/meep.py; see docs/meep-absorber-validation.md
+    expected=(
+        ExpectedValue(
+            name="absorptance",
+            value=1.0,
+            tolerance=0.02,
+            unit="fraction",
+            citation=_SALISBURY,
+            tolerance_rationale=(
+                "A matched sheet over a quarter-wave spacer absorbs everything at "
+                "the design frequency in theory. Real runs land just under: an FDTD "
+                "grid discretises the spacer, and a sheet of finite thickness is not "
+                "quite the zero-thickness ideal. A measured 0.9917 at resolution 12 "
+                "px/mm and 1.0000 at 60 px/mm bracket the convergence; +/-0.02 "
+                "passes a correct solve at usable resolution while still failing any "
+                "model whose sheet does not dissipate."
+            ),
+        ),
+    ),
+)
+
+FREE_STANDING_RESISTIVE_SHEET = ReferenceCase(
+    case_id="free-standing-resistive-sheet-10ghz",
+    description=(
+        "Free-standing 188.365 ohm/sq sheet at 10 GHz, no ground plane. Its peak "
+        "absorptance is exactly 0.5 -- an unusually sharp check, because the value "
+        "is a closed-form maximum rather than an approximation. EXECUTED against "
+        "Meep 1.34.0, which returned 0.4999."
+    ),
+    frequency_hz=10e9,
+    geometry={},
+    expected=(
+        ExpectedValue(
+            name="absorptance",
+            value=0.5,
+            tolerance=0.01,
+            unit="fraction",
+            citation=_FREE_SHEET,
+            tolerance_rationale=(
+                "The 0.5 maximum is exact, so the tolerance covers discretisation "
+                "only. A model that treats conductors as lossless perfect metal "
+                "returns 0 here and fails by a mile, which is the point: this case "
+                "catches the exact defect #230 recorded."
+            ),
+        ),
+    ),
+)
+
+
 #: Every reference case, by id. One for now -- the dipole is the case that
 #: catches the most wrong implementations per unit of effort. A folded dipole
 #: (~292 ohms, four times the dipole) and a quarter-wave monopole over perfect
@@ -215,6 +294,8 @@ HALF_WAVE_DIPOLE = ReferenceCase(
 #: and both are cheap to add here once the first one has actually been run.
 REFERENCE_CASES: dict[str, ReferenceCase] = {
     HALF_WAVE_DIPOLE.case_id: HALF_WAVE_DIPOLE,
+    SALISBURY_SCREEN.case_id: SALISBURY_SCREEN,
+    FREE_STANDING_RESISTIVE_SHEET.case_id: FREE_STANDING_RESISTIVE_SHEET,
 }
 
 

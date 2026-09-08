@@ -63,6 +63,16 @@ reflecting backing — not one form adopted as universal.** The two-port definit
 `LITERATURE-SUPPORTED` and genuinely unanimous; the one-port collapse is `CALCULATED`, exact
 only when `S₂₁ = 0`.
 
+**This is now enforced in the design family registry, not just stated in prose (issue #216).**
+`designs/design_families.py`'s `ABSORBER` family had `requires_ground_plane=True` while carrying
+Example 3 — the ground-less, two-port structure this section describes — as its assigned anchor,
+which is exactly the contradiction this document warns against. The fix was to split the family:
+`ABSORBER` stays the ground-backed, one-port family this programme's own designs default to
+(ADR-0017), and `ABSORBER_TRANSMISSIVE` is the new, ground-less, two-port sibling that Example 3
+actually is. `DesignFamily.__post_init__` now refuses to construct a family whose
+`requires_ground_plane` flag and `port_count` disagree, so this particular error cannot regenerate
+silently in code the way it did in this document.
+
 ---
 
 ## 2. The threshold: −10 dB and 90% are the same number
@@ -380,7 +390,7 @@ It also targets **anechoic chamber lining** — thick pyramidal absorber — not
 
 | Convention | Exact definition | How commonly used | Directly adoptable for #110? |
 |---|---|---|---|
-| **Absorptivity** | `A(ω) = 1 − \|S₁₁\|² − \|S₂₁\|²`; **ground-backed only** → `A = 1 − \|S₁₁\|²` | **Universal.** Every source checked. | **Adopt the two-port definition as-is.** The one-port collapse is a per-structure choice, **not** a default — the reproduction anchor is unbacked (§1). |
+| **Absorptivity** | `A(ω) = 1 − \|S₁₁\|² − \|S₂₁\|²`; **ground-backed only** → `A = 1 − \|S₁₁\|²` | **Universal.** Every source checked. | **Adopt the two-port definition as-is.** The one-port collapse is a per-structure choice, **not** a default — the reproduction anchor is unbacked (§1). Enforced in code as two families, `ABSORBER` (ground-backed) and `ABSORBER_TRANSMISSIVE` (Example 3's shape) — see §1 and issue #216. |
 | **90% absorption threshold** | Band where `A ≥ 0.90` | **Dominant default.** | **Yes**, but store the threshold as a requirement value, don't hard-code it. |
 | **−10 dB reflectivity threshold** | Band where `20log₁₀\|S₁₁\| ≤ −10` | **Dominant** in FSS/circuit-analog work. | **Yes — same quantity as above.** `CALCULATED` identity, exact when `S₂₁=0`. |
 | **Effective Absorption Bandwidth (EAB)** | Frequency range where `RL < −10 dB`, quoted **with the thickness that produced it** | **Universal in RAM/composite work**, incl. MXene. | **Yes**, and adopt its discipline: never quote a band without its thickness. |

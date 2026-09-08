@@ -461,6 +461,105 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path)
     assert results_by_tool["run_nec2_simulation"]["provenance"] == "SIMULATED"
     assert results_by_tool["record_external_measurement"]["provenance"] == "MEASURED"
 
+
+# ---------------------------------------------------------------------------
+# Issue #205: a decision's `alternatives` must survive the flush, not be
+# discarded as a hardcoded `[]`.
+# ---------------------------------------------------------------------------
+
+
+def test_flush_persists_alternatives_the_caller_supplied(cleanup_designs, tmp_path):
+    """Prerequisite for ADR-0026 (#125): a rejected alternative is worthless
+    to a later human review if `_flush_target_for` throws it away at the
+    flush. Drives ARCHITECTURE with a real `alternatives` list and asserts
+    the persisted `decision_records` row carries it through verbatim --
+    the regression this issue asks for. `redesign_decision`'s own step_input
+    supplies no `alternatives` key at all here, proving the `.get(...,
+    [])` default (not a `KeyError`) is what a caller who legitimately
+    offers none gets back."""
+    state = start_new_design_loop("TOOL-ALTS", "Alternatives Flush Test", "A", REQUIREMENTS)
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    architecture_alternatives = [
+        {"decision": "printed dipole", "rejected_because": "narrowband vs. requirement"},
+        {"decision": "PIFA", "rejected_because": "host surface curvature too tight"},
+    ]
+    state = _grant_and_advance(
+        state,
+        DesignStep.ARCHITECTURE,
+        {
+            "decision": "rectangular microstrip patch on FR4",
+            "rationale": "meets band/gain target with a simple, low-cost fabrication",
+            "design_family": "patch_antenna",
+            "alternatives": architecture_alternatives,
+        },
+    )
+    state = advance_design_loop_step(
+        state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
+    )
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    state = advance_design_loop_step(
+        state,
+        {
+            "geometry": _DIPOLE_GEOMETRY,
+            "frequency_hz": 300e6,
+            "reference_impedance_ohms": 50.0,
+            "executable": str(fake_nec2pp),
+            "workdir": str(tmp_path / "nec2_run"),
+        },
+    )
+    state = advance_design_loop_step(
+        state,
+        {
+            "eps_r": 4.4,
+            "w_m": 0.03,
+            "h_m": 0.0016,
+            "target_frequency_hz": 2.45e9,
+            "length_lower_m": 0.02,
+            "length_upper_m": 0.04,
+            "method": "sweep",
+            "n_evaluations": 5,
+        },
+    )
+    state = advance_design_loop_step(
+        state,
+        {
+            "requirement_id": "R1",
+            "requirement": "gain >= 5 dBi over 2.4-2.5 GHz",
+            "method": "analysis",
+            "expected": 5.0,
+            "actual": 5.2,
+            "status": "PASS",
+        },
+    )
+    touchstone_path = _write_measured_touchstone(tmp_path, name="tooling-alts")
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, {"touchstone_file": str(touchstone_path)}
+    )
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_design_loop_step(state, {"simulated": simulated_override})
+    assert state["current_step"] == DesignStep.REDESIGN_DECISION.value
+
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+        # deliberately no "alternatives" key -- proves the .get(..., [])
+        # default, not a KeyError, is what a caller supplying none gets.
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+    assert state["completed"] is True
+
+    stored = read_design(design_id)
+    decision_records = {d["record_key"].rsplit("-", 1)[-1]: d for d in stored["decision_records"]}
+    assert decision_records["architecture"]["alternatives"] == architecture_alternatives
+    assert decision_records["redesign_decision"]["alternatives"] == []
+
     assert stored["verification_items"][0]["status"] == "PASS"
     assert stored["verification_items"][0]["method"] == "analysis"
 

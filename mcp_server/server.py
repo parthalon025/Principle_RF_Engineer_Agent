@@ -31,7 +31,10 @@ from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
+from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
+from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
+from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1335,22 +1338,33 @@ def ingest_document(
     license: str,
     classification: str,
     supersedes_document_id: int | None = None,
+    author: str | None = None,
+    revision: str | None = None,
 ) -> dict:
     """Parse a document PDF via docling, chunk it, and store it. source_type must be one
-    of: datasheet, application_note, standard, textbook, paper, patent, design_record --
-    it is fixed at ingest time and sets the document's default provenance and authority
-    rank, so a wrong value permanently mis-ranks everything retrieved from it. Note
-    patent: its numbers are citable evidence but rank below a peer-reviewed paper (a
-    patent office does not check that a stated number reproduces), and its claim text is
-    legal boundary-setting, never design guidance. Pass supersedes_document_id to declare
-    this upload a newer revision of that document (never inferred from title); omit it for
-    a plain new, independent document."""
+    of: datasheet, application_note, standard, textbook, paper, patent, partner_research,
+    design_record -- it is fixed at ingest time and sets the document's default provenance
+    and authority rank, so a wrong value permanently mis-ranks everything retrieved from
+    it. Note patent: its numbers are citable evidence but rank below a peer-reviewed paper
+    (a patent office does not check that a stated number reproduces), and its claim text is
+    legal boundary-setting, never design guidance. Note partner_research (ADR-0029):
+    unpublished technical work received from an outside research partner -- use this, not
+    paper (which would overclaim peer review, outranking even a granted patent) or
+    design_record (which claims a document as this team's own authorship); it ranks between
+    patent and design_record and gets no structured component extraction, same as
+    paper/patent. Pass supersedes_document_id to declare this upload a newer revision of
+    that document (never inferred from title); omit it for a plain new, independent
+    document. author/revision are stored as-is on the document (both optional) -- for a
+    partner_research document, author should identify the partner/author, since a partner
+    source is not much use without knowing whose work it is."""
     return _ingest_document(
         file_path=file_path,
         source_type=source_type,
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,
+        author=author,
+        revision=revision,
     )
 
 
@@ -1379,6 +1393,115 @@ def ingest_arxiv_paper(
         arxiv_id,
         license=license,
         classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_3gpp_spec(
+    spec_number: str,
+    version: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Download a 3GPP specification from 3GPP's own open FTP archive (no
+    registration/credential needed) and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- you must
+    already know the identifier:
+    spec_number: the spec's own number, e.g. "38.331" (or a multi-part spec
+    like "38.521-1", dash kept intact).
+    version: 3GPP's own version string exactly as it appears in the archive
+    filename, e.g. "h00" -- not a bare revision letter or a guess.
+    3GPP specs are free to download but are NOT public domain -- copyright is
+    jointly held by the 3GPP Organizational Partners and each document
+    carries its own reproduction-restriction notice. license must be the
+    reuse terms that actually apply; this tool does not assume a default.
+    Extracts the single .docx/.doc member from the downloaded zip (preferring
+    .docx). A legacy pre-2020ish .doc spec docling can't parse still stores
+    the document row with extraction_status="failed" rather than raising --
+    expect zero chunks in that case. Pass supersedes_document_id to declare
+    this upload a newer revision of that document (never inferred from
+    title); omit it for a plain new, independent document."""
+    return _ingest_3gpp_spec(
+        spec_number,
+        version,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_etsi_standard(
+    document_url: str,
+    license: str,
+    classification: str,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Download an ETSI standard PDF and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- and
+    unlike ingest_3gpp_spec/ingest_fcc_rule, the identifier here is a full
+    URL, not a bare document number: ETSI's per-document "deliver" path
+    (document-type folder, a grouped numeric-range folder, the document-
+    number folder, a version folder, then the filename) is not mechanically
+    derivable from a bare standard number alone, and no confirmed public
+    search API exists to script that lookup -- only ETSI's own human-facing
+    standards-search UI (https://www.etsi.org/standards-search) resolves a
+    document number to its deliver path today.
+    document_url: the full deliverable URL, e.g. "https://www.etsi.org/
+    deliver/etsi_ts/119600_119699/119612/02.02.01_60/ts_119612v020201p.pdf"
+    -- must be an https://www.etsi.org/deliver/... URL (no registration
+    needed to fetch it), obtained however you already found it (e.g. from
+    the standards-search UI or a citation).
+    ETSI standards are free to download but carry ETSI's own copyright and
+    (F)RAND patent terms, same internal-use posture as 3GPP. license must be
+    the reuse terms that actually apply; this tool does not assume a
+    default. Pass supersedes_document_id to declare this upload a newer
+    revision of that document (never inferred from title); omit it for a
+    plain new, independent document."""
+    return _ingest_etsi_standard(
+        document_url,
+        license=license,
+        classification=classification,
+        supersedes_document_id=supersedes_document_id,
+    )
+
+
+@mcp.tool()
+def ingest_fcc_rule(
+    part: int,
+    license: str,
+    classification: str,
+    title: int = 47,
+    supersedes_document_id: int | None = None,
+) -> dict:
+    """Fetch FCC rule text via eCFR's public versioner API (no
+    authentication) and ingest it into the knowledge base as
+    source_type='standard'. Fetch-by-identifier only, not search -- you must
+    already know the identifier:
+    part: the CFR part number, e.g. 15 for the Part 15 unlicensed-device
+    rules, or 97 for the Part 97 amateur-radio rules.
+    title: the CFR title number, default 47 (Telecommunication) -- pass a
+    different title only if you genuinely need rule text outside Title 47.
+    Always resolves the current edition date from eCFR's own titles.json
+    first (an arbitrary caller-supplied date can 404 against eCFR's
+    versioner), then flattens the fetched Federal-Register XML to plain text
+    locally before ingesting (docling does not support that XML DTD).
+    eCFR content is public domain as a work of the U.S. Government -- the
+    strongest license status of any source this package ingests -- but is
+    explicitly not the official legal edition (GPO's Federal Register
+    printing is authoritative); flag that distinction if a result is ever
+    used for formal regulatory sign-off. license must still be the reuse
+    terms that actually apply; this tool does not assume a default. Pass
+    supersedes_document_id to declare this upload a newer revision of that
+    document (never inferred from title); omit it for a plain new,
+    independent document."""
+    return _ingest_fcc_rule(
+        part,
+        license=license,
+        classification=classification,
+        title=title,
         supersedes_document_id=supersedes_document_id,
     )
 

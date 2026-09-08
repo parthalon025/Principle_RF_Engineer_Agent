@@ -176,6 +176,7 @@ class DesignFamily:
     spine_fields: frozenset[str] = field(default_factory=frozenset)
     optimizer_class: str | None = None
     simulation_adapter: str | None = None
+    port_count: int = 1
 
     @property
     def has_physical_bound(self) -> bool:
@@ -186,6 +187,48 @@ class DesignFamily:
         that needs to explain WHY gets a different answer from each.
         """
         return isinstance(self.physical_bound, PhysicalBound)
+
+    def __post_init__(self) -> None:
+        """Guard the invariant issue #216 found broken: `requires_ground_plane`
+        and `port_count` must agree, because in this programme's physics they
+        are the SAME fact stated twice, not two independent knobs.
+
+        A ground-backed (metal-backed) structure has zero transmission by
+        construction, so its reflection coefficient alone -- one port -- tells
+        the whole story: A = 1 - |S11|^2. A structure with no ground plane has
+        no such guarantee; power can leave out the back, so a second port
+        (S21) is required to close the energy balance: A = 1 - |S11|^2 -
+        |S21|^2 (docs/absorber-scoring-conventions.md section 1). This is not
+        a bookkeeping convention -- it is what makes the Rozanov bound's own
+        derivation valid or invalid in the first place
+        (docs/rozanov-bound-primary-source.md assumption (b)): a metal
+        backing is what lets "everything that didn't reflect became heat"
+        hold. Take the backing away and a one-port measurement can no longer
+        tell absorption from transmission, so `requires_ground_plane=True`
+        paired with `port_count=2` (or the reverse) is not a looser or
+        stricter description of the same design -- it is two designs' worth
+        of physics conflated into one family. That is exactly the
+        contradiction issue #216 found: `ABSORBER` declared
+        `requires_ground_plane=True` while carrying US12089385B2 Example 3 --
+        the ground-less, two-port reproduction anchor -- as its assigned
+        instance. See `ABSORBER_TRANSMISSIVE` below for the resolution.
+        """
+        if self.requires_ground_plane and self.port_count != 1:
+            raise ValueError(
+                f"DesignFamily {self.name!r} declares requires_ground_plane=True "
+                f"with port_count={self.port_count}; a ground-backed family has "
+                "zero transmission by construction and must be port_count=1. "
+                "See this method's docstring and issue #216."
+            )
+        if not self.requires_ground_plane and self.port_count == 1:
+            raise ValueError(
+                f"DesignFamily {self.name!r} declares requires_ground_plane=False "
+                "with port_count=1; without a ground plane, transmission is not "
+                "guaranteed zero, so a one-port reflection-only measurement "
+                "cannot close the absorption energy balance -- this family needs "
+                "port_count=2 (or a stated reason this shape genuinely does not "
+                "apply). See this method's docstring and issue #216."
+            )
 
 
 # The #107 spine, shared by every family. Named once here so a family that
@@ -206,8 +249,40 @@ SPINE_FIELDS = frozenset(
 )
 
 
+# ISSUE #216 -- WHY THERE ARE TWO ABSORBER FAMILIES, NOT ONE WITH A FLAG.
+#
+# `ABSORBER` below is a GROUND-BACKED (one-port) absorber, and that is the
+# only kind ADR-0017 makes this programme build by default: the base printed
+# layer always supplies its own reflector, so T = 0 and A = 1 - |S11|^2.
+# Rozanov's bound applies to it directly (docs/rozanov-bound-primary-source.md).
+#
+# US12089385B2's Example 3 -- this programme's blind reproduction anchor --
+# is NOT that. It is two-port and transmissive (no ground plane; a cut wire
+# suppresses transmission instead), so A = 1 - |S11|^2 - |S21|^2
+# (docs/absorber-scoring-conventions.md section 1) and Rozanov's bound does
+# NOT apply at all: its derivation opens by fixing a slab "overlying a
+# perfectly reflecting plane" (docs/rozanov-bound-primary-source.md section
+# 3, assumption (b)) -- take the plane away and the bookkeeping that makes
+# the bound's integral finite no longer closes.
+#
+# That is a different physical_bound, a different absorptivity formula, and
+# a different port count -- exactly the kind of "different function, not a
+# swapped constant" split ADR-0018 already uses to justify separate families
+# (see the module docstring above). Bolting a per-instance
+# `requires_ground_plane` override onto one `ABSORBER` family would let a
+# single family answer both "the whole reflected wave either bounces or
+# heats" and "a third of it is free to leave out the back" -- which is what
+# produced issue #216 in the first place: `ABSORBER.requires_ground_plane =
+# True` asserted for a design that ISN'T. Two families, not one flag.
+# `ABSORBER_TRANSMISSIVE` is the ground-less, two-port sibling; see below.
 ABSORBER = DesignFamily(
     name="ABSORBER",
+    # #109 named MEEP_FLOQUET as this family's adapter: a unit cell needs a
+    # periodic boundary, and NEC2's thin-wire formulation cannot express one.
+    # The adapter is selected here and the loop honours it (#229); whether the
+    # adapter can yet DELIVER a periodic absorber run is its own question, and
+    # simulation/meep.py answers it honestly rather than this file guessing.
+    simulation_adapter="MEEP_FLOQUET",
     description=(
         "A ground-backed surface that dissipates incident power as heat. "
         "Bandwidth comes from loss, so its bound is a thickness-versus-"
@@ -215,6 +290,7 @@ ABSORBER = DesignFamily(
     ),
     simulation_tier=SimulationTier.TIER_A,
     requires_ground_plane=True,
+    port_count=1,
     spine_fields=SPINE_FIELDS,
     physical_bound=PhysicalBound(
         name="Rozanov thickness-to-bandwidth bound",
@@ -239,8 +315,46 @@ ABSORBER = DesignFamily(
 )
 
 
+ABSORBER_TRANSMISSIVE = DesignFamily(
+    name="ABSORBER_TRANSMISSIVE",
+    description=(
+        "An unbacked, two-port absorbing surface: power that is not "
+        "reflected is not guaranteed to be dissipated, since some of it may "
+        "pass through. Absorptivity is A = 1 - |S11|^2 - |S21|^2, not the "
+        "ground-backed collapse A = 1 - |S11|^2. This is the shape of "
+        "US12089385B2's Example 3 (Landy et al.'s cut-wire absorber), this "
+        "programme's blind reproduction anchor -- see the comment above "
+        "ABSORBER for why that structure cannot be scored as a member of "
+        "the ground-backed family."
+    ),
+    simulation_tier=SimulationTier.TIER_A,
+    requires_ground_plane=False,
+    port_count=2,
+    spine_fields=SPINE_FIELDS,
+    physical_bound=UnreadPhysicalBound(
+        name="unbacked/transmissive absorber bandwidth bound",
+        citation=(
+            "Rozanov (2000) is NOT this bound -- its own opening line fixes a "
+            "slab 'overlying a perfectly reflecting plane' "
+            "(docs/rozanov-bound-primary-source.md section 3, assumption (b)), "
+            "which Example 3 fails. Whether a published thickness-versus-"
+            "bandwidth (or thickness-versus-insertion-loss) bound exists for a "
+            "transmissive/unbacked absorbing screen is an open question this "
+            "programme has not yet researched -- recorded as unread rather than "
+            "NO_PHYSICAL_BOUND, per the same reasoning POLARIZATION_CONVERTER "
+            "uses below: absence of a citation here is not evidence that no "
+            "bound exists."
+        ),
+    ),
+)
+
+
 PATCH = DesignFamily(
     name="PATCH",
+    # Stated rather than left to the fallback: a wire-antenna solver is the
+    # RIGHT tool for a patch, and that should be a declaration, not a default
+    # nobody chose.
+    simulation_adapter="NEC2",
     description=(
         "A plain microstrip patch antenna: a radiator, not an absorber. "
         "Bandwidth comes from radiated power, so its bound is a quality-factor "
@@ -334,7 +448,15 @@ POLARIZATION_CONVERTER = DesignFamily(
 
 
 _REGISTRY: dict[str, DesignFamily] = {
-    fam.name: fam for fam in (ABSORBER, PATCH, REFLECTION_PHASE, DIFFUSIVE, POLARIZATION_CONVERTER)
+    fam.name: fam
+    for fam in (
+        ABSORBER,
+        ABSORBER_TRANSMISSIVE,
+        PATCH,
+        REFLECTION_PHASE,
+        DIFFUSIVE,
+        POLARIZATION_CONVERTER,
+    )
 }
 
 
