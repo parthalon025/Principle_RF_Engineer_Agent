@@ -7,8 +7,21 @@ optimization -> verification -> measurement -> correlation -> redesign
 in Phases 1-11 by CALLING INTO the real functions those tickets already
 built and tested -- not reimplementing any of them:
 
-  - ANALYSIS    calls rf_tools.calculations.patch_resonant_frequency_hz
-                (Phase 1). ONE named calculation, not an arbitrary callable
+  - ANALYSIS    dispatches on the `design_family` ARCHITECTURE recorded
+                (issue #191). ABSORBER calls rf_tools.absorber.
+                absorber_band_response -- the Costa/Luukkonen equivalent-
+                circuit stack adopted at #111 -- and is scored on the single
+                worst-absorbing frequency in the required band (#110's
+                minimax rule). EVERY OTHER family keeps
+                rf_tools.calculations.patch_resonant_frequency_hz (Phase 1)
+                exactly as before, so the dispatch is additive: PATCH uses
+                it legitimately, and a family with no analysis of its own
+                falls back to it unchanged. Before #191 the patch formula
+                ran for every family including ABSORBER, which does not
+                return a wrong number so much as a number about a different
+                device -- a resonant transmit frequency for a surface whose
+                whole job is to transmit nothing.
+                ONE named calculation per family, not an arbitrary callable
                 crossing the tool boundary -- same reasoning
                 optimization/rf_objectives.py's module docstring gives for
                 wiring one named objective rather than a generic one. Its
@@ -117,6 +130,7 @@ from measurement.external import record_external_measurement as _record_external
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
+from rf_tools.absorber import absorber_band_response as _absorber_band_response
 from rf_tools.calculations import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
 from rf_tools.calculations import (
     reflection_coefficient_from_impedance as _reflection_coefficient_from_impedance,
@@ -555,8 +569,109 @@ def _resolve_eps_r_bounds(
     return material_property["low"], material_property["high"], material_property
 
 
+def _family_of_record(state: DesignLoopState) -> str | None:
+    """The `design_family` the ARCHITECTURE step recorded for this
+    iteration, or None if ARCHITECTURE has not run yet. The family is
+    validated against the registry at ARCHITECTURE (see _handle_architecture),
+    so anything reaching here is a registry name."""
+    decision = _find_last_decision(state, DesignStep.ARCHITECTURE)
+    if decision is None:
+        return None
+    return decision.input.get("design_family")
+
+
 def _handle_analysis(
-    _state: DesignLoopState, step_input: dict[str, Any]
+    state: DesignLoopState, step_input: dict[str, Any]
+) -> tuple[str, dict[str, Any], str | None]:
+    """Dispatch ANALYSIS on the design family ARCHITECTURE recorded.
+
+    Issue #191: this step used to compute a patch-antenna resonant
+    frequency for EVERY family, including an absorber, whose designed
+    behaviour is dissipation rather than resonant radiation. A patch
+    formula applied to an absorber does not return a wrong number -- it
+    returns a number about a different device. In plain terms: it was
+    answering "what frequency does this antenna transmit at?" for a
+    surface whose entire job is to transmit nothing.
+
+    ABSORBER gets the equivalent-circuit absorption model
+    (`rf_tools.absorber`, adopted at #111). Every other family keeps the
+    patch formula it had, unchanged -- PATCH legitimately, and any family
+    with no analysis of its own falling back to it exactly as before, so
+    this is additive.
+    """
+    if _family_of_record(state) == "ABSORBER":
+        return _handle_analysis_absorber(step_input)
+    return _handle_analysis_patch(step_input)
+
+
+def _handle_analysis_absorber(
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    """Worst-in-band absorption for a ground-backed printed absorber.
+
+    Scored on the single worst-absorbing frequency in the required band
+    (#110's minimax rule), never the mean or the peak. The result carries
+    a `validity` list naming each load-bearing assumption -- notably the
+    unrecovered thin-spacer term (#190) -- and never withholds a number
+    for one: the loop reports and proceeds.
+    """
+    _require_fields(
+        step_input,
+        {
+            "f_low_hz",
+            "f_high_hz",
+            "tan_delta",
+            "thickness_m",
+            "period_m",
+            "gap_m",
+            "sheet_resistance_ohm_sq",
+            "squares",
+        },
+        "analysis",
+    )
+    eps_r_low, eps_r_high, material_property = _resolve_eps_r_bounds(step_input, "analysis")
+
+    def response(eps_r: float) -> dict[str, Any]:
+        return _absorber_band_response(
+            f_low_hz=step_input["f_low_hz"],
+            f_high_hz=step_input["f_high_hz"],
+            eps_r=eps_r,
+            tan_delta=step_input["tan_delta"],
+            thickness_m=step_input["thickness_m"],
+            period_m=step_input["period_m"],
+            gap_m=step_input["gap_m"],
+            sheet_resistance_ohm_sq=step_input["sheet_resistance_ohm_sq"],
+            squares=step_input["squares"],
+        )
+
+    at_low = response(eps_r_low)
+    if eps_r_high == eps_r_low:
+        result = dict(at_low)
+    else:
+        # A bracketed permittivity (ADR-0015's Family fallback bracket)
+        # gives a RANGE of worst-case absorption, not one false-precise
+        # number -- #127's rule: a guess on a decisive property swings the
+        # answer widely, and that swing IS the warning.
+        at_high = response(eps_r_high)
+        result = dict(at_low)
+        result["worst_absorption_low"] = min(
+            at_low["worst_absorption"], at_high["worst_absorption"]
+        )
+        result["worst_absorption_high"] = max(
+            at_low["worst_absorption"], at_high["worst_absorption"]
+        )
+        # Both endpoints' warnings apply; neither is discarded.
+        seen = {v["flag"] for v in result["validity"]}
+        result["validity"] = list(result["validity"]) + [
+            v for v in at_high["validity"] if v["flag"] not in seen
+        ]
+    if material_property is not None:
+        result["material_property"] = material_property
+    return "calculation", result, "CALCULATED"
+
+
+def _handle_analysis_patch(
+    step_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any], str | None]:
     _require_fields(step_input, {"w_m", "h_m", "l_m"}, "analysis")
     eps_r_low, eps_r_high, material_property = _resolve_eps_r_bounds(step_input, "analysis")

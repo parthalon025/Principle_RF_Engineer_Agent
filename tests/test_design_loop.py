@@ -1341,3 +1341,85 @@ def test_architecture_distinguishes_an_unread_bound_from_a_family_with_none():
     assert "Gustafsson" in unread_bound["citation"]
     assert none_bound["status"] == "none_exists"
     assert none_bound != unread_bound
+
+
+# --- #191: ANALYSIS dispatches on the design family -------------------------
+
+_ABSORBER_ANALYSIS_INPUT = {
+    "f_low_hz": 8e9,
+    "f_high_hz": 12e9,
+    "eps_r": 2.9,
+    "tan_delta": 0.10,
+    "thickness_m": 2.0e-3,
+    "period_m": 3.0e-3,
+    "gap_m": 0.2e-3,
+    "sheet_resistance_ohm_sq": 500.0,
+    "squares": 0.1,
+}
+
+
+def _architecture_input(family: str) -> dict:
+    return {
+        "decision": f"a {family.lower()} design",
+        "rationale": "chosen for this requirement",
+        "design_family": family,
+    }
+
+
+def test_analysis_runs_the_absorber_model_when_architecture_chose_absorber():
+    """#191: an ABSORBER must not be analysed with a patch-antenna resonant
+    frequency -- that answers a question about a different device."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+
+    result = state.decisions[-1].result
+    assert result["function"] == "absorber_band_response"
+    assert "resonant_frequency_hz" not in result
+    assert 0.0 <= result["worst_absorption"] <= 1.0
+    assert 8e9 <= result["worst_frequency_hz"] <= 12e9
+    assert state.decisions[-1].provenance == "CALCULATED"
+
+
+def test_analysis_still_runs_the_patch_model_for_patch():
+    """The dispatch is additive: PATCH keeps exactly the analysis it had."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    state = advance_loop_step(state, {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016, "l_m": 0.029})
+    result = state.decisions[-1].result
+    assert result["function"] == "patch_resonant_frequency_hz"
+    assert result["resonant_frequency_hz"] > 0
+
+
+def test_absorber_analysis_requires_its_own_fields_not_the_patch_ones():
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    with pytest.raises(DesignLoopValidationError, match="missing required field"):
+        advance_loop_step(state, {"eps_r": 4.4, "w_m": 0.038, "h_m": 0.0016, "l_m": 0.029})
+
+
+def test_absorber_analysis_carries_its_validity_warnings_into_the_decision():
+    """A warning that never reaches the recorded decision is not a warning.
+    #190's unrecovered thin-spacer term must ride in the loop's own trail."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    thin = dict(_ABSORBER_ANALYSIS_INPUT, thickness_m=0.5e-3)
+    state = advance_loop_step(state, thin)
+    flags = {v["flag"] for v in state.decisions[-1].result["validity"]}
+    assert "thin_spacer_bias_unrecovered" in flags
+
+
+def test_absorber_analysis_reports_a_range_for_a_bracketed_permittivity():
+    """ADR-0015/#127: a bracketed material property yields a RANGE, never
+    one false-precise number -- the swing is the warning."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    material_property = resolve_material_property(
+        FR4_SEED_ENTRIES, material="FR4", property_name="eps_r", frequency_hz=9.5e9
+    )
+    assert material_property["low"] != material_property["high"]  # sanity: the spread case
+    bracketed = {k: v for k, v in _ABSORBER_ANALYSIS_INPUT.items() if k != "eps_r"}
+    bracketed["material_property"] = material_property
+    state = advance_loop_step(state, bracketed)
+    result = state.decisions[-1].result
+    assert result["worst_absorption_low"] <= result["worst_absorption_high"]
