@@ -469,8 +469,14 @@ def _build_grating_csv(corrupt_order1: bool) -> str:
 
 
 def test_palace_integration_correct_grating_result_balances():
-    parsed = parse_palace_output(_build_grating_csv(corrupt_order1=False))
+    csv_text = _build_grating_csv(corrupt_order1=False)
+    parsed = parse_palace_output(csv_text)
+    assert parsed.get("computed") is True, (
+        f"parse_palace_output did not recognize any mode column -- "
+        f"csv_text={csv_text!r} parsed={parsed!r}"
+    )
     result = check_palace_result(parsed, lossless=True)
+    assert "power_balance" in result, f"check_palace_result returned: {result!r}"
     assert result["power_balance"][0]["power_sum"] == pytest.approx(1.0, abs=1e-3)
     assert result["all_ok"] is True
 
@@ -481,8 +487,14 @@ def test_palace_integration_corrupted_grating_order_is_flagged():
     (simulation.palace.parse_palace_output) and this module's REAL check,
     where one propagating diffraction order's return was silently lost --
     the same pattern as issue #221's motivating defect."""
-    parsed = parse_palace_output(_build_grating_csv(corrupt_order1=True))
+    csv_text = _build_grating_csv(corrupt_order1=True)
+    parsed = parse_palace_output(csv_text)
+    assert parsed.get("computed") is True, (
+        f"parse_palace_output did not recognize any mode column -- "
+        f"csv_text={csv_text!r} parsed={parsed!r}"
+    )
     result = check_palace_result(parsed, lossless=True)
+    assert "power_balance" in result, f"check_palace_result returned: {result!r}"
     row = result["power_balance"][0]
     assert row["ok"] is False
     assert row["power_sum"] == pytest.approx(0.7, abs=1e-3)
@@ -498,7 +510,15 @@ def test_palace_integration_specular_only_view_would_have_looked_fine():
     This is exactly the ticket's warning about balancing only S11/S21 on a
     real grating: checking `modes` (as check_palace_result does) is what
     makes this defect visible at all."""
-    parsed_good = parse_palace_output(_build_grating_csv(corrupt_order1=False))
-    parsed_bad = parse_palace_output(_build_grating_csv(corrupt_order1=True))
+    good_csv = _build_grating_csv(corrupt_order1=False)
+    bad_csv = _build_grating_csv(corrupt_order1=True)
+    parsed_good = parse_palace_output(good_csv)
+    parsed_bad = parse_palace_output(bad_csv)
+    assert parsed_good.get("computed") is True, (
+        f"csv_text={good_csv!r} parsed={parsed_good!r}"
+    )
+    assert parsed_bad.get("computed") is True, f"csv_text={bad_csv!r} parsed={parsed_bad!r}"
+    assert "specular" in parsed_good, f"parsed_good={parsed_good!r}"
+    assert "specular" in parsed_bad, f"parsed_bad={parsed_bad!r}"
     assert parsed_good["specular"].keys() == parsed_bad["specular"].keys() == {"S11", "S21"}
     assert parsed_good["specular"]["S21"] == parsed_bad["specular"]["S21"]  # unchanged either way
