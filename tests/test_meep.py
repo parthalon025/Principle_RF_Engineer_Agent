@@ -441,6 +441,167 @@ def test_nfreq_is_forwarded_to_add_flux():
 
 
 # ---------------------------------------------------------------------------
+# Transmittance (#240) -- optional, and three distinguishable states.
+#
+# "Transmittance" is the fraction of the arriving power that goes straight
+# THROUGH the surface and carries on out the far side, as opposed to the
+# fraction that bounces back (reflectance). A surface with free space behind
+# it passes some power; a ground-backed one passes none, structurally, which
+# is why measuring it is opt-in rather than always on.
+# ---------------------------------------------------------------------------
+
+# Same closed-form style as the reflectance script above: the reference run's
+# forward flux at the transmission plane is 4.0 at every frequency point, and
+# the full run's forward flux there is scripted so transmittance =
+# transmitted / incident_forward lands on exactly 0.5 / 0.25 / 0.125.
+_INCIDENT_FORWARD_FLUX = [4.0, 4.0, 4.0]
+_TRANSMITTED_FLUX = [2.0, 1.0, 0.5]
+_EXPECTED_TRANSMITTANCE = [0.5, 0.25, 0.125]
+
+TRANSMITTING_GEOMETRY = {
+    **PATCH_GEOMETRY,
+    # Behind the structure, on the far side from the source, so what crosses
+    # this plane is what got through.
+    "transmission_monitor_center_m": [20e-3, 10e-3, 0.8e-3],
+}
+
+
+def _transmitting_flux_script(transmitted=None, incident_forward=None):
+    """add_flux call order once a transmission monitor is asked for:
+    (0) reference run's reflection monitor, (1) reference run's baseline
+    monitor, (2) reference run's forward flux at the TRANSMISSION plane,
+    (3) full run's reflection monitor, (4) full run's transmission monitor."""
+    return [
+        (_FREQS_MEEP, [0.0, 0.0, 0.0]),
+        (_FREQS_MEEP, _BASELINE_FLUX),
+        (_FREQS_MEEP, _INCIDENT_FORWARD_FLUX if incident_forward is None else incident_forward),
+        (_FREQS_MEEP, _REFLECTED_FLUX),
+        (_FREQS_MEEP, _TRANSMITTED_FLUX if transmitted is None else transmitted),
+    ]
+
+
+def test_no_transmission_monitor_is_built_unless_one_is_asked_for():
+    """The default path must construct exactly the monitors it always did --
+    a ground-backed cell transmits nothing by construction, and paying solver
+    time to measure a structural zero is waste."""
+    _, fake = _run_against_fake()
+    ref_sim, full_sim = fake.simulations
+    assert len(ref_sim.flux_calls) == 2  # reflection + baseline, as before
+    assert len(full_sim.flux_calls) == 1  # reflection only, as before
+
+
+def test_transmittance_says_not_measured_rather_than_going_silent():
+    """State one of three: nobody asked. Reported as an explicit 'not
+    requested', never as a bare None or a bare 0.0 that a reader could
+    mistake for a measurement."""
+    result, _ = _run_against_fake()
+    transmittance = result["s_parameters"]["transmittance"]
+    assert transmittance["computed"] is False
+    assert transmittance["requested"] is False
+    assert "transmittance" not in transmittance  # no numbers invented
+    assert "transmission_monitor_center_m" in transmittance["note"]
+
+
+def test_requesting_a_transmission_monitor_reports_transmittance_alongside_reflectance():
+    """State three: measured. Reflectance is unchanged by asking."""
+    result, _ = _run_against_fake(
+        geometry=TRANSMITTING_GEOMETRY, flux_script=_transmitting_flux_script()
+    )
+    s_parameters = result["s_parameters"]
+    assert s_parameters["computed"] is True
+    assert s_parameters["reflectance"] == pytest.approx(_EXPECTED_REFLECTANCE)
+
+    transmittance = s_parameters["transmittance"]
+    assert transmittance["computed"] is True
+    assert transmittance["requested"] is True
+    assert transmittance["transmittance"] == pytest.approx(_EXPECTED_TRANSMITTANCE)
+    assert transmittance["frequency_hz"] == pytest.approx(s_parameters["frequency_hz"])
+    # The adapter reports what it measured, never what it means: absorption
+    # (1 - R - T) is the design loop's arithmetic, not this module's.
+    assert "absorption" not in transmittance
+    assert "absorption" not in s_parameters
+
+
+def test_transmission_monitors_sit_on_the_requested_plane_in_both_runs():
+    _, fake = _run_against_fake(
+        geometry=TRANSMITTING_GEOMETRY, flux_script=_transmitting_flux_script()
+    )
+    ref_sim, full_sim = fake.simulations
+    assert len(ref_sim.flux_calls) == 3
+    assert len(full_sim.flux_calls) == 2
+    # a = 1 mm default, so 20 mm -> 20.0 in Meep units.
+    assert ref_sim.flux_calls[2]["region"]["center"] == pytest.approx((20.0, 10.0, 0.8))
+    assert full_sim.flux_calls[1]["region"]["center"] == pytest.approx((20.0, 10.0, 0.8))
+    # Same plane size as every other monitor (defaults to the port's).
+    assert full_sim.flux_calls[1]["region"]["size"] == ref_sim.flux_calls[0]["region"]["size"]
+
+
+def test_only_the_reflection_monitor_has_the_reference_fields_subtracted():
+    """The subtraction trick isolates the REFLECTED wave by cancelling the
+    incident one at the reflection plane. At the transmission plane the total
+    forward flux already IS the transmitted wave, so subtracting there would
+    remove the very thing being measured."""
+    _, fake = _run_against_fake(
+        geometry=TRANSMITTING_GEOMETRY, flux_script=_transmitting_flux_script()
+    )
+    _, full_sim = fake.simulations
+    assert len(full_sim.load_minus_calls) == 1
+    flux_arg, _ = full_sim.load_minus_calls[0]
+    # It is the reflection monitor (the full run's FIRST add_flux), not the
+    # transmission one.
+    assert flux_arg.values == pytest.approx(_REFLECTED_FLUX)
+
+
+def test_transmittance_measured_as_zero_is_not_the_same_as_not_measured():
+    """State three again, at the value most easily confused with silence: a
+    real, measured zero says computed=True and carries the number."""
+    result, _ = _run_against_fake(
+        geometry=TRANSMITTING_GEOMETRY,
+        flux_script=_transmitting_flux_script(transmitted=[0.0, 0.0, 0.0]),
+    )
+    transmittance = result["s_parameters"]["transmittance"]
+    assert transmittance["computed"] is True
+    assert transmittance["transmittance"] == pytest.approx([0.0, 0.0, 0.0])
+
+
+def test_zero_incident_forward_flux_is_honestly_reported_as_not_computed():
+    """State two: asked for, but there is nothing to normalise against --
+    the same honesty `_compute_reflectance` already applies to a zero
+    baseline, and distinct from both 'not asked' and 'measured zero'."""
+    result, _ = _run_against_fake(
+        geometry=TRANSMITTING_GEOMETRY,
+        flux_script=_transmitting_flux_script(incident_forward=[0.0, 0.0, 0.0]),
+    )
+    transmittance = result["s_parameters"]["transmittance"]
+    assert transmittance["computed"] is False
+    assert transmittance["requested"] is True
+    assert "transmittance" not in transmittance
+    # Three states, three different things a reader can act on.
+    not_requested, _ = _run_against_fake()
+    assert transmittance["note"] != not_requested["s_parameters"]["transmittance"]["note"]
+
+
+def test_transmittance_is_reported_even_when_reflectance_could_not_be_computed():
+    """A zero reflectance baseline must not silently swallow the
+    transmittance question -- the reader still gets a stated state."""
+    script = _transmitting_flux_script()
+    script[1] = (_FREQS_MEEP, [0.0, 0.0, 0.0])  # baseline all zero
+    result, _ = _run_against_fake(geometry=TRANSMITTING_GEOMETRY, flux_script=script)
+    assert result["s_parameters"]["computed"] is False
+    assert result["s_parameters"]["transmittance"]["computed"] is True
+
+
+def test_a_requested_transmittance_result_survives_the_json_round_trip():
+    """The subprocess path (MEEP_PYTHON) hands its result back as JSON, so
+    the shape must contain nothing that cannot cross that boundary."""
+    result, _ = _run_against_fake(
+        geometry=TRANSMITTING_GEOMETRY, flux_script=_transmitting_flux_script()
+    )
+    restored = json.loads(json.dumps(result["s_parameters"]))
+    assert restored["transmittance"]["transmittance"] == pytest.approx(_EXPECTED_TRANSMITTANCE)
+
+
+# ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 

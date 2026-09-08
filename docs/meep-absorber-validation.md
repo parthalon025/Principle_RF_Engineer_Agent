@@ -17,7 +17,9 @@ The narrower claim survives, and is the one worth making. The two efforts valida
 
 *In plain terms: #210 proved we can talk to a solver correctly. This proves a solver told us the truth. Those are different claims and both are needed.*
 
-⚠️ **Caveat on the second row.** `verification/meep_absorber_validation.py` deliberately builds `mp.Simulation` objects directly rather than calling `run_meep_simulation()`, and re-derives the unit conversions, so that the validation does not assume the thing it validates. The consequence is that **the adapter's own deck emission and result parsing are not what these numbers check.** The adapter path *was* driven end to end against real Meep during development — through `run_meep_simulation` into a subprocess interpreter, returning 0.9917 at 10 GHz — but that run is not committed as a repeatable artifact. Closing that gap is the obvious next step and belongs with #222.
+⚠️ **Caveat on the second row, and how it was closed.** `verification/meep_absorber_validation.py` deliberately builds `mp.Simulation` objects directly rather than calling `run_meep_simulation()`, and re-derives the unit conversions, so that the validation does not assume the thing it validates. The consequence is that **the adapter's own deck emission, subprocess handoff and result parsing are not what those numbers check.**
+
+That gap is now closed from the other side by `verification/meep_adapter_transmittance_check.py` (#240), which calls the real `run_meep_simulation` through the real `MEEP_PYTHON` subprocess path. The two scripts are complementary and neither replaces the other: one validates the physics without the adapter, the other validates the adapter's own path. See Case 3 below.
 
 ## Case 1 — free-standing resistive sheet (exact answer)
 
@@ -80,6 +82,22 @@ MEEP_PYTHON=/opt/conda/envs/mp/bin/python3 \
 ```
 
 Runs both cases and checks them against the tolerances in `verification/simulator_reference_cases.py`. Deliberately a script rather than a pytest test: it needs a solver CI does not have, and takes minutes rather than milliseconds. `tests/test_meep.py` covers the mechanics; this covers the physics.
+
+## Case 3 — conductive slab, through the adapter itself
+
+The first two cases prove the *physics* is right while bypassing the adapter. This one proves the **adapter** is right, by calling `run_meep_simulation` exactly as the design loop does — through the `MEEP_PYTHON` subprocess handoff — and checking what comes back against an answer derived on paper.
+
+A 3 mm slab of conductivity 0.5 S/m at 10 GHz, free space on both sides. Its complex permittivity is `1 − j·σ/(ωε₀)`, so one ABCD section gives exact R and T.
+
+| | R | T | A = 1 − R − T |
+|---|---|---|---|
+| **exact** | 0.0422 | 0.6034 | 0.3544 |
+| **adapter, real Meep** | 0.0425 | 0.6018 | 0.3557 |
+| delta | +0.0003 | −0.0016 | +0.0013 |
+
+**Why this case and not an absorber.** Transmittance is what #240 added, and the way a transmittance goes wrong is a **fixed multiplicative offset** — the wrong baseline plane, or a monitor area folded in twice — which shows up as a T uniformly 2× or 0.5× the truth, not as a small drift. Catching that needs a case that transmits *most* of its power and whose answer is exactly known. A uniform slab is that case, and unlike a thin resistive sheet its answer does not depend on how many grid cells land across it, so a disagreement is the adapter's fault rather than the mesh's.
+
+*In plain terms: a partly see-through slab. We can work out on paper exactly how much bounces back and how much comes out the far side, so if the adapter says anything else, the adapter is wrong. It agrees to a third of a percent.*
 
 ## What this does *not* establish
 

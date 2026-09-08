@@ -1110,16 +1110,27 @@ def run_meep_simulation(
     simulation.meep.run_meep_simulation for the full geometry shape), a single port
     modeled as a Gaussian-pulse source plus a reflection-flux monitor (MEEP has no
     lumped-RLC-port concept the way openEMS/HFSS do -- see simulation/meep.py's PORT
-    MODEL caveat), and returns "SIMULATED" provenance. IMPORTANT SCOPE LIMITS: only
-    POWER REFLECTANCE and its magnitude |S11| are computed (via MEEP's own documented
-    flux-subtraction technique) -- NO complex phase, NO S21/multi-port, NO Touchstone
-    export, and NO far-field/gain (see simulation/meep.py's module docstring SCOPE
-    section). `characteristic_length_m` is MEEP's own dimensionless-unit lengthscale
-    "a" (default 1mm). Geometry/units translation verified against MEEP's own primary
-    documentation (see simulation/meep.py's module docstring for the citation) but
-    NOT against a real MEEP install -- MEEP has no PyPI wheel and no native Windows
-    support (conda-forge only, WSL required on Windows; see README.md's Optional
-    tools list)."""
+    MODEL caveat), and returns "SIMULATED" provenance. IMPORTANT SCOPE LIMITS: POWER
+    quantities only -- power reflectance and its magnitude |S11| are always computed
+    (via MEEP's own documented flux-subtraction technique), and power TRANSMITTANCE
+    (how much of the arriving power goes straight through and out the far side) is
+    computed too IF you ask for it by putting a "transmission_monitor_center_m" plane
+    in `geometry`; without it no transmission monitor is built and the result says
+    "not requested" rather than a misleading zero. NO complex phase, so no complex
+    S21 and no multi-port S-matrix, NO Touchstone export, and NO far-field/gain (see
+    simulation/meep.py's module docstring SCOPE section). This tool does NOT compute
+    absorption: 1 - R - T is a reading of two measurements, not a measurement.
+    `characteristic_length_m` is MEEP's own dimensionless-unit lengthscale "a"
+    (default 1mm). Geometry/units translation verified against MEEP's own primary
+    documentation (see simulation/meep.py's module docstring for the citation), and
+    the underlying physics recipe and unit conversions have been checked against a
+    real pymeep 1.34.0 install on two reference cases with known answers
+    (docs/meep-absorber-validation.md) -- but MEEP is not installed in the
+    interpreter this application runs under (no PyPI wheel, no native Windows
+    support: conda-forge only, WSL required on Windows; the Dockerfile puts it in a
+    separate conda env named by MEEP_PYTHON, which this adapter shells out to), and
+    no committed artifact re-runs this adapter's own path against it, so treat a
+    result on a geometry unlike those reference cases as unverified end-to-end."""
     return _run_meep_simulation(
         geometry=geometry, characteristic_length_m=characteristic_length_m, nfreq=nfreq
     )
