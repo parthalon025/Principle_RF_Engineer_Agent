@@ -100,6 +100,7 @@ from __future__ import annotations
 
 import cmath
 import math
+from collections.abc import Sequence
 from typing import Any
 
 from rf_tools.absorber import ETA0_OHM, SPEED_OF_LIGHT_M_S, patterned_sheet_impedance
@@ -168,8 +169,20 @@ PHYSICAL_BOUND_STATUS: dict[str, Any] = {
 
 
 class GroundBackedModelMisappliedError(ValueError):
-    """Raised when the ground-backed absorber model is aimed at a structure
-    that has no ground plane. See `refuse_ground_backed_model`."""
+    """Raised when ground-backed absorber ARITHMETIC is aimed at a structure
+    that has no ground plane.
+
+    Two callers raise it, for the same physical reason at two different
+    prices:
+
+      * `refuse_ground_backed_model` -- the closed-form ANALYSIS model
+        (`rf_tools/absorber.py`) pointed at a transmitting family.
+      * `one_port_absorption` -- the one-port collapse `A = 1 - R` applied to
+        a SIMULATED reflectance for a transmitting family (issue #243).
+
+    Both are the same mistake: a sum whose whole legitimacy is "nothing can
+    get out the back" used where power can.
+    """
 
 
 def refuse_ground_backed_model(family: Any) -> None:
@@ -221,6 +234,182 @@ def refuse_ground_backed_model(family: Any) -> None:
         "rf_tools.transmissive_absorber.transmissive_absorber_band_response, "
         "which computes A = 1 - |S11|^2 - |S21|^2. See issues #216 and #242."
     )
+
+
+# --------------------------------------------------------------------------
+# Absorption from a SOLVER's reflectance and transmittance (issue #243)
+# --------------------------------------------------------------------------
+#
+# Everything above turns a described stack into R and T by closed form. The
+# three functions below do the last, tiny step -- turning an R and a T that
+# a full-wave solver measured into an absorption -- and they live here, next
+# to `refuse_ground_backed_model`, for the reason that guard's own docstring
+# gives: the rule they encode is a statement about the PAIR of absorber
+# models, and a reader who opens either absorber module should find it.
+# `orchestration/design_loop.py` is where a design family and a solver
+# result actually meet, so that is where they are CALLED from -- a reader
+# who opens the loop is looking for dispatch, not physics.
+#
+# The two sums (docs/absorber-scoring-conventions.md section 1):
+#
+#     one port  (ground-backed):  A = 1 - R
+#     two ports (unbacked):       A = 1 - R - T
+#
+# In plain terms: with metal behind the surface, anything that did not bounce
+# back was turned into heat, because there is nowhere else for it to go. With
+# free space behind it, some of it simply left through the far side, and that
+# share has to come off the total.
+
+
+def one_port_absorption(family: Any, reflectance: Sequence[float]) -> list[float]:
+    """`A = 1 - R`, and a refusal when the family can transmit.
+
+    Legitimate ONLY for a one-port, ground-backed family, where zero
+    transmission is guaranteed by construction. Aimed at a two-port family it
+    would book every escaped watt as heat: a Salisbury stack that truly
+    absorbs 0.44 would be reported at 1.00, and nothing in the number would
+    say which it was.
+
+    That is why this raises rather than warning. The charter's "warn, never
+    block" governs withholding a CANDIDATE from a reader, and nothing is
+    withheld here -- what is refused is a confidently wrong number, the one
+    kind no caveat can rescue, because a reader cannot tell it apart from a
+    right one.
+    """
+    ports = int(getattr(family, "port_count", 1))
+    if ports != 1:
+        name = getattr(family, "name", repr(family))
+        ground_backed = bool(getattr(family, "requires_ground_plane", False))
+        raise GroundBackedModelMisappliedError(
+            f"The one-port absorption collapse A = 1 - R was aimed at design "
+            f"family {name!r}, which declares port_count={ports} and "
+            f"requires_ground_plane={ground_backed}. That collapse assumes "
+            "zero transmission by construction, so on a surface with free "
+            "space behind it every watt that merely escaped out the back is "
+            "booked as heat -- a Salisbury stack that absorbs 0.44 would be "
+            "reported at 1.00. Measure the transmitted power and use "
+            "two_port_absorption (A = 1 - R - T) instead. See "
+            "docs/absorber-scoring-conventions.md section 1, and issues #216 "
+            "and #243."
+        )
+    return [1.0 - float(r) for r in reflectance]
+
+
+def two_port_absorption(
+    family: Any,
+    reflectance: Sequence[float],
+    transmittance: Sequence[float],
+) -> list[float]:
+    """`A = 1 - R - T` for an unbacked surface, point by point in frequency.
+
+    Both spectra must have been measured on the same run at the same
+    frequencies, so a length disagreement is a wiring fault, not a physics
+    result, and is reported rather than zipped past.
+
+    Nothing is clipped. A negative absorption means R + T came out above one,
+    which cannot physically happen and therefore says an assumption behind
+    the run is wrong -- see `energy_balance_violations` for the warning that
+    goes with it. Clamping it to zero would hide exactly the evidence a
+    reader needs.
+    """
+    reflectance = list(reflectance)
+    transmittance = list(transmittance)
+    if len(reflectance) != len(transmittance):
+        name = getattr(family, "name", repr(family))
+        raise ValueError(
+            f"Cannot compute A = 1 - R - T for design family {name!r}: the run "
+            f"returned {len(reflectance)} reflectance point(s) and "
+            f"{len(transmittance)} transmittance point(s). The two must come "
+            "from the same run at the same frequencies -- pairing them up "
+            "anyway would silently subtract one frequency's transmission from "
+            "another frequency's reflection."
+        )
+    return [1.0 - float(r) - float(t) for r, t in zip(reflectance, transmittance, strict=True)]
+
+
+#: The `flag` an over-unity energy balance is recorded under. Named once so
+#: the loop, the tests and any reader are talking about the same warning.
+ENERGY_BALANCE_FLAG = "reflected_plus_transmitted_exceeds_incident"
+
+
+def energy_balance_violations(
+    reflectance: Sequence[float],
+    transmittance: Sequence[float],
+    frequency_hz: Sequence[float] | None = None,
+) -> list[dict[str, Any]]:
+    """Every frequency where the power coming back plus the power going
+    through is MORE than the power that arrived.
+
+    A passive surface cannot do that -- it has no source of energy inside it
+    -- so a sum above one is not a marginal result, it is proof that
+    something about the run is wrong (see `energy_balance_warning` for the
+    usual suspects). Returns one entry per offending frequency, empty when
+    the run is physical.
+
+    A hair over one is arithmetic noise, not a physics claim, so the test
+    carries a small tolerance: FDTD flux ratios are the quotient of two
+    finite-difference sums and land a fraction of a percent either side of
+    the exact answer. `_ENERGY_BALANCE_TOLERANCE` is that allowance, and it
+    is deliberately far smaller than any error a reader would care about.
+    """
+    frequencies = list(frequency_hz) if frequency_hz else []
+    violations: list[dict[str, Any]] = []
+    for index, (r, t) in enumerate(zip(reflectance, transmittance, strict=True)):
+        total = float(r) + float(t)
+        if total <= 1.0 + _ENERGY_BALANCE_TOLERANCE:
+            continue
+        violations.append(
+            {
+                "index": index,
+                "frequency_hz": frequencies[index] if index < len(frequencies) else None,
+                "reflectance": float(r),
+                "transmittance": float(t),
+                "reflected_plus_transmitted": total,
+            }
+        )
+    return violations
+
+
+#: One part in a thousand. Big enough to absorb an FDTD flux ratio's own
+#: discretisation noise, small enough that a real over-unity result -- the
+#: kind produced by a monitor plane in the wrong place -- still fires.
+_ENERGY_BALANCE_TOLERANCE = 1e-3
+
+
+def energy_balance_warning(violations: Sequence[dict[str, Any]]) -> dict[str, str]:
+    """The charter-shaped warning that rides with an impossible run.
+
+    What is assumed, what it costs if that is wrong, and the cheapest way to
+    find out -- the same three parts every warning in this programme owes,
+    and it fires only where the assumption is load-bearing, because a
+    warning attached to every run is worth the same as none.
+    """
+    worst = max(v["reflected_plus_transmitted"] for v in violations)
+    return {
+        "flag": ENERGY_BALANCE_FLAG,
+        "assumed": (
+            "that the reflectance and transmittance spectra were measured on "
+            "the same structure, at the same frequencies, each normalised "
+            "against the power that actually arrived. At "
+            f"{len(violations)} frequency point(s) they sum to as much as "
+            f"{worst:.4f} -- more power leaving than arrived, which a surface "
+            "with no energy source inside it cannot do."
+        ),
+        "costs": (
+            "absorption is computed as 1 - R - T, so an inflated sum drives it "
+            "below zero and the candidate is scored on a number that is not a "
+            "fraction of anything. The usual causes are a monitor plane on the "
+            "wrong side of the structure or inside the absorbing boundary, or "
+            "a reference run whose normalising power was measured somewhere "
+            "the wave never reached."
+        ),
+        "cheapest_test": (
+            "re-run the same cell as a free-standing 188.4 ohm/sq resistive "
+            "sheet, whose answer is known in closed form: R = T = 0.25 and "
+            "A = 0.5. If those three do not come back, the monitor geometry "
+            "is wrong, not the design."
+        ),
+    }
 
 
 # --------------------------------------------------------------------------

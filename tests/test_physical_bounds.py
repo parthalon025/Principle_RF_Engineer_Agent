@@ -488,15 +488,18 @@ def test_every_family_states_a_solver_or_states_that_the_choice_is_open():
             assert family.simulation_adapter.cheapest_test.strip()
 
 
-def test_the_two_settled_families_keep_the_solvers_they_already_routed_to():
+def test_the_settled_families_keep_the_solvers_they_already_routed_to():
     """#241 changes what happens to families with nothing declared. It must
-    not move ABSORBER or PATCH."""
+    not move ABSORBER or PATCH. ABSORBER_TRANSMISSIVE joined them at #243,
+    once the adapter could report what passes THROUGH the surface as well as
+    what bounces off it."""
     assert ABSORBER.declared_simulation_adapter().name == "MEEP_FLOQUET"
     assert PATCH.declared_simulation_adapter().name == "NEC2"
+    assert ABSORBER_TRANSMISSIVE.declared_simulation_adapter().name == "MEEP_FLOQUET"
 
 
 def test_asking_an_unsettled_family_for_a_solver_raises_with_the_reason_and_the_way_out():
-    for family in (ABSORBER_TRANSMISSIVE, DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE):
+    for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE):
         assert not family.has_settled_simulation_adapter
         with pytest.raises(UnsettledSimulationAdapterError) as exc:
             family.declared_simulation_adapter()
@@ -511,10 +514,15 @@ def test_asking_an_unsettled_family_for_a_solver_raises_with_the_reason_and_the_
         assert family.simulation_adapter.cheapest_test in message
 
 
-def test_the_transmissive_absorber_points_at_the_ticket_that_will_settle_its_solver():
-    """#243 gives this family MEEP_FLOQUET once the adapter can report what
-    passes THROUGH the surface, not just what bounces off it."""
-    assert "243" in ABSORBER_TRANSMISSIVE.simulation_adapter.reason
+def test_the_transmissive_absorbers_settled_solver_still_records_what_was_missing():
+    """#243 settled this family on MEEP_FLOQUET. The reason has to keep
+    saying WHY it was open until then -- that reflectance alone is half an
+    answer for a surface power can pass through -- or the next reader has no
+    way to tell a considered choice from a copied one."""
+    assert ABSORBER_TRANSMISSIVE.has_settled_simulation_adapter
+    reason = ABSORBER_TRANSMISSIVE.simulation_adapter.reason
+    assert "243" in reason
+    assert "S21" in reason
 
 
 def test_the_unsettled_families_do_not_all_share_one_copy_pasted_reason():
@@ -523,11 +531,10 @@ def test_the_unsettled_families_do_not_all_share_one_copy_pasted_reason():
     reason has to be about that family's own missing quantity."""
     reasons = {
         family.name: family.simulation_adapter.reason
-        for family in (ABSORBER_TRANSMISSIVE, DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE)
+        for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE)
     }
     assert len(set(reasons.values())) == len(reasons)
     # The quantity each one actually needs, named in its own words.
-    assert "S21" in reasons["ABSORBER_TRANSMISSIVE"]
     assert "phase" in reasons["REFLECTION_PHASE"]
     assert "180 degrees" in reasons["DIFFUSIVE"]
     assert "CROSS-polarised" in reasons["POLARIZATION_CONVERTER"]
@@ -574,6 +581,15 @@ def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
     under test does not contain. This is not hypothetical -- it is exactly how
     this test passed locally and failed in CI at #239: the spelling asserted
     below had been deleted from the branch and survived only in a worktree.
+
+    That skip must be matched against the path RELATIVE to the repo root. The
+    first version compared absolute parts, which works from the main checkout
+    and breaks the moment the suite is RUN FROM a worktree: the root is then
+    itself `.../.claude/worktrees/agent-x/`, every file matches the skip, and
+    the scan finds nothing at all. The `assert found` below is what catches
+    that, and it is why that assertion is here rather than being obvious
+    belt-and-braces -- a scan that silently narrows to nothing still passes
+    every other assertion in this test.
     """
     import re
     from pathlib import Path
@@ -584,12 +600,16 @@ def test_every_design_family_string_written_anywhere_in_the_tree_resolves():
 
     found: dict[str, list[str]] = {}
     for path in repo_root.rglob("*.py"):
-        # See the docstring: worktrees hold a second copy of the tree at a
-        # different commit, and CI has none of them.
-        if {".venv", "site-packages", "worktrees"} & set(path.parts):
+        # Match on the path RELATIVE to the repo root, never its absolute
+        # parts: when this test itself runs from inside a worktree, the root
+        # is `.../.claude/worktrees/agent-x/`, so an absolute match skips
+        # every file in the tree and the scan silently finds nothing. See the
+        # docstring.
+        relative = path.relative_to(repo_root)
+        if {".venv", "site-packages", "worktrees"} & set(relative.parts):
             continue
         for name in pattern.findall(path.read_text(encoding="utf-8", errors="ignore")):
-            found.setdefault(name, []).append(str(path.relative_to(repo_root)))
+            found.setdefault(name, []).append(str(relative))
 
     assert found, "the scan found no design_family literals at all -- it has stopped working"
     # Canaries: spellings that ARE in the tree and are not the canonical

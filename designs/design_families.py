@@ -561,30 +561,24 @@ ABSORBER = DesignFamily(
 
 ABSORBER_TRANSMISSIVE = DesignFamily(
     name="ABSORBER_TRANSMISSIVE",
-    simulation_adapter=UnsettledSimulationAdapter(
+    simulation_adapter=SimulationAdapter(
+        name="MEEP_FLOQUET",
         reason=(
-            "closing this family's energy balance needs BOTH the reflected and "
-            "the transmitted wave -- A = 1 - |S11|^2 - |S21|^2 "
+            "settled at issue #243, and unsettled until then for a reason worth "
+            "keeping: closing this family's energy balance needs BOTH the "
+            "reflected and the transmitted wave -- A = 1 - |S11|^2 - |S21|^2 "
             "(docs/absorber-scoring-conventions.md section 1) -- and "
-            "simulation/meep.py's adapter computes power reflectance only; its "
-            "own scope section says 'NO complex phase, NO S21/multi-port "
-            "transmission'. In plain terms: it can say how much bounced back "
-            "but not how much went through, and here that is half the answer. "
-            "Issue #243 is the ticket that settles this family on MEEP_FLOQUET "
-            "by adding the transmission side; until it lands this is recorded "
-            "as unsettled rather than written down as MEEP_FLOQUET, because "
-            "declaring an adapter that cannot return the quantity a family is "
-            "scored on is how a confidently wrong number gets made."
-        ),
-        candidates=("MEEP_FLOQUET -- needs a transmission-side monitor (issue #243)",),
-        cheapest_test=(
-            "add a transmission monitor behind the cell and check the three "
-            "powers sum to one on a structure whose answer is known in closed "
-            "form: a free-standing resistive sheet at Rs = eta0/2 = 188.4 "
-            "ohm/sq reflects a quarter of the power, passes a quarter, and "
-            "absorbs half (R = T = 0.25, A = 0.5) -- simulation/meep.py already "
-            "reproduces the 0.5 against real Meep, so only the missing quarter "
-            "is being checked."
+            "simulation/meep.py computed power reflectance only, so it could "
+            "say how much bounced back but not how much went through, which "
+            "here is half the answer. Issue #240 added the transmission-side "
+            "monitor (opt-in via geometry's 'transmission_monitor_center_m'), "
+            "and #243 made orchestration/design_loop.py select the sum from "
+            "this family's declared port_count and refuse to run without a "
+            "measured transmittance. The rest of the case is ABSORBER's: a "
+            "unit cell needs a periodic boundary and NEC2's thin-wire "
+            "formulation cannot express one. Reflectance alone would still be "
+            "the wrong answer for this family -- so the adapter is named here "
+            "only because it now returns the second quantity too."
         ),
     ),
     description=(

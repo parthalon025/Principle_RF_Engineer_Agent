@@ -60,7 +60,19 @@ built and tested -- not reimplementing any of them:
                 hard case for it but an inexpressible one. That path is
                 honest about simulation/meep.py's own three gaps rather
                 than returning a number the adapter cannot stand behind --
-                see _simulate_meep_floquet.
+                see _simulate_meep_floquet. It also chooses HOW to turn
+                that run into an absorption from the family's declared
+                `port_count` (issue #243): a ground-backed, one-port
+                surface keeps A = 1 - R, because with metal behind it
+                anything that did not bounce back had nowhere to go but
+                into heat; an unbacked, two-port surface must measure the
+                power that passed THROUGH as well and use A = 1 - R - T,
+                or it credits the design for every watt that escaped out
+                the back. ABSORBER_TRANSMISSIVE declares MEEP_FLOQUET too
+                (settled at #243, once #240 gave the adapter a
+                transmission monitor), and its run is refused outright if
+                that transmittance is missing rather than falling back to
+                the one-port sum.
   - OPTIMIZATION calls
                 optimization.rf_objectives.optimize_patch_length_for_target_
                 frequency (Phase 9), the one named optimization use case
@@ -164,10 +176,22 @@ from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
 from rf_tools.transmissive_absorber import (
+    energy_balance_violations as _energy_balance_violations,
+)
+from rf_tools.transmissive_absorber import (
+    energy_balance_warning as _energy_balance_warning,
+)
+from rf_tools.transmissive_absorber import (
+    one_port_absorption as _one_port_absorption,
+)
+from rf_tools.transmissive_absorber import (
     refuse_ground_backed_model as _refuse_ground_backed_model,
 )
 from rf_tools.transmissive_absorber import (
     transmissive_absorber_band_response as _transmissive_absorber_band_response,
+)
+from rf_tools.transmissive_absorber import (
+    two_port_absorption as _two_port_absorption,
 )
 from simulation.base import SimulatorError as _SimulatorError
 from simulation.meep import (
@@ -919,7 +943,16 @@ def _simulation_adapter_for(state: DesignLoopState) -> str:
     family with no settled adapter, and an iteration that has not recorded an
     ARCHITECTURE decision at all, both raise here naming what is missing.
     """
-    family = _registry_family_of_record(state, "simulation")
+    return _declared_adapter_name(_registry_family_of_record(state, "simulation"))
+
+
+def _declared_adapter_name(family: Any) -> str:
+    """The solver name a registry entry declares, or a raise saying the
+    choice is still open. Split out from `_simulation_adapter_for` so
+    `_handle_simulation` can read the family ONCE and pass it on: the
+    handlers need the family itself, not only its solver's name -- since
+    #243 the absorption arithmetic is selected from the family's declared
+    `port_count`."""
     try:
         return family.declared_simulation_adapter().name
     except _UnsettledSimulationAdapterError as exc:
@@ -951,8 +984,13 @@ def _handle_simulation(
     last. Both refusals are deliberate: a solver that cannot represent the
     structure returns a confidently wrong number, not an uncertain one, and
     no caveat attached to it would tell a reader which it was.
+
+    The registry entry itself -- not just its solver's name -- is handed to
+    the handler, because since #243 the handler also has to know how many
+    ports the family declares before it can turn the run into an absorption.
     """
-    adapter = _simulation_adapter_for(state)
+    family = _registry_family_of_record(state, "simulation")
+    adapter = _declared_adapter_name(family)
     handler = _SIMULATION_ADAPTERS.get(adapter)
     if handler is None:
         raise _SimulatorError(
@@ -963,30 +1001,57 @@ def _handle_simulation(
             "declaration in designs/design_families.py. Running a different "
             "solver instead is the exact defect issue #241 removed."
         )
-    return handler(step_input)
+    return handler(family, step_input)
 
 
 def _simulate_meep_floquet(
+    family: Any,
     step_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any], str | None]:
-    """The Floquet unit-cell path -- correct destination, incomplete adapter.
+    """The Floquet unit-cell path, with the absorption sum chosen by the
+    family's declared port count (#243).
 
-    `simulation/meep.py` is a deliberately narrow slice of Meep, and three
-    of the things it leaves out are exactly a printed absorber's mechanism:
-    no periodic boundary, no lossy dielectric, no resistive sheet. With all
-    three missing, a run would not be uncertain -- it would model a
-    lossless perfect reflector and report that it absorbs nothing, for
-    every candidate, no matter what was designed.
+    HOW A RUN BECOMES AN ABSORPTION. Meep returns how much power came back
+    (reflectance, R) and -- on request -- how much went through
+    (transmittance, T). Absorption is what is left:
 
-    So this raises instead, naming each gap and how to close it. That is
-    not the charter's "warn, never block": that rule governs withholding a
-    CANDIDATE from the reader, and nothing is withheld here -- ANALYSIS's
-    closed-form absorption (rf_tools/absorber.py) is already recorded and
-    survives this step's failure, exactly as #111's two-tier design
-    intends. What is refused is manufacturing a SIMULATED-provenance number
-    that the adapter cannot actually stand behind, the same discipline
-    request_loop_step_approval uses when it refuses to fabricate an
-    approval.
+        one port  (ground-backed, `port_count=1`):  A = 1 - R
+        two ports (unbacked,      `port_count=2`):  A = 1 - R - T
+
+    In plain terms: with metal behind the surface, anything that did not
+    bounce back had nowhere to go but into heat. With free space behind it,
+    some of it simply carried on out the far side, and that share has to be
+    taken off. Using the one-port sum on an unbacked surface credits the
+    design for power that escaped -- a stack absorbing 0.44 reported as
+    1.00, with nothing in the number to say so, which reads as success. See
+    docs/absorber-scoring-conventions.md section 1; both sums are the
+    field's own, not a house convention.
+
+    WHY THE PORT COUNT IS READ HERE. This is the one place a design family
+    and a solver result are both in hand: the registry knows the ports, the
+    adapter knows the powers, and neither knows the other. The arithmetic
+    itself, and its refusal, live beside the two absorber models in
+    rf_tools/transmissive_absorber.py -- a reader who opens either absorber
+    module finds the rule; a reader who opens the loop finds the dispatch.
+
+    A TWO-PORT RUN MUST ACTUALLY ASK FOR T, and is refused twice over if it
+    cannot have it: once before the solver runs (no transmission monitor in
+    the geometry -- the answer is unobtainable however long the run takes,
+    and full-wave time is the expensive thing here) and once after (a
+    monitor was asked for and the adapter could not measure through it).
+    Quietly falling back to A = 1 - R in either case is the precise defect
+    #243 exists to remove.
+
+    Both are raises rather than warnings, for the same reason the analysis
+    dispatch raises: they would produce a confidently wrong number, not an
+    uncertain one, and no caveat attached to it would tell a reader which it
+    was. This is not the charter's "warn, never block" being broken -- that
+    rule governs withholding a CANDIDATE from a reader, and nothing is
+    withheld: ANALYSIS's closed-form absorption is already recorded and
+    survives this step's failure, exactly as #111's two-tier design intends.
+    The genuinely uncertain case -- R + T summing to more than the power
+    that arrived -- is warned about and the candidate is still returned and
+    ranked; see `_meep_absorption_for_family` below.
     """
     gaps = _meep_periodic_absorber_capability_gaps()
     if gaps:
@@ -1008,6 +1073,7 @@ def _simulate_meep_floquet(
     # difference between an infinite surface and one lonely element, and it
     # fails silently rather than loudly.
     geometry.setdefault("periodic_axes", ["x", "y"])
+    _require_transmission_monitor_for_two_port(family, geometry)
 
     result = _run_meep_simulation(
         geometry=geometry,
@@ -1018,10 +1084,7 @@ def _simulate_meep_floquet(
 
     s_parameters = result.get("s_parameters") or {}
     reflectance = s_parameters.get("reflectance") or []
-    # Ground-backed, so nothing is transmitted and every watt not reflected
-    # was dissipated. This is the ONLY reason A = 1 - R is legitimate here,
-    # and it is why the same arithmetic must not be used on a two-port cell.
-    absorption = [1.0 - float(r) for r in reflectance]
+    absorption_reading = _meep_absorption_for_family(family, s_parameters)
 
     recorded = {
         "function": "run_meep_simulation",
@@ -1029,16 +1092,158 @@ def _simulate_meep_floquet(
         "status": result.get("status"),
         "frequency_hz": s_parameters.get("frequency_hz"),
         "reflectance": reflectance,
-        "absorption": absorption,
-        "worst_absorption": min(absorption) if absorption else None,
+        "absorption": absorption_reading["absorption"],
+        "worst_absorption": (
+            min(absorption_reading["absorption"]) if absorption_reading["absorption"] else None
+        ),
+        # What the arithmetic assumed, said out loud rather than inferred
+        # from the family's name by whoever reads the result later.
+        "port_count": absorption_reading["port_count"],
+        "absorption_formula": absorption_reading["absorption_formula"],
+        # The transmitted share, and separately the adapter's own three-state
+        # account of whether it was even looked for (#240): "not asked",
+        # "asked and could not be measured" and "measured, possibly zero" are
+        # three different facts, and collapsing them is how a measured zero
+        # becomes indistinguishable from silence.
+        "transmittance": absorption_reading["transmittance"],
+        "transmittance_measurement": absorption_reading["transmittance_measurement"],
+        "energy_balance_violations": absorption_reading["energy_balance_violations"],
         "periodic_axes": geometry["periodic_axes"],
-        "validity": [dict(entry) for entry in _MEEP_PERIODIC_ABSORBER_VALIDITY],
+        "validity": [dict(entry) for entry in _MEEP_PERIODIC_ABSORBER_VALIDITY]
+        + absorption_reading["validity"],
         "provenance": result.get("provenance", "SIMULATED"),
     }
     return "simulation", recorded, recorded["provenance"]
 
 
+def _require_transmission_monitor_for_two_port(family: Any, geometry: dict[str, Any]) -> None:
+    """A two-port family's run must carry a transmission monitor, checked
+    BEFORE the solver starts.
+
+    The loop cannot supply the plane itself: where it goes depends on which
+    side the source is on and where the absorbing boundary ends, and only
+    whoever laid the cell out knows that. Guessing a plane would be worse
+    than asking -- a monitor in the wrong place returns a number that looks
+    like a measurement.
+
+    Checked up front because the alternative is spending a full-wave run to
+    discover something already knowable from the step_input, and because the
+    message can then say exactly which key to add.
+    """
+    if int(getattr(family, "port_count", 1)) == 1:
+        # One port: nothing gets through by construction, so asking for the
+        # monitor would only buy solver time to confirm a structural zero.
+        return
+    if geometry.get("transmission_monitor_center_m") is not None:
+        return
+    raise DesignLoopValidationError(
+        f"Design family {getattr(family, 'name', family)!r} declares "
+        f"port_count={getattr(family, 'port_count', None)}, so its absorption is "
+        "A = 1 - R - T and the run must measure how much power passes THROUGH "
+        "the surface. This simulation step_input's geometry has no "
+        "'transmission_monitor_center_m', so there is nothing to measure it "
+        "with. Add that key -- a plane on the far side of the structure from "
+        "the source, inside the cell and clear of the PML (see "
+        "simulation/meep.py's run_meep_simulation geometry contract). This is "
+        "refused before the solver runs rather than after, because no length "
+        "of run can produce a quantity nothing was set up to record, and "
+        "falling back to A = 1 - R would credit this candidate for every watt "
+        "that escaped out the back -- the exact defect issue #243 removes."
+    )
+
+
+def _meep_absorption_for_family(family: Any, s_parameters: dict[str, Any]) -> dict[str, Any]:
+    """Turn one Meep run's powers into an absorption, by the family's ports.
+
+    Returns the absorption spectrum together with everything a reader needs
+    to check it: which sum was used, the transmitted share (or None where
+    the family has no such quantity), the adapter's own three-state
+    transmittance entry verbatim, any frequency where the powers do not add
+    up, and the warning that goes with those.
+    """
+    reflectance = s_parameters.get("reflectance") or []
+    measurement = s_parameters.get("transmittance")
+    ports = int(getattr(family, "port_count", 1))
+
+    if ports == 1:
+        # Ground-backed, so nothing is transmitted and every watt not
+        # reflected was dissipated. That guarantee is the ONLY reason
+        # A = 1 - R is legitimate, and one_port_absorption re-checks it
+        # against the family rather than trusting this branch.
+        return {
+            "absorption": _one_port_absorption(family, reflectance),
+            "port_count": ports,
+            "absorption_formula": "A = 1 - R",
+            "transmittance": None,
+            "transmittance_measurement": measurement,
+            "energy_balance_violations": [],
+            "validity": [],
+        }
+
+    transmittance = _two_port_transmittance(family, measurement)
+    frequency_hz = s_parameters.get("frequency_hz") or []
+    violations = _energy_balance_violations(reflectance, transmittance, frequency_hz)
+    return {
+        "absorption": _two_port_absorption(family, reflectance, transmittance),
+        "port_count": ports,
+        "absorption_formula": "A = 1 - R - T",
+        "transmittance": transmittance,
+        "transmittance_measurement": measurement,
+        "energy_balance_violations": violations,
+        # More power leaving than arrived is impossible for a passive
+        # surface, so it is a violated assumption surfacing -- uncertain,
+        # not confidently wrong. The charter's "warn, never block" governs
+        # exactly this: the candidate is returned and ranked with the
+        # warning attached, never withheld to protect the reader from it.
+        "validity": [_energy_balance_warning(violations)] if violations else [],
+    }
+
+
+def _two_port_transmittance(family: Any, measurement: Any) -> list[float]:
+    """The measured transmitted-power spectrum, or a raise saying why there
+    is none.
+
+    `measurement` is simulation/meep.py's `s_parameters["transmittance"]`
+    entry (#240), which always says which of three things happened: nobody
+    asked, somebody asked and it could not be computed, or it was measured
+    (possibly as zero). Only the third can be used here, and a measured zero
+    is a real result -- it means this surface genuinely passes nothing at
+    these frequencies, which is different from never having looked.
+    """
+    if isinstance(measurement, dict) and measurement.get("computed"):
+        return [float(t) for t in measurement.get("transmittance") or []]
+    name = getattr(family, "name", repr(family))
+    if measurement is None:
+        detail = (
+            "the solver returned no 'transmittance' entry at all, so this "
+            "adapter predates issue #240 or was bypassed"
+        )
+    elif not measurement.get("requested"):
+        detail = (
+            "the solver reports no transmittance because no transmission "
+            "monitor was requested, even though this step asked for one -- the "
+            "monitor plane did not reach the adapter"
+        )
+    else:
+        detail = (
+            "a transmission monitor was requested and the solver could not "
+            f"compute a transmittance from it: {measurement.get('note', 'no reason given')}"
+        )
+    raise _SimulatorError(
+        f"Design family {name!r} is two-port, so its absorption is "
+        f"A = 1 - R - T, and T is missing: {detail}. No absorption is recorded "
+        "for this run. Computing A = 1 - R instead would silently book every "
+        "watt that passed through the surface as heat -- reporting 0.80 where "
+        "the truth may be 0.50 -- and a too-high absorption reads as success, "
+        "which is why this is refused rather than warned about (issue #243). "
+        "ANALYSIS's closed-form two-port absorption "
+        "(rf_tools/transmissive_absorber.py, provenance CALCULATED) still "
+        "stands as this candidate's evidence."
+    )
+
+
 def _simulate_nec2(
+    family: Any,
     step_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any], str | None]:
     """Runs run_nec2_simulation, then (issue #101) derives VSWR and return
@@ -1072,6 +1277,7 @@ def _simulate_nec2(
     reflection_coefficient_magnitude are all None, but the step still
     advances: the underlying simulation itself completed.
     """
+    del family  # a wire-antenna run needs no family fact; the signature is the dispatch's
     _require_fields(
         step_input, {"geometry", "frequency_hz", "reference_impedance_ohms"}, "simulation"
     )
@@ -1114,7 +1320,12 @@ def _simulate_nec2(
 
 
 # The dispatch table `_handle_simulation` reads, keyed by the adapter name a
-# family declares. Every solver this loop can actually drive is listed here
+# family declares. Each handler takes (family, step_input): the family comes
+# along because reading a solver's numbers can depend on what KIND of surface
+# was simulated -- MEEP_FLOQUET's absorption sum is chosen by the declared
+# port count (#243) -- and a handler that needs no family fact says so with a
+# `del family` rather than the table carrying two shapes of callable.
+# Every solver this loop can actually drive is listed here
 # and nothing else runs: an adapter name with no entry is reported by name,
 # never quietly served by another solver (issue #241). Palace, for instance,
 # is implemented in simulation/palace.py and validated against a real binary
