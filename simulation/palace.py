@@ -214,6 +214,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import SimulationResult, Simulator, SimulatorError
+from .conservation_checks import check_palace_result
 
 # ---------------------------------------------------------------------------
 # PalaceSimulator: the Simulator contract (simulation/base.py, unchanged) --
@@ -810,7 +811,13 @@ def run_palace_simulation(
     """Generate a Palace mesh + JSON config for a periodic unit cell from
     structured geometry, run it via PalaceSimulator, and parse
     port-floquet-S.csv into structured per-diffraction-order S-parameter
-    data tagged with SIMULATED provenance.
+    data tagged with SIMULATED provenance. The returned dict's
+    "conservation_check" key (issue #221, see
+    simulation/conservation_checks.py) reports power-balance, passivity and
+    reciprocity margins over every parsed diffraction order -- warned on,
+    never blocked on (ADR-0028): a violation is still returned, annotated
+    with what's assumed, what it costs if wrong, and the cheapest way to
+    find out.
 
     See this module's header comment for the format-verification citations
     and the honest caveat: mesh/config generation and CSV parsing are built
@@ -848,9 +855,26 @@ def run_palace_simulation(
     csv_path = output_dir / "port-floquet-S.csv"
     parsed = parse_palace_output(csv_path.read_text() if csv_path.exists() else "")
 
+    # Issue #221: check the parsed S-parameters against power balance,
+    # passivity and reciprocity -- physics the result cannot violate no
+    # matter what the mesh/config/CSV-parsing got wrong (see
+    # simulation/conservation_checks.py's module docstring, including the
+    # real defect -- a polarization-collision on the `specular` dict's key
+    # -- this check is built to be robust to by summing over the full
+    # `modes` data instead). `lossless` is inferred here, not asked of the
+    # caller: this adapter's SCOPE (see module docstring) has no PEC
+    # conductor/embedded-loss element beyond each material's own
+    # `loss_tan`, so "every material's loss_tan is exactly 0" is exactly
+    # the lossless condition this geometry dict can express today.
+    background_loss_tan = geometry.get("background", {}).get("loss_tan", 0.0)
+    material_loss_tans = [m.get("loss_tan", 0.0) for m in geometry.get("materials", [])]
+    lossless = all(lt == 0.0 for lt in [background_loss_tan, *material_loss_tans])
+    conservation_check = check_palace_result(parsed, lossless=lossless, reciprocal=True)
+
     return {
         "provenance": "SIMULATED",
         "s_parameters": parsed,
+        "conservation_check": conservation_check,
         "simulator": result.simulator,
         "status": result.status,
         "workdir": str(result.workdir),
