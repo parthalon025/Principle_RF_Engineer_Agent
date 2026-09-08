@@ -12,11 +12,13 @@ import pytest
 
 from rf_tools.absorber import (
     ETA0_OHM,
+    THIN_SPACER_RATIO,
     absorber_band_response,
     absorptivity,
     grounded_slab_impedance,
     patterned_sheet_impedance,
 )
+from rf_tools.calculations import COSTA_EQ10_PREFACTOR, THIN_SPACER_PREFACTOR_FORMS
 
 # A plausible printed X-band stack: silicone spacer, 3 mm cell, 0.2 mm gap.
 STACK = {
@@ -28,6 +30,71 @@ STACK = {
     "sheet_resistance_ohm_sq": 500.0,
     "squares": 0.1,
 }
+
+# #128's own design point (PR #186, geometry/PROTOTYPE-lossy-cell-fit.md):
+# 6.0 mm cell, 0.498 mm gap, 1.50 mm silicone spacer. d/p = 0.25, so it sits
+# inside the regime where Costa's eq (10) thin-spacer correction bites --
+# this is the stack the correction was recovered for, so it is the one the
+# tests measure it on.
+THIN_STACK = dict(STACK, thickness_m=1.5e-3, period_m=6.0e-3, gap_m=0.498e-3)
+
+# The same cell with the ground plane twice as far back: d/p = 0.50, where
+# eq (10)'s exponential has decayed to under 0.1% of C0. Same geometry, so
+# any difference between the two tests is the ratio and nothing else.
+THICK_STACK = dict(THIN_STACK, thickness_m=3.0e-3)
+
+
+def _uncorrected_absorptivity(
+    frequency_hz: float,
+    eps_r: float,
+    tan_delta: float,
+    thickness_m: float,
+    period_m: float,
+    gap_m: float | None,
+    sheet_resistance_ohm_sq: float,
+    squares: float,
+) -> float:
+    """The pre-#245 model: the same stack with the thin-spacer correction
+    left out, rebuilt from the same primitives.
+
+    `patterned_sheet_impedance` computes the uncorrected sheet whenever no
+    spacer thickness is handed to it, so the only thing reproduced here is
+    the parallel combination and the reflection coefficient -- three lines
+    that must stay in step with `absorptivity`. It exists so a test can ask
+    "how far did the correction move the answer?", which needs both answers.
+    """
+    z_d = grounded_slab_impedance(frequency_hz, eps_r, tan_delta, thickness_m)
+    z_s = patterned_sheet_impedance(
+        frequency_hz, period_m, gap_m, eps_r, tan_delta, sheet_resistance_ohm_sq, squares
+    )
+    z_in = (z_s * z_d) / (z_s + z_d)
+    gamma = (z_in - ETA0_OHM) / (z_in + ETA0_OHM)
+    return min(1.0, max(0.0, 1.0 - abs(gamma) ** 2))
+
+
+def _peak_frequency_hz(curve: list[dict[str, float]]) -> float:
+    """Resonance, read off a swept curve as the frequency of PEAK absorption.
+
+    This model has no solver behind it, so the resonance is not available as
+    a root -- it is wherever the swept curve happens to be highest, to within
+    the sweep step. Tests that use this must therefore sweep finely enough
+    that the shift they are looking for is several steps wide.
+    """
+    return max(curve, key=lambda point: point["absorption"])["frequency_hz"]
+
+
+def _uncorrected_peak_frequency_hz(
+    f_low_hz: float, f_high_hz: float, points: int, **stack: float
+) -> float:
+    step = (f_high_hz - f_low_hz) / (points - 1)
+    curve = [
+        {
+            "frequency_hz": f_low_hz + i * step,
+            "absorption": _uncorrected_absorptivity(f_low_hz + i * step, **stack),
+        }
+        for i in range(points)
+    ]
+    return _peak_frequency_hz(curve)
 
 
 def test_quarter_wave_grounded_slab_looks_like_an_open_circuit():
@@ -127,23 +194,119 @@ def test_band_response_reports_the_worst_frequency_not_the_average():
     assert r["provenance"] == "CALCULATED"
 
 
-def test_thin_spacer_warns_about_the_unrecovered_costa_term():
-    """#190: below ~0.3 spacer-to-period the fast tier carries a known,
-    unquantified bias. It must warn and still return a number."""
-    r = absorber_band_response(8e9, 12e9, **dict(STACK, thickness_m=0.5e-3))
-    flags = {v["flag"] for v in r["validity"]}
-    assert "thin_spacer_bias_unrecovered" in flags
-    assert r["worst_absorption"] is not None
+def test_the_spacer_thickness_reaches_the_sheet_and_lowers_its_reactance():
+    """The plumbing, asserted directly: a ground plane 1.5 mm behind the
+    grid stores extra charge in the gaps, and more capacitance means less
+    reactance at a fixed frequency.
 
-    warning = next(v for v in r["validity"] if v["flag"] == "thin_spacer_bias_unrecovered")
+    In plain terms -- metal close behind the printed pattern makes the gaps
+    hold more charge, which makes the sheet easier for the wave to push
+    current through.
+    """
+    common = (10e9, THIN_STACK["period_m"], THIN_STACK["gap_m"], THIN_STACK["eps_r"])
+    tail = (THIN_STACK["tan_delta"], STACK["sheet_resistance_ohm_sq"], STACK["squares"])
+    free_standing = patterned_sheet_impedance(*common, *tail)
+    grounded = patterned_sheet_impedance(*common, *tail, THIN_STACK["thickness_m"])
+
+    assert abs(grounded.imag) < abs(free_standing.imag)
+    # The real part moves too, and should: it is the printed film's own
+    # R_s*N_squares (50 ohm here) PLUS the gap dielectric's dissipation,
+    # which is 1/(omega*C*tan_d) and so falls as the capacitance rises. The
+    # film's own contribution is the floor and is untouched by what sits
+    # behind the sheet.
+    film_only = STACK["sheet_resistance_ohm_sq"] * STACK["squares"]
+    assert film_only < grounded.real < free_standing.real
+
+
+def test_thin_spacer_resonates_lower_once_the_costa_term_is_carried():
+    """#245: with eq (10) applied the gap capacitance rises, so the stack
+    resonates BELOW where the uncorrected model drew it.
+
+    At #128's design point the recomputation in
+    `docs/costa-thin-spacer-correction.md` §7 puts that shift near -1% for
+    the `eps0` form. The assertion here is direction plus order of
+    magnitude, not a pinned digit: the resonance is read off a swept curve,
+    not solved for, so it is only ever accurate to the sweep step.
+    """
+    f_low, f_high, points = 9.5e9, 11.0e9, 1501  # 1 MHz resolution
+    corrected = _peak_frequency_hz(
+        absorber_band_response(f_low, f_high, points=points, **THIN_STACK)["curve"]
+    )
+    uncorrected = _uncorrected_peak_frequency_hz(f_low, f_high, points, **THIN_STACK)
+
+    assert corrected < uncorrected
+    shift_percent = 100 * (corrected - uncorrected) / uncorrected
+    assert -2.0 < shift_percent < -0.4
+
+
+def test_a_thick_spacer_is_left_materially_alone_by_the_correction():
+    """At d/p = 0.5 eq (10)'s exponential has decayed to under 0.1% of C0.
+    Applying it unconditionally is therefore safe: it does not disturb the
+    designs that were never in its regime."""
+    f_low, f_high, points = 6.5e9, 7.3e9, 1601  # 0.5 MHz resolution
+    response = absorber_band_response(f_low, f_high, points=points, **THICK_STACK)
+    corrected = _peak_frequency_hz(response["curve"])
+    uncorrected = _uncorrected_peak_frequency_hz(f_low, f_high, points, **THICK_STACK)
+
+    assert abs(corrected - uncorrected) / uncorrected < 1e-3
+    uncorrected_peak = max(
+        _uncorrected_absorptivity(point["frequency_hz"], **THICK_STACK)
+        for point in response["curve"]
+    )
+    assert response["best_absorption"] == pytest.approx(uncorrected_peak, abs=1e-3)
+
+
+def test_the_thin_spacer_bias_is_no_longer_reported_as_unrecovered():
+    """#190's flag said the term was missing. It is not missing any more,
+    and a flag that outlives its cause teaches a reader the wrong thing."""
+    response = absorber_band_response(8e9, 12e9, **THIN_STACK)
+    assert "thin_spacer_bias_unrecovered" not in {v["flag"] for v in response["validity"]}
+
+
+def test_thin_spacer_flags_the_disputed_prefactor_and_a_thick_one_does_not():
+    """What survives #245 is narrower than what it replaced: the correction
+    is applied, but two papers by the same author publish it with different
+    prefactors at different composition points (#234). The flag fires only
+    where the correction is big enough for that disagreement to matter."""
+    thin = absorber_band_response(8e9, 12e9, **THIN_STACK)
+    warnings = [v for v in thin["validity"] if v["flag"] == "thin_spacer_prefactor_disputed"]
+    assert len(warnings) == 1
+    warning = warnings[0]
+
     # Charter: every warning names what is assumed, what it costs, and the
     # cheapest way to find out.
     assert warning["assumed"] and warning["costs"] and warning["cheapest_test"]
+    text = " ".join(warning.values())
+    assert "#234" in text
+    # It must say the correction IS applied, in which form, and that the
+    # rival form differs by eps_r/eps_eff -- 1.487 here, NOT eps_r = 2.9.
+    assert COSTA_EQ10_PREFACTOR in text
+    assert "1.487" in text
+    assert "Tretyakov" in text
+
+    thick = absorber_band_response(6.5e9, 7.3e9, **THICK_STACK)
+    assert "thin_spacer_prefactor_disputed" not in {v["flag"] for v in thick["validity"]}
+    assert THICK_STACK["thickness_m"] / THICK_STACK["period_m"] >= THIN_SPACER_RATIO
 
 
-def test_a_thick_enough_spacer_raises_no_thin_spacer_warning():
-    r = absorber_band_response(8e9, 12e9, **dict(STACK, thickness_m=1.2e-3))
-    assert "thin_spacer_bias_unrecovered" not in {v["flag"] for v in r["validity"]}
+def test_the_result_records_which_published_form_produced_the_numbers():
+    """A selectable constant that leaves no trace in the result is how two
+    runs come to disagree with no way to reconstruct why. Settling #234
+    changes the numbers, so the answer has to carry which form it used."""
+    response = absorber_band_response(8e9, 12e9, **THIN_STACK)
+    assert response["costa_eq10_prefactor"] == COSTA_EQ10_PREFACTOR
+    assert response["costa_eq10_prefactor"] in THIN_SPACER_PREFACTOR_FORMS
+    # A thick stack carries the correction too, so it records the form too.
+    thick = absorber_band_response(6.5e9, 7.3e9, **THICK_STACK)
+    assert thick["costa_eq10_prefactor"] == COSTA_EQ10_PREFACTOR
+
+
+def test_absorption_stays_physical_with_the_correction_active():
+    """The correction raises a capacitance; a passive stack must still not
+    absorb more than the power that hits it."""
+    response = absorber_band_response(2e9, 20e9, points=361, **THIN_STACK)
+    for point in response["curve"]:
+        assert 0.0 <= point["absorption"] <= 1.0
 
 
 def test_rozanov_advises_and_never_blocks():

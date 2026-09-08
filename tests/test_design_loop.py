@@ -1408,13 +1408,19 @@ def test_absorber_analysis_requires_its_own_fields_not_the_patch_ones():
 
 def test_absorber_analysis_carries_its_validity_warnings_into_the_decision():
     """A warning that never reaches the recorded decision is not a warning.
-    #190's unrecovered thin-spacer term must ride in the loop's own trail."""
+    The thin-spacer flag must ride in the loop's own trail.
+
+    Renamed at #245: #190's `thin_spacer_bias_unrecovered` is gone because
+    Costa's eq (10) IS carried now; what survives is the narrower
+    `thin_spacer_prefactor_disputed` -- the correction is applied, but which
+    of two published prefactors is right is still open (#234). What this
+    test guards is unchanged: the flag has to reach the decision record."""
     state = start_design_loop(REQUIREMENTS)
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
     thin = dict(_ABSORBER_ANALYSIS_INPUT, thickness_m=0.5e-3)
     state = advance_loop_step(state, thin)
     flags = {v["flag"] for v in state.decisions[-1].result["validity"]}
-    assert "thin_spacer_bias_unrecovered" in flags
+    assert "thin_spacer_prefactor_disputed" in flags
 
 
 def test_absorber_analysis_reports_a_range_for_a_bracketed_permittivity():
