@@ -378,6 +378,20 @@ adopting these results will hit the same thing.
     already fired. The rule stands unchanged: *a number read off a plot is not
     a requirement.*
 
+    **Landed in the documents 2026-09-08** (#203, under ADR-0024).
+    `absorber-scoring-conventions.md`: the two scoring recommendations no
+    longer state a band for the anchor, and §5.3's worked figures are re-aimed
+    at a ground-backed skin. `absorber-thickness-bandwidth-bound.md`: a
+    governing note in the bottom line, and every prose claim about "where
+    Example 3 sits" re-aimed — that document also fails its **own** stated
+    assumption 4 (*"Backed by a perfect electric conductor"*) when applied to
+    the anchor, which correction 26 established after it was written. Its
+    literal script output is left verbatim as the record of what the script
+    printed, with the block labelled. `HANDOFF-metamaterial-printing-grill.md`
+    is marked in its own `~~struck~~ **corrected**` house style rather than
+    rewritten: ADR-0024 exempts it as an explicit historical record of what
+    was believed when. **The arithmetic was correct throughout and none of it
+    changed** — only what it is about.
 28. **The FR4-permittivity explanation for the patent-vs-Landy 20% frequency gap
     is dead by arithmetic.** The patent states its own simulation inputs:
     *"a 0.87 mm-thick absorber metamaterial layer using FR4 dielectric layer of

@@ -36,15 +36,34 @@ design.
 | 2.00 mm | −10 dB | **87.8%** (5.33–13.67 GHz) |
 | 2.00 mm | −20 dB | **50.8%** (7.09–11.91 GHz) |
 
-**Example 3 (8.5–10.5 GHz, 21.05% fractional) has substantial headroom at −10 dB and almost
+> **Two later corrections govern every Example 3 figure in this document. The arithmetic is
+> unaffected; what it is *about* is.**
+>
+> **This bound does not govern Example 3, by this document's own assumption 4.** §2 lists
+> *"Backed by a perfect electric conductor (PEC), no transmission"* as a stated assumption, and
+> the anchor does not satisfy it: `seven-example-design-unknowns.md` records Example 3 as
+> two-port with no ground plane, because FIG. 7G plots a non-zero Transmission trace and Landy
+> *et al.*'s device suppresses transmission with a **cut wire**. Rozanov's own opening — read
+> first-hand after this document was written — fixes a slab *"overlying a perfectly reflecting
+> plane"* (`rozanov-bound-primary-source.md`; `RUNNING-LISTS.md` §3 correction 26).
+>
+> **And `8.5–10.5 GHz` is FIG. 7G's plot axis, not a stated requirement** (§3 correction 27).
+> The bound is **linear in Δλ**, so every figure below scales one-for-one with that axis label.
+>
+> The figures are kept because they are correct and useful **for a ground-backed skin this
+> programme builds** — ADR-0017 makes those one-port by construction. They are not statements
+> about the reproduction anchor.
+
+**An 8.5–10.5 GHz span (21.05% fractional) leaves substantial headroom at −10 dB and almost
 none at −20 dB, at the thin end of the envelope.** Read as a thickness demand rather than a
-bandwidth ceiling, that band requires **at least 0.392 mm at −10 dB** and **at least 0.784 mm
+bandwidth ceiling, that span requires **at least 0.392 mm at −10 dB** and **at least 0.784 mm
 at −20 dB**. Against a 0.87 mm skin that is 45% and **90%** of the available thickness
 respectively; against a 2.0 mm skin, 20% and 39%. So:
 
-- At −10 dB, Example 3 sits at roughly **47% of the bandwidth limit** for 0.87 mm and 24% for
-  2.0 mm — comfortable headroom, and #129's "rough arithmetic puts that comfortably inside
-  what 2 mm allows" is **confirmed**.
+- At −10 dB, an 8.5–10.5 GHz span sits at roughly **47% of the bandwidth limit** for 0.87 mm
+  and 24% for 2.0 mm — comfortable headroom, and #129's "rough arithmetic puts that comfortably
+  inside what 2 mm allows" is **confirmed** *for a ground-backed skin*. Stated here as a fact
+  about Example 3 in earlier revisions; it is not one (see the note above).
 - At −20 dB, a 0.87 mm skin is at **90% of the limit** — that requirement is at the wall, and a
   search that fails to meet it is probably failing for a physical reason, not a design reason.
 
@@ -298,10 +317,10 @@ at one-fifth the thickness. Ikonen, Rozanov, Osipov & Tretyakov,
 > the thickness of the absorber at microwave frequencies (with a given reflectivity level) is
 > **bounded by the static value of μ of the absorber**."
 
-`CALCULATED`, Example 3's band (8.5–10.5 GHz) at −10 dB, and the widest bandwidth a 2.0 mm skin
-could reach at 9.5 GHz:
+`CALCULATED`, an 8.5–10.5 GHz span at −10 dB (FIG. 7G's plot range, not a requirement — see the
+note in the bottom line), and the widest bandwidth a 2.0 mm skin could reach at 9.5 GHz:
 
-| μ_s | Least thickness for 8.5–10.5 GHz @ −10 dB | Max fractional BW at d = 2.0 mm |
+| μ_s | Least thickness for an 8.5–10.5 GHz span @ −10 dB | Max fractional BW at d = 2.0 mm |
 |---|---|---|
 | **1 (this project)** | **0.3918 mm** | **87.8%** |
 | 2 | 0.1959 mm | 128.1% |
@@ -412,9 +431,12 @@ B = 2 × (√(1 + 0.472679²) − 1) / 0.472679
 | 2.00 mm | −10 dB | 1.086618 | **87.75%** | 5.33 – 13.67 GHz |
 | 2.00 mm | −20 dB | 0.543309 | **50.82%** | 7.09 – 11.91 GHz |
 
-### 5.5 The same question asked the other way — where does Example 3 sit?
+### 5.5 The same question asked the other way — where does an 8.5–10.5 GHz span sit?
 
-Example 3's band, worked directly:
+Worked directly for that span. **Framed as Example 3's position in earlier revisions; it is not
+one** — the anchor is unbacked, so this bound does not govern it, and 8.5–10.5 GHz is FIG. 7G's
+plot axis rather than a stated requirement (see the note in the bottom line). The arithmetic
+below stands for a ground-backed skin over that span:
 
 ```
 λ_max = 299.792458 / 8.5  = 35.2697 mm
@@ -426,12 +448,14 @@ d_min(−10 dB) = 1.151293 × 6.7180 / 19.739209 = 7.73437 / 19.739209 = 0.3918 
 d_min(−20 dB) = 2.302585 × 6.7180 / 19.739209 = 15.46875 / 19.739209 = 0.7837 mm
 ```
 
-| Example 3 target | Least thickness the bound demands | Fraction of a 0.87 mm skin | Fraction of a 2.0 mm skin |
+| Reflectivity target over an 8.5–10.5 GHz span | Least thickness the bound demands | Fraction of a 0.87 mm skin | Fraction of a 2.0 mm skin |
 |---|---|---|---|
 | −10 dB | 0.3918 mm | **45.0%** | 19.6% |
 | −20 dB | 0.7837 mm | **90.1%** | 39.2% |
 
-**Where Example 3 sits: comfortable at −10 dB, at the wall at −20 dB on a thin skin.** The
+**Where a ground-backed skin sits over that span: comfortable at −10 dB, at the wall at −20 dB
+when thin.** *This was written as "where Example 3 sits". It is not — the bound does not govern
+an unbacked structure, and the span is a plot axis (see the note in the bottom line).* The
 patent's own thickness for Example 3 specifically is not recorded in this repo — 0.87–2.0 mm is
 the range across all seven examples (`docs/HANDOFF-metamaterial-printing-grill.md:33`), and the
 example is on FR4, εr 4.8, tanδ 0.017 (`:53`). **Pinning Example 3's actual thickness from the
@@ -754,7 +778,10 @@ def max_fbw(db, d_mm, f_c, mu_s=1.0):
     return K, 2 * (math.sqrt(1 + K * K) - 1) / K
 ```
 
-Verified output:
+**Verified output.** The script's own section labels say *"Example 3's band"*; they are the
+script's literal output and are left verbatim as the record of what it printed. Read them as
+*"an 8.5–10.5 GHz span"* — the bound does not govern the unbacked anchor, and that span is a
+plot axis (see the note in the bottom line).
 
 ```
 == constants ==
