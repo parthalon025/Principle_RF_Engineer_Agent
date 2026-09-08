@@ -47,6 +47,7 @@ _SOURCE_TYPE_TIER: dict[SourceType, str] = {
     SourceType.TEXTBOOK: LITERATURE_SUPPORTED,
     SourceType.PAPER: LITERATURE_SUPPORTED,
     SourceType.PATENT: LITERATURE_SUPPORTED,
+    SourceType.PARTNER_RESEARCH: LITERATURE_SUPPORTED,
     SourceType.DESIGN_RECORD: INTERNAL_HISTORY,
 }
 
@@ -75,12 +76,25 @@ _TIER_AUTHORITY_RANK: dict[str, int] = {
 # policy every time someone reconsidered patents.
 PATENT_AUTHORITY_RANK = 50
 
+# ADR-0029: unpublished technical work from an outside research partner. It
+# is outside work, so it does not inherit `design_record`'s internal-history
+# discount (rank 60, via INTERNAL_HISTORY's tier default); it is unreviewed
+# and unpublished, so it does not reach the peer-reviewed tier either. It
+# maps to LITERATURE_SUPPORTED like `patent`, with the authority rank
+# carrying the distinction -- exactly the mechanism `PATENT_AUTHORITY_RANK`
+# already uses to sit `patent` below `paper`. Placed strictly between
+# PATENT_AUTHORITY_RANK (50) and design_record's rank (60): better evidence
+# than nothing, but not vetted the way a granted patent's examination or a
+# peer-reviewed paper is.
+PARTNER_RESEARCH_AUTHORITY_RANK = 55
+
 # Source types whose default rank is deliberately NOT their tier's rank.
 # CONTEXT.md already documents authority rank as "overridable per document";
 # this is the narrower case of a whole source TYPE whose default differs, so
 # no caller has to remember to pass an override for every patent ingested.
 _SOURCE_TYPE_AUTHORITY_RANK: dict[SourceType, int] = {
     SourceType.PATENT: PATENT_AUTHORITY_RANK,
+    SourceType.PARTNER_RESEARCH: PARTNER_RESEARCH_AUTHORITY_RANK,
 }
 
 

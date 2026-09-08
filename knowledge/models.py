@@ -32,6 +32,17 @@ class SourceType(StrEnum):
     why a patent office's examination does not make a patent's technical
     numbers peer-reviewed. Read that note before citing a patent's figures
     as evidence.
+
+    `PARTNER_RESEARCH` (ADR-0029) is unpublished technical work received
+    from an outside research partner -- the charter names this a primary
+    input, and every existing type misfiled it (`paper` overclaims peer
+    review; `design_record` is defined as internally authored, so filing a
+    partner's work there would claim it as this team's own). It resolves to
+    `LITERATURE-SUPPORTED` like `paper`/`patent`, but at its own rank
+    strictly between a patent and a design record -- see
+    `knowledge/provenance.py`'s `PARTNER_RESEARCH_AUTHORITY_RANK`. Like
+    `paper`/`patent`, it gets no structured component extraction
+    (`knowledge/extract.py`'s `_EXTRACTABLE_SOURCE_TYPES`).
     """
 
     DATASHEET = "datasheet"
@@ -40,6 +51,7 @@ class SourceType(StrEnum):
     TEXTBOOK = "textbook"
     PAPER = "paper"
     PATENT = "patent"
+    PARTNER_RESEARCH = "partner_research"
     DESIGN_RECORD = "design_record"
 
 

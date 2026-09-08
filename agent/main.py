@@ -1395,23 +1395,34 @@ def ingest_document(
     license: str,
     classification: str,
     supersedes_document_id: int | None = None,
+    author: str | None = None,
+    revision: str | None = None,
 ) -> dict:
     """Parse a document PDF via docling, chunk it, and store it in the knowledge base.
     source_type, license, and classification are all mandatory. source_type must be one
-    of: datasheet, application_note, standard, textbook, paper, patent, design_record --
-    it is fixed at ingest time and sets the document's default provenance and authority
-    rank, so a wrong value permanently mis-ranks everything retrieved from it. Note
-    patent: its numbers are citable evidence but rank below a peer-reviewed paper (a
-    patent office does not check that a stated number reproduces), and its claim text is
-    legal boundary-setting, never design guidance. Pass supersedes_document_id to declare
-    this upload a newer revision of that document (never inferred from title); omit it for
-    a plain new, independent document."""
+    of: datasheet, application_note, standard, textbook, paper, patent, partner_research,
+    design_record -- it is fixed at ingest time and sets the document's default provenance
+    and authority rank, so a wrong value permanently mis-ranks everything retrieved from
+    it. Note patent: its numbers are citable evidence but rank below a peer-reviewed paper
+    (a patent office does not check that a stated number reproduces), and its claim text is
+    legal boundary-setting, never design guidance. Note partner_research (ADR-0029):
+    unpublished technical work received from an outside research partner -- use this, not
+    paper (which would overclaim peer review, outranking even a granted patent) or
+    design_record (which claims a document as this team's own authorship); it ranks between
+    patent and design_record and gets no structured component extraction, same as
+    paper/patent. Pass supersedes_document_id to declare this upload a newer revision of
+    that document (never inferred from title); omit it for a plain new, independent
+    document. author/revision are stored as-is on the document (both optional) -- for a
+    partner_research document, author should identify the partner/author, since a partner
+    source is not much use without knowing whose work it is."""
     return _ingest_document(
         file_path=file_path,
         source_type=source_type,
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,
+        author=author,
+        revision=revision,
     )
 
 
