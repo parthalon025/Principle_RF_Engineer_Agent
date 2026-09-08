@@ -37,14 +37,46 @@ reflection, never for extracting a material's own effective permittivity or
 permeability. Homogenisation is provably invalid near resonance, which is
 exactly where an absorber works.
 
-A KNOWN, UNQUANTIFIED BIAS. Costa's eq (10) corrects the gap capacitance
-for evanescent Floquet modes reflecting off the ground plane, which matter
-once the spacer thins below ~0.3 * the cell period. That term has not been
-recovered (#190). Its DIRECTION is known -- capacitance rises, so the true
-resonance sits BELOW this model's prediction -- but not its magnitude. Every
-response computed inside that regime carries `thin_spacer_bias_unrecovered`
-in its `validity` list. Per this project's charter the model reports and
-proceeds; it never refuses to return a number.
+THE THIN-SPACER BIAS, NOW CARRIED (#245). Costa's eq (10) corrects the gap
+capacitance for evanescent Floquet modes reflecting off the ground plane --
+the printed pattern couples to its own mirror image and stores more charge
+than a free-standing grid would:
+
+    C0_thin = C0 - (2p*eps_0/pi) * ln(1 - exp(-4*pi*d/p))
+
+p the cell period, d the spacer thickness. Costa, Genovesi, Monorchio &
+Manara, arXiv:1211.1902 eq (10); published as IEEE TAP 61(3), 1201-1209.
+This model APPLIES that term -- `absorptivity` hands `thickness_m` down to
+`capacitive_grid_sheet_capacitance_f`, which composes it. What used to be
+flagged here as unrecovered (#190) is recovered; the flag that replaced it
+is narrower and is described below.
+
+*In plain terms: the closer the ground plane sits behind the printed
+pattern, the more charge builds up between the two, and the lower the
+surface resonates. Leaving the term out drew the resonance about 1% too
+high at #128's design point.*
+
+APPLIED UNCONDITIONALLY, NOT GATED AT `THIN_SPACER_RATIO`. Costa writes the
+regime boundary as `if (d > 0.3D)`, but eq (10) itself decays smoothly --
+about 2.2% of C0 at d/p = 0.25, under 0.1% at d/p = 0.5 -- and is the better
+approximation on both sides of that ratio. Gating it at 0.3 would put a step
+discontinuity in the capacitance at exactly the ratio this programme's
+designs cluster around, which is an optimiser hazard with no physics behind
+it. This is a reasoned deviation from a literal reading of the paper.
+
+WHAT IS STILL DISPUTED (#234). The same author publishes the same equation
+twice with different prefactors applied at different points: `2D*eps_0/pi`
+substituted into the UNLOADED C0 (Costa et al. 2013, the conservative
+default here), and `2D*eps_0*eps_r/pi` subtracted from an ALREADY-LOADED
+capacitance (Costa & Borgese 2021, arXiv:2102.10666). On the loaded
+capacitance the two differ by `eps_r/eps_eff` -- 1.487 at eps_r = 2.9, NOT
+by eps_r -- because the 2021 form never meets eq (6)'s eps_eff loading. At
+#128's design point that is 9.893 GHz against 9.843 GHz, from an uncorrected
+10.000 GHz. Responses inside the thin-spacer regime carry
+`thin_spacer_prefactor_disputed`, and every response records which form
+produced it in `costa_eq10_form`. Per this project's charter the model
+reports and proceeds; it never refuses to return a number. See
+`docs/costa-thin-spacer-correction.md`.
 """
 
 from __future__ import annotations
@@ -53,9 +85,10 @@ import cmath
 import math
 from typing import Any
 
-from rf_tools import physical_bounds
+from rf_tools import calculations, physical_bounds
 from rf_tools.calculations import (
     capacitive_grid_sheet_capacitance_f,
+    grid_effective_permittivity,
     grid_gap_loss_tangent,
     path_resistance_from_squares,
 )
@@ -63,8 +96,12 @@ from rf_tools.calculations import (
 SPEED_OF_LIGHT_M_S = 299_792_458.0
 ETA0_OHM = 376.730313412
 
-# Below this spacer-thickness-to-period ratio, Costa's eq (10) evanescent
-# correction is load-bearing and this model does not carry it (#190).
+# Costa's regime boundary, `if (d > 0.3D)`. Its job here changed at #245:
+# it no longer gates a warning about a MISSING term -- the term is applied at
+# every ratio -- it marks where the correction is large enough (a couple of
+# per cent of C0 and rising) that the unresolved disagreement between the two
+# published forms of eq (10) could change a decision. Above it the two forms
+# differ by less than a tenth of a per cent and nobody needs telling.
 THIN_SPACER_RATIO = 0.3
 
 
@@ -109,6 +146,7 @@ def patterned_sheet_impedance(
     tan_delta: float,
     sheet_resistance_ohm_sq: float,
     squares: float,
+    spacer_thickness_m: float | None = None,
 ) -> complex:
     """Impedance of the printed conductive layer.
 
@@ -141,6 +179,16 @@ def patterned_sheet_impedance(
     knob, and it spans three orders of magnitude where printable film
     thickness spans about eight to one. A continuous sheet is 1 square by
     definition, so `squares` should be 1.0 when `gap_m` is None.
+
+    `spacer_thickness_m` is the grounded dielectric beneath the pattern, and
+    it is optional only because a free-standing sheet has no ground plane to
+    couple to. Supplied, it turns on Costa's eq (10) thin-spacer correction
+    inside the grid capacitance (#245): evanescent Floquet modes bouncing off
+    the ground plane store extra charge the plain grid formula does not admit,
+    which pulls the resonance down. **Omitting it on a stack that does have a
+    ground plane silently reproduces the pre-#245 bias** -- the model is then
+    reporting a resonance higher than the stack's own. `absorptivity` always
+    passes it; a direct caller must too.
     """
     _require_positive("frequency_hz", frequency_hz)
     _require_positive("sheet_resistance_ohm_sq", sheet_resistance_ohm_sq)
@@ -150,7 +198,9 @@ def patterned_sheet_impedance(
     if gap_m is None:
         return complex(r_eff, 0.0)
 
-    c_sheet = capacitive_grid_sheet_capacitance_f(period_m, gap_m, eps_r)
+    c_sheet = capacitive_grid_sheet_capacitance_f(
+        period_m, gap_m, eps_r, spacer_thickness_m=spacer_thickness_m
+    )
     tan_gap = grid_gap_loss_tangent(eps_r, tan_delta)
 
     omega = 2 * math.pi * frequency_hz
@@ -172,10 +222,25 @@ def absorptivity(
 ) -> float:
     """Fraction of incident power absorbed (0..1) at one frequency, at
     normal incidence, for a ground-backed stack. See the module docstring
-    for the model and its validity."""
+    for the model and its validity.
+
+    `thickness_m` reaches the sheet as well as the slab: it is the spacer
+    the wave travels through AND the distance to the mirror the patches
+    couple to, so it sets both the slab's electrical length and Costa's
+    eq (10) thin-spacer capacitance correction (#245). The signature is
+    unchanged -- the correction needed no new input, only the existing one
+    carried one level further down.
+    """
     z_d = grounded_slab_impedance(frequency_hz, eps_r, tan_delta, thickness_m)
     z_s = patterned_sheet_impedance(
-        frequency_hz, period_m, gap_m, eps_r, tan_delta, sheet_resistance_ohm_sq, squares
+        frequency_hz,
+        period_m,
+        gap_m,
+        eps_r,
+        tan_delta,
+        sheet_resistance_ohm_sq,
+        squares,
+        spacer_thickness_m=thickness_m,
     )
     # The sheet and the grounded spacer sit in parallel across the same port.
     denom = z_s + z_d
@@ -210,6 +275,13 @@ def absorber_band_response(
     Returns the worst absorption and where it falls, the full curve, and a
     `validity` list naming every assumption that is load-bearing for THIS
     stack. `validity` never blocks the result; it travels with it.
+
+    It also returns `costa_eq10_form`: which of the two published forms
+    of Costa's thin-spacer correction produced these numbers (#234, #245).
+    That is a module-level choice in `rf_tools.calculations`, not an argument
+    here -- a caller free to vary it design-by-design could pick whichever
+    form flatters the candidate in front of them. Recording it is what lets
+    two runs that disagree be told apart from two runs of different code.
     """
     if f_high_hz <= f_low_hz:
         raise ValueError(
@@ -245,23 +317,54 @@ def absorber_band_response(
 
     ratio = thickness_m / period_m
     if ratio < THIN_SPACER_RATIO:
+        # The correction is APPLIED at every ratio; what this flag reports is
+        # the one thing #245 could not settle -- which of two published
+        # prefactors, applied at which point, is the right one (#234). Below
+        # 0.3 the two answers are far enough apart to matter; above it they
+        # differ by under a tenth of a per cent and warning would be noise.
+        form_gap = eps_r / grid_effective_permittivity(eps_r)
         validity.append(
             {
-                "flag": "thin_spacer_bias_unrecovered",
+                "flag": "thin_spacer_prefactor_disputed",
                 "assumed": (
                     f"spacer-to-period ratio is {ratio:.3f}, below "
-                    f"{THIN_SPACER_RATIO}, where evanescent Floquet modes off the "
-                    "ground plane raise the gap capacitance; Costa's eq (10) "
-                    "correction for that is not implemented here (#190)"
+                    f"{THIN_SPACER_RATIO}, so Costa's eq (10) thin-spacer "
+                    "correction is numerically significant here. It IS applied "
+                    f"(#245), in the '{calculations.COSTA_EQ10_FORM}' form -- Costa et "
+                    "al. 2013, arXiv:1211.1902 eq (10), prefactor 2D*eps_0/pi "
+                    "substituted into the unloaded grid capacitance. The same "
+                    "author publishes a second form -- Costa & Borgese 2021, "
+                    "arXiv:2102.10666 eq (10), prefactor 2D*eps_0*eps_r/pi "
+                    "subtracted from an already-loaded capacitance -- which "
+                    f"lands eps_r/eps_eff = {form_gap:.3f} times larger on the "
+                    "loaded capacitance. Which is right is unresolved (#234). "
+                    "In plain terms: both papers agree extra charge builds up "
+                    "between the pattern and the ground plane, and disagree by "
+                    "about half again over how much. The equation itself is "
+                    "INFERRED on CONTEXT.md's ladder, not LITERATURE-SUPPORTED: "
+                    "the 2013 form was read by eye off a 400 dpi render because "
+                    "the paper carries no machine-readable maths, and the "
+                    "original both papers cite has never been obtained. So this "
+                    "number is CALCULATED from an INFERRED input, and inherits "
+                    "the weaker rung"
                 ),
                 "costs": (
-                    "the true resonance sits BELOW this prediction and the gap "
-                    "needed for a target frequency is WIDER than computed; the "
-                    "direction is known, the magnitude is not"
+                    "the gap needed to hold a target frequency widens by about "
+                    "another 14 um if the other form is the right one -- larger "
+                    "than the tolerance a printed gap is drawn to, so it "
+                    "changes the geometry that gets printed. In frequency: at "
+                    "#128's design point an uncorrected 10.000 GHz becomes "
+                    "9.893 GHz under this form and 9.843 GHz under the other. "
+                    "A trim to a geometry rather than a different design, but "
+                    "not one the drawing can absorb"
                 ),
                 "cheapest_test": (
-                    "one Floquet unit-cell solve at this stack, compared against "
-                    "this model's predicted resonance"
+                    "read the original both papers cite -- Tretyakov & Simovski "
+                    "2003 -- and see which prefactor it carries; it is closed "
+                    "access with no repository copy found so far "
+                    "(RUNNING-LISTS.md section 1), so the fallback is one "
+                    "Floquet unit-cell full-wave solve of this stack, whose "
+                    "resonance separates the two forms by about 0.5%"
                 ),
             }
         )
@@ -320,6 +423,16 @@ def absorber_band_response(
         "best_frequency_hz": best["frequency_hz"],
         "curve": curve,
         "rozanov_min_thickness_m": rozanov_floor_m,
+        # Which published form of Costa's eq (10) produced these numbers.
+        # #234 is a live question and settling it moves every resonance in
+        # this file; a result that does not say which form it used cannot be
+        # compared against one computed before or after that change.
+        # Read through the module, never `from ... import COSTA_EQ10_FORM`:
+        # a by-value import freezes the name at import time, so overriding
+        # the selection would move every number here while this key went on
+        # reporting the old form -- the "two runs disagree with no way to
+        # reconstruct why" failure this key exists to prevent.
+        "costa_eq10_form": calculations.COSTA_EQ10_FORM,
         "validity": validity,
         "provenance": "CALCULATED",
     }

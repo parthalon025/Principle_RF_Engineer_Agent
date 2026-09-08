@@ -34,6 +34,8 @@ matters**, so a browsing session can be prioritised rather than exhaustive.
 | **A 2025 Wiley paper on absorber quality criteria** | HTTP 403 | Explicitly on this subject. The critique of `RL_min` as a scoring metric currently rests on **secondary summaries** of it | #110 |
 | **JOSA B / Optica** | Not previously recorded as blocked; full text unreachable this pass | Smith & Pendry, "Homogenization of metamaterials by field averaging" (2006) — the field-averaging basis for effective-parameter retrieval. Not on arXiv, not on the Duke group page. #111's homogenisation-validity case currently rests on Alù, Koschny and Menzel instead, which agree with each other | #111 |
 | **ScienceDirect**, a 2015 waveguide characterisation of **BASF Elastollan 1185A** | HTTP 403 (same block as the existing ScienceDirect row) | An X-band (8.2–12.3 GHz) permittivity measurement for a **named, orderable TPU grade**. This is the repo's oldest standing substrate-data complaint — every TPU figure held today is for generic or unnamed material, against a BASF unfilled range spanning tanδ 0.040–0.140 at 1 MHz | #114, #127 |
+| **Tretyakov & Simovski (2003)**, "Dynamic model of artificial reactive impedance surfaces," *J. Electromagn. Waves Appl.* **17**(1) 131–145 | Closed access. **Confirmed by two independent indexes that no repository copy exists**: Unpaywall `is_oa:false, has_repository_copy:false, oa_locations:[]`; Semantic Scholar `CLOSED` | Costa's ref [35] — the **original statement of eq (10)**, the thin-spacer capacitance correction. Three things are stranded behind it: (a) whether the prefactor is `2Dε₀/π` (as the 2013 paper prints) or `2Dε₀ε_r/π` (as Costa & Borgese 2021 restate it, citing the same source) — **a factor of `ε_r` on the size of the bias the fast tier carries**; (b) whether an **inductance** correction was ever written, asserted three times across the Costa papers and published nowhere; (c) eq (10)'s stated validity range in the author's own words. Equation, symbols and a recomputation are in [`costa-thin-spacer-correction.md`](./costa-thin-spacer-correction.md), read off a 400 dpi render | #190, #128, #111 |
+| **APS / Physical Review Letters**, Landy et al. (2008), "Perfect Metamaterial Absorber," *PRL* **100**:207402 | HTTP 403 to automated fetch. **Routed around**: the arXiv e-print carries the authors' LaTeX source and original figure files, which is a better source than the typeset PDF for this purpose | Whether the published version has **supplementary material** the preprint lacks — `UNKNOWN`, an absence in our access rather than in the world. Bounded risk: the arithmetic in [`example3-frequency-discrepancy.md`](./example3-frequency-discrepancy.md) does not depend on it, since **no** `εr` in the FR4 range closes the 2.28 GHz gap. Landy states no permittivity in the preprint at all | #142, #116 |
 
 **Environment note.** A headless browser was set up and reaches sites through
 the agent proxy with `--disable-quic --ssl-version-max=tls1.2`. It does **not**
@@ -624,6 +626,54 @@ this list.
     also could not answer "which entries came from the old printer," the
     one question that matters when equipment changes. ADR-0027 adds a
     **Process record** and keys on a reference to it.
+
+### Found by searching for the formula rather than trusting our own recomputation (2026-09-08)
+
+43. **Costa's eq (10): the two published forms differ by `ε_r/ε_eff` = 1.487,
+    not by `ε_r` = 2.9 — the "triples the bias" claim was wrong.**
+    `costa-thin-spacer-correction.md` §7, #190's resolution comment, #234 and
+    the #245 spec all reported the 2021 `ε₀ε_r` form as **+6.28%** capacitance
+    and a **−3.01%** frequency shift (9.699 GHz), against **+2.17%** / −1.07%
+    for the 2013 `ε₀` form. The correct figures are **+3.22%** and **−1.57%**
+    (9.843 GHz).
+
+    **The transcription was never wrong; the composition was.** The 2013 form
+    substitutes into the **unloaded** `C₀`, which eq (6) then multiplies by
+    `ε_eff = (ε_r+1)/2`. The 2021 form subtracts from the **already-loaded**
+    capacitance, so no `ε_eff` ever reaches it. Computing the 2021 correction
+    as a fraction of the *unloaded* `C₀` — as §7 did — double-counts the
+    permittivity. Net effect on the loaded capacitance is `ε_eff·δ` for 2013
+    and `ε_r·δ` for 2021, where `δ` = 1.4940 fF is the shared base term.
+
+    *In plain terms: both papers say the same thing about how much extra
+    charge the cell stores. They disagree about whether the substrate's
+    permittivity has already been applied by the time you add it, and we
+    applied it twice.*
+
+    **What makes this a documentation failure rather than a research one:**
+    §3 of `costa-thin-spacer-correction.md` **already stated it correctly** —
+    *"Their eqs (7)–(8) also apply the correction to an already-loaded
+    capacitance, so no later `ε_r` arrives"* — and §7 of the same document
+    then computed it the other way. The document contradicted itself for a
+    day, and the wrong half was the half that got quoted into three issues
+    and a spec.
+
+    Settled from the 2021 paper's **LaTeX source** (arXiv:2102.10666,
+    `paper_arxiv_v2.tex`), which states both the correction and the equation
+    consuming it verbatim — `LITERATURE-SUPPORTED`, an upgrade on the eye-read
+    400 dpi render the equation itself rests on. **A web-search summary of the
+    same paper dropped the `ε_r` entirely**, which would have sent the
+    correction the other way; the source settled it and the summary did not.
+    *Search results are a pointer to a primary source, never a substitute for
+    reading it.*
+
+    **It also narrows #234 and tilts it.** The dispute is worth 1.49×, not 3×.
+    And the physical argument now has a mechanism behind it: a patch-to-ground
+    capacitance whose field lies wholly inside the substrate should carry
+    `ε_r`, where the air-straddling gap capacitance carries `ε_eff` — the two
+    entering the circuit at different points is exactly what that asymmetry
+    predicts, which is a point in the 2021 form's favour rather than a coin
+    flip.
 
 ---
 

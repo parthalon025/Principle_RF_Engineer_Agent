@@ -921,7 +921,214 @@ def grid_gap_loss_tangent(eps_r: float, tan_delta: float) -> float:
     return eps_r * tan_delta / (eps_r + 1)
 
 
-def capacitive_grid_sheet_capacitance_f(period_m: float, gap_m: float, eps_r: float) -> float:
+# --- Costa's thin-spacer capacitance correction (issue #245) ---
+#
+# The grid capacitance above is a FREE-STANDING result: it assumes the
+# patches see nothing but the substrate around them. Put a ground plane a
+# short distance behind them and that stops being true -- the patches also
+# couple to the mirror, and store more charge than the free-standing formula
+# admits. Costa et al. (arXiv:1211.1902 eq 10) add that charge back:
+#
+#     C0_thin = C0 - (2p*eps_0/pi) * ln(1 - exp(-4*pi*d/p))
+#
+# with p the cell period and d the spacer thickness. The exponential is
+# between 0 and 1, so the logarithm is negative and subtracting it ADDS --
+# the capacitance can only rise, and the rise grows as the spacer thins,
+# which is exactly what Costa's prose says ("the value of the capacitor
+# increases exponentially as the spacer thickness is reduced").
+#
+# In plain terms: the closer the printed pattern sits to the metal behind
+# it, the more extra charge builds up between the two, and that extra
+# charge makes the surface resonate LOWER than the uncorrected model draws
+# it. At this programme's #128 design point (6.0 mm period, 1.50 mm spacer)
+# the uncorrected model was drawing the resonance about 1% too high.
+#
+# TWO PUBLISHED FORMS, ONE UNRESOLVED (#234) -- AND THEY DIFFER IN WHERE THE
+# CORRECTION IS APPLIED, NOT ONLY IN ITS PREFACTOR.
+#
+#   "eps0" -- Costa et al. 2013 (arXiv:1211.1902 eq 10), read off a 400 dpi
+#   render and confirmed at 22x through a second rasteriser. The prefactor is
+#   `2*D*eps_0/pi` and the correction substitutes into the UNLOADED C0; eq (6)
+#   then loads the corrected sum. Net effect on the loaded capacitance is
+#   `eps_eff * delta`.
+#
+#   "eps0_epsr" -- Costa & Borgese 2021 (arXiv:2102.10666, eqs 9-10, taken
+#   from the authors' own LaTeX source, so verbatim rather than inferred).
+#   The prefactor is `2*D*eps_0*eps_r/pi` and the correction is subtracted
+#   from an ALREADY-LOADED capacitance (their C_patch already carries
+#   eps_eff), so it is never multiplied by eps_eff. Net effect on the loaded
+#   capacitance is `eps_r * delta`.
+#
+# So the real disagreement between the two papers is a factor of
+# `eps_r / eps_eff` -- 1.487 at eps_r = 2.9, not eps_r itself. Reading the
+# 2021 prefactor as a straight eps_r multiplier applied at the 2013 paper's
+# composition point would give `eps_eff * eps_r * delta` and count the
+# permittivity twice; `_thin_spacer_composed_capacitance` below exists to
+# make that mistake impossible to make by accident.
+#
+# The 2021 placement is physically coherent, and worth stating because it is
+# not an arbitrary difference: the correction is a patch-to-GROUND
+# capacitance, whose field sits entirely inside the substrate, so it carries
+# eps_r; the gap capacitance between neighbouring patches straddles air and
+# substrate, so it carries eps_eff = (eps_r + 1)/2. That asymmetry is an
+# argument in the 2021 form's favour. It is not a verdict -- which form is
+# right is #234, and neither can be checked against the original, Tretyakov
+# & Simovski 2003, which is closed access with no repository copy in
+# existence (RUNNING-LISTS.md section 1). Both are carried, and the
+# conservative `eps0` form is the default.
+#
+# PROVENANCE: INFERRED, not LITERATURE-SUPPORTED, for the 2013 form -- the
+# functional form is corroborated four ways (machine-readable text layer,
+# two independent renderers, a separate publication, and an R^2 = 0.99902
+# fit to the source's own Figure 2(b)), but it was still ultimately read by
+# eye off a rasterised page. The 2021 restatement is LITERATURE-SUPPORTED:
+# it comes from the arXiv LaTeX source. See
+# docs/costa-thin-spacer-correction.md.
+
+COSTA_EQ10_FORMS = ("eps0", "eps0_epsr")
+"""The two published statements of Costa eq (10). See #234.
+
+Each name is a whole form -- prefactor AND composition point -- because the
+two papers differ in both, which is why these are `..._FORMS` and not
+`..._PREFACTORS`. `_compose_thin_spacer_
+capacitance` is where the second half of that distinction lives.
+"""
+
+COSTA_EQ10_FORM = "eps0"
+"""Which of the two forms this programme uses. Module-level, deliberately.
+
+Settling #234 is a one-line change here. It is NOT a per-call argument on
+the public absorber API, and must not become one: a caller free to vary the
+prefactor design-by-design could quietly pick whichever form flatters the
+candidate in front of them, which is a thumb on the scale.
+"""
+
+
+def _resolve_thin_spacer_form(form: str | None) -> str:
+    """`None` means the module-level selection; anything unrecognised is an
+    error rather than a silent fall-back to the default."""
+    resolved = COSTA_EQ10_FORM if form is None else form
+    if resolved not in COSTA_EQ10_FORMS:
+        raise ValueError(
+            f"Unknown eq (10) form {form!r}; expected one of {COSTA_EQ10_FORMS} (see #234)."
+        )
+    return resolved
+
+
+def _compose_thin_spacer_capacitance(
+    unloaded_c0_f: float, correction_f: float, eps_r: float, form: str
+) -> float:
+    """Combine an unloaded grid capacitance with its thin-spacer correction
+    AT THE POINT THE CHOSEN PUBLISHED FORM APPLIES IT.
+
+        "eps0"      -> eps_eff * (C0 + dC)     dC = (2p*eps_0/pi)*Lterm
+        "eps0_epsr" -> eps_eff * C0 + dC       dC = eps_r * (2p*eps_0/pi)*Lterm
+
+    This function exists for one reason: the two forms are NOT related by a
+    scalar. Costa 2013 corrects the unloaded capacitance and then loads the
+    sum; Costa & Borgese 2021 correct an already-loaded capacitance, so their
+    term never meets eps_eff. Net effect on the loaded value is `eps_eff*dC0`
+    for the first and `eps_r*dC0` for the second, where dC0 is the bare
+    `(2p*eps_0/pi)*Lterm` quantity.
+
+    Reading the 2021 prefactor as "eps_r times the 2013 correction" and then
+    applying it at the 2013 composition point gives `eps_eff*eps_r*dC0` --
+    the permittivity counted twice, and an overstated correction. Keeping
+    the composition here, keyed off the same name that chose the prefactor,
+    is what makes that mistake impossible to make by accident.
+
+    *In plain terms: the two papers disagree about how much of the substrate
+    the extra charge sits in. Getting that wrong once is a 50% error in the
+    correction; getting it wrong twice over is a 190% one.*
+    """
+    eps_eff = grid_effective_permittivity(eps_r)
+    if form == "eps0":
+        return eps_eff * (unloaded_c0_f + correction_f)
+    return eps_eff * unloaded_c0_f + correction_f
+
+
+def thin_spacer_capacitance_correction_f(
+    period_m: float,
+    spacer_thickness_m: float,
+    eps_r: float,
+    form: str | None = None,
+) -> float:
+    """The extra sheet capacitance (F per square) a nearby ground plane adds.
+
+        dC = (2p * eps_0 / pi) * -ln(1 - exp(-4*pi*d / p))          "eps0"
+        dC = (2p * eps_0 * eps_r / pi) * -ln(1 - exp(-4*pi*d / p))  "eps0_epsr"
+
+    Costa, Genovesi, Monorchio & Manara, arXiv:1211.1902 eq (10) (published
+    IEEE TAP 61(3), 1201-1209). `period_m` is Costa's D, the FSS repeat
+    distance; `spacer_thickness_m` is his d, the dielectric between the
+    printed pattern and the ground plane. The ratio that matters is d/p --
+    spacer thickness over CELL PERIOD, not over wavelength; eq (10) has no
+    frequency in it at all.
+
+    THE TWO FORMS ARE APPLIED AT DIFFERENT POINTS, and this function returns
+    only the term -- `_compose_thin_spacer_capacitance` decides where it
+    lands, and `capacitive_grid_sheet_capacitance_f` is the caller that does
+    both together. Taking the "eps0_epsr" return and pushing it through the
+    "eps0" composition would count the permittivity twice.
+
+      - "eps0" (Costa 2013): corrects the UNLOADED capacitance -- free
+        space, no substrate loading -- and Costa's eq (6) loading,
+        eps_eff = (eps_r + 1)/2, is applied to the corrected sum afterwards.
+        Net effect on the loaded capacitance: `eps_eff` times this return.
+      - "eps0_epsr" (Costa & Borgese 2021): corrects an ALREADY-LOADED
+        capacitance, so this return is added as-is and never meets eps_eff.
+        Net effect on the loaded capacitance: exactly this return.
+
+    So the two published answers differ by `eps_r / eps_eff` on the loaded
+    capacitance -- 1.487 at eps_r = 2.9 -- not by `eps_r`.
+
+    The 2021 placement has a physical argument behind it, worth stating
+    because the difference is not arbitrary: this correction is a
+    patch-to-GROUND capacitance whose field sits entirely inside the
+    substrate, so eps_r is the permittivity it should see, whereas the gap
+    capacitance between neighbouring patches straddles air and substrate and
+    so sees eps_eff. That is a reason to prefer the 2021 form, not a verdict
+    on it; which is right is #234, and "eps0" stays the conservative default.
+
+    The return is always >= 0 and falls monotonically as the spacer thickens:
+    at d/p = 0.25 it is ~2.2% of C0, at d/p = 0.5 under 0.1%, and it tends to
+    zero rather than reaching it.
+
+    *In plain terms: how much extra electrical charge the printed pattern
+    stores because there is metal close behind it. More stored charge means
+    the surface resonates lower, so leaving this term out draws the
+    resonance too high.*
+
+    NOT GATED AT d/p = 0.3, deliberately. Costa writes the regime boundary
+    as `if (d > 0.3D)` inside eq (6), but eq (10) itself decays smoothly and
+    is a strictly better approximation on both sides of that ratio. Gating
+    it would put a step discontinuity in the capacitance at exactly the
+    ratio this programme's designs cluster around, which is an optimiser
+    hazard with nothing physical behind it. This is a reasoned deviation
+    from a literal reading of the paper, not an oversight (#245).
+
+    `form` selects between the two published forms (#234) and defaults
+    to the module-level `COSTA_EQ10_FORM`. As a bare term, the "eps0"
+    form does not depend on `eps_r` and the "eps0_epsr" form is exactly
+    `eps_r` times it -- but see above: they do not land in the same place.
+    """
+    p = _require_positive_length("period_m", period_m)
+    d = _require_positive_length("spacer_thickness_m", spacer_thickness_m)
+    if eps_r < 1:
+        raise ValueError(f"eps_r must be >= 1; got {eps_r!r}.")
+    form = _resolve_thin_spacer_form(form)
+    permittivity = EPS0 if form == "eps0" else EPS0 * eps_r
+    log_term = -math.log1p(-math.exp(-4 * math.pi * d / p))
+    return (2 * p * permittivity / math.pi) * log_term
+
+
+def capacitive_grid_sheet_capacitance_f(
+    period_m: float,
+    gap_m: float,
+    eps_r: float,
+    spacer_thickness_m: float | None = None,
+    form: str | None = None,
+) -> float:
     """Sheet capacitance (farads per square) of a capacitive patch grid.
 
         C = eps_0 * eps_eff * (2p / pi) * ln(1 / sin(pi*g / 2p))
@@ -929,6 +1136,25 @@ def capacitive_grid_sheet_capacitance_f(period_m: float, gap_m: float, eps_r: fl
     Luukkonen's grid capacitance, as used by Costa et al. and adopted in
     #111. `gap_m` must be less than `period_m`: the gap is the space
     between adjacent patches within one period, not the period itself.
+
+    `spacer_thickness_m` is OPTIONAL and describes a ground plane sitting
+    that far behind the grid. Given, Costa's thin-spacer correction (eq 10,
+    `thin_spacer_capacitance_correction_f`, #245) is applied -- at the point
+    the selected form applies it, which is the whole of
+    `_compose_thin_spacer_capacitance`:
+
+        "eps0"      C = eps_eff * (C0_unloaded + dC)   Costa 2013, the default
+        "eps0_epsr" C = eps_eff * C0_unloaded + dC     Costa & Borgese 2021
+
+    Under "eps0" the correction is a free-space quantity that eq (6) then
+    loads; under "eps0_epsr" it already carries eps_r and is added to an
+    already-loaded capacitance. Mixing the two -- loading the eps_r-bearing
+    term as well -- counts the permittivity twice and is the easiest thing
+    to get wrong here.
+
+    Omitted (the default), the returned value is bit-for-bit the
+    free-standing result it has always been -- the Babinet dual test and
+    every caller with no ground plane behind the grid are untouched.
     """
     p = _require_positive_length("period_m", period_m)
     g = _require_positive_length("gap_m", gap_m)
@@ -939,7 +1165,17 @@ def capacitive_grid_sheet_capacitance_f(period_m: float, gap_m: float, eps_r: fl
         )
     eps_eff = grid_effective_permittivity(eps_r)
     s = math.sin(math.pi * g / (2 * p))
-    return EPS0 * eps_eff * (2 * p / math.pi) * math.log(1 / s)
+    log_factor = math.log(1 / s)
+    if spacer_thickness_m is None:
+        # The original expression, verbatim and in its original association
+        # order. Factoring eps_eff out of it to share a code path with the
+        # corrected branch below would move the rounding by one bit on some
+        # inputs, and "bit-for-bit unchanged" above is meant literally.
+        return EPS0 * eps_eff * (2 * p / math.pi) * log_factor
+    form = _resolve_thin_spacer_form(form)
+    unloaded = EPS0 * (2 * p / math.pi) * log_factor
+    correction = thin_spacer_capacitance_correction_f(p, spacer_thickness_m, eps_r, form)
+    return _compose_thin_spacer_capacitance(unloaded, correction, eps_r, form)
 
 
 def inductive_grid_sheet_inductance_h(period_m: float, strip_width_m: float) -> float:
