@@ -49,6 +49,7 @@ from orchestration.approval import (
     request_loop_step_approval,
 )
 from orchestration.design_loop import (
+    DEFAULT_SIMULATION_ADAPTER,
     GATED_STEPS,
     REDESIGN_ACTIONS,
     STEP_ORDER,
@@ -56,8 +57,13 @@ from orchestration.design_loop import (
     DesignLoopValidationError,
     DesignStep,
     LoopDecision,
+    _simulation_adapter_for,
     advance_loop_step,
     start_design_loop,
+)
+from simulation.base import SimulatorError
+from simulation.meep import (
+    periodic_absorber_capability_gaps as meep_periodic_absorber_capability_gaps,
 )
 
 REQUIREMENTS = {
@@ -1423,3 +1429,80 @@ def test_absorber_analysis_reports_a_range_for_a_bracketed_permittivity():
     state = advance_loop_step(state, bracketed)
     result = state.decisions[-1].result
     assert result["worst_absorption_low"] <= result["worst_absorption_high"]
+
+
+# --- #229: SIMULATION dispatches on the family's declared adapter -----------
+
+
+def test_simulation_adapter_defaults_to_nec2_with_no_architecture_decision():
+    """Nothing that worked before this dispatch existed changes behaviour."""
+    state = start_design_loop(REQUIREMENTS)
+    assert _simulation_adapter_for(state) == DEFAULT_SIMULATION_ADAPTER == "NEC2"
+
+
+def test_patch_declares_nec2_and_absorber_declares_meep():
+    state = start_design_loop(REQUIREMENTS)
+    patch = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    absorber = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    assert _simulation_adapter_for(patch) == "NEC2"
+    assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
+
+
+def test_absorber_simulation_refuses_rather_than_returning_a_lossless_answer():
+    """simulation/meep.py models conductors as ideal PEC and dielectrics as
+    lossless, with no periodic boundary. A run would report that every
+    absorber absorbs nothing -- confidently wrong, not merely uncertain."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    assert state.current_step == DesignStep.SIMULATION.value
+
+    with pytest.raises(SimulatorError) as excinfo:
+        advance_loop_step(
+            state,
+            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+        )
+    message = str(excinfo.value)
+    for gap in ("no_periodic_boundary", "no_lossy_dielectric", "no_resistive_sheet"):
+        assert gap in message
+
+
+def test_the_absorbers_closed_form_analysis_survives_the_simulation_refusal():
+    """#111's two tiers: the fast closed form is this candidate's evidence
+    and stays recorded; what is unavailable is the confirmation above it."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    analysis = state.decisions[-1]
+
+    with pytest.raises(SimulatorError):
+        advance_loop_step(
+            state,
+            {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+        )
+    # The refusal raised; it did not erase what was already established.
+    assert state.decisions[-1] is analysis
+    assert analysis.result["function"] == "absorber_band_response"
+    assert analysis.provenance == "CALCULATED"
+
+
+def test_every_declared_capability_gap_names_cost_and_a_cheapest_test():
+    """The charter's bar for a warning: what is assumed, what it costs if
+    that is wrong, and the cheapest way to find out."""
+    gaps = meep_periodic_absorber_capability_gaps()
+    assert gaps
+    for gap in gaps:
+        assert gap["gap"] and gap["assumed"] and gap["costs"] and gap["cheapest_test"]
+
+
+def test_families_with_no_declared_adapter_still_fall_back_to_nec2():
+    """DIFFUSIVE, POLARIZATION_CONVERTER and REFLECTION_PHASE declare no
+    adapter and so keep NEC2 -- the behaviour they had before this dispatch
+    existed. That is deliberately unchanged here and deliberately not an
+    endorsement: they are periodic metasurfaces too, and NEC2 cannot express
+    one. Pointing them at MEEP_FLOQUET is #230's call to make, not a silent
+    side effect of the absorber fix."""
+    state = start_design_loop(REQUIREMENTS)
+    for family in ("DIFFUSIVE", "POLARIZATION_CONVERTER", "REFLECTION_PHASE"):
+        advanced = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+        assert _simulation_adapter_for(advanced) == "NEC2"

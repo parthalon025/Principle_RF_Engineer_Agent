@@ -203,6 +203,84 @@ _DEFAULT_CHARACTERISTIC_LENGTH_M = 1e-3
 _FIELD_COMPONENTS = frozenset({"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"})
 
 
+# ---------------------------------------------------------------------------
+# What this adapter CANNOT yet do for a periodic printed absorber (#229).
+#
+# #111 chose Meep over NEC2 for metamaterial unit cells and was right about
+# the direction: Meep the SIMULATOR supports Bloch-periodic boundaries,
+# complex permittivity and conductivity, all of which a unit cell needs and
+# NEC2's thin-wire formulation cannot express at all. But THIS ADAPTER is a
+# narrow slice of Meep (see SCOPE above), and three of the things it leaves
+# out are precisely an absorber's whole mechanism.
+#
+# Kept here, next to the code whose limits they describe, rather than in the
+# design loop -- an adapter is the only honest place to state what it can do.
+# ---------------------------------------------------------------------------
+
+PERIODIC_ABSORBER_CAPABILITY_GAPS: tuple[dict[str, str], ...] = (
+    {
+        "gap": "no_periodic_boundary",
+        "assumed": (
+            "the structure is finite and isolated: _run_reflectance_cross_check "
+            "sets boundary_layers=[mp.PML(...)] on every side and never sets a "
+            "k_point, so there is no Bloch-periodic boundary anywhere in this "
+            "adapter"
+        ),
+        "costs": (
+            "a unit cell IS an infinite periodic array represented by one cell; "
+            "simulated between absorbing walls it is a lone element in free "
+            "space instead, and the coupling to its neighbours -- which is what "
+            "sets the resonance -- is absent"
+        ),
+        "cheapest_test": (
+            "add k_point=mp.Vector3() and periodic boundaries on the two "
+            "in-plane axes, then reproduce a published unit-cell reflectance"
+        ),
+    },
+    {
+        "gap": "no_lossy_dielectric",
+        "assumed": (
+            "substrates are lossless: _build_geometry_list builds "
+            "mp.Medium(epsilon=<real>, mu=<real>) with no D_conductivity and no "
+            "imaginary part"
+        ),
+        "costs": (
+            "the spacer's own dissipation is discarded, and on a printed "
+            "silicone or TPU stack that is 20-36 % of the loss budget, not a "
+            "rounding term"
+        ),
+        "cheapest_test": (
+            "map a loss tangent onto Meep's D_conductivity and check the slab's "
+            "reflectance against the closed form in rf_tools/absorber.py"
+        ),
+    },
+    {
+        "gap": "no_resistive_sheet",
+        "assumed": (
+            "conductors are mp.metal -- an IDEAL, lossless perfect electric "
+            "conductor (see SCOPE above)"
+        ),
+        "costs": (
+            "a printed absorber dissipates in a RESISTIVE patterned layer; "
+            "modelled as a perfect conductor that layer cannot absorb anything, "
+            "so the run reports a near-perfect reflector no matter what was "
+            "designed -- a confidently wrong answer rather than a noisy one"
+        ),
+        "cheapest_test": (
+            "give conductors a finite conductivity and confirm a sheet at "
+            "377 ohm/sq absorbs rather than reflects"
+        ),
+    },
+)
+
+
+def periodic_absorber_capability_gaps() -> list[dict[str, str]]:
+    """The reasons this adapter cannot yet simulate a printed periodic
+    absorber, each naming what is assumed, what it costs, and the cheapest
+    way to close it. Empty list would mean it can."""
+    return [dict(gap) for gap in PERIODIC_ABSORBER_CAPABILITY_GAPS]
+
+
 def _import_meep() -> Any:
     """Guarded `import meep as mp` -- deferred to inside this function
     (rather than a top-of-module `import`) because Meep genuinely will not

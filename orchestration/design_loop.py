@@ -39,11 +39,20 @@ built and tested -- not reimplementing any of them:
                 is THE recommended one for a two-ended eps_r" is a genuine
                 new design question ADR-0015 does not settle -- left for a
                 separate ticket rather than decided inline here.
-  - SIMULATION  calls simulation.nec2pp.run_nec2_simulation (Phase 6), then
-                (issue #101) derives VSWR/return loss from that call's own
-                feed-point impedance against an explicit
-                reference_impedance_ohms -- see _handle_simulation's own
-                docstring.
+  - SIMULATION  dispatches on the design family's declared
+                `simulation_adapter` (issue #229; ADR-0018 declared the
+                field, nothing read it). NEC2 is the default and PATCH
+                declares it by name: simulation.nec2pp.run_nec2_simulation
+                (Phase 6), then (issue #101) derives VSWR/return loss from
+                that call's own feed-point impedance against an explicit
+                reference_impedance_ohms -- see _simulate_nec2's own
+                docstring. ABSORBER declares MEEP_FLOQUET, because NEC2 is
+                a thin-wire method-of-moments code with no periodic
+                boundary of any kind: a metamaterial unit cell is not a
+                hard case for it but an inexpressible one. That path is
+                honest about simulation/meep.py's own three gaps rather
+                than returning a number the adapter cannot stand behind --
+                see _simulate_meep_floquet.
   - OPTIMIZATION calls
                 optimization.rf_objectives.optimize_patch_length_for_target_
                 frequency (Phase 9), the one named optimization use case
@@ -139,6 +148,10 @@ from rf_tools.calculations import return_loss_db as _return_loss_db
 from rf_tools.calculations import vswr_from_gamma as _vswr_from_gamma
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
+)
+from simulation.base import SimulatorError as _SimulatorError
+from simulation.meep import (
+    periodic_absorber_capability_gaps as _meep_periodic_absorber_capability_gaps,
 )
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
 
@@ -703,8 +716,103 @@ def _handle_analysis_patch(
     return "calculation", result, "CALCULATED"
 
 
+DEFAULT_SIMULATION_ADAPTER = "NEC2"
+
+
+def _simulation_adapter_for(state: DesignLoopState) -> str:
+    """Which solver this iteration's design family calls for.
+
+    Reads `simulation_adapter` off the Design family registry entry
+    (ADR-0018 declared the field; nothing read it until #229). A family that
+    declares none, or an iteration with no ARCHITECTURE decision yet, falls
+    back to NEC2 -- the solver every family used before this dispatch
+    existed, so nothing that worked before changes behaviour.
+    """
+    family_name = _family_of_record(state)
+    if family_name is None:
+        return DEFAULT_SIMULATION_ADAPTER
+    try:
+        family = _get_design_family(family_name)
+    except _UnknownDesignFamilyError:
+        # ARCHITECTURE validates the name against the registry, so this is
+        # unreachable in a normal loop; falling back beats raising from a
+        # step that is not the one that named the family.
+        return DEFAULT_SIMULATION_ADAPTER
+    return family.simulation_adapter or DEFAULT_SIMULATION_ADAPTER
+
+
 def _handle_simulation(
-    _state: DesignLoopState, step_input: dict[str, Any]
+    state: DesignLoopState, step_input: dict[str, Any]
+) -> tuple[str, dict[str, Any], str | None]:
+    """Dispatch SIMULATION to the solver this design family declares (#229).
+
+    Before this, every family ran NEC2. NEC2 is a thin-wire method-of-
+    moments code: it solves Maxwell's equations honestly, but the only
+    geometry it can express is wires in free space over an optional ground.
+    It has no periodic boundary, so it cannot represent a metamaterial unit
+    cell at all -- and a unit cell is not a hard case for it, it is an
+    inexpressible one. In plain terms: it was being asked to model an
+    infinite repeating surface using a tool whose entire vocabulary is
+    single wires.
+
+    NEC2 remains the default and PATCH keeps it by name. ABSORBER declares
+    MEEP_FLOQUET, whose handler reports honestly on what that adapter can
+    and cannot yet do.
+    """
+    adapter = _simulation_adapter_for(state)
+    if adapter == "MEEP_FLOQUET":
+        return _simulate_meep_floquet(step_input)
+    return _simulate_nec2(step_input)
+
+
+def _simulate_meep_floquet(
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    """The Floquet unit-cell path -- correct destination, incomplete adapter.
+
+    `simulation/meep.py` is a deliberately narrow slice of Meep, and three
+    of the things it leaves out are exactly a printed absorber's mechanism:
+    no periodic boundary, no lossy dielectric, no resistive sheet. With all
+    three missing, a run would not be uncertain -- it would model a
+    lossless perfect reflector and report that it absorbs nothing, for
+    every candidate, no matter what was designed.
+
+    So this raises instead, naming each gap and how to close it. That is
+    not the charter's "warn, never block": that rule governs withholding a
+    CANDIDATE from the reader, and nothing is withheld here -- ANALYSIS's
+    closed-form absorption (rf_tools/absorber.py) is already recorded and
+    survives this step's failure, exactly as #111's two-tier design
+    intends. What is refused is manufacturing a SIMULATED-provenance number
+    that the adapter cannot actually stand behind, the same discipline
+    request_loop_step_approval uses when it refuses to fabricate an
+    approval.
+    """
+    gaps = _meep_periodic_absorber_capability_gaps()
+    if gaps:
+        detail = "; ".join(f"{gap['gap']}: {gap['costs']}" for gap in gaps)
+        raise _SimulatorError(
+            "MEEP_FLOQUET is the right adapter for a periodic absorber cell "
+            "and simulation/meep.py cannot yet deliver one. Missing: "
+            f"{detail}. ANALYSIS's closed-form absorption still stands as this "
+            "candidate's evidence (rf_tools/absorber.py, provenance "
+            "CALCULATED); what is unavailable is the full-wave confirmation "
+            "that would raise it to SIMULATED. See simulation/meep.py's "
+            "periodic_absorber_capability_gaps() for how to close each one."
+        )
+    # Deliberately NOT a fallback to NEC2. Once #230 closes the gaps above,
+    # this branch becomes reachable and must call Meep -- quietly running the
+    # wire solver instead would be the exact defect this dispatch exists to
+    # remove, and it would look like success.
+    raise NotImplementedError(
+        "simulation/meep.py reports no remaining capability gaps for a "
+        "periodic absorber, so this path must now call run_meep_simulation "
+        "with a Floquet unit cell (#230). Wire that call here; do not fall "
+        "back to NEC2."
+    )
+
+
+def _simulate_nec2(
+    step_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any], str | None]:
     """Runs run_nec2_simulation, then (issue #101) derives VSWR and return
     loss from the feed-point impedance that call already returns, against
