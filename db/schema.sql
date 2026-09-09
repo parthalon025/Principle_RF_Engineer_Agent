@@ -236,3 +236,45 @@ ON document_chunks USING gin (to_tsvector('english', content));
 
 CREATE INDEX IF NOT EXISTS designs_requirements_gin
 ON designs USING gin (requirements);
+
+-- Issue #258 ticket 1 (orchestration/approval_audit.py): the durable,
+-- independent audit trail for every human approval/refusal decision made
+-- against the design-loop gate (orchestration/approval.py) or the
+-- design-release gate (designs/release_approval.py). Both of those gates'
+-- signing keys are process-local and deliberately non-persistent -- a
+-- receipt does not survive a restart, by design -- so this table is the
+-- only record of "who decided what, when" that outlives one process.
+--
+-- `fingerprint_fields` is the exact decision content a human was shown
+-- (the same dict `request_loop_step_approval`/`request_design_release_
+-- approval` fingerprint their receipt to), stored in full -- never a
+-- summary -- so the record answers "what exactly did they approve", not
+-- just "did they approve something". `decision_fingerprint` is that same
+-- content's canonical SHA-256 hash (the identical algorithm both approval
+-- modules already use for their own receipts), stored alongside it so a
+-- caller holding a still-live receipt can confirm this audit row is for
+-- the same decision without re-deriving the hash.
+--
+-- `loop_id` is nullable: only a loop-step gate decision has one (a
+-- design-release decision's fingerprint has no loop_id at all) -- see
+-- orchestration/approval_audit.py's module docstring.
+--
+-- No UPDATE or DELETE statement is ever issued against this table by
+-- orchestration/approval_audit.py -- that module structurally provides no
+-- function that could (tests/test_approval_audit.py's structural test
+-- holds this at the Python-API level). This table has no trigger
+-- enforcing that at the SQL level; the guarantee is that nothing in this
+-- codebase's own I/O layer ever asks for one.
+CREATE TABLE IF NOT EXISTS approval_audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    gate TEXT NOT NULL,
+    loop_id TEXT,
+    fingerprint_fields JSONB NOT NULL,
+    decision_fingerprint TEXT NOT NULL,
+    approved_by TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS approval_audit_log_loop_id_idx
+ON approval_audit_log (loop_id);
