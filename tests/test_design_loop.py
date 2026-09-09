@@ -42,6 +42,11 @@ from conftest import make_fake_executable
 
 import designs.design_families as design_families_module
 import orchestration.design_loop as design_loop_module
+from designs.element_alphabet import (
+    fetch_symbol_entries,
+    insert_process_record,
+    insert_symbol_entry,
+)
 from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
 from measurement.external import ExternalMeasurementError
 from orchestration.approval import (
@@ -2500,20 +2505,63 @@ def test_optimization_routes_an_explicitly_continuous_family_the_same_way(monkey
     assert new_state.decisions[-1].result["achieved_frequency_hz"] == pytest.approx(2.451e9)
 
 
-def test_optimization_refuses_a_combinatorial_family_instead_of_guessing(monkeypatch):
-    """This ticket does NOT implement the combinatorial symbol-placement
-    search (issue #255's own scope: separate, later work, blocked on the
-    Element/Coding-Alphabet library). What it must never do is silently run
-    the continuous patch-length search against a family whose whole design
-    method is "which pre-characterised tile goes in which grid square" --
-    the exact "wrong tool applied silently" defect issues #239/#241 already
-    removed for ANALYSIS/SIMULATION. This is the chosen safety net: raise,
-    naming the family and the missing search, rather than pass a Tier B
-    family through to a search that does not apply to it."""
-    combinatorial = _dc_replace(
-        design_families_module.REFLECTION_PHASE, optimizer_class="COMBINATORIAL"
-    )
-    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: combinatorial)
+_COMBINATORIAL_SYMBOL_ENTRIES = [
+    {
+        "element_family": "interdigital_elc",
+        "symbol": "elc_finger_4",
+        "frequency_low_hz": 8.0e9,
+        "frequency_high_hz": 12.0e9,
+        "incidence_angle_low_deg": 0.0,
+        "incidence_angle_high_deg": 30.0,
+        "process_id": 1,
+        "geometry": {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]},
+        "response": [{"frequency_hz": 10.0e9, "magnitude": 0.99, "phase_deg": 0.0}],
+    },
+    {
+        "element_family": "interdigital_elc",
+        "symbol": "elc_finger_6",
+        "frequency_low_hz": 8.0e9,
+        "frequency_high_hz": 12.0e9,
+        "incidence_angle_low_deg": 0.0,
+        "incidence_angle_high_deg": 30.0,
+        "process_id": 1,
+        "geometry": {"shape": "box", "p1_m": [0.002, 0.0, 0.0], "p2_m": [0.003, 0.001, 0.0]},
+        "response": [{"frequency_hz": 10.0e9, "magnitude": 0.97, "phase_deg": 180.0}],
+    },
+]
+
+_COMBINATORIAL_OPTIMIZATION_INPUT = {
+    "element_family": "interdigital_elc",
+    "symbol_entries": _COMBINATORIAL_SYMBOL_ENTRIES,
+    "frequency_hz": 10.0e9,
+    "incidence_angle_deg": 15.0,
+    "process_id": 1,
+    "target": [[0.0, 180.0]],
+    "delta_phi_max_deg": 200.0,
+    "random_seed": 1,
+}
+
+
+# NOTE ON THE TEST THIS REPLACED (test_optimization_refuses_a_combinatorial_
+# family_instead_of_guessing): that test encoded ticket 1's INTERIM safety
+# net -- REFLECTION_PHASE declaring optimizer_class="COMBINATORIAL" had to
+# raise, because nothing was wired for it yet. Issue #267 (this ticket) is
+# what finishes wiring it, so that premise is no longer true, BY DESIGN --
+# this is a deliberate, expected consequence of finishing #255/#267, not an
+# accidental regression. test_optimization_refuses_an_unrecognised_
+# optimizer_class below still covers "an unhandled value still raises" with
+# a made-up third value, unchanged.
+def test_optimization_routes_a_combinatorial_family_to_the_real_combinatorial_search(
+    monkeypatch,
+):
+    """Issue #267: REFLECTION_PHASE now genuinely declares optimizer_class
+    ="COMBINATORIAL" (designs/design_families.py, unmonkeypatched -- the
+    real registry entry), and OPTIMIZATION must route it to the real
+    combinatorial symbol-placement search, resolving real candidates from
+    the supplied symbol_entries and returning a real placed layout through
+    the SAME successful-step shape (kind="optimization", a dict result,
+    CALCULATED provenance) the continuous path already uses -- never the
+    patch-length search."""
 
     def exploding_patch_search(**kwargs):
         raise AssertionError("the patch-length search must never run for a COMBINATORIAL family")
@@ -2522,13 +2570,131 @@ def test_optimization_refuses_a_combinatorial_family_instead_of_guessing(monkeyp
         design_loop_module, "_optimize_patch_length_for_target_frequency", exploding_patch_search
     )
     state = _at_optimization("REFLECTION_PHASE")
+    new_state = advance_loop_step(state, dict(_COMBINATORIAL_OPTIMIZATION_INPUT))
+
+    decision = new_state.decisions[-1]
+    assert decision.step == DesignStep.OPTIMIZATION.value
+    assert decision.kind == "optimization"
+    assert decision.provenance == "CALCULATED"
+    assert decision.result["method"] == "combinatorial_symbol_placement"
+    # Each candidate matches its target exactly (0 deg / 180 deg), so the
+    # search should find the exact assignment with ~zero error.
+    assert decision.result["layout"] == [["elc_finger_4", "elc_finger_6"]]
+    assert decision.result["achieved_error"] == pytest.approx(0.0, abs=1e-6)
+    # candidate_snapshot is JSON-safe (a list, not a dict keyed by tuples).
+    assert isinstance(decision.result["candidate_snapshot"], list)
+    assert new_state.current_step == DesignStep.VERIFICATION.value
+
+
+def test_optimization_combinatorial_end_to_end_with_real_alphabet_rows(db_conn):
+    """Issue #267 acceptance criterion 2: seed REAL rows via
+    designs.element_alphabet.insert_process_record/insert_symbol_entry
+    against the live Postgres already reachable in this environment
+    (tests/conftest.py's db_conn fixture -- a real psycopg connection,
+    rolled back on teardown, tests/test_element_alphabet.py's own
+    TestSymbolAlphabetEntryDatabaseRoundTrip pattern), fetch them back with
+    fetch_symbol_entries exactly the way a real caller would, then drive a
+    REFLECTION_PHASE design loop to its OPTIMIZATION step and confirm the
+    real placed layout comes back through the SAME successful-step shape
+    (the same decision-recording path via advance_loop_step) the
+    CONTINUOUS path already uses -- not a special-cased return shape."""
+    process = insert_process_record(
+        db_conn,
+        machine="Voltera NOVA",
+        ink="MXene Ti3C2Tx",
+        ink_grade="battery grade",
+        substrate_stack="50 um PET on 3 mm PDMS carrier",
+        pass_count=3,
+        achieved_film_thickness_m=12.0e-6,
+        cure_schedule="80 degrees C for 30 min, ambient RH",
+    )
+    insert_symbol_entry(
+        db_conn,
+        element_family="interdigital_elc",
+        symbol="elc_finger_4",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=12.0e9,
+        incidence_angle_low_deg=0.0,
+        incidence_angle_high_deg=30.0,
+        process_id=process["id"],
+        geometry={"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]},
+        response=[{"frequency_hz": 10.0e9, "magnitude": 0.99, "phase_deg": 0.0}],
+    )
+    insert_symbol_entry(
+        db_conn,
+        element_family="interdigital_elc",
+        symbol="elc_finger_6",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=12.0e9,
+        incidence_angle_low_deg=0.0,
+        incidence_angle_high_deg=30.0,
+        process_id=process["id"],
+        geometry={"shape": "box", "p1_m": [0.002, 0.0, 0.0], "p2_m": [0.003, 0.001, 0.0]},
+        response=[{"frequency_hz": 10.0e9, "magnitude": 0.97, "phase_deg": 180.0}],
+    )
+    fetched_entries = fetch_symbol_entries(db_conn, "interdigital_elc")
+    assert len(fetched_entries) == 2  # both rows this test just inserted, nothing stale
+
+    state = _at_optimization("REFLECTION_PHASE")
+    step_input = {
+        "element_family": "interdigital_elc",
+        "symbol_entries": fetched_entries,
+        "frequency_hz": 10.0e9,
+        "incidence_angle_deg": 15.0,
+        "process_id": process["id"],
+        "target": [[0.0, 180.0]],
+        "delta_phi_max_deg": 200.0,
+        "random_seed": 1,
+    }
+    new_state = advance_loop_step(state, step_input)
+
+    decision = new_state.decisions[-1]
+    assert decision.step == DesignStep.OPTIMIZATION.value
+    assert decision.kind == "optimization"
+    assert decision.provenance == "CALCULATED"
+    assert decision.result["method"] == "combinatorial_symbol_placement"
+    assert decision.result["layout"] == [["elc_finger_4", "elc_finger_6"]]
+    assert decision.result["achieved_error"] == pytest.approx(0.0, abs=1e-6)
+    assert new_state.current_step == DesignStep.VERIFICATION.value
+
+
+def test_optimization_combinatorial_zero_matching_entries_fails_loudly():
+    """Design decision 4a: a shared candidate lookup that matches NOTHING
+    (the real state of the alphabet in production today -- issue #132's
+    print-and-measure work has not happened) must raise a clear,
+    named error identifying the missing key, and never fall through to the
+    continuous patch-length search."""
+    state = _at_optimization("REFLECTION_PHASE")
+    step_input = dict(_COMBINATORIAL_OPTIMIZATION_INPUT, symbol_entries=[])
     with pytest.raises(DesignLoopValidationError) as exc:
-        advance_loop_step(state, {})
+        advance_loop_step(state, step_input)
     message = str(exc.value)
     assert "REFLECTION_PHASE" in message
-    assert "COMBINATORIAL" in message
+    assert "interdigital_elc" in message
+    assert repr(10.0e9) in message  # frequency_hz, named exactly
+    assert "15.0" in message  # incidence_angle_deg
+    assert "process_id=1" in message
     assert state.current_step == DesignStep.OPTIMIZATION.value
     assert all(d.step != DesignStep.OPTIMIZATION.value for d in state.decisions)
+
+
+def test_optimization_combinatorial_empty_candidate_shelf_is_wrapped(monkeypatch):
+    """Design decision 4b: EmptyCandidateShelfError -- raised by
+    optimization.combinatorial.combinatorial_symbol_placement itself if a
+    narrower gap slips past the zero-match check above -- must surface as
+    this loop's own DesignLoopValidationError, with the underlying
+    message intact, the same wrapping convention _handle_architecture/
+    _handle_analysis already use for their own adapter-level exceptions."""
+
+    def exploding_search(**kwargs):
+        raise design_loop_module._EmptyCandidateShelfError(
+            "position(s) [(1, 0)] have zero candidate symbols to search over."
+        )
+
+    monkeypatch.setattr(design_loop_module, "_combinatorial_symbol_placement", exploding_search)
+    state = _at_optimization("REFLECTION_PHASE")
+    with pytest.raises(DesignLoopValidationError, match="zero candidate symbols"):
+        advance_loop_step(state, dict(_COMBINATORIAL_OPTIMIZATION_INPUT))
 
 
 def test_optimization_refuses_an_unrecognised_optimizer_class(monkeypatch):
