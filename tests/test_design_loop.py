@@ -48,6 +48,13 @@ from designs.element_alphabet import (
     insert_symbol_entry,
 )
 from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
+from designs.requirement_targets import propose_intended_effect, propose_target
+from designs.requirements_document import (
+    DocumentStatus,
+    draft_requirements_document,
+    extract_requirement_fields,
+    revise_requirements_document,
+)
 from measurement.external import ExternalMeasurementError
 from optimization.combinatorial import CombinatorialPlacementResult, SymbolOption
 from orchestration.approval import (
@@ -196,7 +203,9 @@ def test_a_granted_receipt_round_trips_through_a_dict_and_still_works():
     receipt_dict = receipt.to_dict()
     assert isinstance(receipt_dict, dict)
 
-    new_state = advance_loop_step(state, step_input, approval=receipt_dict)
+    new_state = advance_loop_step(
+        state, step_input, approval=receipt_dict, requirements_document_status="CONFIRMED"
+    )
     assert new_state.current_step == DesignStep.ANALYSIS.value
 
 
@@ -509,7 +518,9 @@ def test_architecture_requires_a_design_family():
         fields, approved_by="jane", approval_callback=lambda f: True
     )
     with pytest.raises(DesignLoopValidationError, match="design_family"):
-        advance_loop_step(state, step_input, approval=receipt)
+        advance_loop_step(
+            state, step_input, approval=receipt, requirements_document_status="CONFIRMED"
+        )
 
 
 def test_architecture_decision_records_the_design_family_alongside_decision_and_rationale():
@@ -1355,7 +1366,12 @@ def _grant_and_advance(
 ) -> DesignLoopState:
     """Advance past `step` for real (state.current_step must equal it),
     via the real handler, granting a real approval first if `step` is
-    gated."""
+    gated. `requirements_document_status="CONFIRMED"` is passed
+    unconditionally (issue #325, docs/adr/0031) -- harmless for every step
+    other than ARCHITECTURE, the only one advance_loop_step actually reads
+    it for, and keeps every ARCHITECTURE-advancing call site in this file
+    that goes through this helper working unchanged now that ARCHITECTURE
+    also gates on it."""
     assert state.current_step == step.value
     step_input = step_input_override or _valid_step_input(state, step)
     approval = None
@@ -1364,7 +1380,9 @@ def _grant_and_advance(
         approval = request_loop_step_approval(
             fields, approved_by="jane.engineer", approval_callback=lambda f: True
         )
-    return advance_loop_step(state, step_input, approval=approval)
+    return advance_loop_step(
+        state, step_input, approval=approval, requirements_document_status="CONFIRMED"
+    )
 
 
 def _advance_to(
@@ -1458,6 +1476,152 @@ def test_architecture_distinguishes_an_unread_bound_from_a_family_with_none():
     assert "Gustafsson" in unread_bound["citation"]
     assert none_bound["status"] == "none_exists"
     assert none_bound != unread_bound
+
+
+# ---------------------------------------------------------------------------
+# Group 2d (issue #325, docs/adr/0031, CONTEXT.md's "Requirements document"):
+# ARCHITECTURE gates on the design's Requirements document reaching
+# CONFIRMED, as ONE MORE condition inside advance_loop_step's existing
+# `if current_step in GATED_STEPS:` block -- checked immediately after
+# check_loop_step_approval_gate, scoped to DesignStep.ARCHITECTURE only, not
+# a second, independent check bolted on elsewhere. This module stays
+# DB-free (see this module's own docstring's "STATE DESIGN" section):
+# `requirements_document_status` is the caller's own freshest read of
+# designs.requirements_document.read_requirements_document's
+# `document_status`, passed in exactly like `approval` already is, never
+# fetched by design_loop.py itself.
+# ---------------------------------------------------------------------------
+
+_DOC_REQUIREMENT_IDS = ["R1"]
+
+
+def _draft_requirements_document_with_target(
+    value: float = 2.45e9, effect: str = "behave as a magnetic mirror"
+) -> dict:
+    """A real DRAFT Requirements document (issue #321) carrying one
+    requirement's proposed target and intended effect (issue #323) -- used
+    to demonstrate the ARCHITECTURE gate against real document content,
+    not a bare status string."""
+    target = propose_target(value=value, comparator="EQUALS", unit="Hz")
+    target["intended_effect"] = propose_intended_effect(effect)
+    return draft_requirements_document(
+        _DOC_REQUIREMENT_IDS,
+        narrative="Customer needs a conformal reflector for the 2.45 GHz band.",
+        requirement_targets={"R1": target},
+    )
+
+
+def _confirm_requirements_document(document: dict) -> dict:
+    """Walk `document` through ADR-0031's full review cycle to CONFIRMED
+    (DRAFT -> UNDER_REVIEW -> REFINED -> CONFIRMED) via
+    revise_requirements_document, restating the same narrative/
+    requirement_targets at each step exactly like
+    tests/test_requirements_document.py's own revision tests do."""
+    for status in (DocumentStatus.UNDER_REVIEW, DocumentStatus.REFINED, DocumentStatus.CONFIRMED):
+        document = revise_requirements_document(
+            document,
+            status,
+            document["narrative"],
+            document["requirement_targets"],
+            _DOC_REQUIREMENT_IDS,
+        )
+    return document
+
+
+def test_architecture_is_refused_when_no_requirements_document_exists():
+    """`requirements_document_status=None` -- advance_loop_step's own
+    default, and also what a caller reading `read_requirements_document`'s
+    `"not_found"` result would pass -- refuses ARCHITECTURE with the same
+    OrchestrationError family the approval gate already raises, naming
+    what's missing. A valid approval receipt alone is not enough."""
+    state = start_design_loop(REQUIREMENTS)
+    step_input = _valid_step_input(state, DesignStep.ARCHITECTURE)
+    fields = _fingerprint(state, DesignStep.ARCHITECTURE, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane.engineer", approval_callback=lambda f: True
+    )
+    with pytest.raises(OrchestrationError, match="Requirements document"):
+        advance_loop_step(state, step_input, approval=receipt)
+    # The loop did not advance -- the same guarantee the approval gate
+    # itself already gives.
+    assert state.current_step == DesignStep.ARCHITECTURE.value
+
+
+@pytest.mark.parametrize("status", ["DRAFT", "UNDER_REVIEW", "REFINED"])
+def test_architecture_is_refused_while_the_requirements_document_is_not_yet_confirmed(status):
+    document = _draft_requirements_document_with_target()
+    for target_status in (DocumentStatus.UNDER_REVIEW, DocumentStatus.REFINED):
+        if document["status"] == status:
+            break
+        document = revise_requirements_document(
+            document,
+            target_status,
+            document["narrative"],
+            document["requirement_targets"],
+            _DOC_REQUIREMENT_IDS,
+        )
+    assert document["status"] == status
+
+    state = start_design_loop(REQUIREMENTS)
+    step_input = _valid_step_input(state, DesignStep.ARCHITECTURE)
+    fields = _fingerprint(state, DesignStep.ARCHITECTURE, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane.engineer", approval_callback=lambda f: True
+    )
+    with pytest.raises(OrchestrationError, match="CONFIRMED"):
+        advance_loop_step(
+            state,
+            step_input,
+            approval=receipt,
+            requirements_document_status=document["status"],
+        )
+    assert state.current_step == DesignStep.ARCHITECTURE.value
+
+
+def test_confirming_the_requirements_document_lets_the_same_architecture_call_succeed():
+    """The acceptance-criterion demo, end to end: the SAME loop state,
+    step_input and approval receipt that ARCHITECTURE refused while the
+    Requirements document was still DRAFT succeed immediately once #321/
+    #323's own machinery -- revise_requirements_document walking it to
+    CONFIRMED, extract_requirement_fields pulling the real target/
+    intended_effect off it -- confirms it. No other change to the call is
+    needed; only the freshly-read document status differs."""
+    document = _draft_requirements_document_with_target()
+    state = start_design_loop(REQUIREMENTS)
+    step_input = _valid_step_input(state, DesignStep.ARCHITECTURE)
+    fields = _fingerprint(state, DesignStep.ARCHITECTURE, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane.engineer", approval_callback=lambda f: True
+    )
+
+    with pytest.raises(OrchestrationError, match="CONFIRMED"):
+        advance_loop_step(
+            state,
+            step_input,
+            approval=receipt,
+            requirements_document_status=document["status"],
+        )
+    assert state.current_step == DesignStep.ARCHITECTURE.value
+
+    document = _confirm_requirements_document(document)
+    assert document["status"] == DocumentStatus.CONFIRMED.value
+
+    # #323's own extraction, proving this is real CONFIRMED-derived data --
+    # not a bare "CONFIRMED" string typed into the test.
+    extracted = extract_requirement_fields(
+        {"R1": {"requirement": "reduce RCS at 2.45 GHz"}}, document
+    )
+    assert extracted["R1"]["target"]["value"] == 2.45e9
+    assert extracted["R1"]["intended_effect"]["effect"] == "behave as a magnetic mirror"
+
+    new_state = advance_loop_step(
+        state,
+        step_input,
+        approval=receipt,
+        requirements_document_status=document["status"],
+    )
+    assert new_state.current_step == DesignStep.ANALYSIS.value
+    assert new_state.decisions[-1].kind == "architecture_decision"
 
 
 # --- #191: ANALYSIS dispatches on the design family -------------------------

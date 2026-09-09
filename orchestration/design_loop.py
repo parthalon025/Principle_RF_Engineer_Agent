@@ -141,6 +141,23 @@ recorded evidence into a verification-matrix entry rather than exercising
 new judgment. REQUIREMENTS is the loop's human-supplied starting input, not
 a step the loop "advances past" via advance_loop_step.
 
+REQUIREMENTS-DOCUMENT GATE (issue #325, docs/adr/0031): ARCHITECTURE carries
+ONE MORE precondition beyond the approval receipt every GATED_STEPS member
+already requires -- the design's Requirements document (designs/
+requirements_document.py, issue #321) must have reached `CONFIRMED` (ADR-0031:
+"you don't pick a physical approach before the customer's actual ask is
+locked in"). This is checked as part of the SAME `if current_step in
+GATED_STEPS:` block in advance_loop_step, immediately after
+check_loop_step_approval_gate, scoped to DesignStep.ARCHITECTURE only -- not
+a second, independent gate bolted on elsewhere. This module stays DB-free
+(see "STATE DESIGN" below): `advance_loop_step`'s `requirements_document_status`
+parameter is the caller's own freshest read of `designs.requirements_document.
+read_requirements_document`'s `document_status`, supplied exactly like
+`approval` already is, never fetched by this module itself. `None` (the
+default) covers both "the caller didn't say" and "no Requirements document
+exists yet for this design" -- both mean the customer's actual ask is not
+locked in, so ARCHITECTURE may not proceed on either.
+
 NO MANUFACTURING-RELEASE PATH: DesignStep has no RELEASE/MANUFACTURING
 member, REDESIGN_DECISION's only two valid `next_action` values are
 "iterate" (loop back to ARCHITECTURE for another cycle) and "accept_design"
@@ -173,6 +190,7 @@ from designs.element_alphabet import lookup_symbol_entries as _lookup_symbol_ent
 from designs.element_alphabet import (
     reduce_response_at_frequency as _reduce_response_at_frequency,
 )
+from designs.requirements_document import DocumentStatus as _RequirementsDocumentStatus
 from measurement.external import record_external_measurement as _record_external_measurement
 from optimization.combinatorial import (
     EmptyCandidateShelfError as _EmptyCandidateShelfError,
@@ -400,6 +418,40 @@ def _pending_approval_for(step: DesignStep, completed: bool) -> dict[str, Any] |
             "decision's content before advance_loop_step will proceed."
         ),
     }
+
+
+def _require_requirements_document_confirmed(status: str | None) -> None:
+    """Raise OrchestrationError naming exactly what's missing unless
+    `status` is the design's Requirements document CONFIRMED status
+    (issue #325, docs/adr/0031: "ARCHITECTURE gates on the document
+    reaching CONFIRMED"). Called by advance_loop_step for ARCHITECTURE
+    only, as one more condition inside the SAME `if current_step in
+    GATED_STEPS:` block that already checks the approval receipt -- see
+    this module's own docstring's "REQUIREMENTS-DOCUMENT GATE" section --
+    never a second, independent gate.
+
+    `status` is the caller's own freshest read of `designs.
+    requirements_document.read_requirements_document`'s `document_status`
+    (this module stays DB-free, per "STATE DESIGN" below, so it never reads
+    that row itself). `None` covers both "no Requirements document exists
+    yet for this design" and "the caller supplied nothing" -- both mean the
+    customer's actual ask has not been locked in, and ARCHITECTURE may not
+    proceed on either.
+    """
+    if status == _RequirementsDocumentStatus.CONFIRMED.value:
+        return
+    detail = (
+        "no Requirements document exists yet for this design"
+        if status is None
+        else f"its Requirements document is currently {status!r}, not CONFIRMED"
+    )
+    raise OrchestrationError(
+        "Design-loop step advancement refused: the ARCHITECTURE decision may "
+        "not run until this design's Requirements document reaches CONFIRMED "
+        f"(docs/adr/0031) -- {detail}. Confirm it "
+        "(designs.requirements_document.transition_requirements_document) "
+        "before retrying this exact ARCHITECTURE decision."
+    )
 
 
 @dataclass(frozen=True)
@@ -1962,6 +2014,7 @@ def advance_loop_step(
     state: DesignLoopState,
     step_input: dict[str, Any],
     approval: LoopStepApprovalReceipt | dict[str, Any] | None = None,
+    requirements_document_status: str | None = None,
 ) -> DesignLoopState:
     """Advance the loop from its current step to the next one, per
     STEP_ORDER. Returns a NEW DesignLoopState (never mutates `state`).
@@ -1976,6 +2029,17 @@ def advance_loop_step(
     or invalid approval raises OrchestrationError and `state` is left
     completely untouched (the caller's existing `state` reference is still
     valid and still shows the loop parked at the gated step).
+
+    For ARCHITECTURE specifically, `requirements_document_status` is ALSO
+    checked (issue #325, docs/adr/0031; see this module's own docstring's
+    "REQUIREMENTS-DOCUMENT GATE" section) -- it must equal `"CONFIRMED"`
+    (`designs.requirements_document.DocumentStatus.CONFIRMED.value`) or the
+    same OrchestrationError is raised, naming what's missing, with `state`
+    equally untouched. Pass the design's current Requirements-document
+    status here (from `designs.requirements_document.
+    read_requirements_document`'s `document_status`); the default `None`
+    covers both "the caller didn't say" and "no Requirements document
+    exists yet". Ignored for every other step.
     """
     if state.completed:
         raise OrchestrationError(
@@ -1994,6 +2058,9 @@ def advance_loop_step(
         receipt = _coerce_receipt(approval)
         check_loop_step_approval_gate(receipt, fingerprint_fields)
         approved_by = receipt.approved_by
+
+        if current_step is DesignStep.ARCHITECTURE:
+            _require_requirements_document_confirmed(requirements_document_status)
 
     if current_step is DesignStep.MEASUREMENT:
         kind, result, provenance = _handle_measurement(state, step_input)

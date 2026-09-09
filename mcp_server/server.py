@@ -1365,7 +1365,12 @@ def start_design_loop(design_key: str, name: str, revision: str, requirements: d
 
 
 @mcp.tool()
-def advance_design_loop_step(state: dict, step_input: dict, approval: dict | None = None) -> dict:
+def advance_design_loop_step(
+    state: dict,
+    step_input: dict,
+    approval: dict | None = None,
+    requirements_document_status: str | None = None,
+) -> dict:
     """Advance a design-iteration loop from its current step to the next
     one: requirements -> architecture -> analysis -> simulation ->
     optimization -> verification -> measurement -> correlation -> redesign.
@@ -1378,12 +1383,25 @@ def advance_design_loop_step(state: dict, step_input: dict, approval: dict | Non
     not advance. Check the returned state's "pending_approval" key to see,
     at any point, whether the loop is blocked on an approval.
 
+    `requirements_document_status` is ALSO REQUIRED (equal to `"CONFIRMED"`)
+    whenever the loop is currently at ARCHITECTURE (issue #325, docs/adr/
+    0031) -- the design's Requirements document must be confirmed before a
+    physical approach may be chosen. Nothing in this tool surface can read
+    that status yet (issue #321's `read_requirements_document` is not wired
+    as a tool here); until that lands, a caller must already know the
+    design's Requirements-document status by some other means.
+
     A REDESIGN_DECISION transition also flushes that iteration's decisions
     to the database and advances the backing design's status (docs/adr/
     0011). A failed flush raises DesignLoopPersistenceError instead of
     returning -- the caller's already-held `state` remains the only valid
     state."""
-    return _advance_design_loop_step(state, step_input, approval=approval)
+    return _advance_design_loop_step(
+        state,
+        step_input,
+        approval=approval,
+        requirements_document_status=requirements_document_status,
+    )
 
 
 @mcp.tool()
