@@ -138,6 +138,22 @@ ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family TEXT;
 -- states none.
 ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS considered_and_dropped JSONB NOT NULL DEFAULT '[]'::jsonb;
 
+-- Issue #324 (ADR-0025's 2026-09-09 correction; CONTEXT.md's "Capability
+-- warning"). A WHOLLY SEPARATE mechanism from considered_and_dropped above,
+-- deliberately its own column: a candidate the currently configured
+-- Fabrication capability / Ink-property library / Material-property
+-- library selection cannot meet stays `kept` and never appears in
+-- considered_and_dropped at all -- it carries an entry here instead (the
+-- family, which capability source fell short, which of its properties, the
+-- stated need in value/comparator/unit shape, and a free-text reason),
+-- re-evaluated every run against the current configuration rather than
+-- ever carried forward as settled. Same nullable "ALTER TABLE ADD COLUMN IF
+-- NOT EXISTS" / '[]'::jsonb default pattern as considered_and_dropped
+-- immediately above, for the same reason: recording a Capability warning is
+-- never required (no gate), and an empty array is the honest default for a
+-- decision that states none.
+ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS capability_warnings JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 -- Issue #154 (ADR-0015, CONTEXT.md: Material-property library). Every
 -- citation is its own row, keyed by (material, property, frequency band) --
 -- deliberately no UNIQUE constraint on that triple, since two independent,

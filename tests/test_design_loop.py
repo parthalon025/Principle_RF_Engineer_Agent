@@ -753,6 +753,140 @@ def test_capability_verdict_holds_flips_false_when_curvature_changes():
 
 
 # ---------------------------------------------------------------------------
+# Issue #324 (ADR-0025's 2026-09-09 correction; CONTEXT.md's "Capability
+# warning"): a wholly separate mechanism from the considered_and_dropped
+# ledger above -- a design candidate stays `kept` and instead carries a
+# `capability_warnings` entry stating, in Requirement-target shape
+# (value/comparator/unit), the gap between a stated need and what the
+# currently configured Fabrication capability / Ink-property library /
+# Material-property library selection actually provides. Never drops a
+# candidate, and never shares a reason_kind or a list with capability-verdict
+# -- see the coexistence test at the end of this group (issue #324
+# acceptance criterion 3).
+# ---------------------------------------------------------------------------
+
+
+def _capability_warning_entry(**overrides: Any) -> dict[str, Any]:
+    entry = {
+        "family": "patch_antenna",
+        "capability_kind": "fabrication",
+        "capability_property": "min_feature_size_mm",
+        "value": 0.2,
+        "comparator": "AT_MOST",
+        "unit": "mm",
+        "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_architecture_records_a_valid_capability_warning_entry():
+    state = start_design_loop(REQUIREMENTS)
+    step_input = _architecture_step_input()
+    step_input["capability_warnings"] = [_capability_warning_entry()]
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+    recorded = state.decisions[-1].result["capability_warnings"]
+    assert recorded == [_capability_warning_entry()]
+
+
+def test_architecture_step_input_with_no_capability_warnings_key_is_unaffected():
+    """No gate, same as considered_and_dropped: a step_input that never
+    mentions capability_warnings is untouched -- attaching one is never
+    required."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, step_input_override=_architecture_step_input()
+    )
+    assert "capability_warnings" not in state.decisions[-1].result
+
+
+def test_capability_warning_rejected_for_missing_required_field():
+    state = start_design_loop(REQUIREMENTS)
+    entry = _capability_warning_entry()
+    del entry["capability_property"]
+    step_input = _architecture_step_input()
+    step_input["capability_warnings"] = [entry]
+    with pytest.raises(DesignLoopValidationError, match="missing required field"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_capability_warning_rejected_for_an_unknown_capability_kind():
+    state = start_design_loop(REQUIREMENTS)
+    entry = _capability_warning_entry(capability_kind="printer")
+    step_input = _architecture_step_input()
+    step_input["capability_warnings"] = [entry]
+    with pytest.raises(DesignLoopValidationError, match="capability_kind"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_capability_warning_rejected_for_an_invalid_requirement_target_shape():
+    """The value/comparator/unit fields are validated by the exact same
+    designs.requirement_targets.propose_target a Requirement target uses --
+    issue #324's 'Stated in Requirement target shape' -- so an invalid
+    comparator is rejected here rather than silently accepted."""
+    state = start_design_loop(REQUIREMENTS)
+    entry = _capability_warning_entry(comparator="GREATER_THAN")
+    step_input = _architecture_step_input()
+    step_input["capability_warnings"] = [entry]
+    with pytest.raises(DesignLoopValidationError, match="Requirement target shape"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_redesign_decision_also_validates_capability_warnings():
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, step_input_override=_architecture_step_input()
+    )
+    state = _advance_to(state, DesignStep.REDESIGN_DECISION)
+    step_input = {
+        "decision": "abandon this geometry, try another patch variant",
+        "rationale": "the first geometry cannot meet the gain target",
+        "next_action": "iterate",
+        "capability_warnings": [_capability_warning_entry(capability_kind="printer")],
+    }
+    with pytest.raises(DesignLoopValidationError, match="capability_kind"):
+        _grant_and_advance(state, DesignStep.REDESIGN_DECISION, step_input_override=step_input)
+
+
+def test_capability_warning_holds_true_while_current_configuration_still_falls_short():
+    entry = _capability_warning_entry()
+    still_short = {"fabrication": {"min_feature_size_mm": 0.5}}
+    assert design_loop_module.capability_warning_holds(entry, still_short) is True
+
+
+def test_capability_warning_holds_clears_once_configuration_improves_enough():
+    entry = _capability_warning_entry()
+    now_meets_it = {"fabrication": {"min_feature_size_mm": 0.15}}
+    assert design_loop_module.capability_warning_holds(entry, now_meets_it) is False
+
+
+def test_capability_warning_holds_stays_true_when_configuration_data_is_missing():
+    """Missing/unconfirmed configuration data never silently clears a
+    warning -- the opposite fail-safe direction from
+    capability_verdict_holds, since silently clearing a warning (a
+    candidate that still cannot be built looking clean) is the dangerous
+    failure here, not silently keeping one."""
+    entry = _capability_warning_entry()
+    assert design_loop_module.capability_warning_holds(entry, {}) is True
+    assert design_loop_module.capability_warning_holds(entry, {"ink": {}}) is True
+
+
+def test_capability_verdict_and_capability_warning_coexist_on_the_same_ledger():
+    """Issue #324 acceptance criterion 3: a capability-verdict entry never
+    gains a Capability warning and vice versa -- both can be recorded on the
+    same design's decision without either affecting the other."""
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    step_input = _architecture_step_input([_capability_verdict_entry()])
+    step_input["capability_warnings"] = [_capability_warning_entry()]
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+    result = state.decisions[-1].result
+    assert result["considered_and_dropped"] == [_capability_verdict_entry()]
+    assert result["capability_warnings"] == [_capability_warning_entry()]
+
+
+# ---------------------------------------------------------------------------
 # Group 2b (issue #154, ADR-0015): ANALYSIS wired to the Material-property
 # library -- a caller may supply 'material_property' (a
 # designs.material_properties.resolve_material_property result) instead of
