@@ -73,11 +73,19 @@ built and tested -- not reimplementing any of them:
                 transmission monitor), and its run is refused outright if
                 that transmittance is missing rather than falling back to
                 the one-port sum.
-  - OPTIMIZATION calls
+  - OPTIMIZATION dispatches on the design family's declared `optimizer_class`
+                (`designs/design_families.py`; issue #255 ticket 1 -- a pure
+                prefactor, the same family-lookup seam ANALYSIS/SIMULATION
+                already use). `CONTINUOUS`, or no `optimizer_class` declared
+                at all (every family in this tree today), calls
                 optimization.rf_objectives.optimize_patch_length_for_target_
-                frequency (Phase 9), the one named optimization use case
-                that ticket wired against this same patch-resonant-
-                frequency calculation.
+                frequency (Phase 9) exactly as before, unchanged.
+                `COMBINATORIAL` (REFLECTION_PHASE/DIFFUSIVE's Tier B search,
+                CONTEXT.md) has no path wired yet -- that is separate, later
+                work, blocked on the not-yet-built Element/Coding-Alphabet
+                library (issue #255) -- and raises rather than silently
+                running the continuous search against a placement/selection
+                problem. See _handle_optimization/_optimizer_class_for.
   - MEASUREMENT routes to measurement.external.record_external_measurement
                 (issue #89, ADR-0012/ADR-0013): a Touchstone file an
                 engineer measured on independent equipment and brought
@@ -1339,25 +1347,113 @@ _SIMULATION_ADAPTERS: dict[str, Any] = {
 }
 
 
+def _optimizer_class_for(state: DesignLoopState) -> str | None:
+    """The `optimizer_class` (`designs/design_families.py`) this iteration's
+    ARCHITECTURE-recorded family declares -- issue #255 ticket 1.
+
+    Mirrors `_simulation_adapter_for`: it reads the SAME family-lookup seam
+    `_handle_analysis` (#239) and `_handle_simulation` (#229) already use
+    (`_registry_family_of_record`) to resolve which family this iteration's
+    step belongs to, off the recorded ARCHITECTURE decision -- never a
+    second, parallel lookup, and never a hardcoded family-name list (issue
+    #255's own user story 3/17: dispatch must key off the family's declared
+    field).
+
+    Unlike `_simulation_adapter_for`, this never raises for an UNSET value.
+    `optimizer_class` is an open, optional field (ADR-0018) -- `None` is
+    what every family in this tree declares today (nothing has opted into
+    `COMBINATORIAL` yet) and is itself a legitimate, un-raising answer
+    ("this family's OPTIMIZATION step is the plain continuous search"), not
+    a missing-declaration error the way an unsettled `simulation_adapter`
+    is. Only "there is no ARCHITECTURE decision to read a family off at
+    all" raises here, via `_registry_family_of_record`.
+    """
+    return _registry_family_of_record(state, "optimization").optimizer_class
+
+
 def _handle_optimization(
-    _state: DesignLoopState, step_input: dict[str, Any]
+    state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
-    _require_fields(
-        step_input,
-        {"eps_r", "w_m", "h_m", "target_frequency_hz", "length_lower_m", "length_upper_m"},
-        "optimization",
+    """Dispatch OPTIMIZATION to the search this design family's declared
+    `optimizer_class` calls for (issue #255 ticket 1).
+
+    This ticket is a pure prefactor: it adds the dispatch SEAM a later
+    ticket will hang the real `COMBINATORIAL` symbol-placement search off
+    of (issue #255's Implementation Decisions), and changes no behaviour
+    for any family in this tree today -- every one of them still runs
+    exactly the search it always ran.
+
+    `optimizer_class == "CONTINUOUS"`, and a family that declares no
+    optimizer_class at all (`None` -- every family currently in
+    `designs/design_families.py`; ADR-0018 leaves the field open until a
+    family opts in), both route to the SAME patch-length search this step
+    has always run, byte-for-byte unchanged: same required fields, same
+    call, same result shape.
+
+    `optimizer_class == "COMBINATORIAL"` -- the shape issue #109/CONTEXT.md
+    give REFLECTION_PHASE and DIFFUSIVE's Tier B optimizer, a genetic-
+    algorithm search over a pre-characterized symbol alphabet -- has no
+    search wired here. That search is separate, later work (issue #255's
+    own scope: it needs a resolved candidate-symbol set the not-yet-built
+    Element/Coding-Alphabet library would supply). Rather than silently
+    running the continuous patch-length search against a family whose
+    whole design method is "which already-measured tile goes in which grid
+    square" -- exactly the "wrong tool applied silently" defect issues
+    #239/#241 already removed for ANALYSIS/SIMULATION, one step over --
+    this raises, naming the family and what's missing, so a Tier B run
+    fails loudly at the step that needs a tool that does not exist yet,
+    rather than a number the programme cannot stand behind.
+
+    Any OTHER declared value (a hypothetical third `optimizer_class`, e.g.
+    ML-direct inverse design -- ADR-0018 names this as a credible future
+    value) raises the same way, per issue #255's user story 4: reported by
+    name, never guessed past.
+    """
+    optimizer_class = _optimizer_class_for(state)
+    if optimizer_class is None or optimizer_class == "CONTINUOUS":
+        _require_fields(
+            step_input,
+            {"eps_r", "w_m", "h_m", "target_frequency_hz", "length_lower_m", "length_upper_m"},
+            "optimization",
+        )
+        result = _optimize_patch_length_for_target_frequency(
+            eps_r=step_input["eps_r"],
+            w_m=step_input["w_m"],
+            h_m=step_input["h_m"],
+            target_frequency_hz=step_input["target_frequency_hz"],
+            length_lower_m=step_input["length_lower_m"],
+            length_upper_m=step_input["length_upper_m"],
+            method=step_input.get("method", "bayesian"),
+            n_evaluations=step_input.get("n_evaluations", 20),
+        )
+        return "optimization", result, result.get("provenance", "CALCULATED")
+
+    family = _registry_family_of_record(state, "optimization")
+    if optimizer_class == "COMBINATORIAL":
+        raise DesignLoopValidationError(
+            f"Design family {family.name!r} declares optimizer_class "
+            "'COMBINATORIAL' (CONTEXT.md: a genetic-algorithm search over a "
+            "pre-characterized symbol alphabet), and this loop has no "
+            "combinatorial symbol-placement search wired for OPTIMIZATION "
+            "yet. That search is separate, later work (issue #255), blocked "
+            "on the Element/Coding-Alphabet library it would search "
+            "candidate symbols from. Running the continuous patch-length "
+            "search here instead would silently apply the wrong tool to a "
+            "placement/selection problem -- the same defect issues #239/#241 "
+            "already removed for ANALYSIS/SIMULATION. Wire the combinatorial "
+            "search (issue #255) before advancing OPTIMIZATION for this "
+            "family."
+        )
+    raise DesignLoopValidationError(
+        f"Design family {family.name!r} declares optimizer_class "
+        f"{optimizer_class!r}, and this loop has no OPTIMIZATION path wired "
+        "for it. Recognised values: 'CONTINUOUS' (or unset) and "
+        "'COMBINATORIAL'. Add a dispatch branch for it in "
+        "orchestration/design_loop.py's _handle_optimization, or correct the "
+        "declaration in designs/design_families.py -- silently falling "
+        "through to the patch-length search is exactly what issues #239/#241 "
+        "already removed for ANALYSIS/SIMULATION."
     )
-    result = _optimize_patch_length_for_target_frequency(
-        eps_r=step_input["eps_r"],
-        w_m=step_input["w_m"],
-        h_m=step_input["h_m"],
-        target_frequency_hz=step_input["target_frequency_hz"],
-        length_lower_m=step_input["length_lower_m"],
-        length_upper_m=step_input["length_upper_m"],
-        method=step_input.get("method", "bayesian"),
-        n_evaluations=step_input.get("n_evaluations", 20),
-    )
-    return "optimization", result, result.get("provenance", "CALCULATED")
 
 
 def _handle_verification(
