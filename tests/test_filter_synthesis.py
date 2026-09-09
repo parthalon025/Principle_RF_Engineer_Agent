@@ -12,9 +12,14 @@ import math
 
 import pytest
 
+from rf_tools.calculations import (
+    microstrip_effective_permittivity,
+    microstrip_synthesize_width_m,
+)
 from rf_tools.filter_synthesis import (
     butterworth_g_values,
     chebyshev_g_values,
+    realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
 )
 
@@ -529,3 +534,127 @@ def test_the_wrong_load_impedance_would_be_caught():
     wrong = dataclasses.replace(net, load_impedance_ohm=net.source_impedance_ohm * net.g_values[-1])
     losses = [-20 * math.log10(_s21(wrong, 1e9 * i / 200.0)) for i in range(1, 201)]
     assert max(losses) > 3.0 + 1e-6
+
+
+# --- Physical realization: stepped-impedance ("Hi-Z, Lo-Z") microstrip (issue #286) ---
+#
+# The reference bl (electrical length) values below are NOT regenerated from
+# this implementation -- they are hand-copied from two independently
+# published worked examples of this exact procedure (Bostic & Dittman,
+# "Designing Microstrip ISM Low-pass Filter"; Le/Nguyen/Truong, "Stepped-
+# impedance Lowpass Filter", both reproducing Pozar's own bl = g*R0/Zh
+# (series) / g*Zl/R0 (shunt) formulas), the same "checked against a
+# published table, not against this implementation" discipline the g-value
+# tests at the top of this file already use.
+#
+# Bostic & Dittman's N=5 Butterworth example uses g = 0.6180, 1.6180,
+# 2.0000, 1.6180, 0.6180 -- exactly BUTTERWORTH_TABLE[5] above -- with
+# R0=50, z_high_ohm=100, z_low_ohm=20, giving bl = 0.2472, 0.809 (their
+# rounded 0.805; 1.6180*50/100 = 0.809 exactly), 0.8, 0.809, 0.2472 rad.
+
+_EPS_R, _H_M = 4.4, 0.0016  # an arbitrary but fixed FR4-like substrate
+
+
+def test_stepped_impedance_electrical_lengths_match_a_published_worked_example():
+    net = synthesize_filter(response="butterworth", band="lowpass", order=5, cutoff_hz=1e9)
+    sections = realize_lowpass_stepped_impedance_microstrip(
+        net, eps_r=_EPS_R, h_m=_H_M, z_high_ohm=100.0, z_low_ohm=20.0
+    )
+    expected_bl = [0.2472, 0.809, 0.8, 0.809, 0.2472]
+    assert [s.electrical_length_rad for s in sections] == pytest.approx(expected_bl, abs=1e-3)
+
+
+def test_stepped_impedance_electrical_length_is_independent_of_cutoff_frequency():
+    """bl = wc*L/Zh (series) or wc*C*Zl (shunt); L and C themselves scale as
+    1/wc (see _lowpass_element), so wc cancels algebraically and a section's
+    electrical length depends only on its g-value, Zh/Zl and R0 -- not on
+    which cutoff frequency was used to denormalize the ladder."""
+    net_1ghz = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
+    net_5ghz = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=5e9)
+    sections_1ghz = realize_lowpass_stepped_impedance_microstrip(net_1ghz, eps_r=_EPS_R, h_m=_H_M)
+    sections_5ghz = realize_lowpass_stepped_impedance_microstrip(net_5ghz, eps_r=_EPS_R, h_m=_H_M)
+    assert [s.electrical_length_rad for s in sections_1ghz] == pytest.approx(
+        [s.electrical_length_rad for s in sections_5ghz]
+    )
+    # Physical length, unlike electrical length, DOES depend on cutoff: the
+    # same electrical length is a shorter physical line at a higher frequency.
+    for lo, hi in zip(sections_1ghz, sections_5ghz, strict=True):
+        assert hi.length_m == pytest.approx(lo.length_m / 5.0)
+
+
+def test_stepped_impedance_topology_matches_the_ladder_and_uses_the_right_impedance():
+    """Every 'L' branch (series inductor) becomes a z_high_ohm line; every
+    'C' branch (shunt capacitor) becomes a z_low_ohm line -- matching the
+    method's own physical reasoning (narrow line ~ inductive, wide line ~
+    capacitive), not just the ladder's series/shunt position."""
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=2.4e9)
+    sections = realize_lowpass_stepped_impedance_microstrip(
+        net, eps_r=_EPS_R, h_m=_H_M, z_high_ohm=90.0, z_low_ohm=15.0
+    )
+    assert [(s.position, s.topology) for s in sections] == [
+        ("shunt", "C"),
+        ("series", "L"),
+        ("shunt", "C"),
+    ]
+    for s in sections:
+        expected_z0 = 90.0 if s.topology == "L" else 15.0
+        assert s.characteristic_impedance_ohm == expected_z0
+        assert s.width_m > 0
+        assert s.length_m > 0
+        assert 1.0 < s.effective_permittivity < _EPS_R
+
+
+def test_stepped_impedance_length_matches_an_independent_hand_calculation():
+    """Recomputes one section's physical length from the underlying physics
+    (bl / beta, beta = wc*sqrt(eps_eff)/c) using the already-independently-
+    tested microstrip primitives directly, rather than re-deriving from
+    this function's own internals."""
+    fc = 1e9
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=fc)
+    sections = realize_lowpass_stepped_impedance_microstrip(
+        net, eps_r=_EPS_R, h_m=_H_M, z_high_ohm=100.0, z_low_ohm=20.0
+    )
+    series_element = net.elements[1]
+    assert series_element.topology == "L"
+    omega_c = 2 * math.pi * fc
+    beta_l = omega_c * series_element.inductance_h / 100.0
+    width_m = microstrip_synthesize_width_m(100.0, _EPS_R, _H_M)
+    eps_eff = microstrip_effective_permittivity(_EPS_R, width_m, _H_M)
+    beta = omega_c * eps_eff**0.5 / 299_792_458.0
+    expected_length_m = beta_l / beta
+    assert sections[1].length_m == pytest.approx(expected_length_m)
+    assert sections[1].width_m == pytest.approx(width_m)
+
+
+@pytest.mark.parametrize(
+    ("band", "kwargs"),
+    [
+        ("highpass", {"cutoff_hz": 1e9}),
+        ("bandpass", {"center_hz": 2.4e9, "bandwidth_hz": 0.24e9}),
+        ("bandstop", {"center_hz": 2.4e9, "bandwidth_hz": 0.24e9}),
+    ],
+)
+def test_stepped_impedance_rejects_non_lowpass_bands(band, kwargs):
+    net = synthesize_filter(response="butterworth", band=band, order=3, **kwargs)
+    with pytest.raises(ValueError, match="lowpass"):
+        realize_lowpass_stepped_impedance_microstrip(net, eps_r=_EPS_R, h_m=_H_M)
+
+
+def test_stepped_impedance_requires_z_high_above_z_low():
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
+    with pytest.raises(ValueError, match="z_high_ohm"):
+        realize_lowpass_stepped_impedance_microstrip(
+            net, eps_r=_EPS_R, h_m=_H_M, z_high_ohm=20.0, z_low_ohm=20.0
+        )
+    with pytest.raises(ValueError, match="z_high_ohm"):
+        realize_lowpass_stepped_impedance_microstrip(
+            net, eps_r=_EPS_R, h_m=_H_M, z_high_ohm=10.0, z_low_ohm=20.0
+        )
+
+
+def test_stepped_impedance_invalid_substrate_inputs_raise():
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
+    with pytest.raises(ValueError):
+        realize_lowpass_stepped_impedance_microstrip(net, eps_r=1.0, h_m=_H_M)
+    with pytest.raises(ValueError):
+        realize_lowpass_stepped_impedance_microstrip(net, eps_r=_EPS_R, h_m=0.0)
