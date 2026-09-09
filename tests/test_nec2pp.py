@@ -168,6 +168,84 @@ def test_generate_nec2_deck_explicit_excitation_and_pattern():
     assert "RP 0 37 1 0 0 0 5 0" in lines
 
 
+def test_generate_nec2_deck_plane_wave_excitation_ex_card():
+    """A plane_wave excitation must emit 'EX 1 ...' (linear polarization,
+    necpp's EXCITATION_LINEAR=1 per src/common.h) instead of the voltage
+    source's 'EX 0 ...', with I2/I3 set from theta/phi angle counts and the
+    decimal fields set from first-theta, first-phi, polarization angle eta,
+    theta step, and phi step -- per the ex_card() doc comment in necpp's
+    nec_context.h cited in issue #271."""
+    geometry = {
+        **DIPOLE_GEOMETRY,
+        "excitation": {
+            "type": "plane_wave",
+            "theta_start_deg": 30.0,
+            "phi_start_deg": 45.0,
+            "eta_deg": 90.0,
+            "theta_step_deg": 10.0,
+            "phi_step_deg": 5.0,
+            "theta_count": 1,
+            "phi_count": 1,
+        },
+    }
+    deck = generate_nec2_deck(geometry, frequency_hz=300e6)
+    lines = deck.strip("\n").split("\n")
+    ex_line = next(line for line in lines if line.startswith("EX "))
+    assert ex_line.startswith("EX 1 ")
+    assert ex_line == "EX 1 1 1 0 30 45 90 10 5"
+    # RP/EN cards are unaffected by the excitation type.
+    assert any(line.startswith("RP 0 ") for line in lines)
+    assert lines[-1] == "EN"
+
+
+def test_generate_nec2_deck_plane_wave_default_voltage_type_unchanged():
+    """Omitting excitation['type'] entirely still produces today's
+    voltage-source-only output (AC: byte-identical for every existing
+    caller/test)."""
+    deck_no_type = generate_nec2_deck(DIPOLE_GEOMETRY, frequency_hz=300e6)
+    geometry_explicit_voltage = {
+        **DIPOLE_GEOMETRY,
+        "excitation": {"type": "voltage"},
+    }
+    deck_explicit_voltage = generate_nec2_deck(geometry_explicit_voltage, frequency_hz=300e6)
+    assert deck_no_type == deck_explicit_voltage
+    assert "EX 0 " in deck_no_type
+
+
+def test_generate_nec2_deck_plane_wave_skips_feed_segment_defaulting():
+    """A plane wave has no feed segment: a wire missing 'segments' would
+    blow up the voltage path's default_segment computation
+    (math.ceil(wire['segments'] / 2)) if it ran, so a plane_wave excitation
+    must not invoke that defaulting logic at all."""
+    geometry = {
+        "wires": [
+            {
+                "tag": 1,
+                "segments": 7,
+                "x1_m": 0.0,
+                "y1_m": 0.0,
+                "z1_m": -0.25,
+                "x2_m": 0.0,
+                "y2_m": 0.0,
+                "z2_m": 0.25,
+                "radius_m": 0.001,
+            }
+        ],
+        "excitation": {"type": "plane_wave"},
+    }
+    # Must not raise even though the wire dict is otherwise the same shape
+    # the voltage path's default_tag/default_segment logic reads from.
+    deck = generate_nec2_deck(geometry, frequency_hz=300e6)
+    ex_line = next(line for line in deck.split("\n") if line.startswith("EX "))
+    assert ex_line.startswith("EX 1 ")
+
+
+def test_generate_nec2_deck_invalid_excitation_type_raises():
+    geometry = {**DIPOLE_GEOMETRY, "excitation": {"type": "not_a_real_type"}}
+    with pytest.raises(ValueError, match="excitation"):
+        generate_nec2_deck(geometry, frequency_hz=300e6)
+
+
 def test_generate_nec2_deck_empty_wires_raises():
     with pytest.raises(ValueError):
         generate_nec2_deck({"wires": []}, frequency_hz=300e6)
@@ -379,6 +457,45 @@ def test_run_nec2_simulation_end_to_end_with_fake_executable(tmp_path: Path):
     deck_text = Path(result["input_file"]).read_text()
     assert deck_text.startswith("CM ")
     assert "EN" in deck_text
+
+
+def test_run_nec2_simulation_end_to_end_with_plane_wave_excitation(tmp_path: Path):
+    """A plane_wave excitation geometry runs end to end (deck generation ->
+    fake nec2++ -> parsing) and the far-field phase readback a
+    reflection-phase measurement needs (e_theta_phase_deg/e_phi_phase_deg)
+    is still present and unchanged -- confirming plane-wave illumination
+    plus far-field phase readback is now producible from a single
+    run_nec2_simulation() call (issue #271)."""
+    script = _make_fake_nec2pp_py(tmp_path, GUIDE_SAMPLE_OUTPUT)
+    geometry = {
+        **DIPOLE_GEOMETRY,
+        "excitation": {
+            "type": "plane_wave",
+            "theta_start_deg": 0.0,
+            "phi_start_deg": 0.0,
+            "eta_deg": 0.0,
+            "theta_step_deg": 10.0,
+            "phi_step_deg": 0.0,
+            "theta_count": 19,
+            "phi_count": 1,
+        },
+    }
+
+    result = run_nec2_simulation(
+        geometry=geometry,
+        frequency_hz=300e6,
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_plane_wave"),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["status"] == "COMPLETED"
+    deck_text = Path(result["input_file"]).read_text()
+    assert "EX 1 " in deck_text
+    assert len(result["pattern"]) == 4
+    assert result["pattern"][1]["e_theta_phase_deg"] == pytest.approx(-114.38)
+    assert result["pattern"][1]["e_phi_phase_deg"] == pytest.approx(0.0)
 
 
 def test_run_nec2_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
