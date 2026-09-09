@@ -69,6 +69,12 @@ MODULE SHAPE. Two layers, same pure/I-O seam `designs.validation`/
     `confirm_target`, `attach_target`) -- these carry all of the ticket's
     actual validation/tagging logic and are exhaustively unit-tested in
     `tests/test_requirement_targets.py` with no database needed.
+    `propose_intended_effect`/`attach_intent` (issue #323, ADR-0030) join
+    this same pure layer: `attach_target`'s direct sibling for the other
+    key ADR-0030 puts "beside `requirement` and `target`" on a requirement
+    entry, called only from `designs.requirements_document.
+    extract_requirement_fields` once a Requirements document reaches
+    `CONFIRMED` (docs/adr/0031) -- never as a standalone tool argument.
   - Thin I/O wrappers (`propose_requirement_target`,
     `mark_requirement_unscoreable`, `confirm_requirement_target`) -- these
     are what `agent/main.py`/`mcp_server/server.py` actually wire up as
@@ -347,6 +353,34 @@ def confirm_target(
     return confirmed
 
 
+def propose_intended_effect(effect: str) -> dict[str, Any]:
+    """Validate and tag one requirement's intended effect -- ADR-0030's
+    "another key inside a requirement's own entry, beside `requirement` and
+    `target`" (issue #323). Mirrors `propose_target`'s own validate-then-tag
+    shape for the open-vocabulary effect prose ("behave as a magnetic
+    mirror", "absorb the wave") rather than a numeric value: `effect` must
+    be a non-empty string; `InvalidRequirementTargetError` names the field
+    if it isn't.
+
+    Always returns `provenance="ASSUMED"` -- per ADR-0030's own reasoning
+    (restated in CONTEXT.md's Intended effect entry): a Requirements
+    document (docs/adr/0031) reaching `CONFIRMED` is a trust signal about
+    the reading, never a stronger kind of evidence, so there is no
+    stronger provenance tier to promote to -- the identical "WHY
+    PROVENANCE STAYS ASSUMED" reasoning this module's own docstring
+    already gives for `propose_target`.
+
+    A requirement that asks nothing of the wave (a bend radius, a mass
+    budget, a cure ceiling) legitimately has no intended effect at all
+    (ADR-0030's "having none is a legal answer") -- that case is simply
+    never calling this function for that requirement, the same way a
+    requirement entry with no `target` key yet is legal before
+    `propose_target` is ever called for it.
+    """
+    resolved_effect = _require_nonempty_string("effect", effect)
+    return {"effect": resolved_effect, "provenance": ASSUMED}
+
+
 def attach_target(
     requirements: dict[str, Any],
     requirement_id: str,
@@ -372,6 +406,37 @@ def attach_target(
         raise UnknownRequirementError(requirement_id)
     updated = copy.deepcopy(requirements)
     updated[requirement_id]["target"] = target
+    return updated
+
+
+def attach_intent(
+    requirements: dict[str, Any],
+    requirement_id: str,
+    intended_effect: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a new `requirements` dict (never mutates its input) with
+    `intended_effect` attached under
+    `requirements[requirement_id]["intended_effect"]` -- `attach_target`'s
+    direct sibling (ADR-0030, issue #323), leaving every other key on that
+    requirement entry -- `requirement` and `target` included -- exactly as
+    it was.
+
+    Same shape/validation posture as `attach_target`: this function does
+    not itself validate `intended_effect`'s shape (`propose_intended_effect`'s
+    job, mirroring how `propose_target` -- not `attach_target` -- validates
+    a target), and tolerates any extra keys already on the requirement
+    entry.
+
+    Raises `UnknownRequirementError` if `requirement_id` is not already a
+    key in `requirements` -- the identical error class `attach_target`
+    raises for the same reason, so a caller sees one consistent failure
+    mode regardless of which of the two sibling `attach_*` functions it
+    called.
+    """
+    if requirement_id not in requirements or not isinstance(requirements[requirement_id], dict):
+        raise UnknownRequirementError(requirement_id)
+    updated = copy.deepcopy(requirements)
+    updated[requirement_id]["intended_effect"] = intended_effect
     return updated
 
 

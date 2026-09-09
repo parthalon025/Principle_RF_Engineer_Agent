@@ -6,12 +6,15 @@ document -- modelled on the DoD's JCIDS Capability Development Document, the
 same real-world framework this project already draws Threshold/Objective
 from -- that a human reads, pushes back on, and confirms *before* a
 Requirement target or an Intended effect is extracted from it and *before*
-the ARCHITECTURE decision may run. This module builds that document and its
-review lifecycle only: `DRAFT -> UNDER_REVIEW -> REFINED -> CONFIRMED`. It
-does NOT extract `intended_effect`/`target` into `requirements[requirement_id]`
-(ADR-0031's still-unimplemented `attach_intent`) and does NOT gate
-ARCHITECTURE -- both are separate, later tickets (issue #321's own scope
-note).
+the ARCHITECTURE decision may run. This module builds that document, its
+review lifecycle (`DRAFT -> UNDER_REVIEW -> REFINED -> CONFIRMED`), and (issue
+#323) the extraction that fires once a document reaches `CONFIRMED`:
+`extract_requirement_fields` calls `designs.requirement_targets.attach_target`/
+`attach_intent` for every requirement the document describes, and
+`transition_requirements_document` triggers it automatically whenever a
+transition's target status is `CONFIRMED`. Gating ARCHITECTURE on that same
+status, and wiring these functions into `agent/main.py`/`mcp_server/server.py`,
+remain separate, later tickets (issue #321's own scope note).
 
 WHY A NEW MODULE, NOT `designs/lifecycle.py` OR `designs/requirement_targets.py`.
 `designs/lifecycle.py` walks `DesignStatus` specifically -- a different,
@@ -29,9 +32,14 @@ MODULE SHAPE. The same pure/I-O seam `designs/requirement_targets.py`
 already establishes:
 
   - Pure, DB-free functions (`draft_requirements_document`,
-    `revise_requirements_document`, plus the transition-checking functions)
-    -- exhaustively unit-tested in `tests/test_requirements_document.py`
-    with no database needed.
+    `revise_requirements_document`, the transition-checking functions, and
+    (issue #323) `extract_requirement_fields`) -- exhaustively unit-tested
+    in `tests/test_requirements_document.py` with no database needed.
+    `extract_requirement_fields` reuses `designs.requirement_targets.
+    attach_target`/`attach_intent` directly rather than duplicating their
+    validation/tagging logic (issue #315's own implementation decision:
+    the document module "does not duplicate the existing target-proposal
+    logic -- it calls into it once the document is confirmed").
   - Thin I/O wrappers (`create_requirements_document`,
     `transition_requirements_document`, `read_requirements_document`) --
     read/write the new `requirements_documents` table directly with their
@@ -43,6 +51,13 @@ already establishes:
     already holds one open, the same situation `requirement_targets.py`'s
     own docstring describes for itself. `designs.db.get_connection`/
     `designs.db.UnknownDesignError` are reused as-is (not modified).
+    `transition_requirements_document` additionally reads and rewrites the
+    design's own `designs.requirements` column -- the same table/column
+    `designs.requirement_targets`'s own I/O wrappers touch -- whenever a
+    transition's target status is `CONFIRMED`, via its own small SQL
+    (`_fetch_requirements`/`_store_requirements` below), matching this
+    module's stated "own small amount of raw SQL" discipline rather than
+    importing `requirement_targets`'s private helpers of the same name.
 
 EVERY REVISION IS KEPT, NEVER OVERWRITTEN. `requirements_documents`
 (`db/schema.sql`) is append-only -- one row per revision, `UNIQUE(design_id,
@@ -63,6 +78,20 @@ exact coverage (no requirement left out, no stray id that doesn't exist) by
 `_validate_requirement_targets` below, since a CDD that omits one of the
 system's own KPPs is not the bundled document ADR-0031 describes.
 
+EACH ENTRY MAY ALSO CARRY THE REQUIREMENT'S INTENDED EFFECT (issue #323).
+`_validate_requirement_targets` only requires a `propose_target`/
+`mark_unscoreable` shape and, like `designs.validation` everywhere else in
+this package, tolerates extra keys -- so a per-requirement entry built via
+`designs.requirement_targets.propose_intended_effect` and merged in under
+an `intended_effect` key needs no validation change here.
+`extract_requirement_fields` reads that key off each entry (when present)
+and writes it to `requirements[requirement_id]["intended_effect"]` via
+`attach_intent`, sibling to `target`/`attach_target` (ADR-0030's "another
+key ... beside `requirement` and `target`"). A requirement whose entry
+carries no `intended_effect` key is left without one -- ADR-0030's "having
+none is a legal answer" (a bend radius, a mass budget or a cure ceiling
+asks nothing of the wave).
+
 NOT WIRED AS AN AGENT/MCP TOOL HERE. Issue #321's acceptance criteria stop
 at "build the document and its lifecycle"; wiring `create_requirements_document`/
 `transition_requirements_document` into `agent/main.py`/`mcp_server/server.py`
@@ -80,7 +109,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from designs import db
-from designs.requirement_targets import TargetStatus
+from designs.requirement_targets import TargetStatus, attach_intent, attach_target
 
 __all__ = [
     "LEGAL_TRANSITIONS",
@@ -92,6 +121,7 @@ __all__ = [
     "coerce_status",
     "create_requirements_document",
     "draft_requirements_document",
+    "extract_requirement_fields",
     "legal_transitions_from",
     "read_requirements_document",
     "revise_requirements_document",
@@ -360,6 +390,62 @@ def revise_requirements_document(
     }
 
 
+def extract_requirement_fields(
+    requirements: dict[str, Any],
+    document: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach the Requirement target and Intended effect described by a
+    `CONFIRMED` `document` onto every Customer requirement row it covers
+    (issue #323; ADR-0031's "Requirement target and Intended effect are
+    extracted from the confirmed document, not elicited standalone").
+
+    For each `document["requirement_targets"][requirement_id]` entry -- a
+    `propose_target`/`mark_unscoreable` shape, optionally carrying an
+    `intended_effect` key built by
+    `designs.requirement_targets.propose_intended_effect` -- writes the
+    target fields onto `requirements[requirement_id]["target"]` via
+    `designs.requirement_targets.attach_target`, and, when present, the
+    intended effect onto `requirements[requirement_id]["intended_effect"]`
+    via `attach_intent`. A requirement whose entry carries no
+    `intended_effect` key is left without one -- ADR-0030's "having none is
+    a legal answer" (a bend radius, a mass budget or a cure ceiling asks
+    nothing of the wave).
+
+    Raises `InvalidRequirementsDocumentError` if `document["status"]` is
+    not `CONFIRMED` -- extraction only ever happens from a confirmed
+    document (ADR-0031); calling this on a `DRAFT`/`UNDER_REVIEW`/`REFINED`
+    document names the mistake instead of quietly writing an unreviewed
+    reading onto the design's own requirements.
+
+    Provenance is untouched by this function -- every entry it copies over
+    already carries `provenance="ASSUMED"` from `propose_target`/
+    `mark_unscoreable`/`propose_intended_effect`, and nothing here upgrades
+    it, regardless of how many review rounds produced this revision
+    (docs/adr/0030, docs/adr/0031).
+
+    Pure and DB-free, exactly like `attach_target`/`attach_intent`
+    themselves (never mutates `requirements` or `document`);
+    `transition_requirements_document` below is the only caller that also
+    touches a database, calling this once a transition's target status is
+    `CONFIRMED`.
+    """
+    status = coerce_status(document["status"])
+    if status is not DocumentStatus.CONFIRMED:
+        raise InvalidRequirementsDocumentError(
+            "requirement fields can only be extracted from a CONFIRMED "
+            f"Requirements document, got status {status.value!r}"
+        )
+
+    updated = requirements
+    for requirement_id, entry in document["requirement_targets"].items():
+        intended_effect = entry.get("intended_effect")
+        target = {key: value for key, value in entry.items() if key != "intended_effect"}
+        updated = attach_target(updated, requirement_id, target)
+        if intended_effect is not None:
+            updated = attach_intent(updated, requirement_id, intended_effect)
+    return updated
+
+
 # ---------------------------------------------------------------------------
 # I/O layer: read/write the append-only `requirements_documents` table.
 #
@@ -369,9 +455,11 @@ def revise_requirements_document(
 # ---------------------------------------------------------------------------
 
 
-def _fetch_requirement_ids(conn: Any, design_id: int) -> set[str]:
-    """Return the set of Customer requirement ids already recorded on
-    `design_id` (`designs.requirements`'s own keys). Raises
+def _fetch_requirements(conn: Any, design_id: int) -> dict[str, Any]:
+    """Return `design_id`'s current `designs.requirements` JSONB payload --
+    the same query `designs.requirement_targets`'s own `_fetch_requirements`
+    makes, duplicated here (not imported) per this module's stated "own
+    small amount of raw SQL" discipline (see MODULE SHAPE). Raises
     `designs.db.UnknownDesignError` (reused as-is) if no `designs` row
     matches."""
     with conn.cursor(row_factory=dict_row) as cur:
@@ -379,7 +467,29 @@ def _fetch_requirement_ids(conn: Any, design_id: int) -> set[str]:
         row = cur.fetchone()
     if row is None:
         raise db.UnknownDesignError(design_id)
-    return set(row["requirements"])
+    return row["requirements"]
+
+
+def _store_requirements(conn: Any, design_id: int, requirements: dict[str, Any]) -> None:
+    """Overwrite `designs.requirements` for `design_id` with `requirements`
+    and bump `updated_at` -- the same statement
+    `designs.requirement_targets`'s own `_store_requirements` runs, called
+    here (issue #323) only when `transition_requirements_document` has just
+    confirmed a document and extracted its fields. Caller-owned transaction
+    boundary: never commits itself."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE designs SET requirements = %s, updated_at = now() WHERE id = %s",
+            (Json(requirements), design_id),
+        )
+
+
+def _fetch_requirement_ids(conn: Any, design_id: int) -> set[str]:
+    """Return the set of Customer requirement ids already recorded on
+    `design_id` (`designs.requirements`'s own keys). Raises
+    `designs.db.UnknownDesignError` (reused as-is) if no `designs` row
+    matches."""
+    return set(_fetch_requirements(conn, design_id))
 
 
 def _fetch_stored_document(conn: Any, design_id: int) -> dict[str, Any] | None:
@@ -500,6 +610,16 @@ def transition_requirements_document(
     through DRAFT -> UNDER_REVIEW -> REFINED -> CONFIRMED; an illegal
     transition ... is rejected").
 
+    When the new revision's status is `CONFIRMED`, this also extracts the
+    Requirement target and Intended effect for every requirement the
+    document describes and writes them onto this design's own
+    `requirements[requirement_id]` rows (issue #323; ADR-0031: "confirming
+    a document should trigger extraction for every requirement it
+    describes") -- via `extract_requirement_fields`, in the same
+    transaction as the revision insert, so a caller never observes a
+    document that reads `CONFIRMED` without the extraction having already
+    happened.
+
     Returns a structured `status`-tagged result: `"not_found"` (no such
     `design_id`), `"no_document"` (this design has no Requirements document
     yet -- call `create_requirements_document` first), `"illegal_transition"`
@@ -547,6 +667,12 @@ def transition_requirements_document(
             return {"status": "invalid_document", "message": str(exc)}
 
         _insert_revision(conn, design_id, updated["revisions"][-1])
+
+        if updated["status"] == DocumentStatus.CONFIRMED.value:
+            design_requirements = _fetch_requirements(conn, design_id)
+            extracted = extract_requirement_fields(design_requirements, updated)
+            _store_requirements(conn, design_id, extracted)
+
         conn.commit()
     except Exception:
         conn.rollback()

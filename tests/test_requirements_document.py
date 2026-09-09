@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import pytest
 
-from designs.requirement_targets import mark_unscoreable, propose_target
+from designs.requirement_targets import mark_unscoreable, propose_intended_effect, propose_target
 from designs.requirements_document import (
     LEGAL_TRANSITIONS,
     TERMINAL_STATUSES,
@@ -40,6 +40,7 @@ from designs.requirements_document import (
     check_transition,
     coerce_status,
     draft_requirements_document,
+    extract_requirement_fields,
     legal_transitions_from,
     revise_requirements_document,
 )
@@ -49,6 +50,31 @@ S = DocumentStatus
 
 def _proposed(value: float = 2.45e9) -> dict:
     return propose_target(value=value, comparator="EQUALS", unit="Hz")
+
+
+def _proposed_with_intent(value: float, effect: str) -> dict:
+    """A `propose_target` shape carrying an `intended_effect` extra key --
+    how a document's per-requirement entry states both the numeric target
+    and the intended effect together (issue #323, docs/adr/0030)."""
+    target = propose_target(value=value, comparator="EQUALS", unit="Hz")
+    target["intended_effect"] = propose_intended_effect(effect)
+    return target
+
+
+def _confirm(document: dict, narrative: str, requirement_targets: dict, requirement_ids) -> dict:
+    """Walk `document` through the full DRAFT -> UNDER_REVIEW -> REFINED ->
+    CONFIRMED lifecycle, restating the same content at every step (mirrors
+    test_the_happy_path_walks_end_to_end) -- a convenience for extraction
+    tests that don't care about the intermediate review rounds themselves."""
+    under_review = revise_requirements_document(
+        document, "UNDER_REVIEW", narrative, requirement_targets, requirement_ids
+    )
+    refined = revise_requirements_document(
+        under_review, "REFINED", narrative, requirement_targets, requirement_ids
+    )
+    return revise_requirements_document(
+        refined, "CONFIRMED", narrative, requirement_targets, requirement_ids
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -349,3 +375,121 @@ def test_revise_requirements_document_does_not_mutate_its_input():
 
 def test_document_status_covers_the_four_lifecycle_states():
     assert {s.value for s in DocumentStatus} == {"DRAFT", "UNDER_REVIEW", "REFINED", "CONFIRMED"}
+
+
+# ---------------------------------------------------------------------------
+# extract_requirement_fields -- attach_target/attach_intent from a CONFIRMED
+# document onto a design's own requirements (issue #323, docs/adr/0031)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_requirement_fields_writes_target_and_intended_effect():
+    requirement_targets = {"req-1": _proposed_with_intent(2.4e9, "behave as a magnetic mirror")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="Needs to behave as a magnetic mirror at 2.4 GHz.",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "needs to behave as a magnetic mirror at 2.4 GHz"}}
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    assert updated["req-1"]["target"]["value"] == 2.4e9
+    assert updated["req-1"]["target"]["target_status"] == "PROPOSED"
+    assert updated["req-1"]["intended_effect"]["effect"] == "behave as a magnetic mirror"
+    # the original prose is untouched
+    assert updated["req-1"]["requirement"] == "needs to behave as a magnetic mirror at 2.4 GHz"
+
+
+def test_extract_requirement_fields_handles_the_compound_ask_case():
+    """A customer wanting two different things from one design is two
+    ordinary Customer requirement rows, each independently extracted with
+    its own intended_effect from the same confirmed document (issue #323
+    acceptance criteria)."""
+    requirement_targets = {
+        "req-1": _proposed_with_intent(2.4e9, "behave as a magnetic mirror"),
+        "req-2": _proposed_with_intent(10.0, "absorb the wave"),
+    }
+    document = draft_requirements_document(
+        requirement_ids={"req-1", "req-2"},
+        narrative="Wants both a magnetic mirror and absorption from one design.",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1", "req-2"})
+
+    requirements = {
+        "req-1": {"requirement": "should behave as a magnetic mirror"},
+        "req-2": {"requirement": "should absorb the wave"},
+    }
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    assert updated["req-1"]["intended_effect"]["effect"] == "behave as a magnetic mirror"
+    assert updated["req-2"]["intended_effect"]["effect"] == "absorb the wave"
+    assert updated["req-1"]["target"]["value"] == 2.4e9
+    assert updated["req-2"]["target"]["value"] == 10.0
+
+
+def test_extract_requirement_fields_leaves_a_requirement_without_a_stated_effect():
+    """ADR-0030's 'having none is a legal answer' -- a bend radius asks
+    nothing of the wave, so a document entry with no intended_effect key
+    leaves the requirement without one after extraction."""
+    requirement_targets = {"req-1": _proposed(5.0)}  # no intended_effect key
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="bend radius <= 5 mm",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "bend radius <= 5 mm"}}
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    assert "intended_effect" not in updated["req-1"]
+    assert updated["req-1"]["target"]["value"] == 5.0
+
+
+def test_extract_requirement_fields_rejects_a_document_that_is_not_confirmed():
+    requirement_targets = {"req-1": _proposed_with_intent(2.4e9, "behave as a magnetic mirror")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"}, narrative="v1", requirement_targets=requirement_targets
+    )
+    requirements = {"req-1": {"requirement": "some prose"}}
+    with pytest.raises(InvalidRequirementsDocumentError, match="CONFIRMED"):
+        extract_requirement_fields(requirements, document)
+
+
+def test_extract_requirement_fields_provenance_stays_assumed_across_review_rounds():
+    """issue #323 acceptance criteria: intended_effect/target provenance
+    stays ASSUMED regardless of how many review rounds the document went
+    through."""
+    v1_targets = {"req-1": _proposed_with_intent(1.0, "absorb the wave")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"}, narrative="v1", requirement_targets=v1_targets
+    )
+    v2_targets = {"req-1": _proposed_with_intent(2.0, "absorb the wave, revised")}
+    under_review = revise_requirements_document(
+        document, "UNDER_REVIEW", "v2", v2_targets, {"req-1"}
+    )
+    v3_targets = {"req-1": _proposed_with_intent(3.0, "absorb the wave, corrected")}
+    refined = revise_requirements_document(under_review, "REFINED", "v3", v3_targets, {"req-1"})
+    confirmed = revise_requirements_document(refined, "CONFIRMED", "v3", v3_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "some prose"}}
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    assert updated["req-1"]["target"]["provenance"] == "ASSUMED"
+    assert updated["req-1"]["intended_effect"]["provenance"] == "ASSUMED"
+
+
+def test_extract_requirement_fields_does_not_mutate_its_inputs():
+    requirement_targets = {"req-1": _proposed_with_intent(1.0, "absorb the wave")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"}, narrative="v1", requirement_targets=requirement_targets
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "some prose"}}
+    extract_requirement_fields(requirements, confirmed)
+    assert "target" not in requirements["req-1"]
+    assert "intended_effect" not in requirements["req-1"]
