@@ -1257,6 +1257,9 @@ def run_elmer_simulation(
     geometry: dict,
     frequency_hz: float,
     timeout_s: int = 1800,
+    gmsh_executable: str | None = None,
+    elmergrid_executable: str | None = None,
+    elmersolver_executable: str | None = None,
 ) -> dict:
     """Simulate a structure with Elmer FEM's VectorHelmholtz module: a general,
     multiphysics-ready EM cross-check -- NOT a replacement for run_nec2_simulation/
@@ -1293,7 +1296,14 @@ def run_elmer_simulation(
     against real gmsh/ElmerGrid/ElmerSolver binaries -- none is installed in this
     environment; treat any result as unverified end-to-end until it has been run
     against the real tools at least once."""
-    return _run_elmer_simulation(geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s)
+    return _run_elmer_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        timeout_s=timeout_s,
+        gmsh_executable=gmsh_executable,
+        elmergrid_executable=elmergrid_executable,
+        elmersolver_executable=elmersolver_executable,
+    )
 
 
 @function_tool(strict_mode=False)  # same rationale as run_elmer_simulation above --
@@ -1303,6 +1313,7 @@ def generate_freecad_curved_geometry(
     primitives: list[dict],
     curvature: dict,
     timeout_s: int = 600,
+    executable: str | None = None,
 ) -> dict:
     """Map a FLAT unit-cell/array layout (a list of this repo's own "box"/"polygon"
     geometry-dict primitives -- e.g. straight out of geometry.unit_cell.
@@ -1336,7 +1347,10 @@ def generate_freecad_curved_geometry(
     has been run against the real tool at least once (the geometry-dict mapping itself
     is pure Python, exercised directly in tests, and needs no FreeCAD install)."""
     return _run_freecad_curved_geometry(
-        primitives=primitives, curvature=curvature, timeout_s=timeout_s
+        primitives=primitives,
+        curvature=curvature,
+        timeout_s=timeout_s,
+        executable=executable,
     )
 
 
