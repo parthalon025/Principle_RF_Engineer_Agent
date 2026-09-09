@@ -1285,25 +1285,17 @@ def run_freecad_fem_mesh_geometry(
             "mesh": status.get("mesh", {**_no_mesh, "note": "status file has no 'mesh' key"}),
         }
     else:
+        missing_status_note = (
+            f"{status_filename!r} was not found in the run's workdir after "
+            "FreeCADCmd exited 0 -- either the macro's own final JSON-write step "
+            "didn't execute (check stdout below), or (for a fake test executable "
+            "standing in for FreeCADCmd) the fake script doesn't emit this file."
+        )
         freecad_result = {
             "objects_built": [],
             "errors": [],
-            "mesh": {
-                **_no_mesh,
-                "note": (
-                    f"{status_filename!r} was not found in the run's workdir after "
-                    "FreeCADCmd exited 0 -- either the macro's own final JSON-write "
-                    "step didn't execute (check stdout below), or (for a fake test "
-                    "executable standing in for FreeCADCmd) the fake script doesn't "
-                    "emit this file."
-                ),
-            },
-            "note": (
-                f"{status_filename!r} was not found in the run's workdir after "
-                "FreeCADCmd exited 0 -- either the macro's own final JSON-write step "
-                "didn't execute (check stdout below), or (for a fake test executable "
-                "standing in for FreeCADCmd) the fake script doesn't emit this file."
-            ),
+            "mesh": {**_no_mesh, "note": missing_status_note},
+            "note": missing_status_note,
         }
 
     return {
