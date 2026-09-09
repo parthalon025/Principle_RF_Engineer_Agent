@@ -52,6 +52,7 @@ server.py`'s real entry point -- the same one
 tests) but filtered to one role's own tool set.
 """
 
+import os
 import sys
 from dataclasses import dataclass
 
@@ -147,9 +148,28 @@ def build_role_mcp_server(role_key: str) -> MCPServerStdio:
     cached singleton, since each call site (a live run, or a test) owns its
     own connect/cleanup lifecycle and two callers sharing one `MCPServerStdio`
     would also share one underlying subprocess and session.
+
+    WHY `env=dict(os.environ)` IS REQUIRED, NOT OPTIONAL (issue #319's own
+    Verify-phase finding): confirmed directly against the installed MCP
+    client's own source (`mcp/client/stdio/__init__.py`) that
+    `MCPServerStdio`'s underlying `stdio_client()` defaults an unset `env`
+    to `get_default_environment()` -- a small, security-motivated allowlist
+    (`PATH`/`HOME`/`USER`/etc. on POSIX, `PATH`/`APPDATA`/etc. on Windows)
+    that does NOT include `DATABASE_URL` or any other `.env`-loaded
+    configuration this repo's tools read from the environment. Without this,
+    every tool the spawned subprocess runs that touches Postgres
+    (`designs.db.get_connection` reads `os.environ["DATABASE_URL"]` -- true
+    of nearly every tool in this repo) would fail inside the subprocess with
+    a bare `KeyError`, for a reason that has nothing to do with MCP-routing
+    parity -- see `tests/test_mcp_tool_call_parity.py` for the live proof.
+    Captured FRESH on every call (not once at `_MCP_SERVER_PARAMS`'s module-
+    import time) so a caller's own `monkeypatch.setenv` (e.g. `NEC2PP_BIN`
+    pointed at a fake executable, this repo's own solver-adapter-test
+    convention -- see `tests/conftest.py`'s `make_fake_executable`) reaches
+    the subprocess too.
     """
     return MCPServerStdio(
-        params=_MCP_SERVER_PARAMS,
+        params={**_MCP_SERVER_PARAMS, "env": dict(os.environ)},
         name=f"principal-rf-engineer-mcp-{role_key}",
         tool_filter=ROLE_MCP_TOOL_FILTERS[role_key],
     )

@@ -26,6 +26,7 @@ Two kinds of proof are used here, deliberately:
 """
 
 import asyncio
+import os
 import sys
 
 import pytest
@@ -135,6 +136,29 @@ def test_build_role_mcp_server_returns_a_fresh_instance_each_call():
     first = build_role_mcp_server("verification")
     second = build_role_mcp_server("verification")
     assert first is not second
+
+
+def test_build_role_mcp_server_passes_the_parent_process_environment_through(monkeypatch):
+    """Issue #319 (ADR-0032 Verify phase): confirmed directly against the
+    installed MCP client's own source (mcp/client/stdio/__init__.py) that
+    MCPServerStdio's underlying stdio_client() defaults an unset `env` to
+    get_default_environment() -- a small, security-motivated allowlist
+    (PATH/HOME/USER/etc. on POSIX, PATH/APPDATA/etc. on Windows) that does
+    NOT include DATABASE_URL or any other `.env`-loaded configuration this
+    repo's tools read from the environment. Before this fix,
+    build_role_mcp_server's `_MCP_SERVER_PARAMS` carried no `env` key at
+    all, so EVERY tool the spawned subprocess runs that touches Postgres
+    (designs.db.get_connection reads os.environ['DATABASE_URL'] -- true of
+    nearly every tool in this repo) would fail inside the subprocess with a
+    bare KeyError, for a reason that has nothing to do with MCP-routing
+    parity. `env=dict(os.environ)` is captured fresh on every call (not
+    once at import time) so a test's own monkeypatch.setenv (e.g. NEC2PP_BIN
+    pointed at a fake executable) reaches the subprocess too."""
+    monkeypatch.setenv("_TEST_319_CANARY_VAR", "canary-value")
+    server = build_role_mcp_server("verification")
+    assert server.params.env is not None
+    assert server.params.env.get("_TEST_319_CANARY_VAR") == "canary-value"
+    assert server.params.env.get("DATABASE_URL") == os.environ["DATABASE_URL"]
 
 
 # ---------------------------------------------------------------------------
