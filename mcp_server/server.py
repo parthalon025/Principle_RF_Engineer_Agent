@@ -11,6 +11,7 @@ from designs.requirement_targets import (
 from designs.requirement_targets import (
     propose_requirement_target as _propose_requirement_target,
 )
+from designs.service import coerce_release_approval as _coerce_release_approval
 from designs.service import create_design as _create_design
 from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
@@ -1718,7 +1719,7 @@ def record_decision(
 
 
 @mcp.tool()
-def advance_design_status(design_id: int, status: str) -> dict:
+def advance_design_status(design_id: int, status: str, approval: dict | None = None) -> dict:
     """Advance a design through docs/OPERATIONS.md's lifecycle (issue #145):
     DRAFT -> ANALYSIS -> SIMULATION -> OPTIMIZATION -> VERIFICATION ->
     CONDITIONAL-PASS/PASS/FAIL/BLOCKED -> RELEASED.
@@ -1730,16 +1731,25 @@ def advance_design_status(design_id: int, status: str) -> dict:
     A refusal comes back tagged illegal_transition with a legal_next list
     naming what IS reachable from here.
 
-    RELEASED additionally requires a signed human-approval receipt, which this
-    tool cannot supply: no human-facing approval workflow is wired up in this
-    codebase, so a release attempt returns release_not_approved. That is the
-    intended behaviour -- a design must never reach RELEASED autonomously
-    (docs/adr/0007; docs/BUILD_PLAN.md's Phase 12).
+    RELEASED additionally requires a signed human-approval receipt (issue
+    #258): pass it as `approval`, a `DesignReleaseApprovalReceipt.to_dict()`
+    output minted by a human through this codebase's separate, human-only
+    release-approval CLI (its `approve-release` subcommand) -- NOT
+    something this tool, or the agent calling it, can fabricate itself;
+    nothing here calls `request_design_release_approval`, and that CLI
+    module is not reachable from this tool surface at all. A release
+    attempt with no `approval` (or an invalid, forged, or wrong-design/
+    wrong-revision one) still returns release_not_approved, exactly as
+    before this tool accepted the parameter at all -- a design must never
+    reach RELEASED autonomously (docs/adr/0007; docs/BUILD_PLAN.md's
+    Phase 12).
 
     This is the explicit path, for design work tracked outside the opt-in
     design loop (ADR-0010). The loop persists its own status at each iteration
     boundary (ADR-0011) and does not go through here."""
-    return _update_design_status(design_id=design_id, status=status)
+    return _update_design_status(
+        design_id=design_id, status=status, approval=_coerce_release_approval(approval)
+    )
 
 
 @mcp.tool()
