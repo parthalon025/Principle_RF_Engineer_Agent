@@ -255,10 +255,10 @@ def test_correlate_temperature_one_sided_not_flagged():
 # ---------------------------------------------------------------------------
 # known_tolerance_db (issue #254): a mechanical, per-S-parameter comparison
 # of the already-computed max_magnitude_diff_db against a caller-supplied
-# bound -- never a "model was wrong"/"design was wrong" verdict (see
-# docs/adr/0009). Mirrors the temperature-tolerance test triad above:
-# supplied-and-within, supplied-and-exceeds, not-supplied-at-all, and a
-# per-parameter dict case.
+# bound (see correlate_simulation_measurement's docstring and docs/adr/0009
+# for what this field is and isn't). Mirrors the temperature-tolerance test
+# triad above: supplied-and-within, supplied-and-exceeds, not-supplied-at-
+# all, and a per-parameter dict case.
 # ---------------------------------------------------------------------------
 
 
@@ -325,9 +325,8 @@ def test_correlate_tolerance_dict_applies_per_parameter_independently():
 
 
 def test_correlate_tolerance_comparison_never_names_model_or_design():
-    """docs/adr/0009: this field must never allocate blame between 'the
-    model was wrong' and 'the design was wrong' -- it is a mechanical
-    inside/outside/no-data comparison only, exactly three values."""
+    """See docs/adr/0009: exactly three mechanical values, never a
+    model-vs-design verdict."""
     result = _known_loss_perturbation_result(known_tolerance_db={"s21": 0.1})
 
     allowed = {"WITHIN_KNOWN_TOLERANCE", "EXCEEDS_KNOWN_TOLERANCE", "NO_TOLERANCE_ON_RECORD"}
@@ -336,6 +335,21 @@ def test_correlate_tolerance_comparison_never_names_model_or_design():
     note_lower = result["tolerance_comparison_note"].lower()
     for banned in ("model was wrong", "design was wrong", "model_wrong", "design_wrong"):
         assert banned not in note_lower
+
+
+def test_correlate_tolerance_dict_with_uppercase_key_raises():
+    """Issue #254's spec text says the dict is 'keyed the same way
+    s_parameters already is' (upper-case, e.g. "S11"), but comparison's own
+    keys are lower-case -- a caller following the spec's literal words who
+    passes {"S11": ...} must get a clear error, not a silent
+    NO_TOLERANCE_ON_RECORD for every parameter."""
+    with pytest.raises(CorrelationError, match="S11"):
+        _known_loss_perturbation_result(known_tolerance_db={"S11": 0.1})
+
+
+def test_correlate_tolerance_dict_with_unrecognized_key_raises():
+    with pytest.raises(CorrelationError, match="s99"):
+        _known_loss_perturbation_result(known_tolerance_db={"s99": 0.1})
 
 
 # ---------------------------------------------------------------------------
