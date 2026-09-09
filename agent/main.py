@@ -1319,18 +1319,25 @@ def run_ngspice_simulation(job: dict, timeout_s: int = 600) -> dict:
     with ngspice (a free/open circuit-level SPICE simulator, no paid ADS license
     needed): generate a netlist from a structured job dict (R/L/C/V/I components,
     optional "raw_cards" escape hatch for nonlinear devices/subcircuits, an
-    op/ac/tran "analysis", and node-voltage/branch-current "outputs" -- see
-    simulation.ngspice.generate_ngspice_netlist for the full shape), run it via
-    ngspice, and parse the requested outputs' AC (real/imag pairs vs. frequency),
-    TRAN (values vs. time), or OP data back out. Returns "SIMULATED" provenance.
-    IMPORTANT SCOPE LIMIT: S-parameters are NOT computed here -- stable ngspice has
-    no built-in S-parameter analysis; use run_xyce_simulation's native `.LIN`
+    op/ac/tran/noise/disto/pz/sens "analysis", and "outputs" -- see
+    simulation.ngspice.generate_ngspice_netlist for the full per-analysis-type
+    shape), run it via ngspice, and parse the results back out: AC/DISTO (real/imag
+    pairs vs. frequency), TRAN/OP/NOISE (real values vs. time or frequency), or
+    PZ/SENS (a small unswept set of poles/zeros or per-parameter sensitivities,
+    with no frequency/time axis at all -- "scale"/"scale_name" are None for these
+    two). Use NOISE for amplifier/LNA noise-figure work, DISTO or TRAN for
+    nonlinearity (harmonic distortion / large-signal compression), and PZ/SENS for
+    stability (pole locations) or design-parameter sensitivity. Returns "SIMULATED"
+    provenance. IMPORTANT SCOPE LIMIT: S-parameters and `.TF` (transfer function)
+    are NOT computed here -- stable ngspice has no built-in S-parameter analysis and
+    this adapter does not yet wire up `.TF`; use run_xyce_simulation's native `.LIN`
     S-parameter/Touchstone path for that need instead (see simulation/ngspice.py's
     module docstring for why). Netlist/output format verified against the primary
     ngspice manual (see simulation/ngspice.py's module docstring for the citation)
-    but NOT against a real ngspice binary -- none is installed in this environment;
-    treat any result as unverified end-to-end until it has been run against the
-    real tool at least once."""
+    but NOT against a real ngspice binary for noise/disto/pz/sens -- none is
+    installed in this environment (the `.AC` path alone was verified against a real
+    binary; see that same module docstring); treat any result as unverified
+    end-to-end until it has been run against the real tool at least once."""
     return _run_ngspice_simulation(job=job, timeout_s=timeout_s)
 
 
@@ -2655,8 +2662,13 @@ ROLE_SPECS: list[RoleSpec] = [
             "`.LIN` analysis produces a genuine Touchstone file, subject to "
             "its own honest confidence caveat -- see simulation/xyce.py's "
             "module docstring; ngspice has no built-in S-parameter analysis "
-            "at all). Defer system-chain-level gain/link budgeting to the "
-            "systems role."
+            "at all). run_ngspice_simulation additionally covers (issue "
+            "#283) `.NOISE` (amplifier/LNA noise figure -- the LNA-"
+            "noise-and-distortion reasoning this role exists for), `.DISTO` "
+            "(harmonic distortion), `.PZ` (pole-zero stability), and "
+            "`.SENS` (DC/AC parameter sensitivity) analyses, alongside its "
+            "existing OP/AC/TRAN support. Defer system-chain-level gain/"
+            "link budgeting to the systems role."
         ),
         tools=[
             calculate_vswr,

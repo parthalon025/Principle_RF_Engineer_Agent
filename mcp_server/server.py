@@ -1014,16 +1014,21 @@ def run_ngspice_simulation(job: dict, timeout_s: int = 600) -> dict:
     with ngspice (a free/open circuit-level SPICE simulator, no paid ADS license
     needed): generate a netlist from a structured job dict (R/L/C/V/I components,
     optional "raw_cards" escape hatch for nonlinear devices/subcircuits, an
-    op/ac/tran "analysis", and node-voltage/branch-current "outputs" -- see
-    simulation.ngspice.generate_ngspice_netlist for the full shape), run it via
-    ngspice, and parse the requested outputs' AC (real/imag pairs vs. frequency),
-    TRAN (values vs. time), or OP data back out. Returns "SIMULATED" provenance.
-    SCOPE LIMIT: S-parameters are NOT computed -- stable ngspice has no built-in
-    S-parameter analysis; use run_xyce_simulation's native `.LIN` S-parameter/
-    Touchstone path for that need instead. Netlist/output format verified against
-    the primary ngspice manual (see simulation/ngspice.py's module docstring for
-    the citation) but NOT against a real ngspice binary -- none is installed in
-    this environment."""
+    op/ac/tran/noise/disto/pz/sens "analysis", and "outputs" -- see
+    simulation.ngspice.generate_ngspice_netlist for the full per-analysis-type
+    shape), run it via ngspice, and parse the results back out: AC/DISTO (real/imag
+    pairs vs. frequency), TRAN/OP/NOISE (real values vs. time or frequency), or
+    PZ/SENS (a small unswept set of poles/zeros or per-parameter sensitivities,
+    with no frequency/time axis at all -- "scale"/"scale_name" are None for these
+    two). Returns "SIMULATED" provenance. SCOPE LIMIT: S-parameters and `.TF`
+    (transfer function) are NOT computed -- stable ngspice has no built-in
+    S-parameter analysis and this adapter does not yet wire up `.TF`; use
+    run_xyce_simulation's native `.LIN` S-parameter/Touchstone path for the former.
+    Netlist/output format verified against the primary ngspice manual (see
+    simulation/ngspice.py's module docstring for the citation) but NOT against a
+    real ngspice binary for noise/disto/pz/sens -- none is installed in this
+    environment (the `.AC` path alone was verified against a real binary; see that
+    same module docstring)."""
     return _run_ngspice_simulation(job=job, timeout_s=timeout_s)
 
 

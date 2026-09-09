@@ -92,27 +92,38 @@ and raises this repo's `SimulatorError` on a nonzero exit or timeout.
 R/L/C/V/I components via the shared `simulation/spice_netlist.py` helpers,
 plus a `raw_cards` escape hatch for anything else (semiconductor devices,
 subcircuits) since this repo deliberately does not generate SPICE
-model-parameter syntax itself — and emits a `.control` block that runs
-`op`/`ac`/`tran` and writes results with `wrdata` (one shared scale column,
-via `set wr_singlescale`, plus one value column per output, or a
-real/imaginary pair per output for AC). `parse_ngspice_wrdata()` reads that
-plain-ASCII file back into a `{scale, scale_name, values}` dict, tolerating
-stray non-numeric lines. `run_ngspice_simulation()` ties the three together
-and returns a dict tagged `"provenance": "SIMULATED"`. Per the module's own
-verification note, a real ngspice-47 binary was run end to end against a
-plain RC low-pass filter's `.AC` sweep and matched the filter's known
-physics; `.TRAN`/`.OP` and the `raw_cards` path remain format-verified
-against documentation only, not yet run against a real binary. `.DC` sweep
-and S-parameters are explicitly not implemented in this pass (Xyce's native
-`.LIN` analysis, wired up in `simulation/xyce.py`, is this repo's actual
-S-parameter path).
+model-parameter syntax itself — and emits a `.control` block for one of
+seven analysis types: `op`/`ac`/`tran`/`noise`/`disto` write results with
+`wrdata` (one shared scale column, via `set wr_singlescale`, plus one real
+value column per output, or a real/imaginary pair per output for the two
+complex small-signal quantities — `ac` and `disto`; `noise`'s own
+spectral-density vectors stay real); `pz`/`sens` have no swept axis to
+write at all, so their block ends with `print all` instead (issue #283 —
+neither analysis sweeps anything, so `wrdata`'s "one row per swept point"
+shape does not apply). `parse_ngspice_wrdata()` reads the `wrdata` file
+back into a `{scale, scale_name, values}` dict, tolerating stray
+non-numeric lines; the sibling `parse_ngspice_print_values()` reads the
+`print all` text into a `{name: value | [real, imag]}` dict for `pz`/`sens`
+instead. `run_ngspice_simulation()` ties these together (dispatching to
+whichever parser its analysis type needs) and returns a dict tagged
+`"provenance": "SIMULATED"`. Per the module's own verification note, a real
+ngspice-47 binary was run end to end against a plain RC low-pass filter's
+`.AC` sweep and matched the filter's known physics; `.TRAN`/`.OP`, the
+`raw_cards` path, and (added issue #283) `.NOISE`/`.DISTO`/`.PZ`/`.SENS`
+remain format-verified against documentation only, not yet run against a
+real binary. `.DC` sweep, `.TF` (transfer function), and S-parameters are
+explicitly not implemented in this pass (Xyce's native `.LIN` analysis,
+wired up in `simulation/xyce.py`, is this repo's actual S-parameter path).
 
 ## Capabilities not yet used here
 
-- **`.NOISE`, `.DISTO`, `.PZ`, `.SENS`, `.TF` analyses** [4] — noise figure
-  and distortion analysis would be directly useful for an active
-  amplifier/LNA sub-circuit behind an EM surface, but only `.OP`/`.AC`/`.TRAN`
-  are wired up.
+- **`.TF` (transfer function) analysis** [4] — the last of the five
+  analyses this report originally listed as unwired; `.NOISE`, `.DISTO`,
+  `.PZ`, and `.SENS` were closed in issue #283 (noise-figure and
+  distortion analysis for an active amplifier/LNA sub-circuit behind an EM
+  surface, plus pole-zero/sensitivity analysis for the same), leaving
+  `.TF` as the one analysis from ngspice's own `ANALYSES` file this repo's
+  adapter still does not generate a `.control`-block command for.
 - **XSPICE behavioral code models and Verilog/VHDL co-simulation** [1][2] —
   useful for a controller driving a tunable/reconfigurable metasurface
   (e.g. varactor-bias switching logic), but this repo's adapter only
