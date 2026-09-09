@@ -25,17 +25,24 @@ THE MECHANISM:
      It does nothing consequential itself -- no step action runs, no state
      advances -- it only decides whether to grant a receipt.
 
-  2. THIS CODEBASE DOES NOT WIRE UP A REAL HUMAN-FACING APPROVAL UI/
-     WORKFLOW. `approval_callback` defaults to None, and calling with
+  2. `approval_callback` defaults to None, and calling with
      `approval_callback=None` (the only way a Python callable cannot cross
      an agent/MCP JSON tool boundary, so the only way any agent/MCP tool
      wiring in this project could ever call it) ALWAYS raises
      OrchestrationError. This project's `orchestration/design_loop.py`
      deliberately does NOT wire this function up as its own agent/MCP tool
      (the ticket's tool-surface budget is three tools: start, advance,
-     inspect -- see design_loop.py's module docstring) -- it is exercised
-     directly in Python (by tests, and by any future human-approval
-     workflow that supplies a real `approval_callback`).
+     inspect -- see design_loop.py's module docstring). The real,
+     human-facing workflow that supplies a genuine `approval_callback` is
+     `orchestration/approval_cli.py` (issue #258) -- a local CLI, run as
+     `uv run python -m orchestration.approval_cli <subcommand>` by a human
+     with direct access to the machine running the live session, that calls
+     `request_loop_step_approval` directly and unmodified. Nothing in
+     `agent/main.py` or `mcp_server/server.py` imports that CLI module or can
+     reach it -- see that module's own docstring and
+     `tests/test_approval_cli.py`'s structural tests for the proof. Outside
+     of that CLI, this function is exercised directly in Python only by
+     tests.
 
   3. A receipt this function DOES grant is cryptographically bound (HMAC-
      SHA256, keyed by a random secret generated once per process at import
@@ -126,10 +133,12 @@ def request_loop_step_approval(
 
     `approval_callback`, if given, is called with `fingerprint_fields` and
     must return True/False for "a human approved this exact decision" /
-    "not approved". THIS CODEBASE DOES NOT WIRE UP A REAL HUMAN-FACING
-    APPROVAL UI/WORKFLOW, so `approval_callback` defaults to None, and when
-    it is None this function ALWAYS raises OrchestrationError rather than
-    fabricating an approval -- see this module's docstring, point 2.
+    "not approved". No agent/MCP tool in this codebase ever supplies one --
+    `orchestration/approval_cli.py` is the real human-facing workflow that
+    does, run locally by a human, outside any agent/MCP tool call (see this
+    module's docstring, point 2) -- so `approval_callback` defaults to None,
+    and when it is None this function ALWAYS raises OrchestrationError
+    rather than fabricating an approval.
     """
     if approval_callback is None:
         raise OrchestrationError(

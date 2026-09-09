@@ -20,11 +20,18 @@ and its own signing key, and each gate's `isinstance` check rejects the
 other's receipt outright. `tests/test_design_release_approval.py` holds that
 property in both directions.
 
-**This codebase wires up no human-facing approval workflow.** As with the loop
-gate, `approval_callback` defaults to `None`, and in that state
+**The human-facing approval workflow is `orchestration/approval_cli.py`.** As
+with the loop gate, `approval_callback` defaults to `None`, and in that state
 `request_design_release_approval` always raises rather than fabricating an
-approval. Until a real workflow exists, nothing can reach RELEASED -- which is
-the correct behaviour, not a gap to route around.
+approval -- no agent/MCP tool in this codebase ever supplies one. The real
+callback comes from a human running `uv run python -m orchestration.
+approval_cli <subcommand>` locally, on the machine running the live session
+(issue #258); that CLI calls `request_design_release_approval` directly and
+unmodified, and is not importable from, and does not import, `agent/main.py`
+or `mcp_server/server.py` (see that module's own docstring and
+`tests/test_approval_cli.py`'s structural tests). Without a human running that
+CLI, nothing can reach RELEASED -- which is the correct behaviour, not a gap
+to route around.
 
 Approvals are process-local and do not survive a restart, by design: the
 signing key is generated at import.

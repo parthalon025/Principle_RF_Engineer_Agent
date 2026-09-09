@@ -207,6 +207,85 @@ def test_approval_cli_module_is_not_imported_by_either_tool_surface():
         assert "approval_cli" not in source
 
 
+def test_neither_tool_registry_contains_any_name_from_approval_cli_public_surface():
+    """CI-lock (issue #258 ticket 5, structural regression coverage): the two
+    checks above name only the two approval-minting functions themselves
+    (`request_loop_step_approval`, `request_design_release_approval`). This
+    check is broader on purpose -- it scans the ACTUAL registered tool sets
+    (agent/main.py's `_ALL_TOOLS`, by `.name`; mcp_server/server.py's live MCP
+    registry, by `.name`) against `orchestration.approval_cli.__all__`,
+    this module's own declared public surface (`submit_pending_approval`,
+    `decide_pending_release_approval`, `list_pending_approvals`, etc. -- ten
+    names, not two). A future tool that reached this module's functionality
+    under one of ITS names, rather than under `request_loop_step_approval`'s,
+    would still be caught here even though the two targeted checks above
+    would not name it -- the same structural-guarantee spirit as
+    tests/test_design_loop.py's `test_no_release_or_manufacturing_callable_
+    exists_anywhere_in_the_package`, applied to this module's own surface
+    instead of `orchestration.approval`'s."""
+    import agent.main as agent_main
+    import mcp_server.server as server
+    import orchestration.approval_cli as approval_cli
+
+    cli_public_names = set(approval_cli.__all__)
+
+    agent_tool_names = {tool.name for tool in agent_main._ALL_TOOLS}
+    overlap = cli_public_names & agent_tool_names
+    assert not overlap, (
+        f"agent/main.py registers a tool named after orchestration.approval_cli's "
+        f"public surface: {sorted(overlap)} -- the AI agent must never be able to "
+        "reach this module's approval-minting functionality under any name"
+    )
+
+    mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    overlap = cli_public_names & mcp_tool_names
+    assert not overlap, (
+        f"mcp_server/server.py registers a tool named after orchestration."
+        f"approval_cli's public surface: {sorted(overlap)} -- the AI agent must "
+        "never be able to reach this module's approval-minting functionality "
+        "under any name"
+    )
+
+
+_BANNED_TOOL_NAME_SUBSTRINGS = ("release", "manufactur", "production")
+
+
+def test_no_release_or_manufacturing_named_tool_is_registered_in_either_surface():
+    """CI-lock (issue #258 ticket 5): the same `_BANNED_SUBSTRINGS` scan
+    tests/test_design_loop.py already runs over `orchestration.approval`,
+    `orchestration.design_loop`, and `orchestration.tooling` (by `dir()`),
+    extended to what actually matters for THIS surface -- the registered
+    tool NAMES an AI agent can call, in both registries. Deliberately scoped
+    to registered tool names only (not every module attribute, the way
+    test_design_loop.py's version is) -- `agent/main.py` and
+    `mcp_server/server.py` both legitimately hold `advance_design_status`'s
+    `approval` parameter and similar names that are not themselves a
+    release/manufacturing action; scanning every attribute there would
+    false-positive on those. Scanning tool NAMES catches a future tool
+    registered under a new name (e.g. a hypothetical `trigger_manufacturing_
+    run` or `release_design_for_print`) even though nobody thought to add a
+    targeted test for it -- structural, not enumerated."""
+    import agent.main as agent_main
+    import mcp_server.server as server
+
+    agent_tool_names = {tool.name for tool in agent_main._ALL_TOOLS}
+    mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+
+    for surface, names in (
+        ("agent/main.py", agent_tool_names),
+        ("mcp_server/server.py", mcp_tool_names),
+    ):
+        for name in names:
+            lowered = name.lower()
+            for banned in _BANNED_TOOL_NAME_SUBSTRINGS:
+                assert banned not in lowered, (
+                    f"{surface} registers a tool named {name!r}, which looks like a "
+                    "release/manufacturing path -- none should ever be agent-"
+                    "reachable (docs/BUILD_PLAN.md's Phase 12: 'Never allow "
+                    "autonomous manufacturing release')"
+                )
+
+
 # ---------------------------------------------------------------------------
 # Group 3: happy path -- submit, list, show, approve.
 # ---------------------------------------------------------------------------
