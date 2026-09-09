@@ -205,6 +205,10 @@ from simulation.meep import (
 )
 from simulation.meep import run_meep_simulation as _run_meep_simulation
 from simulation.nec2pp import run_nec2_simulation as _run_nec2_simulation
+from simulation.palace import (
+    metasurface_capability_gaps as _palace_metasurface_capability_gaps,
+)
+from simulation.palace import run_palace_simulation as _run_palace_simulation
 
 from .approval import LoopStepApprovalReceipt, OrchestrationError, check_loop_step_approval_gate
 
@@ -1245,6 +1249,94 @@ def _two_port_transmittance(family: Any, measurement: Any) -> list[float]:
     )
 
 
+def _simulate_palace_floquet(
+    family: Any,
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    """The Palace Floquet unit-cell path for REFLECTION_PHASE/DIFFUSIVE
+    (#252 ticket 3), mirroring `_simulate_meep_floquet`'s own shape: check
+    the capability gap BEFORE spending any solver time, raise a named
+    `SimulatorError` if the candidate's geometry cannot pose the family's
+    question, otherwise run the solver and record what it returned.
+
+    `family` is accepted for the same reason every handler in
+    `_SIMULATION_ADAPTERS` takes it -- the dispatch table's one shared
+    signature -- but this handler needs no fact off it: unlike
+    `_simulate_meep_floquet`'s port-count-dependent absorption arithmetic,
+    Palace's own S-parameter/conservation-check output already IS the
+    answer this family needs (a per-diffraction-order reflectance and
+    phase), nothing here derives a second quantity from it.
+
+    WHAT "capability gap" MEANS HERE, AND WHY IT IS CHECKED ON THE GEOMETRY
+    RATHER THAN ON THE ADAPTER. Unlike MEEP_FLOQUET's gap check (three
+    things the adapter itself cannot yet DO, checked with no arguments),
+    both features REFLECTION_PHASE/DIFFUSIVE need -- an embedded PEC
+    conductor patch, a ground-backed one-port cell -- are already
+    implemented in simulation/palace.py (issue #252 tickets 1/2). What can
+    still be wrong is a CANDIDATE's own geometry dict: nothing stops a
+    caller from handing this handler the module's OTHER shape (an
+    all-dielectric, two-port transmissive grating) by simply omitting
+    "ground_backed"/"pec_patches", which would run Palace successfully and
+    return a confidently wrong answer -- a bare dielectric grating's
+    transmission standing in for a metal-backed metasurface's reflection
+    phase. `simulation.palace.metasurface_capability_gaps()` is the probe
+    that catches this, per candidate, before any solver time is spent. See
+    that function's own docstring for the full reasoning.
+
+    Refusing here is not the charter's "warn, never block" being broken:
+    that rule governs withholding a CANDIDATE from a reader, and nothing is
+    withheld -- REFLECTION_PHASE/DIFFUSIVE currently declare no closed-form
+    ANALYSIS model at all (designs/design_families.py), so there is no
+    earlier-stage evidence this refusal could erase; what is refused is
+    manufacturing a SIMULATED number for a structure the candidate never
+    actually described.
+    """
+    _require_fields(step_input, {"geometry", "frequency_hz"}, "simulation")
+    geometry = dict(step_input["geometry"])
+
+    gaps = _palace_metasurface_capability_gaps(geometry)
+    if gaps:
+        detail = "; ".join(f"{gap['gap']}: {gap['costs']}" for gap in gaps)
+        raise _SimulatorError(
+            "PALACE_FLOQUET is the right adapter for a ground-backed metasurface "
+            "cell (REFLECTION_PHASE/DIFFUSIVE), and this candidate's geometry does "
+            f"not yet describe one. Missing: {detail}. No SIMULATION result is "
+            "recorded for this candidate. See simulation/palace.py's "
+            "metasurface_capability_gaps() for how to close each gap -- this is "
+            "checked in the geometry dict itself, before any solver time is spent."
+        )
+
+    result = _run_palace_simulation(
+        geometry=geometry,
+        frequency_hz=step_input["frequency_hz"],
+        sweep=step_input.get("sweep"),
+        num_processes=int(step_input.get("num_processes", 1)),
+        timeout_s=int(step_input.get("timeout_s", 3600)),
+        executable=step_input.get("executable"),
+        workdir=step_input.get("workdir"),
+        solver_order=int(step_input.get("solver_order", 1)),
+    )
+
+    s_parameters = result.get("s_parameters") or {}
+    recorded = {
+        "function": "run_palace_simulation",
+        "simulator": result.get("simulator"),
+        "status": result.get("status"),
+        "frequency_hz": s_parameters.get("frequency_hz"),
+        # Palace's own per-diffraction-order reflectance/phase output --
+        # what this family actually needs to know (issue #252's user story
+        # 6/7), not a quantity derived or borrowed from another family's
+        # physics.
+        "s_parameters": s_parameters,
+        "specular": s_parameters.get("specular"),
+        # Power-balance/passivity/reciprocity, carried through unmodified
+        # (issue #221) -- warned on, never blocked on, per ADR-0028.
+        "conservation_check": result.get("conservation_check"),
+        "provenance": result.get("provenance", "SIMULATED"),
+    }
+    return "simulation", recorded, recorded["provenance"]
+
+
 def _simulate_nec2(
     family: Any,
     step_input: dict[str, Any],
@@ -1330,12 +1422,13 @@ def _simulate_nec2(
 # `del family` rather than the table carrying two shapes of callable.
 # Every solver this loop can actually drive is listed here
 # and nothing else runs: an adapter name with no entry is reported by name,
-# never quietly served by another solver (issue #241). Palace, for instance,
-# is implemented in simulation/palace.py and validated against a real binary
-# (#210) but has no entry yet -- so a family declaring it would be told so.
+# never quietly served by another solver (issue #241). Palace is implemented
+# in simulation/palace.py, validated against a real binary (#210), and wired
+# here as PALACE_FLOQUET for REFLECTION_PHASE/DIFFUSIVE (#252 ticket 3).
 _SIMULATION_ADAPTERS: dict[str, Any] = {
     "NEC2": _simulate_nec2,
     "MEEP_FLOQUET": _simulate_meep_floquet,
+    "PALACE_FLOQUET": _simulate_palace_floquet,
 }
 
 

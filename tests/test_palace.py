@@ -41,7 +41,9 @@ import pytest
 from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
+from simulation.conservation_checks import check_palace_result
 from simulation.palace import (
+    BOUND_PEC_START,
     BOUND_X_MAX,
     BOUND_X_MIN,
     BOUND_Y_MAX,
@@ -51,6 +53,7 @@ from simulation.palace import (
     PalaceSimulator,
     generate_palace_config,
     generate_palace_mesh,
+    metasurface_capability_gaps,
     parse_palace_output,
     run_palace_simulation,
 )
@@ -176,6 +179,121 @@ def test_generate_palace_mesh_missing_material_field_raises():
 
 
 # ---------------------------------------------------------------------------
+# Embedded conductor (PEC) patches -- issue #252 ticket 1. A patch is meshed
+# as an INTERIOR boundary-attribute assignment (a flat 2D face), never a
+# domain material box like the dielectric materials above.
+# ---------------------------------------------------------------------------
+
+# A single flat conductor patch, centered in x/y, sitting halfway through
+# the cell in z (0.005 m, strictly interior to the 0.01 m cell) -- its own
+# coordinates become mesh grid lines automatically via the same
+# feature-line mechanism a material box's edges use.
+PEC_PATCH_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "pec_patches": [
+        {"name": "patch", "p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+    "mesh": {"nx": 1, "ny": 1, "nz": 1},
+}
+
+
+def _attrs_in(section_name: str, mesh_result: dict) -> set[int]:
+    lines = mesh_result["mesh_text"].split("\n")
+    count_key = "num_boundary_faces" if section_name == "boundary" else "num_elements"
+    start = lines.index(section_name) + 2
+    return {int(line.split()[0]) for line in lines[start : start + mesh_result[count_key]]}
+
+
+def test_generate_palace_mesh_pec_patch_gets_a_boundary_attribute_not_a_domain_one():
+    result = generate_palace_mesh(PEC_PATCH_GEOMETRY)
+    # Background only -- a PEC patch has no volume, so it contributes
+    # nothing to the domain ("elements") attribute space.
+    assert _attrs_in("elements", result) == {1}
+    boundary_attrs = _attrs_in("boundary", result)
+    assert BOUND_PEC_START in boundary_attrs
+    assert boundary_attrs == {
+        BOUND_X_MIN,
+        BOUND_X_MAX,
+        BOUND_Y_MIN,
+        BOUND_Y_MAX,
+        BOUND_Z_MIN,
+        BOUND_Z_MAX,
+        BOUND_PEC_START,
+    }
+
+
+def test_generate_palace_mesh_multiple_pec_patches_get_distinct_attributes():
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [
+            {"p1_m": [0.002, 0.002, 0.003], "p2_m": [0.008, 0.008, 0.003]},
+            {"p1_m": [0.002, 0.002, 0.007], "p2_m": [0.008, 0.008, 0.007]},
+        ],
+        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    }
+    result = generate_palace_mesh(geometry)
+    boundary_attrs = _attrs_in("boundary", result)
+    assert BOUND_PEC_START in boundary_attrs
+    assert BOUND_PEC_START + 1 in boundary_attrs
+
+
+def test_generate_palace_mesh_pec_patch_alongside_materials_leaves_material_numbering_intact():
+    geometry = {
+        **GRATING_GEOMETRY,
+        "pec_patches": [
+            {"p1_m": [0.002, 0.002, 0.06], "p2_m": [0.006, 0.006, 0.06]},
+        ],
+    }
+    result = generate_palace_mesh(geometry)
+    # 1 = background, 2 = the dielectric bar -- unchanged by the added patch.
+    assert _attrs_in("elements", result) == {1, 2}
+    assert BOUND_PEC_START in _attrs_in("boundary", result)
+
+
+def test_generate_palace_mesh_pec_patch_missing_field_raises():
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.002, 0.005]}],  # p2_m missing
+    }
+    with pytest.raises(ValueError, match="p2_m"):
+        generate_palace_mesh(geometry)
+
+
+def test_generate_palace_mesh_pec_patch_not_flat_raises():
+    """A patch must be a flat 2D face -- exactly one of its three p1_m/p2_m
+    coordinates must match. A real 3D box (zero matching coordinates) can't
+    be meshed as a single interior face."""
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.002, 0.002], "p2_m": [0.008, 0.008, 0.008]}],
+    }
+    with pytest.raises(ValueError, match="flat"):
+        generate_palace_mesh(geometry)
+
+
+def test_generate_palace_mesh_pec_patch_degenerate_to_a_line_raises():
+    """Two matching coordinates collapse the patch to a line, not a face."""
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.005, 0.005], "p2_m": [0.008, 0.005, 0.005]}],
+    }
+    with pytest.raises(ValueError, match="flat"):
+        generate_palace_mesh(geometry)
+
+
+def test_generate_palace_mesh_pec_patch_on_cell_boundary_raises():
+    """A patch coincident with the unit cell's own outer face would collide
+    with the periodic/Floquet-port boundary attributes already assigned to
+    that face -- rejected rather than silently overlapping them."""
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.002, 0.0], "p2_m": [0.008, 0.008, 0.0]}],
+    }
+    with pytest.raises(ValueError, match="interior"):
+        generate_palace_mesh(geometry)
+
+
+# ---------------------------------------------------------------------------
 # Config generation
 # ---------------------------------------------------------------------------
 
@@ -266,6 +384,85 @@ def test_generate_palace_config_floquet_ports_excitation_and_polarization():
     assert ports[1]["Excitation"] is False
 
 
+# ---------------------------------------------------------------------------
+# ground_backed: a one-port, ground-backed cell (REFLECTION_PHASE/DIFFUSIVE's
+# declared physics, issue #252 ticket 2) -- PEC on the opposite face instead
+# of a second FloquetPort. See generate_palace_config's own docstring for the
+# "ground_backed" key and the Palace config-reference citation for "PEC".
+# ---------------------------------------------------------------------------
+
+
+def test_generate_palace_config_ground_backed_emits_exactly_one_floquet_port():
+    config = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": True},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    ports = config["Boundaries"]["FloquetPort"]
+    assert len(ports) == 1
+    assert ports[0]["Index"] == 1
+    assert ports[0]["Attributes"] == [BOUND_Z_MIN]
+    assert ports[0]["Excitation"] is True
+    assert ports[0]["IncidentPolarization"] == "TE"
+
+
+def test_generate_palace_config_ground_backed_emits_pec_boundary_on_z_max():
+    config = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": True},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    assert config["Boundaries"]["PEC"] == {"Attributes": [BOUND_Z_MAX]}
+
+
+def test_generate_palace_config_ground_backed_periodic_pairs_unaffected():
+    """ground_backed only changes what sits on the z-normal faces -- the
+    x/y periodic boundary pairs (the four side faces) are untouched."""
+    config = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": True},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    pairs = config["Boundaries"]["Periodic"]["BoundaryPairs"]
+    assert len(pairs) == 2
+    assert pairs[0]["DonorAttributes"] == [BOUND_X_MIN]
+    assert pairs[0]["ReceiverAttributes"] == [BOUND_X_MAX]
+    assert pairs[1]["DonorAttributes"] == [BOUND_Y_MIN]
+    assert pairs[1]["ReceiverAttributes"] == [BOUND_Y_MAX]
+
+
+def test_generate_palace_config_default_has_no_pec_boundary():
+    """Regression: with the flag unset, no config["Boundaries"]["PEC"] key
+    is ever emitted -- only ground_backed=True introduces it."""
+    config = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert "PEC" not in config["Boundaries"]
+    assert len(config["Boundaries"]["FloquetPort"]) == 2
+
+
+def test_generate_palace_config_ground_backed_default_false_is_byte_for_byte_unchanged():
+    """The core regression this ticket asks for: omitting "ground_backed"
+    and passing it explicitly as False must produce the IDENTICAL config to
+    what this function emitted before the flag existed."""
+    config_omitted = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    config_explicit_false = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": False},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    assert config_omitted == config_explicit_false
+    assert json.dumps(config_omitted, sort_keys=True) == json.dumps(
+        config_explicit_false, sort_keys=True
+    )
+
+
 def test_generate_palace_config_invalid_polarization_raises():
     geometry = {**GRATING_GEOMETRY, "floquet": {"polarization": "not_a_real_polarization"}}
     with pytest.raises(ValueError, match="polarization"):
@@ -336,6 +533,40 @@ def test_generate_palace_config_is_json_serializable():
         GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
     )
     json.dumps(config)  # must not raise
+
+
+def test_generate_palace_config_no_pec_patches_omits_pec_section():
+    config = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert "PEC" not in config["Boundaries"]
+
+
+def test_generate_palace_config_pec_boundary_section_matches_mesh_attribute_numbering():
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [
+            {"p1_m": [0.002, 0.002, 0.003], "p2_m": [0.008, 0.008, 0.003]},
+            {"p1_m": [0.002, 0.002, 0.007], "p2_m": [0.008, 0.008, 0.007]},
+        ],
+        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    }
+    mesh_result = generate_palace_mesh(geometry)
+    mesh_pec_attrs = sorted(a for a in _attrs_in("boundary", mesh_result) if a >= BOUND_PEC_START)
+
+    config = generate_palace_config(
+        geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert config["Boundaries"]["PEC"]["Attributes"] == mesh_pec_attrs
+    assert mesh_pec_attrs == [BOUND_PEC_START, BOUND_PEC_START + 1]
+
+
+def test_generate_palace_config_pec_section_is_json_serializable():
+    config = generate_palace_config(
+        PEC_PATCH_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    json.dumps(config)  # must not raise
+    assert config["Boundaries"]["PEC"]["Attributes"] == [BOUND_PEC_START]
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +666,55 @@ def test_parse_palace_output_no_matching_header_returns_computed_false():
     result = parse_palace_output("f (GHz),SomethingElse\n1.0,2.0\n")
     assert result["computed"] is False
     assert "mode label" in result["note"]
+
+
+# ---------------------------------------------------------------------------
+# A one-port, ground-backed cell's output: no port-2 columns at all (there is
+# no second FloquetPort to report on -- see generate_palace_config's
+# "ground_backed" option). parse_palace_output/check_palace_result must run
+# cleanly on this shape (issue #252 ticket 2) exactly as they already do on
+# the two-port shape -- see tests/test_conservation_checks.py's own
+# check_palace_result fixtures for the two-port sibling of this test.
+# ---------------------------------------------------------------------------
+
+
+def _build_ground_backed_csv() -> str:
+    """A ground-backed cell's port-floquet-S.csv has only port-1 columns.
+    Full in-phase reflection (|S11|=1 at 0 degrees) is the magnetic-mirror
+    behavior CLAUDE.md's charter names (US12089385B2 [0058]): a surface that
+    "produces the same full reflection with 0 degree phase shift"."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["f (GHz)", "|S[P1(0;0)TE][1]| (dB)", "arg(S[P1(0;0)TE][1]) (deg.)"])
+    writer.writerow(["10.000000e+00", "0.0", "0.0"])
+    return buf.getvalue()
+
+
+GROUND_BACKED_CSV = _build_ground_backed_csv()
+
+
+def test_parse_palace_output_one_port_result_has_no_second_port_specular():
+    result = parse_palace_output(GROUND_BACKED_CSV)
+    assert result["computed"] is True
+    assert "S11_TE" in result["specular"]
+    assert "S21_TE" not in result["specular"]
+
+
+def test_check_palace_result_runs_on_a_one_port_ground_backed_result():
+    """check_palace_result (power balance/passivity/reciprocity) must still
+    run correctly against a one-port-shaped parsed result: full reflection
+    (|S11|^2 == 1) with no second port to sum against is a lossless,
+    perfectly balanced structure, and reciprocity has nothing to compare
+    against (no reverse-excitation data) -- neither is an error."""
+    parsed = parse_palace_output(GROUND_BACKED_CSV)
+    result = check_palace_result(parsed, lossless=True)
+    assert "power_balance" in result
+    row = result["power_balance"][0]
+    assert row["power_sum"] == pytest.approx(1.0, abs=1e-6)
+    assert row["ok"] is True
+    assert result["passivity"][0]["ok"] is True
+    assert result["reciprocity"] == []  # no reverse-excitation data present
+    assert result["all_ok"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -740,3 +1020,127 @@ def test_specular_view_keeps_both_polarizations_apart():
 def test_specular_view_keys_are_polarization_qualified():
     result = parse_palace_output(PALACE_REFERENCE_BOTH_POLARIZATIONS_CSV)
     assert set(result["specular"]) == {"S11_TE", "S11_TM", "S21_TE", "S21_TM"}
+
+
+# ---------------------------------------------------------------------------
+# metasurface_capability_gaps() -- issue #252 ticket 3. Both features it
+# checks (pec_patches, ground_backed) are already implemented (tickets 1/2);
+# this probe validates that a CANDIDATE's geometry actually uses them, the
+# way a REFLECTION_PHASE/DIFFUSIVE candidate's physics requires.
+# ---------------------------------------------------------------------------
+
+# A geometry with neither feature set: the module's original all-dielectric,
+# two-port transmissive shape -- the WRONG shape for a ground-backed
+# metasurface family.
+_NEITHER_FEATURE_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+}
+
+# ground_backed=True but no printed conductor: a bare, metal-BACKED
+# dielectric slab -- has the right port physics but no metasurface element.
+_GROUND_BACKED_ONLY_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "ground_backed": True,
+}
+
+# pec_patches present but ground_backed left at its False default: a
+# transmissive two-port cell with an embedded patch, not the family's
+# declared one-port physics.
+_PEC_PATCH_ONLY_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "pec_patches": [
+        {"p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+}
+
+# Both set: the physically-correct shape for REFLECTION_PHASE/DIFFUSIVE.
+_BOTH_FEATURES_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "ground_backed": True,
+    "pec_patches": [
+        {"p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+}
+
+
+def _gap_names(gaps: list[dict[str, str]]) -> set[str]:
+    return {gap["gap"] for gap in gaps}
+
+
+def test_metasurface_capability_gaps_neither_feature_reports_both_gaps():
+    gaps = metasurface_capability_gaps(_NEITHER_FEATURE_GEOMETRY)
+    names = _gap_names(gaps)
+    assert len(gaps) == 2
+    assert any("ground_backed=True" in name for name in names)
+    assert any("pec_patches" in name for name in names)
+
+
+def test_metasurface_capability_gaps_ground_backed_only_still_flags_missing_pec_patches():
+    gaps = metasurface_capability_gaps(_GROUND_BACKED_ONLY_GEOMETRY)
+    names = _gap_names(gaps)
+    assert len(gaps) == 1
+    assert any("pec_patches" in name for name in names)
+    assert not any("ground_backed=True" in name for name in names)
+
+
+def test_metasurface_capability_gaps_pec_patches_only_still_flags_missing_ground_backed():
+    gaps = metasurface_capability_gaps(_PEC_PATCH_ONLY_GEOMETRY)
+    names = _gap_names(gaps)
+    assert len(gaps) == 1
+    assert any("ground_backed=True" in name for name in names)
+    assert not any("pec_patches" in name for name in names)
+
+
+def test_metasurface_capability_gaps_both_features_present_is_empty():
+    assert metasurface_capability_gaps(_BOTH_FEATURES_GEOMETRY) == []
+
+
+def test_metasurface_capability_gaps_empty_pec_patches_list_still_counts_as_missing():
+    """An explicit empty list is the same as omitting the key entirely --
+    zero patches is zero patches either way."""
+    geometry = {**_GROUND_BACKED_ONLY_GEOMETRY, "pec_patches": []}
+    names = _gap_names(metasurface_capability_gaps(geometry))
+    assert any("pec_patches" in name for name in names)
+
+
+def test_metasurface_capability_gaps_explicit_ground_backed_false_still_counts_as_missing():
+    geometry = {**_PEC_PATCH_ONLY_GEOMETRY, "ground_backed": False}
+    names = _gap_names(metasurface_capability_gaps(geometry))
+    assert any("ground_backed=True" in name for name in names)
+
+
+def test_metasurface_capability_gaps_shape_matches_meep_probes_dict_keys():
+    """Same {"gap", "assumed", "costs", "cheapest_test"} shape as
+    simulation/meep.py's periodic_absorber_capability_gaps() -- so
+    orchestration/design_loop.py's dispatch can join `gap['gap']:
+    gap['costs']` the same way for either adapter."""
+    for gap in metasurface_capability_gaps(_NEITHER_FEATURE_GEOMETRY):
+        assert set(gap) == {"gap", "assumed", "costs", "cheapest_test"}
+        for value in gap.values():
+            assert isinstance(value, str) and value.strip()
+
+
+def test_metasurface_capability_gaps_a_real_reflection_phase_run_reaches_run_palace_simulation(
+    tmp_path: Path,
+):
+    """End to end: a geometry with both features set has no gaps, and
+    actually running it through run_palace_simulation() (against a fake
+    executable, the same pattern as
+    test_run_palace_simulation_end_to_end_with_fake_executable) produces a
+    one-port ground-backed result -- proving the probe's "ready" verdict and
+    the adapter's own ground-backed path (issue #252 ticket 2) agree."""
+    assert metasurface_capability_gaps(_BOTH_FEATURES_GEOMETRY) == []
+    script = _make_fake_palace_py(tmp_path, GROUND_BACKED_CSV)
+
+    result = run_palace_simulation(
+        geometry=_BOTH_FEATURES_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 12e9, "points": 2},
+        executable=str(script),
+        workdir=str(tmp_path / "run"),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["s_parameters"]["computed"] is True
+    assert "S11_TE" in result["s_parameters"]["specular"]
+    assert "S21_TE" not in result["s_parameters"]["specular"]

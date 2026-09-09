@@ -1725,6 +1725,18 @@ def test_patch_declares_nec2_and_absorber_declares_meep():
     assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
 
 
+def test_reflection_phase_and_diffusive_declare_palace_floquet():
+    """#252 ticket 3: both Tier B unit-cell families now route to Palace,
+    not to whichever handler used to answer for an unsettled adapter."""
+    state = start_design_loop(REQUIREMENTS)
+    reflection_phase = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, _architecture_input("REFLECTION_PHASE")
+    )
+    diffusive = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("DIFFUSIVE"))
+    assert _simulation_adapter_for(reflection_phase) == "PALACE_FLOQUET"
+    assert _simulation_adapter_for(diffusive) == "PALACE_FLOQUET"
+
+
 # --- #241: an undeclared simulation adapter is a loud failure, not NEC2 -----
 #
 # NEC2 is a thin-wire method-of-moments solver: its whole geometry vocabulary
@@ -1738,9 +1750,9 @@ def test_patch_declares_nec2_and_absorber_declares_meep():
 # designs/design_families.py rather than being left silently unset.
 _FAMILIES_WITH_NO_SETTLED_ADAPTER = [
     # ABSORBER_TRANSMISSIVE was here until #243 settled it on MEEP_FLOQUET.
-    "DIFFUSIVE",
+    # DIFFUSIVE and REFLECTION_PHASE were here until #252 ticket 3 settled
+    # both on PALACE_FLOQUET -- see the PALACE_FLOQUET dispatch tests below.
     "POLARIZATION_CONVERTER",
-    "REFLECTION_PHASE",
 ]
 
 
@@ -1793,21 +1805,27 @@ def test_the_transmissive_absorber_now_routes_to_meep_and_never_to_nec2(monkeypa
 def test_a_declared_adapter_this_loop_cannot_drive_is_reported_not_routed_to_nec2(monkeypatch):
     """The other half of the same defect: a family may declare a solver this
     loop has no handler wired for. That must be said, not silently answered
-    by whichever handler happens to be last."""
-    palace = _dc_replace(
+    by whichever handler happens to be last.
+
+    "HFSS_DRIVEN" is used here (rather than PALACE_FLOQUET, this test's
+    original example) because #252 ticket 3 wired PALACE_FLOQUET into
+    `_SIMULATION_ADAPTERS` -- see test_reflection_phase_and_diffusive_route_
+    to_palace_not_nec2 below for that adapter's own dispatch coverage. This
+    test needs a name that stays genuinely unwired."""
+    unwired = _dc_replace(
         design_families_module.ABSORBER,
         simulation_adapter=design_families_module.SimulationAdapter(
-            name="PALACE_FLOQUET", reason="a solver this loop has no handler for yet"
+            name="HFSS_DRIVEN", reason="a solver this loop has no handler for"
         ),
     )
-    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: palace)
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: unwired)
 
     def exploding_nec2(*args, **kwargs):
         raise AssertionError("NEC2 must never stand in for an unwired adapter")
 
     monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
     state = _at_simulation("ABSORBER")
-    with pytest.raises(_SimulatorError, match="PALACE_FLOQUET"):
+    with pytest.raises(_SimulatorError, match="HFSS_DRIVEN"):
         advance_loop_step(
             state,
             {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
@@ -1897,6 +1915,171 @@ def test_the_absorbers_closed_form_analysis_is_kept_alongside_the_full_wave_run(
     kinds = [(d.step, d.result.get("function")) for d in state.decisions]
     assert ("analysis", "absorber_band_response") in kinds
     assert ("simulation", "run_meep_simulation") in kinds
+
+
+# ---------------------------------------------------------------------------
+# #252 ticket 3: SIMULATION dispatches REFLECTION_PHASE/DIFFUSIVE to
+# PALACE_FLOQUET, mirroring the ABSORBER/MEEP_FLOQUET dispatch tests above.
+# ---------------------------------------------------------------------------
+
+# The physically-correct shape for a REFLECTION_PHASE/DIFFUSIVE candidate:
+# ground_backed=True (the family's own requires_ground_plane=True/
+# port_count=1 physics) plus at least one embedded conductor patch (the
+# printed metasurface element these families are designed by).
+_GROUND_BACKED_METASURFACE_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "ground_backed": True,
+    "pec_patches": [
+        {"name": "patch", "p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+}
+
+
+def _fake_palace_result(**_kwargs):
+    return {
+        "provenance": "SIMULATED",
+        "simulator": "Palace",
+        "status": "COMPLETED",
+        "s_parameters": {
+            "computed": True,
+            "frequency_hz": [10e9],
+            "modes": {},
+            "specular": {"S11_TE": [complex(-1.0, 0.0)]},
+        },
+        "conservation_check": {
+            "all_ok": True,
+            "power_balance": [],
+            "passivity": [],
+            "reciprocity": [],
+        },
+    }
+
+
+@pytest.mark.parametrize("family", ["REFLECTION_PHASE", "DIFFUSIVE"])
+def test_reflection_phase_and_diffusive_route_to_palace_not_nec2(family, monkeypatch):
+    """#252 ticket 3: a candidate whose geometry sets ground_backed=True and
+    carries a pec_patches entry reaches Palace, never NEC2, and records a
+    SIMULATED result carrying Palace's own s_parameters/specular/
+    conservation_check output -- the per-diffraction-order reflectance and
+    phase this family actually needs (issue #252's user stories 6/7), not a
+    quantity borrowed from another family's physics."""
+    captured = {}
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError(f"NEC2 must never be reached for {family}")
+
+    def fake_run(**kwargs):
+        captured["kwargs"] = kwargs
+        return _fake_palace_result()
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", fake_run)
+
+    state = _at_simulation(family)
+    state = advance_loop_step(
+        state, {"geometry": dict(_GROUND_BACKED_METASURFACE_GEOMETRY), "frequency_hz": 10e9}
+    )
+
+    assert captured["kwargs"]["geometry"]["ground_backed"] is True
+    assert captured["kwargs"]["geometry"]["pec_patches"]
+    assert captured["kwargs"]["frequency_hz"] == 10e9
+
+    result = state.decisions[-1].result
+    assert result["function"] == "run_palace_simulation"
+    assert result["simulator"] == "Palace"
+    assert result["s_parameters"]["specular"] == {"S11_TE": [complex(-1.0, 0.0)]}
+    assert result["specular"] == {"S11_TE": [complex(-1.0, 0.0)]}
+    assert result["conservation_check"]["all_ok"] is True
+    assert state.decisions[-1].provenance == "SIMULATED"
+
+
+@pytest.mark.parametrize("family", ["REFLECTION_PHASE", "DIFFUSIVE"])
+def test_reflection_phase_and_diffusive_never_silently_fall_back_to_nec2(family, monkeypatch):
+    """The failure this dispatch exists to remove: quietly running the wire
+    solver -- or Palace on this module's OTHER (transmissive, all-
+    dielectric) shape -- on a metasurface cell and reporting success. An
+    unsupported geometry (missing ground_backed/pec_patches) must raise,
+    naming the gap, and must never reach a solver run at all."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError(f"NEC2 must never be reached for {family}")
+
+    def exploding_palace_run(*args, **kwargs):
+        raise AssertionError(
+            f"run_palace_simulation must never run on an unsupported {family} geometry"
+        )
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", exploding_palace_run)
+
+    state = _at_simulation(family)
+    with pytest.raises(_SimulatorError) as exc:
+        advance_loop_step(
+            state,
+            {
+                "geometry": {"unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01}},
+                "frequency_hz": 10e9,
+            },
+        )
+    message = str(exc.value)
+    assert "ground_backed=True" in message
+    assert "pec_patches" in message
+    assert state.current_step == DesignStep.SIMULATION.value
+    assert all(d.step != DesignStep.SIMULATION.value for d in state.decisions)
+
+
+def test_reflection_phase_missing_only_pec_patches_names_only_that_gap(monkeypatch):
+    """A geometry that already sets ground_backed=True but has no
+    pec_patches must name only the missing patch, not the (already-
+    satisfied) ground_backed gap too."""
+
+    def exploding_palace_run(*args, **kwargs):
+        raise AssertionError("run_palace_simulation must never run on an unsupported geometry")
+
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", exploding_palace_run)
+    state = _at_simulation("REFLECTION_PHASE")
+    with pytest.raises(_SimulatorError) as exc:
+        advance_loop_step(
+            state,
+            {
+                "geometry": {
+                    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+                    "ground_backed": True,
+                },
+                "frequency_hz": 10e9,
+            },
+        )
+    message = str(exc.value)
+    assert "ground_backed=True" not in message
+    assert "pec_patches" in message
+
+
+def test_patch_and_absorber_routing_is_unaffected_by_the_palace_dispatch(monkeypatch):
+    """Regression: wiring PALACE_FLOQUET must not move PATCH off NEC2 or
+    ABSORBER off MEEP_FLOQUET, and DEFAULT_SIMULATION_ADAPTER (removed at
+    #241) stays gone -- nothing here reintroduces a default."""
+    assert not hasattr(design_loop_module, "DEFAULT_SIMULATION_ADAPTER")
+
+    def exploding_palace_run(*args, **kwargs):
+        raise AssertionError("Palace must never be reached for PATCH or ABSORBER")
+
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", exploding_palace_run)
+    monkeypatch.setattr(
+        design_loop_module, "_run_nec2_simulation", lambda **kw: _fake_nec2_result()
+    )
+
+    state = start_design_loop(REQUIREMENTS)
+    patch = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    absorber = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    assert _simulation_adapter_for(patch) == "NEC2"
+    assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
+
+    patch_state = advance_loop_step(
+        _advance_to(patch, DesignStep.SIMULATION),
+        {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+    )
+    assert patch_state.decisions[-1].result["simulator"] == "NEC2++"
+    assert "s_parameters" not in patch_state.decisions[-1].result
 
 
 def test_no_capability_gaps_remain_and_the_survivors_are_honest_caveats():
