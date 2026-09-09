@@ -92,7 +92,18 @@ under GPLv3 terms; no purchase cost.
   the ngspice adapter), optional Port devices plus a `.LIN` line (triggers
   S-parameter extraction when `job["ports"]` is given and
   `analysis.type == "ac"`), a `raw_cards` escape hatch, and one of
-  `.OP`/`.AC`/`.TRAN` plus an optional `.PRINT ... FORMAT=CSV` line.
+  `.OP`/`.AC`/`.TRAN`/`.HB` plus an optional `.PRINT ... FORMAT=CSV` line.
+  `.HB` (Harmonic Balance — the periodic steady-state of a nonlinear
+  circuit, e.g. a driven mixer or an amplifier at real large-signal power,
+  rather than the small-signal wiggle `.AC` linearizes around one bias
+  point) takes a job dict `analysis["fundamental_freqs_hz"]` list of one or
+  more frequencies (Hz) — one value for single-tone HB, several for
+  multi-tone. `.PRINT HB FORMAT=CSV` round-trips through the same
+  `parse_xyce_csv()` path as `.AC`/`.TRAN` output (issue #282) — though a
+  real Xyce run's `.PRINT HB` documents writing TWO output files
+  (frequency- and time-domain) where `.AC`/`.TRAN` write one, a nuance this
+  adapter does not yet model (see `simulation/xyce.py`'s header docstring
+  "HONEST SCOPE NOTE ON `.PRINT HB`'s TWO OUTPUT FILES").
 - **`parse_xyce_csv()`** — parses `.PRINT`'s CSV output into
   `{scale_name, scale, values}`.
 - **`run_xyce_simulation()`** — the end-to-end entry point: writes the
@@ -105,21 +116,15 @@ Explicitly NOT implemented: `.OP`-only results (Xyce sends bias-point data
 to the log only, not a `.PRINT`-able output, per the Reference Guide, so no
 CSV parsing is attempted for that case); any semiconductor-device/`.MODEL`
 generation (structured support is R/L/C/V/I only, same scope note as the
-ngspice adapter); HB, noise, sensitivity, or Multi-Time PDE analyses (only
-`op`/`ac`/`tran` are exposed). The module's own docstring additionally flags
-that the real `Xyce` binary was not installed in the dev environment
+ngspice adapter); noise, sensitivity, or Multi-Time PDE analyses (only
+`op`/`ac`/`tran`/`hb` are exposed). The module's own docstring additionally
+flags that the real `Xyce` binary was not installed in the dev environment
 (`which Xyce` / `which xyce` both exit 1), so netlist generation and output
 parsing — especially the `.LIN` S-parameter path — are built to the
 documented format but unverified end-to-end against a real run.
 
 ## Capabilities not yet used here
 
-- **Harmonic Balance (`.HB`) analysis** — Xyce's method for periodic
-  nonlinear steady-state problems (e.g. a driven mixer or amplifier at
-  large signal, or characterizing a nonlinear periodic unit cell). Not
-  exposed by `_ANALYSIS_TYPES` (`"op"`, `"ac"`, `"tran"` only). Useful for
-  this repo's purpose wherever a matching/bias network's nonlinear large-
-  signal behavior — not just its small-signal S-parameters — matters.
 - **Noise analysis** — relevant to amplifier bias-network trade studies but
   not wired up.
 - **Sensitivity / uncertainty-propagation (random sampling) analysis** —
