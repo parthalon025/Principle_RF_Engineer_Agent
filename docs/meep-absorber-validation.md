@@ -175,12 +175,25 @@ MEEP_PYTHON=/opt/conda/envs/mp/bin/python3 \
 
 A script rather than a pytest test, for the same reason as the others: it needs a solver CI does not have. `tests/test_simulator_reference_cases.py` covers the mechanics with no solver installed — the geometry it poses, the scoring, the collapse arithmetic, and the assertion that scoring this run at 0.7101 **fails** the case.
 
-## What this does *not* establish
+## What `SIMULATED` now means — and where that stops (issue #222, criterion 4)
 
-- **Still `SIMULATED`, not `MEASURED`.** No VNA, no fixture, no bench (#133). Two solvers agreeing is not a measurement, a closed form agreeing with a full-wave run is not a measurement, and the provenance ceiling has not moved for any of the four cases.
-- **Normal incidence only.** `k_point` is zero. Nothing here says anything about oblique angles.
-- **Loss tangent pinned at band centre.** Meep's `D_conductivity` is one constant; a loss tangent is not. Exact at centre, slightly off at the edges.
-- **These are uniform sheets.** A *patterned* cell is the thing the programme actually designs, and the closed form's grid capacitance — the part these cases deliberately switch off with `gap_m=None` — is exactly what is unvalidated. Costa's eq (10) thin-spacer correction (#190) remains unrecovered and still biases patterned results in a known direction.
+CONTEXT.md's evidence hierarchy has always ranked *validated* simulation above a bare one. Before this work there was no such thing anywhere in the codebase to point at — every `SIMULATED` tag meant only "an adapter shelled out to a solver and parsed something back", never "and the number it parsed was checked against a truth this codebase did not produce." That is what changed, and precisely this much of it changed:
+
+**What it now means, and only for this:** for a bare or ground-backed *uniform, unpatterned* resistive sheet, hit at *normal incidence*, with any dielectric's loss tangent read at *band centre*, solved by Meep FDTD at 10 GHz — `SIMULATED` means the returned number was checked against an answer this codebase did not produce (an exact closed form, or an independent equivalent-circuit model), to the tolerances in `verification/simulator_reference_cases.py`. Cases 3 and 4 above extend that same claim to the adapter itself: the deck emission, the subprocess handoff and the result parsing were exercised too, not only the physics.
+
+**What it still does not mean, for everything else a `SIMULATED` tag can be attached to:**
+
+- **`MEASURED`.** No VNA, no fixture, no bench (#133). Two solvers agreeing is not a measurement, a closed form agreeing with a full-wave run is not a measurement, and the provenance ceiling has not moved for any of the four cases.
+- **A patterned unit cell** — the family this programme actually designs, printed elements and gaps included. Every case here uses `gap_m=None` specifically to switch off the grid capacitance a real printed pattern has; validating the uniform limit says nothing about the patterned one. Costa's eq (10) thin-spacer correction (#190) remains unrecovered and still biases patterned results in a known direction.
+- **Anything off normal incidence.** `k_point` is zero in every case above; nothing here says anything about oblique angles.
+- **A dielectric away from band centre.** The loss-tangent conversion is exact at one frequency and drifts either side of it; nothing here bounds that drift.
+- **The NEC2 half-wave-dipole path.** `half-wave-dipole-300mhz` is registered with its published values transcribed but has never been run — it needs nec2++, which no environment this has been attempted in has installed. Its `SIMULATED` tag, when it is eventually produced, is unchecked until that case runs.
+- **The Palace/Floquet periodic-grating path** (`simulation/palace.py`, #210). That work drove the adapter against a real compiled Palace binary and reproduced Palace's *own published output* for its worked dielectric-grating example to 0.056 dB — proof the deck, the mesh and the parser are right. It is not a reference case in this module's sense: the truth it checked against is a simulated result from the same class of tool, not an independent closed form or measurement, and its own §4 says the run is "no check at all on the physics." A `SIMULATED` grating result from that adapter today carries the adapter-path guarantee and none of the physics guarantee this document's cases carry.
+- **Every other adapter in `simulation/`** not named above (openEMS, HFSS, gprMax, Elmer, Xyce, ngspice, KiCad/gerber2ems, LTspice, OpenParEM) has no reference case at all yet. A `SIMULATED` tag from any of them means exactly what it meant before this document existed.
+
+*In plain terms: this work earned the word "validated" for one narrow shape — a plain, flat, uniform sheet hit head-on — not for the actual printed metasurfaces this programme exists to design. A `SIMULATED` label on one of those still means "a solver ran and produced a number that looked reasonable," not "a solver ran and we checked the number against something we know is true."*
+
+### Case 4's own limits
 
 Case 4 adds four of its own, and they are worth reading before quoting its pass:
 

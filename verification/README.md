@@ -100,15 +100,42 @@ the committed adapter rather than around it.
 It is **unrun, not unrunnable**: the Dockerfile builds nec2++, so it is
 takeable in the container. Tracked by #222.
 
+**Two case families #222 asks for on the Palace/Floquet path are not
+registered at all yet:** a bare dielectric slab against Fresnel's equations
+(a degenerate, patternless case of the same mesh and Floquet ports a real
+metasurface uses, with an exactly-known answer), and Mie scattering from a
+sphere (an exact infinite series, and the prerequisite for ever scoring the
+patent's Mie-resonant Examples 1 and 2, #220). Neither has geometry, expected
+values, or a runner script written. Building and *running* either needs a
+compiled Palace binary; the Dockerfile builds one from source inside the
+Linux container this repo publishes, with the build workarounds recorded in
+`docs/palace-floquet-validation.md`. No `palace` binary is on `PATH` in the
+native-Windows session that wrote this paragraph, and building one from
+source on Windows was out of scope for that session -- `simulation/meep.py`'s
+own sourced citation records that Meep specifically has no supported native
+Windows install path at all ("Native Windows installation is currently
+unsupported"), which is at least suggestive for a sibling scientific-computing
+tool. Registering the geometry without running it would repeat the exact
+mistake #222 was filed to fix (see
+`docs/meep-absorber-validation.md` case history and #144) -- scaffolding for
+a test nobody has executed -- so neither is added here until a session with
+a real Palace binary can also run it.
+
 A case declares which adapter can pose it (`ReferenceCase.solver`), and
 runners must filter on that. A case is only meaningful to the solver its
 geometry is written for: a wire list means nothing to an FDTD grid, and an
 absorber stack means nothing to a thin-wire method-of-moments code.
 
 What this does and does not earn for `SIMULATED` provenance is stated in
-`docs/meep-absorber-validation.md` -- in short, the physics of the first two
-MEEP cases is checked against known-correct answers while the adapter's own
-deck emission and parsing are not what those numbers check, and the third
-case checks that adapter-and-loop path against the same known-correct
-answer. None of it moves the provenance ceiling: two methods agreeing is
-still not a measurement.
+`docs/meep-absorber-validation.md`'s "What `SIMULATED` now means -- and
+where that stops" section -- in short, the physics of the first two MEEP
+cases is checked against known-correct answers while the adapter's own deck
+emission and parsing are not what those numbers check, and the third and
+fourth cases check that adapter-and-loop path against the same known-correct
+answer. That claim covers exactly one family -- a uniform, unpatterned
+resistive sheet at normal incidence -- and does not extend to a patterned
+unit cell (what this programme actually designs), an oblique angle, the
+NEC2 dipole (unrun), or the Palace/Floquet grating path (#210 validated its
+adapter path against Palace's own published output, not against an
+independent physics answer). None of it moves the provenance ceiling: two
+methods agreeing is still not a measurement.
