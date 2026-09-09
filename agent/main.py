@@ -40,20 +40,26 @@ from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
 from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datasheet
+from knowledge.digikey import lookup_digikey_product_details as _lookup_digikey_product_details
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
 from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
+from knowledge.nexar import lookup_nexar_part_data as _lookup_nexar_part_data
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
 from knowledge.sourcing.arxiv import search_arxiv_papers as _search_arxiv_papers
+from knowledge.sourcing.etsi import ingest_etsi_ipr_declaration as _ingest_etsi_ipr_declaration
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
+from knowledge.sourcing.fcc_ecfr import search_fcc_rules as _search_fcc_rules
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
+from knowledge.sourcing.patent import search_uspto_patents as _search_uspto_patents
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
+from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -105,7 +111,10 @@ from rf_tools.calculations import (
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
-from rf_tools.filter_synthesis import synthesize_filter
+from rf_tools.filter_synthesis import (
+    realize_lowpass_stepped_impedance_microstrip,
+    synthesize_filter,
+)
 from rf_tools.touchstone import (
     analyze_touchstone,
     cascade_touchstone,
@@ -693,6 +702,67 @@ def synthesize_filter_prototype(
 
 
 @function_tool
+def realize_lowpass_stepped_impedance_microstrip_filter(
+    response: str,
+    order: int,
+    eps_r: float,
+    h_m: float,
+    impedance_ohm: float = 50.0,
+    ripple_db: float | None = None,
+    cutoff_hz: float | None = None,
+    z_high_ohm: float = 120.0,
+    z_low_ohm: float = 20.0,
+    first_element: str = "shunt",
+) -> dict:
+    """Synthesize a LOWPASS ladder (issue #143) and realize it as a stepped-
+    impedance ("Hi-Z, Lo-Z") microstrip layout (issue #286): each series
+    inductor becomes a short high-impedance line, each shunt capacitor a
+    short low-impedance line (Pozar, "Microwave Engineering" sec. 8.6).
+    response/order/impedance_ohm/ripple_db/cutoff_hz mean exactly what they
+    mean in synthesize_filter_prototype (band is always "lowpass" here --
+    the stepped-impedance method has no realization for highpass/bandpass/
+    bandstop, see docs/adr/0031). eps_r and h_m describe the microstrip
+    substrate (relative permittivity, thickness in metres); z_high_ohm/
+    z_low_ohm are the highest/lowest characteristic impedance the target
+    board can manufacture (default 120/20 ohm, Pozar's own example values).
+
+    Returns the ideal ladder (as synthesize_filter_prototype does) plus a
+    "sections" list, one microstrip line per branch, each with its
+    characteristic impedance, width (m), length (m), electrical length
+    (rad) and effective permittivity. Closed-form and textbook-sourced
+    throughout -- no simulator involved, `provenance: CALCULATED`. Two
+    approximations by construction: each section assumes an electrically
+    short line (accuracy degrades gracefully, not sharply, as a section's
+    electrical length grows past ~pi/4), and each width's effective
+    permittivity is the quasi-static, non-dispersive value at cutoff_hz --
+    no coupling or discontinuity reactance between adjacent sections.
+    Cross-check a result that matters against a full-wave simulator
+    (run_openems_simulation/run_hfss_simulation) or qucsator_rf's own
+    dispersive MLIN model before fabrication."""
+    network = synthesize_filter(
+        response=response,
+        band="lowpass",
+        order=order,
+        impedance_ohm=impedance_ohm,
+        ripple_db=ripple_db,
+        cutoff_hz=cutoff_hz,
+        first_element=first_element,
+    )
+    sections = realize_lowpass_stepped_impedance_microstrip(
+        network,
+        eps_r=eps_r,
+        h_m=h_m,
+        z_high_ohm=z_high_ohm,
+        z_low_ohm=z_low_ohm,
+    )
+    return {
+        "network": network.to_dict(),
+        "sections": [s.to_dict() for s in sections],
+        "provenance": "CALCULATED",
+    }
+
+
+@function_tool
 def calculate_patch_effective_permittivity(eps_r: float, w_m: float, h_m: float) -> dict:
     """Calculate the effective dielectric constant of a microstrip patch
     (transmission-line model). Only valid for patch width/substrate-thickness W/h > 1."""
@@ -907,9 +977,13 @@ def correlate_simulated_and_measured(
     run_openems_simulation's current outputs this can and cannot use yet
     (NEC2++'s single-frequency impedance is always honestly rejected, not
     fabricated from; openEMS's S-parameters are accepted via its
-    "touchstone_file" output when computed=True -- real port probe data was
-    available -- and honestly rejected when computed=False). Temperature
-    normalization is a documented no-op unless both inputs happen to carry
+    "touchstone_file" output only for the single-port case with
+    computed=True -- real port probe data was available -- and honestly
+    rejected otherwise: when computed=False, and also for a multi-port
+    computed=True run, which has no "touchstone_file" and whose
+    "values"/"z0_ohms" shape doesn't match the generic "s_parameters"/"z0"
+    shape this function accepts either). Temperature normalization is a
+    documented no-op unless both inputs happen to carry
     a "temperature_c" field, since no current simulator/external-measurement
     source populates one -- see the returned temperature_note. Returns
     "CALCULATED" provenance for the correlation result itself, alongside
@@ -989,13 +1063,25 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     can't adequately model. Returns "SIMULATED" provenance. S-parameters are REAL --
     FFT-computed from the run's port ProbeBox voltage/current time-domain dumps --
     when those dump files are present (this module's own XML now requests them);
-    they fall back to an honestly-flagged computed=False when they aren't. IMPORTANT
-    SCOPE LIMIT: far-field extraction is still NOT computed -- it requires openEMS's
-    separate nf2ff tool, out of scope for this pass (see simulation/openems.py's
-    module docstring). Format verified against primary openEMS/CSXCAD documentation
-    (see simulation/openems.py's module docstring for citations) but NOT against a
-    real openEMS binary -- none is installed in this environment; treat any result as
-    unverified end-to-end until it has been run against the real tool at least once."""
+    they fall back to an honestly-flagged computed=False when they aren't. Far-field/
+    gain is REAL too (issue #269) when geometry includes an optional "nf2ff" key: a
+    near-field-to-far-field recording box ("p1_m"/"p2_m" corners enclosing every
+    radiating structure, plus optional "directions"/"name"/"frequencies_hz"/
+    "radius_m"/"center_m"/"eps_r"/"mue_r"/theta-phi angle-grid overrides -- see
+    simulation.openems.generate_openems_xml for the full shape). Requesting it also
+    keeps this run's field/NF2FF dumps enabled automatically (the default
+    --disable-dumps flag would otherwise suppress them). The result's "gain_dbi" is
+    then a real number and "far_field" carries a real per-angle "pattern" table,
+    structurally parallel to run_nec2_simulation's own "pattern"/"gain_dbi" keys --
+    which is what lets the design loop's default SIMULATION-step scored field
+    (gain_dbi) work the same way for either simulator. Without an "nf2ff" key, or if
+    openEMS's separate nf2ff post-processing step doesn't produce a parseable result,
+    "far_field" stays an honestly-flagged computed=False stub with an explanatory
+    note -- never a fabricated number. Format verified against primary openEMS/CSXCAD
+    documentation (see simulation/openems.py's module docstring for citations) but
+    NOT against a real openEMS binary -- none is installed in this environment; treat
+    any result as unverified end-to-end until it has been run against the real tool
+    at least once."""
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
@@ -1039,9 +1125,12 @@ def run_hfss_simulation(
 ) -> dict:
     """Simulate a structure with HFSS via PyAEDT: create a project, apply geometry
     (box material/conductor primitives with materials in meters -- see
-    simulation.hfss._apply_hfss_geometry for the full shape), a lumped port, and a
-    length-based mesh, solve, extract S-parameters, export a Touchstone file, and
-    archive the solved project plus extracted report for later reproducibility.
+    simulation.hfss._apply_hfss_geometry for the full shape), either a single
+    lumped port (geometry["port"]) or a periodic Floquet-port unit cell
+    (geometry["periodic"], issue #273), and a length-based mesh, solve, extract
+    S-parameters (per-mode reflection for the Floquet case), export a Touchstone
+    file, and archive the solved project plus extracted report for later
+    reproducibility.
     Returns "SIMULATED" provenance. CRITICAL: unlike run_nec2_simulation/
     run_openems_simulation, HFSS is commercial, licensed software (Ansys HFSS via
     PyAEDT) that fundamentally cannot run without a paid license -- execution is
@@ -1064,24 +1153,33 @@ def run_hfss_simulation(
 
 
 @function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
-# ports'/project's shapes (optional materials/nested path/boundary/mode lists) do not
-# fit the SDK's strict-schema requirement.
+# ports'/project's/materials' shapes (optional materials/nested path/boundary/mode
+# lists) do not fit the SDK's strict-schema requirement.
 def run_openparem_simulation(
-    mesh_file: str,
     ports: dict,
+    mesh_file: str | None = None,
+    geometry: dict | None = None,
     project: dict | None = None,
     project_name: str = "openparem_project",
+    materials: list[dict] | None = None,
     mpi_processes: int | None = None,
     timeout_s: int = 3600,
+    gmsh_executable: str | None = None,
+    gmsh_timeout_s: int = 600,
 ) -> dict:
-    """Simulate a structure with OpenParEM3D (full-wave FEM): given an already-meshed
-    Gmsh msh22 `mesh_file` (mesh generation is out of scope -- see simulation/
-    openparem.py's module docstring SCOPE; produce one via FreeCAD+gmsh first) and
+    """Simulate a structure with OpenParEM3D (full-wave FEM): given EITHER an
+    already-meshed Gmsh msh22 `mesh_file` OR a `geometry` dict (this repo's own
+    primitive-dict shape -- issue #278; meshed internally via
+    simulation.elmer.generate_gmsh_geo_script + simulation.openparem.
+    run_openparem_gmsh_meshing, forcing OpenParEM3D's required msh22 format) and
     structured `ports` geometry (Path/Boundary/Port definitions -- see
     simulation.openparem.generate_openparem_ports_file for the full shape), generate
     the `.proj` project-control file (frequency plan, mesh/refinement settings,
     reference impedance, Touchstone format -- see simulation.openparem.
     generate_openparem_project_config for the full `project` shape) plus the ports
+    file and (when `materials` is given, in place of a pre-existing materials
+    library on disk -- see simulation.openparem.generate_openparem_materials_file/
+    openparem_materials_from_property_entries for the input shapes) a materials
     file, run OpenParEM3D, and parse S-parameters AND antenna far-field gain/
     directivity/radiation-efficiency from the SAME FEM solve -- no separate tool or
     manual post-processing step. Set `project["far_field"] = {"quantity": "G"}` (or
@@ -1089,21 +1187,25 @@ def run_openparem_simulation(
     when `ports["boundaries"]` includes a `type="radiation"` boundary. Returns
     "SIMULATED" provenance with `s_parameters`/`far_field` each honestly flagged
     computed=True/False (never fabricated) plus a `touchstone_file` key when a
-    single-port renormalized Touchstone was written. `.proj`/ports-file format and
-    CLI invocation verified against OpenParEM's own primary GitHub source and its
-    official Installation Manual PDF (see simulation/openparem.py's module docstring
-    for the full citation list) but NOT against a real OpenParEM3D binary -- none is
-    installed in this environment; treat any result as unverified end-to-end until it
-    has been run against the real tool at least once. OpenParEM is also considerably
-    younger and less battle-tested than NEC2++/openEMS/HFSS (initial release Sept.
-    2024) -- extra caution warranted."""
+    single-port renormalized Touchstone was written. `.proj`/ports-file/materials-file
+    format and CLI invocation verified against OpenParEM's own primary GitHub source
+    and its official Installation Manual/Users Manual PDFs (see simulation/
+    openparem.py's module docstring for the full citation list) but NOT against a
+    real OpenParEM3D (or gmsh) binary -- none is installed in this environment; treat
+    any result as unverified end-to-end until it has been run against the real tools
+    at least once. OpenParEM is also considerably younger and less battle-tested than
+    NEC2++/openEMS/HFSS (initial release Sept. 2024) -- extra caution warranted."""
     return _run_openparem_simulation(
         mesh_file=mesh_file,
+        geometry=geometry,
         ports=ports,
         project=project,
         project_name=project_name,
+        materials=materials,
         mpi_processes=mpi_processes,
         timeout_s=timeout_s,
+        gmsh_executable=gmsh_executable,
+        gmsh_timeout_s=gmsh_timeout_s,
     )
 
 
@@ -1162,19 +1264,31 @@ def run_elmer_simulation(
     geometry: dict,
     frequency_hz: float,
     timeout_s: int = 1800,
+    gmsh_executable: str | None = None,
+    elmergrid_executable: str | None = None,
+    elmersolver_executable: str | None = None,
 ) -> dict:
     """Simulate a structure with Elmer FEM's VectorHelmholtz module: a general,
-    multiphysics-ready EM cross-check kept available for a FUTURE coupled-physics
-    need (e.g. EM/thermal analysis on a mounted "adaptive EM skin") -- NOT a
-    replacement for run_nec2_simulation/run_openems_simulation/run_hfss_simulation on
-    everyday antenna work, since Elmer's primary user base is structural/CFD/heat-
-    transfer, not EM. Generates a Gmsh OpenCASCADE .geo script from structured
-    geometry (a single rectangular domain with isotropic material, plus an optional
-    rectangular excitation sub-region -- see simulation.elmer.generate_gmsh_geo_script
-    for the full shape), meshes it with gmsh, converts the mesh to ElmerSolver's
-    native format with ElmerGrid, generates a matching VectorHelmholtz .sif (see
-    simulation.elmer.generate_elmer_sif), runs it with ElmerSolver, and parses
-    whatever raw output is available. Returns "SIMULATED" provenance. CRITICAL SCOPE
+    multiphysics-ready EM cross-check -- NOT a replacement for run_nec2_simulation/
+    run_openems_simulation/run_hfss_simulation on everyday antenna work, since
+    Elmer's primary user base is structural/CFD/heat-transfer, not EM. Generates a
+    Gmsh OpenCASCADE .geo script from structured geometry (a single rectangular
+    domain with isotropic material, plus an optional rectangular excitation
+    sub-region -- see simulation.elmer.generate_gmsh_geo_script for the full shape),
+    meshes it with gmsh, converts the mesh to ElmerSolver's native format with
+    ElmerGrid, generates a matching VectorHelmholtz .sif (see simulation.elmer.
+    generate_elmer_sif), runs it with ElmerSolver, and parses whatever raw output is
+    available. Returns "SIMULATED" provenance. COUPLED EM+THERMAL (issue #281): pass
+    an optional `geometry["thermal"]` block (`heat_conductivity_w_mk`,
+    `density_kg_m3`, `heat_capacity_j_kgk`, plus optional `fixed_temperature_faces_k`/
+    `convective_faces` boundary conditions -- see simulation.elmer.generate_elmer_sif
+    for the full shape) to add a Heat Equation solve driven by the EM solve's own
+    Joule-heating loss on the same mesh -- e.g. how hot a mounted "adaptive EM skin"
+    gets from soaking up radio energy while sitting on a warm surface, in the same
+    run as the EM-only result. The returned dict then also carries a `thermal_result`
+    key (`computed=True` with `max_temperature_k`, or `computed=False` with an
+    explanatory note -- same honest-gap pattern as `s_parameters`/`far_field`).
+    Omitting `geometry["thermal"]` runs EM-only exactly as before. CRITICAL SCOPE
     LIMIT: unlike OpenParEM/Palace, Elmer's VectorHelmholtz module has NO native
     antenna-specific port/S-parameter/far-field/gain post-processing -- this tool's
     excitation (an impressed "Body Force"/"Current Density" current source) and
@@ -1189,7 +1303,14 @@ def run_elmer_simulation(
     against real gmsh/ElmerGrid/ElmerSolver binaries -- none is installed in this
     environment; treat any result as unverified end-to-end until it has been run
     against the real tools at least once."""
-    return _run_elmer_simulation(geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s)
+    return _run_elmer_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        timeout_s=timeout_s,
+        gmsh_executable=gmsh_executable,
+        elmergrid_executable=elmergrid_executable,
+        elmersolver_executable=elmersolver_executable,
+    )
 
 
 @function_tool(strict_mode=False)  # same rationale as run_elmer_simulation above --
@@ -1199,6 +1320,7 @@ def generate_freecad_curved_geometry(
     primitives: list[dict],
     curvature: dict,
     timeout_s: int = 600,
+    executable: str | None = None,
 ) -> dict:
     """Map a FLAT unit-cell/array layout (a list of this repo's own "box"/"polygon"
     geometry-dict primitives -- e.g. straight out of geometry.unit_cell.
@@ -1232,45 +1354,62 @@ def generate_freecad_curved_geometry(
     has been run against the real tool at least once (the geometry-dict mapping itself
     is pure Python, exercised directly in tests, and needs no FreeCAD install)."""
     return _run_freecad_curved_geometry(
-        primitives=primitives, curvature=curvature, timeout_s=timeout_s
+        primitives=primitives,
+        curvature=curvature,
+        timeout_s=timeout_s,
+        executable=executable,
     )
 
 
-@function_tool
+@function_tool(strict_mode=False)  # same rationale as run_nec2_simulation above --
+# job's shape (optional keys, variable-length components/ports/raw_cards lists)
+# doesn't fit the SDK's strict-schema requirement -- see
+# simulation.ltspice.generate_ltspice_net_netlist for the accepted shape.
 def run_ltspice_simulation(
     netlist: str | None = None,
     netlist_file: str | None = None,
+    job: dict | None = None,
     timeout_s: int = 600,
 ) -> dict:
     """Simulate a circuit with LTspice (ADS alternative, part 3 of 3 -- issue
-    #59): run an existing SPICE netlist (either `netlist`, raw netlist text
-    -- e.g. exported from LTspice's own File > Export Netlist -- or
-    `netlist_file`, a path to an existing .net/.cir/.asc file already on
-    disk; exactly one is required) through LTspice's real batch-mode CLI
-    (driven via the spicelib package, not hand-rolled -- see simulation/
-    ltspice.py's module docstring for the primary-source citation), and
-    parse the resulting .raw output into structured trace data (plot type,
-    axis, and every named trace, complex for an AC analysis or real for a
-    transient/DC sweep) via spicelib's own RawRead. Returns "SIMULATED"
-    provenance. LOWEST PRIORITY / LOWEST INVESTMENT of this batch's "ADS
-    alternative" simulators: LTspice is the one non-open-source item here
-    (free-of-charge proprietary Analog Devices freeware, NOT OSI-approved --
-    see docs/LICENSE_MATRIX.md) and is capability-redundant with any
-    ngspice/Xyce/Qucs-S adapter this repo may also have -- its value is
-    vendor device-model-library and engineer familiarity, not new
-    simulation capability. Unlike run_nec2_simulation/run_openems_
-    simulation, this tool does NOT generate a netlist from a structured
-    component-description dict -- a SPICE netlist is already the natural
-    structured/text format for a circuit, so bring your own. spicelib
-    itself is an OPTIONAL install (`pip install '.[ltspice]'` /
-    `uv sync --extra ltspice`) -- this tool raises a clear, actionable
-    SimulatorError (not a bare ImportError) if it isn't installed. Format/
-    invocation verified against spicelib's own primary GitHub source (see
-    simulation/ltspice.py's module docstring for the full citation) but NOT
-    against a real LTspice binary -- none is installed in this environment;
-    treat any result as unverified end-to-end until it has been run against
-    the real tool at least once."""
-    return _run_ltspice_simulation(netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s)
+    #59): run a SPICE netlist through LTspice's real batch-mode CLI (driven
+    via the spicelib package, not hand-rolled -- see simulation/ltspice.py's
+    module docstring for the primary-source citation), and parse the
+    resulting .raw output into structured trace data (plot type, axis, and
+    every named trace, complex for an AC analysis or real for a transient/DC
+    sweep) via spicelib's own RawRead. Takes EXACTLY ONE of `netlist` (raw
+    netlist text -- e.g. exported from LTspice's own File > Export Netlist),
+    `netlist_file` (a path to an existing .net/.cir/.asc file already on
+    disk), or `job` (a structured two-port job dict -- R/L/C/V/I components,
+    a driven-port/loaded-port pair under "ports", and an "ac"-type
+    "analysis" -- templated into LTspice's native `.net` two-port S-/Y-/Z-/
+    H-parameter extraction statement by generate_ltspice_net_netlist(),
+    issue #287; see that function's docstring for the exact shape). When
+    `job` is given, the returned dict also carries "network_parameters"
+    (whichever S11/S21/S12/S22/Zin/Zout/etc. traces `.net` produced, via
+    extract_ltspice_network_parameters()). Returns "SIMULATED" provenance.
+    LOWEST PRIORITY / LOWEST INVESTMENT of this batch's "ADS alternative"
+    simulators: LTspice is the one non-open-source item here (free-of-
+    charge proprietary Analog Devices freeware, NOT OSI-approved -- see
+    docs/LICENSE_MATRIX.md) and is capability-redundant with any
+    ngspice/Xyce/Qucs-S adapter this repo may also have -- `job`'s S/Y/Z/H-
+    parameter extraction duplicates what run_xyce_simulation's native `.LIN`
+    path already provides; it matters only when a design specifically needs
+    LTspice's own bundled device-model library, not new simulation
+    capability. Outside the `job` case, this tool does NOT generate a
+    netlist from an arbitrary structured component-description dict -- a
+    SPICE netlist is already the natural structured/text format for a
+    circuit, so bring your own. spicelib itself is an OPTIONAL install
+    (`pip install '.[ltspice]'` / `uv sync --extra ltspice`) -- this tool
+    raises a clear, actionable SimulatorError (not a bare ImportError) if it
+    isn't installed. Format/invocation verified against spicelib's own
+    primary GitHub source (see simulation/ltspice.py's module docstring for
+    the full citation) but NOT against a real LTspice binary -- none is
+    installed in this environment; treat any result as unverified
+    end-to-end until it has been run against the real tool at least once."""
+    return _run_ltspice_simulation(
+        netlist=netlist, netlist_file=netlist_file, job=job, timeout_s=timeout_s
+    )
 
 
 @function_tool(strict_mode=False)  # `config`'s shape (gerber2ems's own optional
@@ -1296,15 +1435,23 @@ def run_kicad_gerber2ems_simulation(board_file: str, config: dict, timeout_s: in
     even stub. Returns "SIMULATED" provenance. REQUIRES the PCB design to already
     place "Simulation_Port"-valued footprints (reference designators SP1, SP2, ...)
     at the trace endpoints of interest -- this is gerber2ems's own PCB-design-time
-    port-discovery convention, not something this tool can synthesize. Format/API
-    verified against gerber2ems's and kicad-python's own primary sources (see
-    simulation/kicad_gerber2ems.py's module docstring for the full citation list)
-    but NOT against a real KiCad/kicad-cli/gerbv/gerber2ems/openEMS installation --
-    none is installed in this environment; treat any result as unverified end-to-end
-    until it has been run against the real tools at least once. One honestly-flagged
-    gap beyond that: kicad-python's drill export does not yet expose a plated/
-    non-plated-hole split, so a board with unplated holes may get a mis-labeled drill
-    file (see that module's own docstring and each result's own `warnings`)."""
+    port-discovery convention, not something this tool can synthesize.
+
+    Runs KiCad's own Design Rule Check (`kicad-cli pcb drc`) FIRST, before export
+    or simulation (issue #272) -- the result's "drc" key carries the violation
+    count/detail, and "warnings" carries a human-readable note if any were found.
+    Per CLAUDE.md's "warn, never block", a board with DRC violations still gets
+    exported and simulated; nothing here withholds a result over it.
+
+    Format/API verified against gerber2ems's, kicad-python's, and kicad-cli's own
+    primary sources (see simulation/kicad_gerber2ems.py's module docstring and
+    run_kicad_drc's own docstring for the full citation list) but NOT against a
+    real KiCad/kicad-cli/gerbv/gerber2ems/openEMS installation -- none is installed
+    in this environment; treat any result as unverified end-to-end until it has
+    been run against the real tools at least once. One honestly-flagged gap beyond
+    that: kicad-python's drill export does not yet expose a plated/non-plated-hole
+    split, so a board with unplated holes may get a mis-labeled drill file (see
+    that module's own docstring and each result's own `warnings`)."""
     return _run_kicad_gerber2ems_simulation(
         board_file=board_file, config=config, timeout_s=timeout_s
     )
@@ -1319,18 +1466,25 @@ def run_ngspice_simulation(job: dict, timeout_s: int = 600) -> dict:
     with ngspice (a free/open circuit-level SPICE simulator, no paid ADS license
     needed): generate a netlist from a structured job dict (R/L/C/V/I components,
     optional "raw_cards" escape hatch for nonlinear devices/subcircuits, an
-    op/ac/tran "analysis", and node-voltage/branch-current "outputs" -- see
-    simulation.ngspice.generate_ngspice_netlist for the full shape), run it via
-    ngspice, and parse the requested outputs' AC (real/imag pairs vs. frequency),
-    TRAN (values vs. time), or OP data back out. Returns "SIMULATED" provenance.
-    IMPORTANT SCOPE LIMIT: S-parameters are NOT computed here -- stable ngspice has
-    no built-in S-parameter analysis; use run_xyce_simulation's native `.LIN`
+    op/ac/tran/noise/disto/pz/sens "analysis", and "outputs" -- see
+    simulation.ngspice.generate_ngspice_netlist for the full per-analysis-type
+    shape), run it via ngspice, and parse the results back out: AC/DISTO (real/imag
+    pairs vs. frequency), TRAN/OP/NOISE (real values vs. time or frequency), or
+    PZ/SENS (a small unswept set of poles/zeros or per-parameter sensitivities,
+    with no frequency/time axis at all -- "scale"/"scale_name" are None for these
+    two). Use NOISE for amplifier/LNA noise-figure work, DISTO or TRAN for
+    nonlinearity (harmonic distortion / large-signal compression), and PZ/SENS for
+    stability (pole locations) or design-parameter sensitivity. Returns "SIMULATED"
+    provenance. IMPORTANT SCOPE LIMIT: S-parameters and `.TF` (transfer function)
+    are NOT computed here -- stable ngspice has no built-in S-parameter analysis and
+    this adapter does not yet wire up `.TF`; use run_xyce_simulation's native `.LIN`
     S-parameter/Touchstone path for that need instead (see simulation/ngspice.py's
     module docstring for why). Netlist/output format verified against the primary
     ngspice manual (see simulation/ngspice.py's module docstring for the citation)
-    but NOT against a real ngspice binary -- none is installed in this environment;
-    treat any result as unverified end-to-end until it has been run against the
-    real tool at least once."""
+    but NOT against a real ngspice binary for noise/disto/pz/sens -- none is
+    installed in this environment (the `.AC` path alone was verified against a real
+    binary; see that same module docstring); treat any result as unverified
+    end-to-end until it has been run against the real tool at least once."""
     return _run_ngspice_simulation(job=job, timeout_s=timeout_s)
 
 
@@ -1344,9 +1498,12 @@ def run_xyce_simulation(job: dict, timeout_s: int = 600) -> dict:
     license needed -- prefer this over run_ngspice_simulation for a larger circuit
     or when real S-parameters are needed): generate a netlist from a structured job
     dict (R/L/C/V/I components, optional "raw_cards" escape hatch for nonlinear
-    devices/subcircuits, an op/ac/tran "analysis", optional node-voltage/branch-
-    current "outputs", and optional "ports" -- see simulation.xyce.generate_xyce_netlist
-    for the full shape), run it via Xyce, and return the requested `.PRINT` outputs
+    devices/subcircuits, an op/ac/tran/hb "analysis" (hb = Harmonic Balance, Xyce's
+    periodic large-signal steady-state analysis for a driven mixer or nonlinear
+    amplifier/unit cell -- see simulation/xyce.py's module docstring), optional
+    node-voltage/branch-current "outputs", and optional "ports" -- see
+    simulation.xyce.generate_xyce_netlist for the full shape), run it via Xyce,
+    and return the requested `.PRINT` outputs
     (CSV columns vs. frequency/time) and/or, when "ports" are given (requires
     analysis type "ac"), REAL S-parameters extracted via Xyce's native `.LIN` linear-
     network analysis and exported to a genuine Touchstone file (surfaced as
@@ -1386,12 +1543,22 @@ def run_meep_simulation(
     computed too IF you ask for it by putting a "transmission_monitor_center_m" plane
     in `geometry`; without it no transmission monitor is built and the result says
     "not requested" rather than a misleading zero. NO complex phase, so no complex
-    S21 and no multi-port S-matrix, NO Touchstone export, and NO far-field/gain (see
-    simulation/meep.py's module docstring SCOPE section) -- so only |S11| magnitude,
-    not phase, can be cross-checked against run_openems_simulation's complex S11.
-    This tool does NOT compute absorption: 1 - R - T is a reading of two
-    measurements, not a measurement. `characteristic_length_m` is MEEP's own
-    dimensionless-unit lengthscale "a" (default 1mm, reasonable for patch-antenna-
+    S21 and no multi-port S-matrix, and NO Touchstone export (see simulation/meep.py's
+    module docstring SCOPE section) -- so only |S11| magnitude, not phase, can be
+    cross-checked against run_openems_simulation's complex S11. Antenna gain/
+    radiation pattern (`gain_dbi`, `far_field`) is ALSO opt-in, via MEEP's own
+    documented near-to-far-field transform (#270): put a "far_field_monitor" dict
+    in `geometry` (an "enclosing_regions" closed box plus "directions" far-field
+    points -- see simulation.meep.run_meep_simulation's own docstring for the full
+    shape) and `gain_dbi` carries a real dBi figure instead of None; leave it out
+    and both stay exactly as they were (far_field computed=False, gain_dbi=None),
+    at no extra solver cost. That gain figure is a peak among only the directions
+    YOU named, not a full-sphere scan, and its absolute scale rests on a reasoned-
+    but-not-yet-pymeep-verified assumption (see simulation/meep.py's
+    FAR_FIELD_VALIDITY) -- newer and less battle-tested than the reflectance/
+    transmittance recipe below. This tool does NOT compute absorption: 1 - R - T
+    is a reading of two measurements, not a measurement. `characteristic_length_m`
+    is MEEP's own dimensionless-unit lengthscale "a" (default 1mm, reasonable for patch-antenna-
     scale geometry); geometry/units translation verified against MEEP's own primary
     documentation (see simulation/meep.py's module docstring for the citation), and
     the underlying physics recipe and unit conversions have been checked against a
@@ -1531,6 +1698,28 @@ def ingest_3gpp_spec(
 
 
 @function_tool
+def lookup_3gpp_spec_status(spec_number: str) -> dict:
+    """Look up spec_number (e.g. "38.101", or a multi-part spec like
+    "38.101-1") in 3GPP's own DynaReport per-series table (3gpp.org's free,
+    no-login HTML database of every spec's status back to 1999; series
+    derived the same way ingest_3gpp_spec derives it -- text before the
+    first "." only) and report its title and whether 3GPP has marked it
+    withdrawn. Run this before ingest_3gpp_spec to catch a withdrawn spec
+    before downloading and ingesting it -- e.g. TS 38.101 itself is
+    withdrawn while its five parts, 38.101-1..5, remain current.
+    Returns {"spec_number", "title", "withdrawn", "version"}. version is
+    always None: the real per-series page this reads has no version
+    column at all (confirmed against a live fetch) -- see
+    knowledge/sourcing/threegpp.py's module docstring for where a real
+    version string does live on 3GPP's site and why fetching it is out of
+    scope here. Raises if spec_number is not a row in the fetched table --
+    a typo, or a spec whose series differs from the one derived from it --
+    naming every spec number the table DID contain, rather than returning
+    a placeholder status."""
+    return _lookup_3gpp_spec_status(spec_number)
+
+
+@function_tool
 def ingest_etsi_standard(
     document_url: str,
     license: str,
@@ -1567,6 +1756,46 @@ def ingest_etsi_standard(
 
 
 @function_tool
+def ingest_etsi_ipr_declaration(
+    document_url: str,
+    declared_against_document_id: int,
+    license: str,
+    classification: str,
+) -> dict:
+    """Download an ETSI IPR/(F)RAND-declaration document from the SR 000 314
+    register and ingest it into the knowledge base as source_type='standard'
+    -- the same source type ingest_etsi_standard uses for every ETSI
+    deliverable, since a licensing declaration is still an ETSI document.
+    Plain language: a company that believes it holds a patent essential to
+    building to a standard declares it here and promises (F)RAND terms --
+    fair, reasonable, and non-discriminatory licensing, not a free grant --
+    so a design that leans on a standard with a declaration on file may
+    still cost something to license before it can be built.
+    Fetch-by-identifier only, not search: document_url must be a specific
+    declaration's own page, e.g. "https://ipr.etsi.org/IPRDetails.aspx?
+    IPRD_ID=198&IPRD_TYPE_ID=2&MODE=2" -- confirmed live during this
+    ticket's research as a stable, unauthenticated, no-session-required URL
+    (Google's own crawler has this exact URL indexed with no sessionkey
+    parameter). ipr.etsi.org is a distinct subdomain from www.etsi.org, and
+    like the standards-search UI, has no confirmed scriptable search API --
+    obtain the URL from https://ipr.etsi.org/ (the human-facing search
+    form) however you already found it.
+    declared_against_document_id: the documents.id (from a prior
+    ingest_etsi_standard call) of the standard this declaration was filed
+    against -- stored as extra_metadata so the declaration stays traceably
+    linked to the standard it constrains, never inferred or guessed.
+    ETSI's IPR declarations are free to view but carry the same copyright/
+    (F)RAND posture as its standards; license must be the reuse terms that
+    actually apply, this tool does not assume a default."""
+    return _ingest_etsi_ipr_declaration(
+        document_url,
+        declared_against_document_id=declared_against_document_id,
+        license=license,
+        classification=classification,
+    )
+
+
+@function_tool
 def ingest_fcc_rule(
     part: int,
     license: str,
@@ -1576,8 +1805,10 @@ def ingest_fcc_rule(
 ) -> dict:
     """Fetch FCC rule text via eCFR's public versioner API (no
     authentication) and ingest it into the knowledge base as
-    source_type='standard'. Fetch-by-identifier only, not search -- you must
-    already know the identifier:
+    source_type='standard'. Fetch-by-identifier only -- you must already
+    know the part number; use search_fcc_rules first if you only have a
+    plain-English topic (e.g. "EIRP" or "spurious emissions") and need to
+    find which part covers it.
     part: the CFR part number, e.g. 15 for the Part 15 unlicensed-device
     rules, or 97 for the Part 97 amateur-radio rules.
     title: the CFR title number, default 47 (Telecommunication) -- pass a
@@ -1605,6 +1836,27 @@ def ingest_fcc_rule(
 
 
 @function_tool
+def search_fcc_rules(query: str, max_results: int = 10) -> list:
+    """Search eCFR's full-text Search Service by topic/keyword (issue #279)
+    and return a ranked list of Title-47 candidates for review -- NOT
+    documents in the corpus. Each candidate carries part/title/section/
+    heading/full_text_excerpt; use "search precedent before inventing"
+    (CLAUDE.md) to judge relevance before spending an ingestion pass on it.
+    Pass a chosen candidate's part straight to ingest_fcc_rule unchanged
+    (same title=47 default), along with the license/classification
+    ADR-0001 requires for that specific rule -- this tool never calls
+    ingest_document itself, so finding a rule here never counts as trusting
+    it. query is a full-text search over every CFR title's rule text (e.g.
+    "EIRP" or "spurious emissions") -- not ingest_fcc_rule's fetch-by-
+    already-known-part-number. Non-Title-47 hits are filtered out before
+    they reach you, since ingest_fcc_rule only ever fetches Title 47. A
+    topic with no matches returns [] (a real "no Title 47 rule mentions
+    this" result); an unreachable eCFR API raises instead of returning an
+    empty list, so the two cases are never confused."""
+    return _search_fcc_rules(query, max_results=max_results)
+
+
+@function_tool
 def ingest_patent(
     patent_number: str,
     license: str,
@@ -1618,8 +1870,10 @@ def ingest_patent(
     same application ("US 2022/0192066 A1", "20220192066") -- the same invention
     published at two moments, and often worth ingesting both, since they differ
     a lot in how readable the file is. This tool CANNOT look one number up from
-    the other (that needs a keyed API this project has no credential for) and it
-    does NOT search: call it once per number you already have.
+    the other (that needs a keyed lookup-by-number call this project has not
+    built), and it does NOT itself search -- use search_uspto_patents (issue
+    #280) for "find patents about X", then call this once per number the search
+    turns up.
     How the file is read depends on what is in it, not on which number you gave.
     Every USPTO PDF measured so far is a scan -- a photograph of the page, with
     no machine-readable text -- so the usual path is: hand the PDF to the normal
@@ -1649,6 +1903,36 @@ def ingest_patent(
         supersedes_document_id=supersedes_document_id,
         render_page_images=render_page_images,
     )
+
+
+@function_tool
+def search_uspto_patents(query: str, max_results: int = 10) -> list:
+    """Search the USPTO Open Data Portal (ODP) by topic/full-text (issue #280)
+    and return a ranked list of candidates for review -- NOT documents in the
+    corpus. Each candidate carries number/title/date/snippet (snippet is always
+    None: ODP's search response is bibliographic metadata -- title, dates,
+    applicant/inventor -- not a text excerpt of the matched document; see
+    knowledge/sourcing/patent.py's module docstring). Use "search precedent
+    before inventing" (CLAUDE.md) to judge relevance before spending an
+    ingestion pass on it. Pass a chosen candidate's number straight to
+    ingest_patent unchanged (it already round-trips through
+    normalize_patent_number, so it is never rejected as an implausible number)
+    along with the license/classification ADR-0001 requires for that specific
+    document -- this tool never calls ingest_document or ingest_patent itself,
+    so finding a patent here never counts as trusting it. Refuses to run unless
+    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND USPTO_ODP_API_KEY is configured (see
+    .env.example) -- unlike ingest_patent above, this places a real,
+    credentialed call to a third party (ODP requires a free USPTO.gov account
+    with a linked, ID.me-verified identity, confirmed live this ticket: a
+    request with no key is refused with HTTP 401 before ODP even reads the
+    query). ODP's own request/response shape is corroborated from multiple
+    independent working API clients but NOT run against the real API in this
+    environment -- treat any result as unverified end-to-end until it has been
+    run against the real API at least once. A topic with no matches returns []
+    (a real "nobody has filed this" result); a missing credential or an
+    unreachable API raises instead of returning an empty list, so the two cases
+    are never confused."""
+    return _search_uspto_patents(query, max_results=max_results)
 
 
 @function_tool
@@ -1721,13 +2005,45 @@ def lookup_digikey_component(part_number: str, license: str, classification: str
 
 
 @function_tool
+def lookup_digikey_product_details(part_number: str) -> dict:
+    """Look up part_number's parametric attributes and price/quantity breaks
+    via Digi-Key's ProductDetails endpoint (ticket #275) -- a narrower,
+    separate contract from lookup_digikey_component's "find and ingest a
+    datasheet PDF": this does not download or ingest anything, and takes no
+    license/classification (there is no document to file). Refuses to run
+    unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND DIGIKEY_CLIENT_ID/
+    DIGIKEY_CLIENT_SECRET are configured, reusing the same OAuth2 token and
+    X-DIGIKEY-Client-Id header lookup_digikey_component already uses -- no
+    new auth path. Returns {"status": "no_match" | "ok", ...}; on "ok",
+    "manufacturer"/"manufacturer_part_number" are Digi-Key's own report of
+    the part's identity (same reconcile_component_sources contract as
+    lookup_digikey_component), plus "parameters" (Digi-Key's raw per-
+    category parametric attribute list -- frequency range, impedance,
+    tolerance, or whatever that part's category actually names them),
+    "price_breaks"/"my_pricing" (list and contract pricing quantity breaks),
+    and "digikey_product_number"/"package"/"category"/"quantity_available"/
+    "product_status"/"discontinued"/"end_of_life"/"datasheet_url" for a
+    manufacturability check with zero additional API calls. Digi-Key's real
+    API surface is verified against its own docs and a corroborating
+    third-party client (see knowledge/digikey.py's module docstring) but
+    NOT run against the real API in this environment -- treat any result as
+    unverified end-to-end until it has been run against the real API at
+    least once."""
+    return _lookup_digikey_product_details(part_number)
+
+
+@function_tool
 def lookup_mouser_component(part_number: str, license: str, classification: str) -> dict:
     """Same contract as lookup_digikey_component, against Mouser's Search API
-    (MOUSER_API_KEY). Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND
-    MOUSER_API_KEY is configured. Mouser's real API surface is corroborated from
-    third-party integrations (see knowledge/mouser.py's module docstring's honest
-    caveat -- Mouser's own Swagger spec sits behind a login wall) but NOT run against
-    the real API in this environment."""
+    (MOUSER_API_KEY). On "ok", also carries price_breaks/availability/lead_time/
+    lifecycle_status/is_discontinued/suggested_replacement/rohs_status/reach_svhc/
+    product_compliance/trade_compliance -- so a manufacturability or export-
+    compliance check needs no second call. Refuses to run unless
+    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND MOUSER_API_KEY is configured. Mouser's real
+    API surface is corroborated from third-party integrations (see
+    knowledge/mouser.py's module docstring's honest caveat -- Mouser's own Swagger
+    spec sits behind a login wall) but NOT run against the real API in this
+    environment."""
     return _lookup_mouser_datasheet(part_number, license=license, classification=classification)
 
 
@@ -1740,6 +2056,27 @@ def lookup_nexar_component(part_number: str, license: str, classification: str) 
     verified against its own docs (see knowledge/nexar.py's module docstring) but NOT
     run against the real API in this environment."""
     return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
+
+
+@function_tool
+def lookup_nexar_part_data(part_number: str) -> dict:
+    """Search Nexar's GraphQL API (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET) for
+    part_number's multi-distributor pricing/availability and parametric specs in one query
+    -- ticket #276, the capability that distinguishes Nexar's cross-distributor aggregation
+    from lookup_digikey_component/lookup_mouser_component/lookup_nexar_component, which only
+    confirm a part exists and fetch its datasheet. Use this to screen a candidate component
+    against an RF requirement (e.g. an impedance or frequency-range threshold) or to compare
+    stock/price across distributors, BEFORE committing to that part -- lookup_nexar_component
+    remains the tool for actually fetching and ingesting its datasheet as cited evidence.
+    Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND NEXAR_CLIENT_ID/
+    NEXAR_CLIENT_SECRET are configured. Returns structured data only -- unlike the other
+    lookup_*_component tools, it never downloads or ingests a document. On "ok", carries
+    "specs" (list of {"name", "value", "display_value", "units"} parametric attributes) and
+    "offers" (list of {"seller", "stock_level", "price_breaks"}, one entry per distributor
+    offer) alongside the usual manufacturer/manufacturer_part_number/datasheet_url identity;
+    both lists are [] rather than absent when Nexar reports neither. NOT run against the
+    real API in this environment -- see knowledge/nexar.py's module docstring."""
+    return _lookup_nexar_part_data(part_number)
 
 
 @function_tool(strict_mode=False)  # `matches` (a list of open-shaped distributor-hit
@@ -2316,12 +2653,18 @@ def run_candidate_search(
 #                   knowledge-base *authoring* tools (ingest_document,
 #                   index_document, (ticket #67) lookup_digikey_component/
 #                   lookup_mouser_component/lookup_nexar_component/
-#                   reconcile_component_sources -- sourcing a datasheet
+#                   reconcile_component_sources, plus (ticket #275)
+#                   lookup_digikey_product_details -- sourcing a datasheet
 #                   straight from a distributor and reconciling it into one
 #                   components row is the same authoring concern as manually
-#                   ingesting one -- and ingest_arxiv_paper, the arxiv-doc-
-#                   builder-backed arXiv preprint fetcher, alongside (issue
-#                   #257) search_arxiv_papers, its sibling discovery step:
+#                   ingesting one -- plus (ticket #276) lookup_nexar_part_data,
+#                   Nexar's cross-distributor pricing/availability + parametric
+#                   specs query, grouped alongside lookup_nexar_component since
+#                   it's the same distributor-sourcing concern even though it
+#                   never itself ingests a document -- and ingest_arxiv_paper,
+#                   the arxiv-doc-builder-backed arXiv preprint fetcher,
+#                   alongside (issue #257) search_arxiv_papers, its sibling
+#                   discovery step:
 #                   topic/keyword search over the same public arXiv API,
 #                   returning candidates only, never itself calling
 #                   ingest_document -- the same authoring bucket, since
@@ -2339,7 +2682,12 @@ def run_candidate_search(
 #                   fetchers, same authoring bucket again: each is a thin,
 #                   fetch-by-identifier client with its own extraction step
 #                   ahead of ingest_document, exactly the ingest_arxiv_paper
-#                   shape) -- and (issue #219) ingest_patent, the USPTO
+#                   shape) -- alongside (issue #279) search_fcc_rules,
+#                   ingest_fcc_rule's own discovery-search sibling: a
+#                   topic/keyword full-text search over eCFR's Search
+#                   Service, same "candidates only, never itself calling
+#                   ingest_document" shape as search_arxiv_papers above --
+#                   and (issue #219) ingest_patent, the USPTO
 #                   grant/publication fetcher, same bucket and same
 #                   unauthenticated-endpoint posture as those four, since
 #                   standing up the knowledge base for
@@ -2352,6 +2700,14 @@ def run_candidate_search(
 #                   (device/network-level, not a systems-level concern) or
 #                   the knowledge *auditing* tools (read_document/
 #                   extract_components -- verification's job, see below).
+#                   Also (issue #280) search_uspto_patents, ingest_patent's sibling
+#                   discovery step: full-text topic search against the USPTO Open Data
+#                   Portal, returning candidates only, never itself calling ingest_document
+#                   or ingest_patent -- the same "search precedent before inventing"
+#                   discipline search_arxiv_papers already applies, credentialed this
+#                   time (require_external_network_tools_enabled, a real USPTO.gov/ID.me
+#                   account), so it sits in approval_self_gated rather than
+#                   ingestion_auto in policies/tool_policy.yaml.
 #   - microwave:    passive/active RF component and network analysis. Gets
 #                   VSWR, return loss, noise figure, Touchstone analysis, the
 #                   S/Z/Y/ABCD two-port parameter conversions, stability
@@ -2479,6 +2835,7 @@ _ALL_TOOLS = [
     calculate_quarter_wave_transformer_impedance,
     calculate_l_network_match,
     synthesize_filter_prototype,
+    realize_lowpass_stepped_impedance_microstrip_filter,
     calculate_patch_effective_permittivity,
     calculate_patch_length_extension,
     calculate_patch_resonant_frequency,
@@ -2511,17 +2868,23 @@ _ALL_TOOLS = [
     ingest_arxiv_paper,
     search_arxiv_papers,
     ingest_3gpp_spec,
+    lookup_3gpp_spec_status,
     ingest_etsi_standard,
+    ingest_etsi_ipr_declaration,
     ingest_fcc_rule,
+    search_fcc_rules,
     ingest_patent,
+    search_uspto_patents,
     index_document,
     read_document,
     search_knowledge,
     search_design_records,
     extract_components,
     lookup_digikey_component,
+    lookup_digikey_product_details,
     lookup_mouser_component,
     lookup_nexar_component,
+    lookup_nexar_part_data,
     reconcile_component_sources,
     create_design,
     read_design,
@@ -2607,14 +2970,27 @@ ROLE_SPECS: list[RoleSpec] = [
             "gain/noise-figure budgets, wavelength/electrical-size bookkeeping, "
             "and standing up the knowledge base (ingesting and indexing "
             "documents, sourcing component datasheets directly from Digi-Key/"
-            "Mouser/Nexar, fetching/converting arXiv preprints via "
+            "Mouser/Nexar, querying Nexar's cross-distributor pricing/"
+            "availability and parametric specs via lookup_nexar_part_data to "
+            "screen a candidate component against a requirement before "
+            "committing to it, fetching/converting arXiv preprints via "
             "ingest_arxiv_paper, searching arXiv by topic/keyword via "
             "search_arxiv_papers before proposing a new element or mechanism "
             "-- 'search precedent before inventing' -- fetching 3GPP specs/"
             "ETSI standards/FCC eCFR rule text via ingest_3gpp_spec/"
-            "ingest_etsi_standard/ingest_fcc_rule, and fetching US patents "
-            "and published patent applications from the USPTO via "
-            "ingest_patent) other roles rely on. Defer network-level "
+            "ingest_etsi_standard/ingest_fcc_rule (check a 3GPP spec's "
+            "current DynaReport withdrawn/current status via "
+            "lookup_3gpp_spec_status first, so a withdrawn spec doesn't "
+            "get ingested as if it were current), surfacing ETSI's "
+            "IPR/(F)RAND-declaration register against a standard already "
+            "ingested via ingest_etsi_ipr_declaration, searching FCC eCFR "
+            "rule text by topic/keyword via search_fcc_rules before you "
+            "already know which part covers it, and fetching US "
+            "patents and published patent applications from the USPTO via "
+            "ingest_patent, or searching the USPTO Open Data Portal by topic "
+            "via search_uspto_patents first (issue #280) -- same 'search "
+            "precedent before inventing' discipline as arXiv, credentialed "
+            "this time) other roles rely on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -2637,14 +3013,20 @@ ROLE_SPECS: list[RoleSpec] = [
             ingest_arxiv_paper,
             search_arxiv_papers,
             ingest_3gpp_spec,
+            lookup_3gpp_spec_status,
             ingest_etsi_standard,
+            ingest_etsi_ipr_declaration,
             ingest_fcc_rule,
+            search_fcc_rules,
             ingest_patent,
+            search_uspto_patents,
             index_document,
             search_knowledge,
             lookup_digikey_component,
+            lookup_digikey_product_details,
             lookup_mouser_component,
             lookup_nexar_component,
+            lookup_nexar_part_data,
             reconcile_component_sources,
         ],
     ),
@@ -2676,8 +3058,23 @@ ROLE_SPECS: list[RoleSpec] = [
             "`.LIN` analysis produces a genuine Touchstone file, subject to "
             "its own honest confidence caveat -- see simulation/xyce.py's "
             "module docstring; ngspice has no built-in S-parameter analysis "
-            "at all). Defer system-chain-level gain/link budgeting to the "
-            "systems role."
+            "at all). run_ngspice_simulation additionally covers (issue "
+            "#283) `.NOISE` (amplifier/LNA noise figure -- the LNA-"
+            "noise-and-distortion reasoning this role exists for), `.DISTO` "
+            "(harmonic distortion), `.PZ` (pole-zero stability), and "
+            "`.SENS` (DC/AC parameter sensitivity) analyses, alongside its "
+            "existing OP/AC/TRAN support. Also gets filter synthesis: "
+            "synthesize_filter_prototype (issue #143) turns a Butterworth/"
+            "Chebyshev lowpass/highpass/bandpass/bandstop specification "
+            "into an ideal lumped-element ladder (henries/farads), and "
+            "(issue #286) realize_lowpass_stepped_impedance_microstrip_filter "
+            "carries a LOWPASS ladder one step further into a physical "
+            "stepped-impedance ('Hi-Z, Lo-Z') microstrip layout -- narrow "
+            "high-impedance lines standing in for series inductors, wide "
+            "low-impedance lines for shunt capacitors (Pozar sec. 8.6); "
+            "highpass/bandpass/bandstop physical realization is still open "
+            "(see docs/adr/0031). Defer system-chain-level gain/link "
+            "budgeting to the systems role."
         ),
         tools=[
             calculate_vswr,
@@ -2705,6 +3102,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_quarter_wave_transformer_impedance,
             calculate_l_network_match,
             synthesize_filter_prototype,
+            realize_lowpass_stepped_impedance_microstrip_filter,
             run_qucs_simulation,
             run_ltspice_simulation,
             run_ngspice_simulation,
@@ -2749,13 +3147,17 @@ ROLE_SPECS: list[RoleSpec] = [
             "and is young/less battle-tested than the other three "
             "simulators, Elmer FEM's VectorHelmholtz simulation "
             "(run_elmer_simulation, issue #64) as a general, multiphysics-"
-            "ready EM cross-check kept available for a future coupled-"
-            "physics need (e.g. EM/thermal on a mounted 'adaptive EM "
-            "skin') -- NOT a substitute for the three tools above on "
-            "everyday antenna work, since Elmer's VectorHelmholtz module "
-            "has no native antenna-specific port/S-parameter/far-field/"
-            "gain post-processing (its excitation and boundary conditions "
-            "are hand-assembled, see simulation/elmer.py), "
+            "ready EM cross-check -- NOT a substitute for the three tools "
+            "above on everyday antenna work, since Elmer's VectorHelmholtz "
+            "module has no native antenna-specific port/S-parameter/far-"
+            "field/gain post-processing (its excitation and boundary "
+            "conditions are hand-assembled, see simulation/elmer.py); it "
+            "also now supports a coupled EM+thermal run mode (issue #281 "
+            "-- pass geometry['thermal'] to add a Heat Equation solve "
+            "driven by the EM solve's own Joule heating, e.g. how hot a "
+            "mounted 'adaptive EM skin' gets from soaking up radio energy "
+            "on a warm surface; the result's 'thermal_result' key carries "
+            "the outcome), "
             "(issue #65) run_kicad_gerber2ems_simulation for a REAL, "
             "as-laid-out KiCad PCB design (not a hand-modeled geometry "
             "dict) -- gerber2ems drives openEMS internally via its own "

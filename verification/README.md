@@ -100,15 +100,101 @@ the committed adapter rather than around it.
 It is **unrun, not unrunnable**: the Dockerfile builds nec2++, so it is
 takeable in the container. Tracked by #222.
 
+**Two case families #222 asks for on the Palace/Floquet path are not
+registered at all yet:** a bare dielectric slab against Fresnel's equations
+(a degenerate, patternless case of the same mesh and Floquet ports a real
+metasurface uses, with an exactly-known answer), and Mie scattering from a
+sphere (an exact infinite series, and the prerequisite for ever scoring the
+patent's Mie-resonant Examples 1 and 2, #220). Neither has geometry, expected
+values, or a runner script written. Building and *running* either needs a
+compiled Palace binary; the Dockerfile builds one from source inside the
+Linux container this repo publishes, with the build workarounds recorded in
+`docs/palace-floquet-validation.md`. No `palace` binary is on `PATH` in the
+native-Windows session that wrote this paragraph, and building one from
+source on Windows was out of scope for that session. Palace's own
+native-Windows support status is **UNVERIFIED** here -- the only signal on
+hand is `simulation/meep.py`'s sourced citation that Meep, a sibling
+scientific-computing tool, has no supported native Windows install path at
+all ("Native Windows installation is currently unsupported"), and that is
+not itself evidence about Palace. Registering the geometry without running it
+would repeat the exact mistake #222 was filed to fix (see
+`docs/meep-absorber-validation.md` case history and #144) -- scaffolding for
+a test nobody has executed -- so neither is added here until a session with
+a real Palace binary can also run it.
+
 A case declares which adapter can pose it (`ReferenceCase.solver`), and
 runners must filter on that. A case is only meaningful to the solver its
 geometry is written for: a wire list means nothing to an FDTD grid, and an
 absorber stack means nothing to a thin-wire method-of-moments code.
 
-What this does and does not earn for `SIMULATED` provenance is stated in
-`docs/meep-absorber-validation.md` -- in short, the physics of the first two
+## What `SIMULATED` now means -- and where that stops (issue #222, criterion 4)
+
+CONTEXT.md's evidence hierarchy has always ranked *validated* simulation
+above a bare one. Before the Meep absorber work
+(`docs/meep-absorber-validation.md`) there was no such thing anywhere in the
+codebase to point at -- every `SIMULATED` tag meant only "an adapter shelled
+out to a solver and parsed something back," never "and the number it parsed
+was checked against a truth this codebase did not produce." That is what
+changed, and precisely this much of it changed:
+
+**What it now means, and only for this:** for a bare or ground-backed
+*uniform, unpatterned* resistive sheet, hit at *normal incidence*, with any
+dielectric's loss tangent read at *band centre*, solved by Meep FDTD at 10
+GHz -- `SIMULATED` means the returned number was checked against an answer
+this codebase did not produce (an exact closed form, or an independent
+equivalent-circuit model), to the tolerances in
+`verification/simulator_reference_cases.py`. The physics of the first two
 MEEP cases is checked against known-correct answers while the adapter's own
-deck emission and parsing are not what those numbers check, and the third
-case checks that adapter-and-loop path against the same known-correct
-answer. None of it moves the provenance ceiling: two methods agreeing is
-still not a measurement.
+deck emission and parsing are not what those numbers check; the third and
+fourth cases (`free-standing-resistive-sheet-two-port-10ghz` and its
+transmittance check) extend that same claim to the adapter itself -- the
+deck emission, the subprocess handoff and the result parsing were exercised
+too, not only the physics. Full numbers and method:
+`docs/meep-absorber-validation.md`.
+
+**What it still does not mean, for everything else a `SIMULATED` tag can be
+attached to:**
+
+- **`MEASURED`.** No VNA, no fixture, no bench (#133). Two solvers agreeing
+  is not a measurement, a closed form agreeing with a full-wave run is not a
+  measurement, and the provenance ceiling has not moved for any of the four
+  cases.
+- **A patterned unit cell** -- the family this programme actually designs,
+  printed elements and gaps included. Every case above uses `gap_m=None`
+  specifically to switch off the grid capacitance a real printed pattern has;
+  validating the uniform limit says nothing about the patterned one. Costa's
+  eq (10) thin-spacer correction (#190) remains unrecovered and still biases
+  patterned results in a known direction.
+- **Anything off normal incidence.** `k_point` is zero in every MEEP case
+  above; nothing here says anything about oblique angles.
+- **A dielectric away from band centre.** The loss-tangent conversion is
+  exact at one frequency and drifts either side of it; nothing here bounds
+  that drift.
+- **The NEC2 half-wave-dipole path.** `half-wave-dipole-300mhz` is
+  registered with its published values transcribed but has never been run --
+  it needs nec2++, which no environment this has been attempted in has
+  installed. Its `SIMULATED` tag, when it is eventually produced, is
+  unchecked until that case runs.
+- **The Palace/Floquet periodic-grating path** (`simulation/palace.py`,
+  #210). That work drove the adapter against a real compiled Palace binary
+  and reproduced Palace's *own published output* for its worked
+  dielectric-grating example to 0.056 dB -- proof the deck, the mesh and the
+  parser are right. It is not a reference case in this module's sense: the
+  truth it checked against is a simulated result from the same class of
+  tool, not an independent closed form or measurement, and its own §4 says
+  the run is "no check at all on the physics." A `SIMULATED` grating result
+  from that adapter today carries the adapter-path guarantee and none of the
+  physics guarantee the Meep cases above carry.
+- **Every other adapter in `simulation/`** not named above -- openEMS, HFSS,
+  gprMax, Elmer, Xyce, ngspice, KiCad/gerber2ems, LTspice, OpenParEM, and
+  Qucs -- has no reference case at all yet. A `SIMULATED` tag from any of
+  them means exactly what it meant before this section existed.
+
+*In plain terms: this work earned the word "validated" for one narrow shape
+-- a plain, flat, uniform sheet hit head-on -- not for the actual printed
+metasurfaces this programme exists to design, not for any other solver
+adapter, and not for measurement. A `SIMULATED` label on anything outside
+that one shape still means "a solver ran and produced a number that looked
+reasonable," not "a solver ran and we checked the number against something
+we know is true." None of it moves the provenance ceiling: two methods
+agreeing is still not a measurement.*

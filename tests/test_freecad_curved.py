@@ -32,9 +32,11 @@ from conftest import make_fake_executable
 from geometry.freecad_curved import (
     FreecadGeometryError,
     _nearest_cardinal_axis,
+    generate_freecad_fem_mesh_macro,
     generate_freecad_macro,
     map_unit_cell_layout_to_curved_surface,
     run_freecad_curved_geometry,
+    run_freecad_fem_mesh_geometry,
     surface_frame_at,
 )
 
@@ -578,3 +580,340 @@ def test_run_freecad_curved_geometry_status_json_is_read_not_guessed(tmp_path: P
     on_disk = json.loads(status_path.read_text())
     assert on_disk["total_input"] == 1
     assert result["freecad"]["total_input"] == 1
+
+
+# ---------------------------------------------------------------------------
+# generate_freecad_fem_mesh_macro / run_freecad_fem_mesh_geometry (issue #288):
+# routes the same exact curved solid through FreeCAD's own FEM workbench
+# meshing API (ObjectsFem.makeMeshGmsh + femmesh.gmshtools.GmshTools) instead
+# of stopping at TopoShape.exportStep(). Pure string-content and subprocess-
+# contract tests only -- see module docstring "FEM WORKBENCH MESHING" for the
+# full primary-source citation list and honest caveats (this cannot be
+# exercised against a real FreeCADCmd/gmsh install in this environment,
+# matching every other claim in this module).
+# ---------------------------------------------------------------------------
+
+
+def test_generate_freecad_fem_mesh_macro_contains_expected_api_calls():
+    box = {
+        "name": "patch",
+        "shape": "box",
+        "p1_m": [-0.001, -0.001, 0.0],
+        "p2_m": [0.001, 0.001, 0.0016],
+    }
+    macro = generate_freecad_fem_mesh_macro([box], CYLINDER_Z, working_directory="/tmp/run")
+    # Same per-object solid-building lines as the STEP macro (shared helper).
+    assert "Part.makePolygon(pts, True)" in macro
+    assert "Part.Face([wire])" in macro
+    assert "doc.addObject(\"Part::Feature\", 'patch')" in macro
+    # The compound becomes its own Part::Feature the mesh object links to.
+    assert "Part.makeCompound(built_shapes)" in macro
+    assert 'doc.addObject("Part::Feature", "CurvedArrayCompound")' in macro
+    assert "compound_feature.Shape = compound" in macro
+    # FreeCAD's own FEM workbench meshing API, not a hand-rolled gmsh .geo.
+    assert "import ObjectsFem" in macro
+    assert "from femmesh.gmshtools import GmshTools, GmshError" in macro
+    assert 'ObjectsFem.makeMeshGmsh(doc, "CurvedArrayMesh")' in macro
+    assert "mesh_obj.Shape = compound_feature" in macro
+    assert "mesh_obj.WorkingDirectory = '/tmp/run'" in macro
+    assert "tool = GmshTools(mesh_obj)" in macro
+    assert "tool.create_mesh()" in macro
+    assert "tool.temp_file_mesh" in macro
+    assert "mesh_obj.FemMesh.NodeCount" in macro
+    assert '"mesh": mesh_status' in macro
+    assert "json.dump(status" in macro
+    assert "App.closeDocument(doc.Name)" in macro
+    # Never exports STEP -- this is a distinct, additive path (AC: does not
+    # modify run_freecad_curved_geometry()'s existing STEP-only default).
+    assert "exportStep" not in macro
+
+
+def test_generate_freecad_fem_mesh_macro_is_valid_python_syntax():
+    box = {"shape": "box", "p1_m": [-0.001, -0.001, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    poly = {
+        "shape": "polygon",
+        "points_m": [[0.0, 0.0], [0.001, 0.0], [0.0, 0.001]],
+        "elevation_m": 0.0016,
+    }
+    macro = generate_freecad_fem_mesh_macro([box, poly], CYLINDER_Z, working_directory="/tmp/run")
+    compile(macro, "<freecad_fem_mesh_macro>", "exec")
+
+
+def test_generate_freecad_fem_mesh_macro_sets_characteristic_length_when_given():
+    box = {"shape": "box", "p1_m": [-0.001, -0.001, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    macro = generate_freecad_fem_mesh_macro(
+        [box], CYLINDER_Z, working_directory="/tmp/run", mesh_max_size_m=0.0005
+    )
+    assert "mesh_obj.CharacteristicLengthMax = 0.0005" in macro
+
+
+def test_generate_freecad_fem_mesh_macro_omits_characteristic_length_by_default():
+    box = {"shape": "box", "p1_m": [-0.001, -0.001, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    macro = generate_freecad_fem_mesh_macro([box], CYLINDER_Z, working_directory="/tmp/run")
+    assert "CharacteristicLengthMax" not in macro
+
+
+def test_generate_freecad_fem_mesh_macro_empty_primitives_raises():
+    with pytest.raises(ValueError, match="non-empty"):
+        generate_freecad_fem_mesh_macro([], CYLINDER_Z, working_directory="/tmp/run")
+
+
+def test_generate_freecad_fem_mesh_macro_reuses_same_solid_build_as_step_macro():
+    """Regression guard for the _macro_object_build_lines() refactor: both
+    macro flavors must build IDENTICAL per-object solids for the same input
+    (see module docstring "WHY NOT A ROTATED PLACEMENT" -- the two outputs
+    must never silently drift apart)."""
+    box = {
+        "name": "patch",
+        "shape": "box",
+        "p1_m": [-0.001, -0.001, 0.0],
+        "p2_m": [0.001, 0.001, 0.0016],
+    }
+    step_macro = generate_freecad_macro([box], CYLINDER_Z)
+    fem_macro = generate_freecad_fem_mesh_macro([box], CYLINDER_Z, working_directory="/tmp/run")
+    step_line = next(ln for ln in step_macro.splitlines() if ln.strip().startswith("pts ="))
+    fem_line = next(ln for ln in fem_macro.splitlines() if ln.strip().startswith("pts ="))
+    assert step_line == fem_line
+
+
+def test_generate_freecad_fem_mesh_macro_reuses_same_status_epilogue_as_step_macro():
+    """Regression guard for the _macro_status_epilogue() extraction: both
+    macro flavors must close out with IDENTICAL objects_built/errors/
+    total_input JSON-write-and-closeDocument boilerplate (differing only in
+    their one extra status key -- "step_file" vs "mesh") so the two can
+    never silently drift apart (same rationale as the solid-build-lines
+    regression guard above)."""
+    box = {
+        "name": "patch",
+        "shape": "box",
+        "p1_m": [-0.001, -0.001, 0.0],
+        "p2_m": [0.001, 0.001, 0.0016],
+    }
+    step_macro = generate_freecad_macro([box], CYLINDER_Z, status_filename="shared_status.json")
+    fem_macro = generate_freecad_fem_mesh_macro(
+        [box], CYLINDER_Z, working_directory="/tmp/run", status_filename="shared_status.json"
+    )
+
+    def _epilogue_shared_lines(macro: str) -> list[str]:
+        lines = macro.splitlines()
+        start = next(i for i, ln in enumerate(lines) if ln == "status = {")
+        # Everything from "status = {" through "App.closeDocument(doc.Name)"
+        # except the one line carrying the extra, flavor-specific status key.
+        end = next(i for i, ln in enumerate(lines) if ln == "App.closeDocument(doc.Name)")
+        return [
+            ln
+            for ln in lines[start : end + 1]
+            if not (ln.startswith('    "step_file"') or ln.startswith('    "mesh"'))
+        ]
+
+    assert _epilogue_shared_lines(step_macro) == _epilogue_shared_lines(fem_macro)
+
+
+# ---------------------------------------------------------------------------
+# run_freecad_fem_mesh_geometry: subprocess contract -- fake-executable
+# pattern, no real FreeCADCmd/gmsh install required.
+# ---------------------------------------------------------------------------
+
+_FAKE_FREECADCMD_FEM_MESH_SUCCESS = """
+import sys, json, os
+script = sys.argv[1]
+with open(script) as f:
+    text = f.read()
+assert "makeMeshGmsh" in text
+mesh_path = os.path.abspath("patch_0_Mesh.unv")
+with open(mesh_path, "w") as f:
+    f.write("    -1\\n  2411\\nfake unv mesh\\n    -1\\n")
+status = {
+    "objects_built": ["patch_0"],
+    "errors": [],
+    "mesh": {
+        "mesh_ok": True,
+        "mesh_file": mesh_path,
+        "node_count": 42,
+        "element_counts": {"tetra": 100, "triangle": 0},
+        "gmsh_exit_code": 0,
+        "gmsh_stderr": "",
+        "note": None,
+    },
+    "total_input": 1,
+}
+with open("curved_unit_cell_fem_mesh_status.json", "w") as f:
+    json.dump(status, f)
+sys.stdout.write("FreeCAD FEM mesh fake run complete\\n")
+sys.exit(0)
+"""
+
+_FAKE_FREECADCMD_FEM_MESH_GMSH_MISSING = """
+import sys, json
+status = {
+    "objects_built": ["patch_0"],
+    "errors": [],
+    "mesh": {
+        "mesh_ok": False,
+        "mesh_file": None,
+        "node_count": 0,
+        "element_counts": {},
+        "gmsh_exit_code": None,
+        "gmsh_stderr": "",
+        "note": "GmshError: Gmsh binary not found.",
+    },
+    "total_input": 1,
+}
+with open("curved_unit_cell_fem_mesh_status.json", "w") as f:
+    json.dump(status, f)
+sys.exit(0)
+"""
+
+
+def test_run_freecad_fem_mesh_geometry_end_to_end_with_fake_executable(tmp_path: Path):
+    script = _make_fake_py(tmp_path, "fake_freecadcmd_fem.py", _FAKE_FREECADCMD_FEM_MESH_SUCCESS)
+
+    result = run_freecad_fem_mesh_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "run_fem"),
+        executable=str(script),
+        timeout_s=10,
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "FreeCADCmd"
+    assert result["status"] == "COMPLETED"
+    assert len(result["primitives"]) == 1
+    assert result["primitives"][0]["shape"] == "polygon"
+    assert result["freecad"]["objects_built"] == ["patch_0"]
+    assert result["freecad"]["mesh"]["mesh_ok"] is True
+    assert result["freecad"]["mesh"]["node_count"] == 42
+    mesh_file = Path(result["freecad"]["mesh"]["mesh_file"])
+    assert mesh_file.is_absolute()
+    assert mesh_file.exists()
+    assert "fake unv mesh" in mesh_file.read_text()
+
+
+def test_run_freecad_fem_mesh_geometry_propagates_error_on_nonzero_exit(tmp_path: Path):
+    script = _make_fake_py(tmp_path, "fake_freecadcmd_fem_fail.py", _FAKE_FREECADCMD_FAILURE)
+
+    with pytest.raises(FreecadGeometryError, match="initialization failed"):
+        run_freecad_fem_mesh_geometry(
+            [_BOX],
+            CYLINDER_Z,
+            workdir=str(tmp_path / "run_fem_fail"),
+            executable=str(script),
+            timeout_s=10,
+        )
+
+
+def test_run_freecad_fem_mesh_geometry_missing_status_file_is_honestly_noted(tmp_path: Path):
+    script = _make_fake_py(
+        tmp_path, "fake_freecadcmd_fem_nostatus.py", _FAKE_FREECADCMD_NO_STATUS_FILE
+    )
+
+    result = run_freecad_fem_mesh_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "run_fem_nostatus"),
+        executable=str(script),
+        timeout_s=10,
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert result["freecad"]["mesh"]["mesh_ok"] is False
+    assert result["freecad"]["mesh"]["mesh_file"] is None
+    assert "note" in result["freecad"]
+    # This alternate ("status file missing") shape is DIFFERENT from the
+    # happy-path shape documented in run_freecad_fem_mesh_geometry()'s own
+    # docstring -- no "total_input" key at all, and "note" duplicated at
+    # freecad's own top level (sibling to "mesh"), not only inside "mesh".
+    assert "total_input" not in result["freecad"]
+    assert result["freecad"]["note"] == result["freecad"]["mesh"]["note"]
+
+
+def test_missing_status_note_is_shared_between_both_run_functions(tmp_path: Path):
+    """Regression guard for the note-string dedup fix (both run_freecad_
+    curved_geometry() and run_freecad_fem_mesh_geometry() used to hand-copy
+    this exact wording -- see geometry/freecad_curved.py's module-private
+    _missing_status_note()): each function's own "status file missing" note
+    is generated by that ONE shared helper, so the two can never silently
+    drift apart again."""
+    from geometry.freecad_curved import _missing_status_note
+
+    curved_script = _make_fake_py(
+        tmp_path, "fake_freecadcmd_dedup_curved.py", _FAKE_FREECADCMD_NO_STATUS_FILE
+    )
+    curved_result = run_freecad_curved_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "dedup_curved"),
+        executable=str(curved_script),
+        timeout_s=10,
+    )
+    assert curved_result["freecad"]["note"] == _missing_status_note(
+        "curved_unit_cell_array_status.json"
+    )
+
+    fem_script = _make_fake_py(
+        tmp_path, "fake_freecadcmd_dedup_fem.py", _FAKE_FREECADCMD_NO_STATUS_FILE
+    )
+    fem_result = run_freecad_fem_mesh_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "dedup_fem"),
+        executable=str(fem_script),
+        timeout_s=10,
+    )
+    assert fem_result["freecad"]["note"] == _missing_status_note(
+        "curved_unit_cell_fem_mesh_status.json"
+    )
+
+
+def test_run_freecad_fem_mesh_geometry_internal_meshing_failure_is_reported_not_raised(
+    tmp_path: Path,
+):
+    """A successfully-run FreeCADCmd process (exit 0) whose FEM-meshing step
+    failed INSIDE FreeCAD (e.g. gmsh not installed) is reported honestly in
+    freecad['mesh'], never raised -- mirrors run_freecad_curved_geometry's
+    own per-object-failure-is-not-a-subprocess-failure philosophy."""
+    script = _make_fake_py(
+        tmp_path, "fake_freecadcmd_fem_gmshmissing.py", _FAKE_FREECADCMD_FEM_MESH_GMSH_MISSING
+    )
+
+    result = run_freecad_fem_mesh_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "run_fem_gmshmissing"),
+        executable=str(script),
+        timeout_s=10,
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert result["freecad"]["mesh"]["mesh_ok"] is False
+    assert "Gmsh binary not found" in result["freecad"]["mesh"]["note"]
+
+
+def test_run_freecad_fem_mesh_geometry_rejects_bad_geometry_before_subprocess(tmp_path: Path):
+    big_box = {"shape": "box", "p1_m": [-2.0, -2.0, 0.0], "p2_m": [2.0, 2.0, 0.0]}
+    with pytest.raises(ValueError, match="curvature radius"):
+        run_freecad_fem_mesh_geometry(
+            [big_box],
+            CYLINDER_Z,
+            workdir=str(tmp_path / "run_fem_bad"),
+            executable="definitely_not_a_real_executable_xyz",
+            timeout_s=10,
+        )
+
+
+def test_run_freecad_fem_mesh_geometry_passes_mesh_max_size_through(tmp_path: Path):
+    script = _make_fake_py(
+        tmp_path, "fake_freecadcmd_fem_size.py", _FAKE_FREECADCMD_FEM_MESH_SUCCESS
+    )
+
+    result = run_freecad_fem_mesh_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "run_fem_size"),
+        executable=str(script),
+        timeout_s=10,
+        mesh_max_size_m=0.00025,
+    )
+    macro_path = Path(result["macro_file"])
+    assert "mesh_obj.CharacteristicLengthMax = 0.00025" in macro_path.read_text()

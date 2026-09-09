@@ -1,39 +1,52 @@
 """Shared plumbing for the distributor/component-intelligence thin clients
 (ticket #67): `knowledge/digikey.py`, `knowledge/mouser.py`,
-`knowledge/nexar.py`.
+`knowledge/nexar.py` -- plus one credentialed, gated non-distributor
+caller, `knowledge/sourcing/patent.py`'s `search_uspto_patents` (issue
+#280): a USPTO Open Data Portal government patent-search API, not a
+component distributor, but held to the same "real credentialed outbound
+call the instant it runs" posture (see `ExternalNetworkToolsDisabledError`
+below), so it shares this gate and the `post_json` helper too.
 
-Per CLAUDE.md's knowledge-sourcing seam, each of those three modules is a
-THIN client: authenticate against that provider's own free-developer-tier
-credentials, search by part number, download the matched datasheet PDF
-locally, and hand it to `knowledge.ingest.ingest_document(source_type=
-"datasheet", ...)` unchanged -- no new ingestion logic. This module factors
-out the two pieces all three would otherwise triplicate -- downloading a URL
-to a local file, and the outbound-network-call safety gate -- per this
+Per CLAUDE.md's knowledge-sourcing seam, each of the three distributor
+modules is a THIN client: authenticate against that provider's own
+free-developer-tier credentials, search by part number, download the
+matched datasheet PDF locally, and hand it to
+`knowledge.ingest.ingest_document(source_type="datasheet", ...)`
+unchanged -- no new ingestion logic. `search_uspto_patents` is shaped the
+same way credential- and gate-wise, but returns candidate dicts for a
+caller to review rather than downloading and ingesting anything itself
+(see its own module's docstring). This module factors out the three
+pieces all four would otherwise duplicate -- downloading a URL to a local
+file, the shared `Request`/`urlopen`/JSON-decode shape behind every
+credentialed POST, and the outbound-network-call safety gate -- per this
 repo's "search-before-write, reuse beats reinvention" convention (see
 ../CLAUDE.md).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 _USER_AGENT = "principal-rf-engineer/0.1 (+component-sourcing)"
 
 
 class ExternalNetworkToolsDisabledError(PermissionError):
-    """Raised when a distributor client is invoked without
+    """Raised when a gated client is invoked without
     ALLOW_EXTERNAL_NETWORK_TOOLS=true.
 
     This repo's other real-world-reaching tools refuse by default behind
     an explicit env-var gate too -- HFSS_ENABLED (simulation/hfss.py). The
-    three distributor clients place a real, credentialed outbound HTTP
-    call to a third party the instant they run, so they get the same
-    posture.
+    three distributor clients, plus `search_uspto_patents` (issue #280,
+    `knowledge/sourcing/patent.py`), place a real, credentialed outbound
+    HTTP call to a third party the instant they run, so they all get the
+    same posture.
     ALLOW_EXTERNAL_NETWORK_TOOLS was already declared in .env.example
     (defaulting to "false") before this ticket, but nothing read it yet --
     this is the first thing that does.
@@ -42,8 +55,15 @@ class ExternalNetworkToolsDisabledError(PermissionError):
 
 def require_external_network_tools_enabled(distributor: str) -> None:
     """Refuse to proceed unless ALLOW_EXTERNAL_NETWORK_TOOLS=true. Called
-    as the very first line of each `lookup_*_datasheet` function, before
-    any credential is read or any request is built."""
+    as the very first line of every function here that places a real,
+    credentialed outbound call to a distributor the instant it runs --
+    originally each `lookup_*_datasheet` function, plus `search_uspto_
+    patents` (issue #280), joined since ticket #276 by
+    `knowledge.nexar.lookup_nexar_part_data` (same real Nexar call, just
+    returning structured pricing/specs data instead of a downloaded
+    document, so its name doesn't fit the `*_datasheet` pattern even though
+    it gates the same way) -- before any credential is read or any request
+    is built."""
     if os.environ.get("ALLOW_EXTERNAL_NETWORK_TOOLS", "false").strip().lower() != "true":
         raise ExternalNetworkToolsDisabledError(
             f"ALLOW_EXTERNAL_NETWORK_TOOLS is not 'true' -- refusing to call the real "
@@ -101,6 +121,38 @@ def download_to_file(url: str, dest_dir: Path, filename: str | None = None) -> P
     with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 -- real datasheet fetch
         dest.write_bytes(resp.read())
     return dest
+
+
+def post_json(
+    url: str, data: bytes, headers: dict[str, str], *, timeout: int = 30
+) -> dict[str, Any]:
+    """POST `data` (already-encoded request body bytes) to `url` and parse
+    the response body as JSON.
+
+    The one shape behind every credentialed POST this package's clients
+    make, factored out of what was five duplicate copies across three
+    files -- Digi-Key's OAuth2 token request and its keyword search
+    (`knowledge/digikey.py`), Mouser's part-number search
+    (`knowledge/mouser.py`), Nexar's OAuth2 token request and its GraphQL
+    query (`knowledge/nexar.py`) -- before USPTO ODP's full-text search
+    (`knowledge/sourcing/patent.py`'s `search_uspto_patents`, issue #280)
+    added a sixth. Body encoding (form-urlencoded for an OAuth2 token
+    request, JSON for everything else) and headers (the auth scheme
+    differs client to client -- a bearer token, an API-key header, an
+    API-key query parameter) stay each caller's own job; this factors out
+    only the `Request`/`urlopen`/`json.loads` triplet that was otherwise
+    copied six times over.
+
+    Like `download_to_file`, this is the actual network I/O boundary. Five
+    of its six call sites are reached only through their own `get_token`/
+    `get_api_key`/`search` injectable parameter, which is what their tests
+    stub instead (no live credential or network access in this sandbox);
+    this function's own request-building and JSON-parsing are covered
+    directly by `tests/test_sourcing_common.py`.
+    """
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 -- shared credentialed POST helper, see this function's own docstring for every caller
+        return json.loads(resp.read())
 
 
 def make_workdir(prefix: str) -> Path:
