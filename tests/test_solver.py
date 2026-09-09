@@ -1197,3 +1197,355 @@ def test_design_id_skips_an_ordinal_when_only_one_step_scores_there(monkeypatch)
 
     assert result["prior_best_score"] == pytest.approx(ordinal3_overall)
     assert result["prior_iteration"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Group 7: per-candidate Prediction (issue #253, docs/adr/0022) -- status,
+# residual, provenance. Every test here scores "analysis" only, matching
+# this file's own Group 4 convention, so the "relevant step" a Prediction is
+# compared against is unambiguous (the sole step named in score_specs).
+# ---------------------------------------------------------------------------
+
+
+def test_prediction_confirmed_when_actual_falls_inside_the_stated_tolerance(tmp_path):
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    achieved = patch_resonant_frequency_hz(
+        candidate["eps_r"], candidate["w_m"], candidate["h_m"], candidate["l_m"]
+    )
+    # Target tolerance (1e8) is wider than the stated Prediction tolerance
+    # (1e6) -- so the Prediction can actually be scored -- and the stated
+    # value is close enough to fall inside its own +/-1e6 band.
+    target = propose_target(value=achieved, comparator="EQUALS", unit="Hz", tolerance=1e8)
+    candidate["prediction"] = {"value": achieved + 5e5, "tolerance": 1e6}
+    result = run_candidate_search(state, [candidate], {"analysis": {"target": target}})
+
+    prediction = result["trail"][0]["prediction"]
+    assert prediction["status"] == "CONFIRMED"
+    assert prediction["value"] == pytest.approx(achieved + 5e5)
+    assert prediction["tolerance"] == pytest.approx(1e6)
+    assert prediction["residual"] == pytest.approx(5e5)
+    assert prediction["provenance"] == "INFERRED"
+
+
+def test_prediction_refuted_when_actual_falls_outside_the_stated_tolerance(tmp_path):
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    achieved = patch_resonant_frequency_hz(
+        candidate["eps_r"], candidate["w_m"], candidate["h_m"], candidate["l_m"]
+    )
+    target = propose_target(value=achieved, comparator="EQUALS", unit="Hz", tolerance=1e8)
+    # Stated tolerance (1e6) is still narrower than the target's (1e8), but
+    # the actual value is 5e6 off -- well outside the stated band.
+    candidate["prediction"] = {"value": achieved + 5e6, "tolerance": 1e6}
+    result = run_candidate_search(state, [candidate], {"analysis": {"target": target}})
+
+    prediction = result["trail"][0]["prediction"]
+    assert prediction["status"] == "REFUTED"
+    assert prediction["residual"] == pytest.approx(5e6)
+    assert prediction["provenance"] == "INFERRED"
+
+
+def test_prediction_unscoreable_when_no_prediction_stated(tmp_path):
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    target = _exact_frequency_target(candidate, tolerance=5e7)
+    result = run_candidate_search(state, [candidate], {"analysis": {"target": target}})
+
+    prediction = result["trail"][0]["prediction"]
+    assert prediction["status"] == "UNSCOREABLE"
+    assert prediction["value"] is None
+    assert prediction["tolerance"] is None
+    assert prediction["residual"] is None
+    # provenance is "INFERRED" even with no prediction stated at all -- see
+    # orchestration/solver.py's docstring, "PREDICTION".
+    assert prediction["provenance"] == "INFERRED"
+    # And the candidate itself still ran, scored, and won -- a Prediction
+    # is never a precondition for a candidate actually running.
+    assert result["trail"][0]["status"] == "evaluated"
+    assert result["best_candidate_index"] == 0
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "not a dict",
+        {"value": "not a number", "tolerance": 1e6},
+        {"value": 2.45e9},  # missing tolerance
+        {"tolerance": 1e6},  # missing value
+        {"value": 2.45e9, "tolerance": -1.0},  # negative tolerance
+        {"value": float("nan"), "tolerance": 1e6},
+        {"value": 2.45e9, "tolerance": float("inf")},
+    ],
+)
+def test_prediction_malformed_but_present_is_unscoreable_and_never_raises(tmp_path, malformed):
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp, prediction=malformed)
+    target = _exact_frequency_target(candidate, tolerance=5e7)
+    result = run_candidate_search(state, [candidate], {"analysis": {"target": target}})
+
+    prediction = result["trail"][0]["prediction"]
+    assert prediction["status"] == "UNSCOREABLE"
+    assert prediction["value"] is None
+    assert prediction["residual"] is None
+    assert prediction["provenance"] == "INFERRED"
+    assert result["trail"][0]["status"] == "evaluated"
+
+
+def test_prediction_unscoreable_when_stated_tolerance_not_narrower_than_targets(tmp_path):
+    """ADR-0022's own example, reproduced structurally: a stated tolerance
+    that is NOT narrower than the target's own -- here, exactly equal --
+    cannot honestly separate a pass from a fail, so this stays UNSCOREABLE
+    even though the predicted value lands exactly on the actual one."""
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    achieved = patch_resonant_frequency_hz(
+        candidate["eps_r"], candidate["w_m"], candidate["h_m"], candidate["l_m"]
+    )
+    target = propose_target(value=achieved, comparator="EQUALS", unit="Hz", tolerance=1e6)
+    # Stated tolerance (1e6) equals the target's own (1e6) -- not narrower.
+    candidate["prediction"] = {"value": achieved, "tolerance": 1e6}
+    result = run_candidate_search(state, [candidate], {"analysis": {"target": target}})
+
+    prediction = result["trail"][0]["prediction"]
+    assert prediction["status"] == "UNSCOREABLE"
+    assert prediction["residual"] is None
+    assert prediction["value"] == pytest.approx(achieved)
+    assert prediction["tolerance"] == pytest.approx(1e6)
+
+
+def test_prediction_unscoreable_when_target_has_no_tolerance_at_all(tmp_path):
+    """A target with no stated tolerance offers no yardstick a Prediction's
+    own tolerance could be narrower than -- UNSCOREABLE, not a crash and
+    not a lucky CONFIRMED."""
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    target = propose_target(value=5.0, comparator="AT_LEAST", unit="dBi")
+    candidate["prediction"] = {"value": 5.0, "tolerance": 0.1}
+    result = run_candidate_search(state, [candidate], {"simulation": {"target": target}})
+
+    prediction = result["trail"][0]["prediction"]
+    assert prediction["status"] == "UNSCOREABLE"
+    assert prediction["residual"] is None
+
+
+def test_prediction_is_predicted_when_candidate_fails_before_its_relevant_step(tmp_path):
+    """The PREDICTED-resolution design decision, exercised directly: a
+    candidate that states a Prediction but fails BEFORE reaching the
+    scoreable step the Prediction was about (here, ANALYSIS itself, missing
+    "l_m") is tagged PREDICTED, not UNSCOREABLE -- see orchestration/
+    solver.py's docstring, "PREDICTION", for why."""
+    state = _state_at_analysis()
+    broken_candidate = {
+        "eps_r": 4.4,
+        "w_m": 0.03,
+        "h_m": 0.0016,  # no "l_m" -- fails at ANALYSIS, before any value exists
+        "prediction": {"value": 2.45e9, "tolerance": 1e6},
+    }
+    target = propose_target(value=2.45e9, comparator="EQUALS", unit="Hz", tolerance=5e7)
+    result = run_candidate_search(state, [broken_candidate], {"analysis": {"target": target}})
+
+    entry = result["trail"][0]
+    assert entry["status"] == "failed"
+    assert entry["failed_at_step"] == "analysis"
+    prediction = entry["prediction"]
+    assert prediction["status"] == "PREDICTED"
+    assert prediction["value"] == pytest.approx(2.45e9)
+    assert prediction["tolerance"] == pytest.approx(1e6)
+    assert prediction["residual"] is None
+    assert prediction["provenance"] == "INFERRED"
+
+
+def test_prediction_is_predicted_when_relevant_step_itself_fails_to_score(tmp_path):
+    """A candidate whose relevant step FAILS TO SCORE (rather than failing
+    to advance) still reads PREDICTED, not UNSCOREABLE -- no actual value
+    was ever produced for the relevant step either way. Reuses this file's
+    own zero-target-value-without-tolerance refusal (designs/success_
+    score.py) to make analysis scoring raise deterministically."""
+    state = _state_at_analysis()
+    candidate = dict(_BASE_CANDIDATE)
+    candidate["prediction"] = {"value": 1.0, "tolerance": 0.1}
+    # value=0, no tolerance -> designs.success_score.SuccessScoreError at
+    # scoring time, AFTER analysis itself already advanced successfully.
+    zero_target_no_tolerance = propose_target(value=0.0, comparator="EQUALS", unit="Hz")
+    result = run_candidate_search(
+        state, [candidate], {"analysis": {"target": zero_target_no_tolerance}}
+    )
+
+    entry = result["trail"][0]
+    assert entry["status"] == "failed"
+    assert entry["failed_at_step"] == "analysis"
+    assert entry["steps"][0]["score"] is None  # step advanced but scoring raised
+    prediction = entry["prediction"]
+    assert prediction["status"] == "PREDICTED"
+    assert prediction["residual"] is None
+
+
+def test_prediction_scores_against_its_relevant_step_even_when_a_later_step_fails(tmp_path):
+    """A Prediction about ANALYSIS (the first -- and here, only -- scored
+    step) is still CONFIRMED/REFUTED even when a LATER, unscored step
+    (SIMULATION) then fails -- the relevant step itself produced a value,
+    so a real comparison was possible regardless of what happened after."""
+    state = _state_at_analysis()
+    analysis_target = _exact_frequency_target(_BASE_CANDIDATE, tolerance=5e7)
+    candidate = dict(_BASE_CANDIDATE)  # no geometry/frequency_hz -> SIMULATION fails
+    achieved = patch_resonant_frequency_hz(
+        candidate["eps_r"], candidate["w_m"], candidate["h_m"], candidate["l_m"]
+    )
+    candidate["prediction"] = {"value": achieved, "tolerance": 1e3}
+    result = run_candidate_search(state, [candidate], {"analysis": {"target": analysis_target}})
+
+    entry = result["trail"][0]
+    assert entry["status"] == "failed"
+    assert entry["failed_at_step"] == "simulation"
+    prediction = entry["prediction"]
+    assert prediction["status"] == "CONFIRMED"
+    assert prediction["residual"] == pytest.approx(0.0)
+
+
+def test_prediction_targets_the_first_scored_step_in_driven_order(tmp_path):
+    """With BOTH analysis and simulation scored, a stated Prediction is
+    compared against ANALYSIS -- the first step, in driven order, that
+    score_specs actually scores -- never simulation, even though
+    simulation is also scored and its own actual value is very different."""
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    achieved_frequency = patch_resonant_frequency_hz(
+        candidate["eps_r"], candidate["w_m"], candidate["h_m"], candidate["l_m"]
+    )
+    # A value/tolerance that only makes sense as a frequency prediction
+    # (ANALYSIS), wildly wrong as a gain prediction (SIMULATION, ~8.52 dBi).
+    candidate["prediction"] = {"value": achieved_frequency, "tolerance": 1e3}
+    analysis_target = propose_target(
+        value=achieved_frequency, comparator="EQUALS", unit="Hz", tolerance=1e8
+    )
+    gain_target = propose_target(value=5.0, comparator="AT_LEAST", unit="dBi", tolerance=1.0)
+    result = run_candidate_search(
+        state,
+        [candidate],
+        {"analysis": {"target": analysis_target}, "simulation": {"target": gain_target}},
+    )
+
+    prediction = result["trail"][0]["prediction"]
+    assert prediction["status"] == "CONFIRMED"
+    assert prediction["residual"] == pytest.approx(0.0)
+
+
+def test_prediction_provenance_is_always_inferred_confirmed_and_refuted_can_disagree_on_status():
+    """Direct structural analogue of tests/test_success_score.py's own
+    test_score_carries_both_target_provenance_and_target_status_and_they_
+    can_disagree_in_practice -- pins the provenance/status split down
+    against a real CONFIRMED-vs-REFUTED disagreeing pair, not just prose."""
+    state = _state_at_analysis()
+    achieved = patch_resonant_frequency_hz(
+        _BASE_CANDIDATE["eps_r"], _BASE_CANDIDATE["w_m"], _BASE_CANDIDATE["h_m"], _BASE_CANDIDATE["l_m"]
+    )
+    target = propose_target(value=achieved, comparator="EQUALS", unit="Hz", tolerance=1e8)
+
+    confirmed_candidate = dict(_BASE_CANDIDATE)
+    confirmed_candidate["prediction"] = {"value": achieved, "tolerance": 1e3}
+    refuted_candidate = dict(_BASE_CANDIDATE)
+    refuted_candidate["prediction"] = {"value": achieved + 1e7, "tolerance": 1e3}
+
+    result = run_candidate_search(
+        state, [confirmed_candidate, refuted_candidate], {"analysis": {"target": target}}
+    )
+
+    confirmed_prediction = result["trail"][0]["prediction"]
+    refuted_prediction = result["trail"][1]["prediction"]
+
+    # provenance is identical -- ALWAYS "INFERRED", confirmation makes no
+    # difference to it (docs/adr/0022's own precedent from designs/
+    # success_score.py's permanent-ASSUMED target_provenance).
+    assert confirmed_prediction["provenance"] == "INFERRED"
+    assert refuted_prediction["provenance"] == "INFERRED"
+    assert confirmed_prediction["provenance"] == refuted_prediction["provenance"]
+
+    # status is what actually distinguishes a right guess from a wrong one
+    # -- this is the field a reader must check.
+    assert confirmed_prediction["status"] == "CONFIRMED"
+    assert refuted_prediction["status"] == "REFUTED"
+    assert confirmed_prediction["status"] != refuted_prediction["status"]
+
+
+def test_prediction_never_affects_scoring_or_stopping_rules(tmp_path):
+    """The regression test the ticket calls out explicitly: the exact same
+    batch, run once with Predictions attached and once without, must
+    produce byte-for-byte identical overall_score_percent/all_targets_met/
+    best_candidate_index/best_candidate_overall_score_percent/stop_reason/
+    stop_detail/candidates_evaluated -- a Prediction only ever adds a new
+    "prediction" field to the record, never changes any other one."""
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    good = _full_candidate(tmp_path, fake_nec2pp)
+    target = _exact_frequency_target(good, tolerance=5e7)
+    off_target = _full_candidate(tmp_path, fake_nec2pp, l_m=0.02)
+    unreachable_target = propose_target(value=1.0e9, comparator="EQUALS", unit="Hz", tolerance=1.0)
+
+    def _run(with_predictions: bool, use_state: dict, use_target: dict, budget: int | None):
+        candidates = [dict(off_target), dict(good), dict(off_target)]
+        if with_predictions:
+            candidates[0]["prediction"] = {"value": 2.4e9, "tolerance": 1e5}
+            candidates[1]["prediction"] = {"value": 999.0, "tolerance": 1e5}  # wrong unit/scale
+            candidates[2]["prediction"] = "not even a dict"
+        return run_candidate_search(
+            use_state, candidates, {"analysis": {"target": use_target}}, evaluation_budget=budget
+        )
+
+    # target_satisfaction path.
+    state_a = _state_at_analysis()
+    state_b = _state_at_analysis()
+    without = _run(False, state_a, target, None)
+    with_pred = _run(True, state_b, target, None)
+    for key in (
+        "overall_score_percent",
+        "all_targets_met",
+        "best_candidate_index",
+        "best_candidate_overall_score_percent",
+        "stop_reason",
+        "stop_detail",
+        "candidates_evaluated",
+        "candidates_requested",
+    ):
+        assert without.get(key) == with_pred.get(key), key
+    for w_entry, p_entry in zip(without["trail"], with_pred["trail"]):
+        assert w_entry["overall_score_percent"] == p_entry["overall_score_percent"]
+        assert w_entry["all_targets_met"] == p_entry["all_targets_met"]
+        assert w_entry["status"] == p_entry["status"]
+        assert w_entry["failed_at_step"] == p_entry["failed_at_step"]
+
+    # score_plateau path -- unrelated candidates/target, same regression
+    # property, isolating plateau detection specifically.
+    plateau_state_a = _state_at_analysis()
+    plateau_state_b = _state_at_analysis()
+    plateau_candidates_without = [dict(good)] * 6
+    plateau_candidates_with = [dict(good) for _ in range(6)]
+    for c in plateau_candidates_with:
+        c["prediction"] = {"value": 2.4e9, "tolerance": 1e5}
+    without_plateau = run_candidate_search(
+        plateau_state_a,
+        plateau_candidates_without,
+        {"analysis": {"target": unreachable_target}},
+        plateau_window=3,
+        plateau_epsilon=0.5,
+    )
+    with_plateau = run_candidate_search(
+        plateau_state_b,
+        plateau_candidates_with,
+        {"analysis": {"target": unreachable_target}},
+        plateau_window=3,
+        plateau_epsilon=0.5,
+    )
+    assert without_plateau["stop_reason"] == with_plateau["stop_reason"] == "score_plateau"
+    assert without_plateau["candidates_evaluated"] == with_plateau["candidates_evaluated"]
+    assert (
+        without_plateau["best_candidate_overall_score_percent"]
+        == with_plateau["best_candidate_overall_score_percent"]
+    )
