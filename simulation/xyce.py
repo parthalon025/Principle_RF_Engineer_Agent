@@ -20,6 +20,18 @@ below are that PDF's own):
     general form: section 2.1.38 (p.159).
   - `.OP` (bare, no arguments; bias-point data goes to the log file, NOT a
     `.PRINT`-able output -- see SCOPE below): section 2.1.24 (p.92-93).
+  - `.HB <fundamental frequencies>` general form (issue #282) -- Harmonic
+    Balance, Xyce's method for the periodic steady state of a nonlinear
+    circuit (a driven mixer, or an amplifier/nonlinear periodic unit cell
+    at its real large-signal operating power) rather than the small-signal
+    linearization `.AC` computes around one fixed bias point: section
+    2.1.13 (p.45). One or more space-separated fundamental frequencies in
+    Hz -- one value is single-tone HB, several select multi-tone HB (e.g.
+    an LO tone and an RF tone driving a mixer); the Reference Guide's own
+    examples are bare `.HB 1e4` / `.hb 1e4 2e2`, no other argument is
+    required on the `.HB` line itself (`.OPTIONS HBINT` tunes HB's internal
+    solver but is optional and out of this module's SCOPE, same as every
+    other `.OPTIONS` line -- supply it via `raw_cards` if needed).
   - `.PRINT <type> [FILE=<file>] [FORMAT=<STD|NOINDEX|...|CSV|...>]
     <output variable>*` general form, and the CSV format's own
     description ("a comma-separated value file with a header indicating
@@ -32,7 +44,33 @@ below are that PDF's own):
     a `.LIN` run: same section, p.129 and p.130 (a bare `V(node)` under AC
     auto-splits into real+imag per that same page -- this module does not
     assume a specific auto-split column-header naming convention for that
-    case; see parse_xyce_csv()'s docstring).
+    case; see parse_xyce_csv()'s docstring). A `.PRINT HB` line uses this
+    same general form, per the "Print Harmonic Balance Analysis" section:
+    section 2.1.31.3 (p.135-136) -- see the HONEST SCOPE NOTE ON `.PRINT
+    HB`'s TWO OUTPUT FILES below for what that section says beyond the
+    plain `.AC`/`.TRAN` one-file model this adapter already handles.
+
+HONEST SCOPE NOTE ON `.PRINT HB`'s TWO OUTPUT FILES (added for issue #282,
+alongside the pre-existing `.LIN` confidence caveat below): section 2.1.31.3
+documents that a single `.PRINT HB` statement generates TWO output files --
+one frequency-domain, one time-domain (`<netlist-name>.HB.FD.csv` and
+`<netlist-name>.HB.TD.csv` under FORMAT=CSV) -- not the ONE file `.PRINT
+AC`/`.PRINT TRAN` write via this module's own `FILE=` argument. This
+module's generic `.PRINT {type} FORMAT=CSV FILE=<file>` line-generation and
+run_xyce_simulation()'s single-`print_file`-readback (both left unchanged by
+issue #282, which only wires up the `.HB` analysis line and job-dict
+contract) assume the `.AC`/`.TRAN` one-file model; whether a real Xyce run
+honors `FILE=` for the frequency-domain file specifically, ignores it and
+uses the two `<netlist-name>.HB.*` names regardless, or something else, was
+NOT independently verified against a second primary source (see the
+Reference Guide's own pointer, in its `.PRINT` FILE= description, to "the
+Xyce Users' Guide['s] 'Results Output and Evaluation Options' section...for
+analysis types (e.g., AC and HB) that can produce multiple output files" --
+that Users' Guide section was not fetched in this pass). Request explicit
+frequency-domain output variables (VDB()/VP()/etc., matching this module's
+existing `.AC` convention) and confirm the actual output filename against a
+real Xyce run before relying on `.PRINT HB` for anything beyond this
+ticket's netlist-generation/job-dict-plumbing scope.
   - `.LIN [SPARCALC=<1|0>] [FORMAT=<TOUCHSTONE|TOUCHSTONE2>]
     [LINTYPE=<S|Y|Z>] [DATAFORMAT=<RI|MA|DB>] [FILE=<file>]` general form
     -- a native linear-network S-/Y-/Z-parameter extraction analysis
@@ -80,8 +118,10 @@ specifically as carrying one extra notch of uncertainty beyond this
 module's other, more routine (.AC/.TRAN/.PRINT) coverage.
 
 SCOPE OF THIS IMPLEMENTATION:
-  - Analyses: `.OP`, `.AC`, `.TRAN`, matching simulation/ngspice.py's
-    scope. `.OP`-only jobs get back the raw log text only (Xyce's own
+  - Analyses: `.OP`, `.AC`, `.TRAN`, `.HB` (issue #282 added `.HB` --
+    simulation/ngspice.py has no periodic large-signal HB-equivalent
+    analysis wired up, so this is Xyce-only, same as `.LIN` below).
+    `.OP`-only jobs get back the raw log text only (Xyce's own
     "Additional Output Available" table lists `.OP` data as going to the
     log file, not any `.PRINT`-able output -- section 2.1.31.1/2.1.31.2,
     p.133/134) -- no `.PRINT`/CSV parsing is attempted for that case.
@@ -131,7 +171,7 @@ from typing import Any
 from .base import SimulationResult, Simulator, SimulatorError
 from .spice_netlist import format_components, format_number
 
-_ANALYSIS_TYPES = ("op", "ac", "tran")
+_ANALYSIS_TYPES = ("op", "ac", "tran", "hb")
 
 
 class XyceSimulator(Simulator):
@@ -198,6 +238,20 @@ def _analysis_run_lines(analysis: dict[str, Any]) -> list[str]:
             f".AC {sweep_type.upper()} {int(analysis['points'])} "
             f"{format_number(analysis['start_freq_hz'])} {format_number(analysis['stop_freq_hz'])}"
         ]
+    if analysis_type == "hb":
+        required = ("fundamental_freqs_hz",)
+        missing = [f for f in required if f not in analysis]
+        if missing:
+            raise ValueError(f"analysis (type='hb') missing required field(s): {missing}")
+        freqs = analysis["fundamental_freqs_hz"]
+        if not freqs:
+            raise ValueError(
+                "analysis['fundamental_freqs_hz'] must be a non-empty list of one or "
+                "more fundamental frequency values (Hz) -- Xyce's `.HB <fundamental "
+                "frequencies>` general form (Reference Guide section 2.1.13, p.45) "
+                "takes one value for single-tone HB or several for multi-tone HB"
+            )
+        return [".HB " + " ".join(format_number(freq) for freq in freqs)]
     # tran
     required = ("step_s", "stop_s")
     missing = [f for f in required if f not in analysis]
@@ -246,11 +300,16 @@ def generate_xyce_netlist(
           "raw_cards": [str, ...],   # optional escape hatch -- see
                                       # simulation/spice_netlist.py's SCOPE note.
           "analysis": {
-              "type": "op" | "ac" | "tran",
+              "type": "op" | "ac" | "tran" | "hb",
               # ac:   "sweep_type": "lin"|"oct"|"dec", "points": int,
               #       "start_freq_hz": float, "stop_freq_hz": float,
               # tran: "step_s": float, "stop_s": float,
               #       "start_s": float (optional), "max_step_s": float (optional),
+              # hb:   "fundamental_freqs_hz": list[float] -- one or more Hz
+              #       values (`.HB <fundamental frequencies>`, Reference
+              #       Guide section 2.1.13, p.45 -- see this module's header
+              #       docstring); one value for single-tone HB, several for
+              #       multi-tone HB.
           },
           "outputs": [str, ...],   # optional -- Xyce output-variable tokens
                                     # for `.PRINT` (e.g. "V(out)", "VDB(out)",
