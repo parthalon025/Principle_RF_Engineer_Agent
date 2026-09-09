@@ -63,6 +63,8 @@ from simulation.base import SimulatorError  # noqa: E402
 from simulation.ltspice import (  # noqa: E402
     LtspiceSimulator,
     _bind_ltspice_executable,
+    extract_ltspice_network_parameters,
+    generate_ltspice_net_netlist,
     parse_ltspice_raw,
     run_ltspice_simulation,
 )
@@ -75,6 +77,29 @@ AC_NETLIST = (
     ".ac dec 10 1meg 10meg\n"
     ".end\n"
 )
+
+# Two-port `.net` job dict (issue #287) -- mirrors the attenuator-pad shape
+# of LTspice's own bundled "Educational/S-param" example cited in
+# simulation/ltspice.py's module docstring (V-source with series
+# impedance driving a resistive pad, I(Rout) as the output port spec).
+TWO_PORT_NET_JOB = {
+    "components": [
+        {"type": "V", "name": "V1", "n1": "in", "n2": "0", "ac_mag": 1.0},
+        {"type": "R", "name": "R1", "n1": "in", "n2": "out", "value": 100.0},
+        {"type": "R", "name": "Rout", "n1": "out", "n2": "0", "value": 50.0},
+    ],
+    "ports": [
+        {"role": "input", "name": "V1"},
+        {"role": "output", "kind": "I", "name": "Rout"},
+    ],
+    "analysis": {
+        "type": "ac",
+        "sweep_type": "dec",
+        "points": 10,
+        "start_freq_hz": 1e6,
+        "stop_freq_hz": 1e8,
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -402,5 +427,232 @@ def test_run_ltspice_simulation_propagates_simulator_error_on_failure(tmp_path: 
 
 
 def test_run_ltspice_simulation_requires_netlist_or_netlist_file():
-    with pytest.raises(ValueError, match="requires either"):
+    with pytest.raises(ValueError, match="requires exactly one"):
         run_ltspice_simulation()
+
+
+def test_run_ltspice_simulation_rejects_more_than_one_input_source():
+    with pytest.raises(ValueError, match="requires exactly one"):
+        run_ltspice_simulation(netlist=AC_NETLIST, job=TWO_PORT_NET_JOB)
+
+
+# ---------------------------------------------------------------------------
+# generate_ltspice_net_netlist() -- `.net` two-port netlist templating
+# (issue #287). Syntax verified against ADI's own `.NET` help-page content
+# as mirrored at ltwiki.org (fetched directly this session -- see
+# simulation/ltspice.py's module docstring for the full citation):
+# `.net [V(out[,ref])|I(Rout)] <Vin|Iin> [Rin=<val>] [Rout=<val>]`.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_ltspice_net_netlist_components_and_net_line():
+    netlist = generate_ltspice_net_netlist(TWO_PORT_NET_JOB)
+    lines = netlist.strip("\n").split("\n")
+
+    assert lines[0].startswith("* ")
+    assert "V1 in 0 AC 1" in lines
+    assert "R1 in out 100" in lines
+    assert "Rout out 0 50" in lines
+    assert ".ac dec 10 1e+06 1e+08" in lines
+    assert ".net I(Rout) V1" in lines
+    assert lines[-1] == ".end"
+
+
+def test_generate_ltspice_net_netlist_rin_rout_overrides():
+    job = {**TWO_PORT_NET_JOB, "rin": 75.0, "rout": 25.0}
+    netlist = generate_ltspice_net_netlist(job)
+    assert ".net I(Rout) V1 Rin=75 Rout=25" in netlist.split("\n")
+
+
+def test_generate_ltspice_net_netlist_voltage_output_with_ref():
+    job = {
+        **TWO_PORT_NET_JOB,
+        "ports": [
+            {"role": "input", "name": "V1"},
+            {"role": "output", "kind": "V", "node": "out", "ref": "gnd"},
+        ],
+    }
+    netlist = generate_ltspice_net_netlist(job)
+    assert ".net V(out,gnd) V1" in netlist.split("\n")
+
+
+def test_generate_ltspice_net_netlist_voltage_output_without_ref():
+    job = {
+        **TWO_PORT_NET_JOB,
+        "ports": [
+            {"role": "input", "name": "V1"},
+            {"role": "output", "kind": "V", "node": "out"},
+        ],
+    }
+    netlist = generate_ltspice_net_netlist(job)
+    assert ".net V(out) V1" in netlist.split("\n")
+
+
+def test_generate_ltspice_net_netlist_requires_ac_analysis():
+    job = {**TWO_PORT_NET_JOB, "analysis": {"type": "tran", "step_s": 1e-9, "stop_s": 1e-6}}
+    with pytest.raises(ValueError, match="'ac'"):
+        generate_ltspice_net_netlist(job)
+
+
+def test_generate_ltspice_net_netlist_requires_ports():
+    job = {k: v for k, v in TWO_PORT_NET_JOB.items() if k != "ports"}
+    with pytest.raises(ValueError, match="ports"):
+        generate_ltspice_net_netlist(job)
+
+
+def test_generate_ltspice_net_netlist_requires_exactly_one_input_and_output():
+    job = {
+        **TWO_PORT_NET_JOB,
+        "ports": [
+            {"role": "input", "name": "V1"},
+            {"role": "input", "name": "V2"},
+        ],
+    }
+    with pytest.raises(ValueError, match="input"):
+        generate_ltspice_net_netlist(job)
+
+
+def test_generate_ltspice_net_netlist_rejects_bad_output_kind():
+    job = {
+        **TWO_PORT_NET_JOB,
+        "ports": [
+            {"role": "input", "name": "V1"},
+            {"role": "output", "kind": "Q", "node": "out"},
+        ],
+    }
+    with pytest.raises(ValueError, match="kind"):
+        generate_ltspice_net_netlist(job)
+
+
+def test_generate_ltspice_net_netlist_rejects_non_source_input_name():
+    job = {
+        **TWO_PORT_NET_JOB,
+        "ports": [
+            {"role": "input", "name": "R1"},
+            {"role": "output", "kind": "I", "name": "Rout"},
+        ],
+    }
+    with pytest.raises(ValueError, match="voltage or current source"):
+        generate_ltspice_net_netlist(job)
+
+
+# ---------------------------------------------------------------------------
+# extract_ltspice_network_parameters() -- pure, I/O-free extraction from an
+# already-parsed parse_ltspice_raw() result (this module's "caller fetches,
+# pure function resolves" split). See this function's own docstring for the
+# HONEST CAVEAT on exact trace-name corroboration.
+# ---------------------------------------------------------------------------
+
+
+def test_extract_ltspice_network_parameters_finds_s_and_impedance_traces():
+    parsed = {
+        "trace_names": ["frequency", "V(in)", "V(out)", "S11", "S21", "S12", "S22", "Zin", "Zout"],
+        "traces": {
+            "frequency": [[1e6, 0.0]],
+            "V(in)": [[1.0, 0.0]],
+            "V(out)": [[0.5, 0.0]],
+            "S11": [[0.1, 0.2]],
+            "S21": [[0.3, 0.4]],
+            "S12": [[0.05, 0.01]],
+            "S22": [[0.2, 0.1]],
+            "Zin": [[50.0, 0.0]],
+            "Zout": [[50.0, 0.0]],
+        },
+    }
+    result = extract_ltspice_network_parameters(parsed)
+    assert result["computed"] is True
+    assert set(result["parameters"]) == {"S11", "S21", "S12", "S22", "Zin", "Zout"}
+    assert result["parameters"]["S21"] == [[0.3, 0.4]]
+
+
+def test_extract_ltspice_network_parameters_matches_case_insensitively():
+    parsed = {
+        "trace_names": ["frequency", "s11", "s21"],
+        "traces": {"frequency": [[1e6, 0.0]], "s11": [[0.1, 0.0]], "s21": [[0.2, 0.0]]},
+    }
+    result = extract_ltspice_network_parameters(parsed)
+    assert result["computed"] is True
+    assert set(result["parameters"]) == {"s11", "s21"}
+
+
+def test_extract_ltspice_network_parameters_uncomputed_when_absent():
+    parsed = {"trace_names": ["frequency", "V(out)"], "traces": {"V(out)": [[0.5, 0.0]]}}
+    result = extract_ltspice_network_parameters(parsed)
+    assert result["computed"] is False
+    assert "note" in result
+    assert "parameters" not in result
+
+
+# ---------------------------------------------------------------------------
+# run_ltspice_simulation(job=...) end to end -- `.net` netlist generated,
+# run through the same fake-executable pattern as the rest of this file,
+# S/Y/Z/H traces surfaced back out via extract_ltspice_network_parameters().
+# ---------------------------------------------------------------------------
+
+_FAKE_NET_SUCCESS_BODY = """
+import sys
+from pathlib import Path
+from spicelib import RawWrite
+from spicelib.raw.raw_write import Trace
+
+args = sys.argv[1:]
+assert args[0] == "-Run", args
+assert args[1] == "-b", args
+netlist_arg = args[2][2:] if args[2].startswith("Z:") else args[2]
+netlist_path = Path(netlist_arg)
+netlist_path.with_suffix(".log").write_text(
+    "Fake LTspice .net run OK\\nDirect Newton iteration for .op point succeeded.\\n"
+)
+
+freq = [1e6, 1e7, 1e8]
+writer = RawWrite(plot_name="AC Analysis", fastacces=False)
+writer.add_trace(Trace("frequency", freq, numerical_type="complex"))
+writer.add_trace(Trace("V(in)", [complex(1.0, 0.0)] * 3))
+writer.add_trace(Trace("V(out)", [complex(0.33, 0.0)] * 3))
+writer.add_trace(Trace("S11", [complex(0.5, 0.0), complex(0.4, -0.1), complex(0.3, -0.2)]))
+writer.add_trace(Trace("S21", [complex(0.5, 0.0), complex(0.45, -0.05), complex(0.4, -0.1)]))
+writer.add_trace(Trace("S12", [complex(0.5, 0.0), complex(0.45, -0.05), complex(0.4, -0.1)]))
+writer.add_trace(Trace("S22", [complex(0.0, 0.0), complex(0.01, 0.0), complex(0.02, 0.0)]))
+writer.save(str(netlist_path.with_suffix(".raw")))
+sys.exit(0)
+"""
+
+
+def test_run_ltspice_simulation_with_job_generates_net_netlist_and_extracts_parameters(
+    tmp_path: Path,
+):
+    script = tmp_path / "fake_ltspice_net.py"
+    script.write_text(_FAKE_NET_SUCCESS_BODY)
+    exe = Path(sys.executable).as_posix() + " " + script.as_posix()
+
+    result = run_ltspice_simulation(
+        job=TWO_PORT_NET_JOB,
+        executable=exe,
+        workdir=str(tmp_path / "run"),
+        timeout_s=15,
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["status"] == "COMPLETED"
+    netlist_text = Path(result["netlist_file"]).read_text()
+    assert ".net I(Rout) V1" in netlist_text
+    assert ".ac dec 10 1e+06 1e+08" in netlist_text
+
+    net_params = result["network_parameters"]
+    assert net_params["computed"] is True
+    assert net_params["parameters"]["S21"] == [[0.5, 0.0], [0.45, -0.05], [0.4, -0.1]]
+    assert set(net_params["parameters"]) == {"S11", "S21", "S12", "S22"}
+
+
+def test_run_ltspice_simulation_without_job_omits_network_parameters(tmp_path: Path):
+    script = tmp_path / "fake_ltspice.py"
+    script.write_text(_FAKE_SUCCESS_BODY)
+    exe = Path(sys.executable).as_posix() + " " + script.as_posix()
+
+    result = run_ltspice_simulation(
+        netlist=AC_NETLIST,
+        executable=exe,
+        workdir=str(tmp_path / "run"),
+        timeout_s=15,
+    )
+    assert "network_parameters" not in result
