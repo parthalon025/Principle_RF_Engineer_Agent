@@ -71,6 +71,7 @@ calculation:
   - calculate_quarter_wave_transformer_impedance
   - calculate_l_network_match
   - synthesize_filter_prototype
+  - realize_lowpass_stepped_impedance_microstrip_filter
   - calculate_patch_effective_permittivity
   - calculate_patch_length_extension
   - calculate_patch_resonant_frequency
@@ -127,9 +128,13 @@ approval_self_gated:
   # confinement check (run_hfss_simulation), or (ticket #67)
   # knowledge/sourcing_common.py's require_external_network_tools_enabled()
   # -- ALLOW_EXTERNAL_NETWORK_TOOLS=true, checked before any credential is
-  # read or any outbound request is built -- for the three distributor
-  # lookup tools, which place a real, credentialed call to a third party
-  # the instant they run. Deliberately NOT listed under approval_required:
+  # read or any outbound request is built -- for the distributor lookup
+  # tools, which place a real, credentialed call to a third party the
+  # instant they run (ticket #275 adds a fourth, lookup_digikey_product_
+  # details, calling the same gate its lookup_digikey_component sibling
+  # already does -- see knowledge/digikey.py; ticket #276 adds Nexar's
+  # second query, lookup_nexar_part_data, same reasoning). Deliberately NOT
+  # listed under approval_required:
   # this policy file adds no second gate on top of an already-working one
   # -- see docs/adr's grilling notes and orchestration/policy.py's module
   # docstring for why a blanket approval_required block would just
@@ -162,9 +167,30 @@ approval_self_gated:
   # tool is NOT).
   - run_hfss_simulation
   - lookup_digikey_component
+  - lookup_digikey_product_details
   - lookup_mouser_component
   - lookup_nexar_component
   - search_ink_product
+  # issue #280: search_uspto_patents (knowledge/sourcing/patent.py) sits here,
+  # not beside its own sibling ingest_patent in ingestion_auto below. The
+  # distinction is the same one this category already draws for the three
+  # distributor lookups: ingest_patent's fetch-by-number USPTO PDF endpoint
+  # takes no API key, no account and no payment (verified live, issue #219),
+  # but search_uspto_patents calls the USPTO Open Data Portal's full-text
+  # search endpoint, which is credentialed -- confirmed live this ticket (a
+  # request with no API key gets HTTP 401 before the query is even read) --
+  # and requires a free USPTO.gov account with a linked, ID.me-verified
+  # identity to obtain that key. It already calls
+  # require_external_network_tools_enabled("USPTO") as its own first line,
+  # same self-gate as the three distributor lookups above, which is what
+  # this category is for.
+  - search_uspto_patents
+  # ticket #276: lookup_nexar_part_data places the same real, credentialed
+  # call to Nexar as lookup_nexar_component (same require_external_network_
+  # tools_enabled("Nexar") gate, same NEXAR_CLIENT_ID/SECRET), just querying
+  # multi-distributor pricing/specs instead of a datasheet -- same category,
+  # same reasoning, for the same reason it doesn't get a second gate here.
+  - lookup_nexar_part_data
 
 ingestion_auto:
   # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule join
@@ -174,8 +200,9 @@ ingestion_auto:
   # approval_self_gated exists for a tool that ALREADY enforces its own
   # independent gate before it runs -- concretely, knowledge/
   # sourcing_common.py's require_external_network_tools_enabled()
-  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the three distributor lookups
-  # (lookup_digikey_component/lookup_mouser_component/lookup_nexar_component)
+  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the distributor lookups
+  # (lookup_digikey_component/lookup_digikey_product_details/
+  # lookup_mouser_component/lookup_nexar_component/lookup_nexar_part_data)
   # call because each places a real, CREDENTIALED call to a third party
   # (an API key/secret read from the environment) the instant it runs. None
   # of the three new sourcing clients do that, or need to: 3GPP's FTP
@@ -189,7 +216,7 @@ ingestion_auto:
   #
   # issue #219: ingest_patent sits here, ungated, for exactly the reason
   # ingest_arxiv_paper does -- and deliberately NOT in approval_self_gated
-  # beside the three distributor lookups. The distinction that category
+  # beside the distributor lookups. The distinction that category
   # actually draws is a CREDENTIAL: Digi-Key/Mouser/Nexar place an
   # authenticated, account-billed call to a third party the instant they
   # run, which is why knowledge/sourcing_common.py gates them. The USPTO
@@ -218,12 +245,44 @@ ingestion_auto:
   # just this project's own knowledge base) -- ingestion_auto, grouped by
   # "external, credential-free knowledge/sourcing operation," is still the
   # closest fit.
+  # issue #284: ingest_etsi_ipr_declaration sits here too, right beside
+  # ingest_etsi_standard -- same reasoning again, just against the SR 000
+  # 314 IPR/FRAND-declaration register instead of the deliver-path PDFs.
+  # Confirmed during this ticket's research: ipr.etsi.org's individual
+  # declaration pages need no login (ETSI's own "User Guide for Anonymous
+  # Users" documents read-only anonymous access, and Google's crawler --
+  # which holds no ETSI session -- has these pages indexed directly). No
+  # credential, no self-gate to categorize this under approval_self_gated.
+  #
+  # ticket #285: lookup_3gpp_spec_status sits here too, right beside
+  # ingest_3gpp_spec -- same credential-free 3gpp.org endpoint (its own
+  # DynaReport per-series HTML table rather than the FTP archive), same
+  # ungated posture, same module (knowledge/sourcing/threegpp.py). Like
+  # search_arxiv_papers above, it never itself calls ingest_document -- it
+  # only reports a spec's title/withdrawn/version status -- so it is not a
+  # `calculation` (nothing derived) and not `read_only` in that category's
+  # own sense (it reaches an external network endpoint, not just this
+  # project's own knowledge base); "external, credential-free knowledge/
+  # sourcing operation" is still the closest fit.
+  #
+  # issue #279: search_fcc_rules (knowledge/sourcing/fcc_ecfr.py's
+  # topic/keyword discovery search over eCFR's Search Service) sits here
+  # for exactly the same reason as search_arxiv_papers above -- same
+  # credential-free eCFR API ingest_fcc_rule already uses, same ungated
+  # posture, same "returns candidates only, never calls ingest_document"
+  # exception to this category's usual write-a-document shape (see
+  # tests/test_sourcing_fcc_ecfr.py's
+  # test_search_fcc_rules_never_calls_ingest_document).
   - ingest_document
   - ingest_arxiv_paper
   - search_arxiv_papers
   - ingest_3gpp_spec
+  - lookup_3gpp_spec_status
   - ingest_etsi_standard
+  - ingest_etsi_ipr_declaration
   - ingest_fcc_rule
+  - search_fcc_rules
+  - search_fcc_rules
   - ingest_patent
   - index_document
   - extract_components

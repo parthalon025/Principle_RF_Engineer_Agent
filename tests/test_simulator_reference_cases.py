@@ -13,7 +13,9 @@ Two layers:
 
 from __future__ import annotations
 
+import re
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -150,6 +152,61 @@ def test_every_expected_value_carries_a_citation_and_a_rationale():
 def test_case_ids_match_their_registry_keys():
     for key, case in REFERENCE_CASES.items():
         assert key == case.case_id
+
+
+# --- verification/README.md's adapter-coverage claim stays honest ---------
+#
+# Code review of #222 (see the "Address code review findings" commit) found
+# that this exact enumeration had silently dropped simulation/qucs.py -- a
+# real, MCP-wired adapter with no reference case, exactly like the other
+# nine it was sitting next to. An enumeration that misses a real member is
+# worse than no enumeration: a reader trusts it to be complete. This test
+# recomputes the set from the actual simulation/ directory so a new adapter
+# added later fails here instead of silently going unmentioned again.
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_RUN_SIMULATION_DEF = re.compile(r"^def run_\w+_simulation\(", re.MULTILINE)
+
+# These solvers are named individually in the surrounding prose (MEEP as the
+# document's whole subject, NEC2 and Palace each with their own bullet), so
+# they are deliberately excluded from the "every other adapter" enumeration.
+_NAMED_ELSEWHERE_IN_PROSE = {"meep", "nec2pp", "palace"}
+
+# module stem -> how the adapter is written in verification/README.md's prose
+_ADAPTER_DISPLAY_NAME = {
+    "kicad_gerber2ems": "kicad/gerber2ems",
+}
+
+
+def _adapters_with_a_run_simulation_entry_point() -> set[str]:
+    found = set()
+    for path in (_REPO_ROOT / "simulation").glob("*.py"):
+        if _RUN_SIMULATION_DEF.search(path.read_text(encoding="utf-8")):
+            found.add(path.stem)
+    return found
+
+
+def test_every_unreferenced_adapter_is_named_in_the_simulated_scope_note():
+    """Every simulation/*.py module with a run_*_simulation entry point, other
+    than the ones named individually elsewhere in the prose, must appear in
+    verification/README.md's "Every other adapter" enumeration -- or a reader
+    is misled into thinking that adapter isn't a gap."""
+    adapters = _adapters_with_a_run_simulation_entry_point()
+    expected = adapters - _NAMED_ELSEWHERE_IN_PROSE
+    assert expected, "sanity check: expected at least one adapter left to enumerate"
+
+    readme = (_REPO_ROOT / "verification" / "README.md").read_text(encoding="utf-8")
+    bullet_match = re.search(r"\*\*Every other adapter.*?\n\n", readme, re.DOTALL)
+    assert bullet_match, "expected an 'Every other adapter' bullet in verification/README.md"
+    bullet_text = bullet_match.group(0).lower()
+
+    for stem in expected:
+        display_name = _ADAPTER_DISPLAY_NAME.get(stem, stem)
+        assert display_name in bullet_text, (
+            f"simulation/{stem}.py defines a run_*_simulation adapter but "
+            f"'{display_name}' is missing from verification/README.md's "
+            "adapter-coverage enumeration"
+        )
 
 
 # --- the real solve -------------------------------------------------------

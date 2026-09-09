@@ -251,10 +251,104 @@ domain/material attribute. See generate_palace_mesh()'s and
 generate_palace_config()'s docstrings for the schema and the honest caveat
 on the "PEC" config key name (inferred from Palace's documented
 Boundaries-section pattern, not yet independently confirmed the way
-FloquetPort was by issue #210's real binary run). STILL NOT implemented:
-a ground-backed, one-port cell (a PEC termination on the z=Lz face in place
-of the second, non-excited Floquet port) -- a separate, explicitly-scoped
-gap, not attempted here, not a silent omission.
+FloquetPort was by issue #210's real binary run). A "pec_patches" entry may
+sit on any of the three axes (see _pec_patch_axis()) and is an IDEALIZED,
+zero-loss conductor -- exactly Palace's own "PEC" boundary condition, and
+exactly the same idealization simulation/openems.py's own "conductors" list
+already uses ("PEC layers (patch, ground, etc.)", that module's docstring).
+Issue #252 ticket 2 also added a ground-backed, one-port cell
+(geometry["ground_backed"], a PEC termination on the z=Lz face in place of
+the second, non-excited Floquet port).
+
+EMBEDDED CONDUCTIVITY SHEET (issue #289) is the complementary, REAL
+(finite-conductivity, not idealized) case: a printed metasurface/FSS
+element whose conductivity is a real, measured/cited number -- e.g. a
+printed conductive ink, which commonly runs well below bulk-metal
+conductivity, not a solid copper trace "pec_patches" is the right model
+for. It lives in geometry["materials"] rather than alongside
+"pec_patches", identified by carrying a "kappa_s_m" field (electric
+conductivity in S/m, the same field name and physical quantity
+simulation/openems.py's own lossy "materials" entries already use --
+deliberately NOT the same meaning as that module's separate "conductors"
+list, or as this module's own "pec_patches", both of which ARE idealized
+PEC). A conductivity sheet must be zero-thickness along z (p1_m[2] ==
+p2_m[2], strictly between the unit cell's own z=0/z=Lz Floquet-port faces)
+and have non-zero extent in x and y -- i.e. flat, lying in an x/y plane,
+matching a printed layer sitting on a substrate rather than a side wall;
+any other orientation is rejected, not silently reinterpreted (see
+_validate_conductivity_sheet) -- unlike "pec_patches", which (per issue
+#252) already supports any of the three axes; z-only is this pass's own,
+narrower scope, not a limitation inherited from "pec_patches". It must
+also carry a REQUIRED "thickness_m" -- see below for why this is required
+rather than left to Palace's own default.
+
+generate_palace_mesh() below adds the sheet's own footprint edges and
+z-plane to the same feature-line grid the dielectric materials and
+pec_patches already contribute to, then emits it as an INTERNAL boundary --
+a new boundary attribute (BOUND_CONDUCTIVITY_BASE + index, computed as
+BOUND_PEC_START plus however many pec_patches entries precede it, so the
+two features' boundary-attribute ranges never collide) on the mesh faces
+exactly coincident with its footprint, at its own z-plane -- the same kind
+of boundary-attribute assignment already used for the unit cell's six
+outer faces and for pec_patches, not a new mesh-writing technique.
+generate_palace_config() below references that attribute from a new
+config["Boundaries"]["Conductivity"] entry, a DIFFERENT Palace boundary
+type from "pec_patches"' "PEC" (exact key/shape verified against Palace's
+own schema and source, not guessed):
+  - config["Boundaries"]["Conductivity"][i]: {"Attributes": [int, ...],
+    "Conductivity": float (S/m, required), "Permeability": float (relative
+    permeability, default 1.0), "Thickness": float (mesh length units,
+    i.e. meters here)} -- awslabs.github.io/palace/dev/config/reference/
+    (generated from scripts/schema/config-schema.json's own $defs/
+    Conductivity) and cross-checked against palace/utils/configfile.hpp's
+    ConductivityData struct, awslabs/palace commit 43a5483 (fetched
+    2026-09-09).
+  - AN INTERNAL (non-exterior) mesh face is a legal place for this
+    boundary, with no manual mesh-splitting required: Palace "cracks"
+    (duplicates the shared vertices of) any boundary-attributed face that
+    sits between two volume elements at load time, controlled by
+    config["Model"]["CrackInternalBoundaryElements"] (default true) --
+    palace/utils/configfile.hpp's crack_bdr_elements/refine_crack_elements/
+    add_bdr_elements fields and palace/utils/geodata.cpp's
+    AddInterfaceBdrElements/CheckMesh, awslabs/palace commit 43a5483
+    (fetched 2026-09-09). The only boundary type excluded from cracking is
+    LumpedPort (geodata.cpp's own comment: "cracking would give invalid
+    results" for it); Conductivity is not excluded. This module therefore
+    does NOT pre-split/duplicate mesh vertices itself -- it lists the
+    shared face once, in the "boundary" section, the same way it already
+    lists an exterior face, and leaves the splitting to Palace.
+  - WHY "thickness_m" IS REQUIRED, NOT LEFT OPTIONAL LIKE PALACE'S OWN
+    DEFAULT. Palace's plain conductivity-only formula (surface impedance
+    from conductivity and skin depth alone) is documented, by Palace's own
+    reference math and by HFSS's equivalent "Finite Conductivity" boundary
+    documentation, to hold only when the conductor is thick relative to its
+    own skin depth -- both state this as an explicit validity condition,
+    not a footnote. A printed conductive ink -- this project's own
+    first-class case, not solid bulk metal -- commonly runs at a
+    conductivity far below bulk copper/silver and is frequently THINNER
+    than its own skin depth at RF frequencies, exactly the regime the plain
+    formula is documented not to cover. Palace's own reference math gives a
+    second, thickness-aware formula (nu = h/skin_depth) that its own docs
+    state "correctly produces the DC limit when h is much less than the
+    skin depth" -- i.e. the regime a thin printed ink trace actually sits
+    in. Making "thickness_m" required costs nothing extra to implement
+    (same boundary type, one more field) and closes off exactly the case
+    this project's own printed-ink use case would otherwise silently
+    mis-simulate.
+  - STILL NOT PROVEN, on top of the existing dielectric-only validation
+    above: no worked example in Palace's own example gallery combines
+    Floquet/periodic ports with an embedded Conductivity boundary (the
+    closest published analog found is a 2D coplanar-waveguide example using
+    the same interior-face technique in 2D, not 3D, and not periodic) --
+    this specific combination has not been run against a real Palace
+    binary, and every result it produces remains SIMULATED provenance
+    exactly like the rest of this module.
+  - SHAPE STILL OUT OF SCOPE: only an axis-aligned rectangle. An actual
+    split-ring resonator or other curved/non-rectangular metasurface
+    element needs true conformal meshing (e.g. via an external mesher this
+    project does not currently depend on) and remains a separate, later
+    gap (issue #289) -- this pass proves the boundary-attribute/
+    conductivity mechanism, not arbitrary shape.
 """
 
 import csv
@@ -512,6 +606,101 @@ def _material_attribute(
     return 1
 
 
+def _conductivity_boundary_base(pec_patches: list[dict[str, Any]]) -> int:
+    """First embedded-conductivity-sheet boundary attribute (issue #289):
+    sheet i (0-based, input order) gets this value + i. Placed after every
+    geometry["pec_patches"] entry's own BOUND_PEC_START-based attribute
+    (issue #252 ticket 1) -- computed from geometry alone, the same
+    deterministic way generate_palace_mesh and generate_palace_config each
+    compute pec_patches' own attributes independently -- so the two
+    separately-added embedded-conductor mechanisms (idealized PEC patches,
+    real conductivity sheets) never claim the same boundary attribute."""
+    return BOUND_PEC_START + len(pec_patches)
+
+
+def _split_materials(
+    materials: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split geometry["materials"] into (dielectric materials, conductivity
+    sheets) -- the same split generate_palace_mesh, generate_palace_config
+    and run_palace_simulation must each apply, in the same input order, so
+    they all agree on which attribute number means which entry (see module
+    docstring's EMBEDDED CONDUCTIVITY SHEET section). A "kappa_s_m" field is
+    what marks an entry as a sheet rather than a bulk dielectric."""
+    dielectric = [m for m in materials if "kappa_s_m" not in m]
+    sheets = [m for m in materials if "kappa_s_m" in m]
+    return dielectric, sheets
+
+
+def _validate_conductivity_sheet(
+    sheet: dict[str, Any], idx: int, lx: float, ly: float, lz: float
+) -> None:
+    """Raise ValueError if conductivity sheet `idx` doesn't describe a flat,
+    zero-thickness, z-normal rectangle strictly inside the unit cell -- see
+    module docstring's EMBEDDED CONDUCTIVITY SHEET section for why this
+    shape, and not an arbitrary orientation, is this pass's scope."""
+    missing = [f for f in ("p1_m", "p2_m", "kappa_s_m", "thickness_m") if f not in sheet]
+    if missing:
+        raise ValueError(f"conductivity sheet {idx} missing required field(s): {missing}")
+    p1, p2 = sheet["p1_m"], sheet["p2_m"]
+    if p1[2] != p2[2]:
+        raise ValueError(
+            f"conductivity sheet {idx} must be zero-thickness along z "
+            f"(p1_m[2] == p2_m[2]); got {p1[2]} and {p2[2]} -- only a flat, "
+            "z-normal sheet is implemented (see module docstring)"
+        )
+    if p1[0] == p2[0] or p1[1] == p2[1]:
+        raise ValueError(
+            f"conductivity sheet {idx} must have non-zero extent in both x "
+            f"and y; got p1_m={p1}, p2_m={p2}"
+        )
+    z0 = p1[2]
+    if not (0.0 < z0 < lz):
+        raise ValueError(
+            f"conductivity sheet {idx}'s z={z0} must sit strictly between "
+            f"the unit cell's own z=0/z={lz} Floquet-port faces, not "
+            "coincide with either"
+        )
+    x_lo, x_hi = sorted((p1[0], p2[0]))
+    y_lo, y_hi = sorted((p1[1], p2[1]))
+    if not (0.0 <= x_lo and x_hi <= lx and 0.0 <= y_lo and y_hi <= ly):
+        raise ValueError(
+            f"conductivity sheet {idx}'s x/y extent ([{x_lo},{x_hi}] x "
+            f"[{y_lo},{y_hi}]) must lie within the unit cell ([0,{lx}] x "
+            f"[0,{ly}])"
+        )
+    if float(sheet["kappa_s_m"]) <= 0.0:
+        raise ValueError(f"conductivity sheet {idx}'s kappa_s_m must be > 0")
+    if float(sheet["thickness_m"]) <= 0.0:
+        raise ValueError(f"conductivity sheet {idx}'s thickness_m must be > 0")
+
+
+def _geometry_is_lossless(geometry: dict[str, Any]) -> bool:
+    """Whether every lossy mechanism this geometry dict can express is
+    exactly zero -- background/material loss_tan, and no embedded
+    conductivity sheet at all (any sheet present is a real, absorbing
+    conductor by construction, since _validate_conductivity_sheet requires
+    kappa_s_m > 0). Used by run_palace_simulation to decide what
+    check_palace_result's own `lossless` argument should be (see module
+    docstring's EMBEDDED CONDUCTIVITY SHEET section, issue #289)."""
+    dielectric_materials, conductivity_sheets = _split_materials(geometry.get("materials", []))
+    if conductivity_sheets:
+        return False
+    background_loss_tan = geometry.get("background", {}).get("loss_tan", 0.0)
+    material_loss_tans = [m.get("loss_tan", 0.0) for m in dielectric_materials]
+    return all(lt == 0.0 for lt in [background_loss_tan, *material_loss_tans])
+
+
+def _grid_index(grid: list[float], value: float, *, what: str) -> int:
+    """Exact (to 1e-9) index of `value` within `grid` -- used to locate a
+    conductivity sheet's own z-plane/footprint edges, which _feature_lines
+    guarantees land exactly on a grid line (see its own docstring)."""
+    for idx, v in enumerate(grid):
+        if abs(v - value) <= 1e-9:
+            return idx
+    raise ValueError(f"{what}={value} does not fall on a mesh grid line (internal error)")
+
+
 def _pec_patch_axis(
     patch: dict[str, Any], idx: int, cell_lengths: tuple[float, float, float]
 ) -> tuple[int, float, tuple[float, float], tuple[float, float]]:
@@ -568,9 +757,16 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
         {
           "unit_cell": {"lx_m": float, "ly_m": float, "lz_m": float},
           "materials": [                 # optional embedded dielectric boxes
+                                          # and/or conductivity sheets
               {"name": str (optional), "p1_m": [x,y,z], "p2_m": [x,y,z],
                "epsilon_r": float (default 1.0), "mue_r": float (default 1.0),
-               "loss_tan": float (default 0.0)}, ...
+               "loss_tan": float (default 0.0)},  # dielectric material
+              {"name": str (optional), "p1_m": [x,y,z], "p2_m": [x,y,z],
+               "kappa_s_m": float (required, > 0, S/m),
+               "thickness_m": float (required, > 0, meters),
+               "mue_r": float (default 1.0)},  # conductivity sheet -- see
+                    # module docstring's EMBEDDED CONDUCTIVITY SHEET section;
+                    # p1_m[2] must equal p2_m[2] (zero-thickness along z)
           ],
           "pec_patches": [                # optional embedded conductor patches
               {"name": str (optional), "p1_m": [x,y,z], "p2_m": [x,y,z]}, ...
@@ -619,10 +815,13 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("geometry['unit_cell']'s lx_m/ly_m/lz_m must all be > 0")
 
     materials = geometry.get("materials", [])
-    for idx, mat in enumerate(materials):
+    dielectric_materials, conductivity_sheets = _split_materials(materials)
+    for idx, mat in enumerate(dielectric_materials):
         missing = [f for f in ("p1_m", "p2_m") if f not in mat]
         if missing:
             raise ValueError(f"material {idx} missing required field(s): {missing}")
+    for idx, sheet in enumerate(conductivity_sheets):
+        _validate_conductivity_sheet(sheet, idx, lx, ly, lz)
 
     pec_patches = geometry.get("pec_patches", [])
     for idx, patch in enumerate(pec_patches):
@@ -674,7 +873,7 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
                     (y_grid[j] + y_grid[j + 1]) / 2,
                     (z_grid[k] + z_grid[k + 1]) / 2,
                 )
-                attr = _material_attribute(materials, centroid)
+                attr = _material_attribute(dielectric_materials, centroid)
                 # CUBE vertex order: bottom face (0,1,2,3) then top face
                 # (4,5,6,7) in the same rotational order, vertex i<->i+4 --
                 # see module docstring citation.
@@ -802,6 +1001,42 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
                     )
                 )
 
+    # Embedded conductivity sheets (issue #289): an INTERNAL boundary face
+    # per grid cell in the sheet's own footprint, at its own z-plane -- not
+    # an exterior unit-cell face, but listed in the "boundary" section the
+    # same way one is; Palace "cracks" (decouples) it at load time (see
+    # module docstring's EMBEDDED CONDUCTIVITY SHEET section for the
+    # citation). Vertex order matches BOUND_Z_MIN's own convention above --
+    # arbitrary but consistent, same caveat as that convention (module
+    # docstring: MFEM's winding requirement was never independently read).
+    # Attribute numbering starts after every pec_patches entry's own
+    # BOUND_PEC_START-based attribute above, so the two mechanisms never
+    # collide (see _conductivity_boundary_base()).
+    conductivity_base = _conductivity_boundary_base(pec_patches)
+    for sheet_idx, sheet in enumerate(conductivity_sheets):
+        p1, p2 = sheet["p1_m"], sheet["p2_m"]
+        k = _grid_index(z_grid, p1[2], what=f"conductivity sheet {sheet_idx}'s z")
+        x_lo, x_hi = sorted((p1[0], p2[0]))
+        y_lo, y_hi = sorted((p1[1], p2[1]))
+        i_lo = _grid_index(x_grid, x_lo, what=f"conductivity sheet {sheet_idx}'s x_lo")
+        i_hi = _grid_index(x_grid, x_hi, what=f"conductivity sheet {sheet_idx}'s x_hi")
+        j_lo = _grid_index(y_grid, y_lo, what=f"conductivity sheet {sheet_idx}'s y_lo")
+        j_hi = _grid_index(y_grid, y_hi, what=f"conductivity sheet {sheet_idx}'s y_hi")
+        attr = conductivity_base + sheet_idx
+        for i in range(i_lo, i_hi):
+            for j in range(j_lo, j_hi):
+                boundary.append(
+                    (
+                        attr,
+                        [
+                            vidx(i, j, k),
+                            vidx(i + 1, j, k),
+                            vidx(i + 1, j + 1, k),
+                            vidx(i, j + 1, k),
+                        ],
+                    )
+                )
+
     lines = ["MFEM mesh v1.0", "", "dimension", "3", "", "elements", str(len(elements))]
     lines += [
         f"{attr} {_CUBE_GEOM_TYPE} " + " ".join(str(v) for v in verts) for attr, verts in elements
@@ -839,7 +1074,10 @@ def generate_palace_config(
 ) -> dict[str, Any]:
     """Generate a Palace JSON config for a driven Floquet-port unit-cell
     simulation. `geometry` is the same dict passed to generate_palace_mesh
-    (see its docstring), plus three more optional keys:
+    (see its docstring, including "materials"' conductivity-sheet entries,
+    which this function emits as config["Boundaries"]["Conductivity"]
+    rather than a domain material, and "pec_patches", emitted into
+    config["Boundaries"]["PEC"]), plus three more optional keys:
         "background": {"epsilon_r": float, "mue_r": float, "loss_tan": float},
         "floquet": {
             "wave_vector_1_per_m": [kx, ky, kz] (default [0,0,0], normal
@@ -917,6 +1155,7 @@ def generate_palace_config(
     ly = float(unit_cell["ly_m"])
 
     materials = geometry.get("materials", [])
+    dielectric_materials, conductivity_sheets = _split_materials(materials)
     background = geometry.get("background", {})
 
     floquet = geometry.get("floquet", {})
@@ -950,7 +1189,7 @@ def generate_palace_config(
             "LossTan": background.get("loss_tan", 0.0),
         }
     ]
-    for idx, mat in enumerate(materials):
+    for idx, mat in enumerate(dielectric_materials):
         materials_json.append(
             {
                 "Attributes": [idx + 2],
@@ -1022,6 +1261,23 @@ def generate_palace_config(
     if pec_boundary_attributes:
         boundaries["PEC"] = {"Attributes": pec_boundary_attributes}
     boundaries["FloquetPort"] = floquet_ports
+
+    if conductivity_sheets:
+        conductivity_base = _conductivity_boundary_base(pec_patches)
+        conductivity_json = []
+        for idx, sheet in enumerate(conductivity_sheets):
+            missing = [f for f in ("kappa_s_m", "thickness_m") if f not in sheet]
+            if missing:
+                raise ValueError(f"conductivity sheet {idx} missing required field(s): {missing}")
+            conductivity_json.append(
+                {
+                    "Attributes": [conductivity_base + idx],
+                    "Conductivity": float(sheet["kappa_s_m"]),
+                    "Permeability": sheet.get("mue_r", 1.0),
+                    "Thickness": float(sheet["thickness_m"]),
+                }
+            )
+        boundaries["Conductivity"] = conductivity_json
 
     return {
         "Problem": {"Type": "Driven", "Output": str(output_dir)},
@@ -1308,13 +1564,14 @@ def run_palace_simulation(
     # real defect -- a polarization-collision on the `specular` dict's key
     # -- this check is built to be robust to by summing over the full
     # `modes` data instead). `lossless` is inferred here, not asked of the
-    # caller: this adapter's SCOPE (see module docstring) has no PEC
-    # conductor/embedded-loss element beyond each material's own
-    # `loss_tan`, so "every material's loss_tan is exactly 0" is exactly
-    # the lossless condition this geometry dict can express today.
-    background_loss_tan = geometry.get("background", {}).get("loss_tan", 0.0)
-    material_loss_tans = [m.get("loss_tan", 0.0) for m in geometry.get("materials", [])]
-    lossless = all(lt == 0.0 for lt in [background_loss_tan, *material_loss_tans])
+    # caller: "every material's loss_tan is exactly 0, AND no embedded
+    # conductivity sheet is present" is exactly the lossless condition this
+    # geometry dict can express (issue #289 added the second half -- a
+    # conductivity sheet is a real, absorbing conductor by construction,
+    # since _validate_conductivity_sheet already requires kappa_s_m > 0, so
+    # its mere presence makes the geometry non-lossless regardless of any
+    # material's own loss_tan).
+    lossless = _geometry_is_lossless(geometry)
     conservation_check = check_palace_result(parsed, lossless=lossless, reciprocal=True)
 
     return {

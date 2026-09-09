@@ -48,7 +48,9 @@ from agent.main import (
     SPECIALIST_HANDOFFS,
     ProvenanceIntegrityError,
     _assert_calculated_provenance_is_tool_backed,
+    correlate_simulated_and_measured,
     principal,
+    run_meep_simulation,
 )
 from orchestration.policy import assert_all_tools_categorized, category_for
 
@@ -102,7 +104,9 @@ def test_principal_role_is_scoped_not_broad():
     assert "ingest_arxiv_paper" not in names
     assert "ingest_3gpp_spec" not in names
     assert "ingest_etsi_standard" not in names
+    assert "ingest_etsi_ipr_declaration" not in names
     assert "ingest_fcc_rule" not in names
+    assert "search_fcc_rules" not in names
     assert "ingest_patent" not in names
     assert "extract_components" not in names
     assert "analyze_touchstone_file" not in names
@@ -175,6 +179,60 @@ def test_systems_role_gets_standards_body_sourcing_tools():
         assert "ingest_fcc_rule" not in role_names
 
 
+def test_systems_role_gets_etsi_ipr_declaration_sourcing_tool():
+    # issue #284: ingest_etsi_ipr_declaration (the SR 000 314 IPR/FRAND-
+    # declaration register client) is the same knowledge-authoring concern
+    # as its ingest_etsi_standard sibling -- same bucket, same reasoning.
+    names = _tool_names(ROLES["systems"])
+    assert "ingest_etsi_ipr_declaration" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "ingest_etsi_ipr_declaration" not in role_names
+    # Not principal-direct either -- reachable via the systems handoff only.
+    assert "ingest_etsi_ipr_declaration" not in _tool_names(ROLES["principal"])
+
+
+def test_systems_role_gets_3gpp_spec_status_lookup_tool():
+    # issue #285: lookup_3gpp_spec_status is the same knowledge-sourcing
+    # concern as ingest_3gpp_spec (same module, same 3gpp.org host, no
+    # credential) -- sits right beside it here. issue #215 already found
+    # the "implemented and tested but wired onto no role's tool list" gap
+    # once for the ingest siblings; this guards the lookup sibling too.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_3gpp_spec_status" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        assert "lookup_3gpp_spec_status" not in _tool_names(ROLES[key])
+    # Not principal-direct either -- reachable via the systems handoff only,
+    # same as ingest_3gpp_spec (see test_principal_role_is_scoped_not_broad).
+    assert "lookup_3gpp_spec_status" not in _tool_names(ROLES["principal"])
+
+
+def test_systems_role_gets_fcc_rules_discovery_search_tool():
+    # issue #279: search_fcc_rules (topic/keyword discovery over eCFR's
+    # Search Service) is wired onto the same role as its sibling
+    # ingest_fcc_rule -- both are the same "bring FCC rule text into reach
+    # of the design loop" knowledge-sourcing concern, discovery finding
+    # candidate parts ahead of the deliberate ingest step.
+    names = _tool_names(ROLES["systems"])
+    assert "search_fcc_rules" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "search_fcc_rules" not in role_names
+    # Not principal-direct either -- reachable via the systems handoff only,
+    # same as ingest_fcc_rule (see test_principal_role_is_scoped_not_broad).
+    assert "search_fcc_rules" not in _tool_names(ROLES["principal"])
+
+
+def test_search_fcc_rules_is_categorized_ingestion_auto():
+    # Matches ingest_fcc_rule's category: a knowledge/sourcing operation,
+    # not a calculation -- see policies/tool_policy.yaml's ingestion_auto
+    # comment on why a credential-free eCFR sourcing call belongs here even
+    # though this particular tool, unlike its ingest_fcc_rule sibling, never
+    # itself writes a document.
+    assert category_for("search_fcc_rules") == category_for("ingest_fcc_rule")
+    assert category_for("search_fcc_rules") == "ingestion_auto"
+
+
 def test_systems_role_gets_patent_sourcing_tool():
     # issue #219: fetching a USPTO patent grant/publication is the same
     # knowledge-authoring concern as ingest_arxiv_paper/ingest_3gpp_spec/
@@ -210,6 +268,34 @@ def test_search_arxiv_papers_is_categorized_ingestion_auto():
     # never itself writes a document.
     assert category_for("search_arxiv_papers") == category_for("ingest_arxiv_paper")
     assert category_for("search_arxiv_papers") == "ingestion_auto"
+
+
+def test_systems_role_gets_uspto_discovery_search_tool():
+    # issue #280: search_uspto_patents (full-text discovery search against
+    # the USPTO Open Data Portal) is wired onto the same role as its sibling
+    # ingest_patent -- both are the same "bring USPTO patents into reach of
+    # the design loop" knowledge-sourcing concern, discovery finding
+    # candidates ahead of the deliberate ingest step.
+    names = _tool_names(ROLES["systems"])
+    assert "search_uspto_patents" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "search_uspto_patents" not in role_names
+    # Not principal-direct either -- reachable via the systems handoff only,
+    # same as ingest_patent (see test_principal_role_is_scoped_not_broad).
+    assert "search_uspto_patents" not in _tool_names(ROLES["principal"])
+
+
+def test_search_uspto_patents_is_categorized_approval_self_gated():
+    # UNLIKE search_arxiv_papers (ingestion_auto, credential-free):
+    # search_uspto_patents calls require_external_network_tools_enabled as
+    # its own first line, the same self-gate the three distributor lookups
+    # (lookup_digikey_component and siblings) already have -- see
+    # policies/tool_policy.yaml's approval_self_gated comment on why a
+    # credentialed USPTO ODP call belongs here rather than beside its own
+    # credential-free ingest_patent sibling.
+    assert category_for("search_uspto_patents") == category_for("lookup_digikey_component")
+    assert category_for("search_uspto_patents") == "approval_self_gated"
 
 
 def test_systems_role_gets_component_sourcing_tools():
@@ -249,6 +335,30 @@ def test_search_ink_product_is_categorized_approval_self_gated():
     # search_arxiv_papers' credential-free ingestion_auto category.
     assert category_for("search_ink_product") == category_for("lookup_digikey_component")
     assert category_for("search_ink_product") == "approval_self_gated"
+
+
+def test_systems_role_gets_digikey_product_details_tool():
+    # ticket #275: parametric-attribute/pricing lookup sits beside its
+    # lookup_digikey_component sibling -- same component-sourcing concern,
+    # same role.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_digikey_product_details" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        assert "lookup_digikey_product_details" not in _tool_names(ROLES[key])
+
+
+def test_systems_role_gets_nexar_part_data_tool():
+    # ticket #276: lookup_nexar_part_data (Nexar's cross-distributor
+    # pricing/availability + parametric specs query) is grouped with its
+    # sibling lookup_nexar_component -- same distributor-sourcing concern,
+    # same role -- so the design loop can actually reach it; a function
+    # that exists in knowledge/nexar.py but is never wired onto a tool
+    # surface is unreachable to every role, this one included.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_nexar_part_data" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "lookup_nexar_part_data" not in role_names
 
 
 def test_microwave_role_gets_network_and_component_analysis():
@@ -547,6 +657,46 @@ def test_antenna_and_test_roles_get_meep_simulation():
     assert "run_meep_simulation" not in _tool_names(ROLES["systems"])
     assert "run_meep_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_meep_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_run_meep_simulation_tool_description_reflects_far_field_support():
+    """agent/main.py's own @function_tool-wrapped run_meep_simulation (the
+    surface an agent driven through this module -- as opposed to the MCP
+    server -- actually sees) carries a FOURTH, independently-maintained copy
+    of this tool's docstring, alongside simulation/meep.py's module
+    docstring, mcp_server/server.py's tool docstring, and docs/tools/meep.md
+    -- issue #270 named the first three as needing to change together and
+    missed this one. `@function_tool`-wrapped functions expose their
+    docstring text to the SDK via the `.description` attribute (see
+    agents.tool.FunctionTool), not `.__doc__` on the wrapped callable, so
+    this reads that attribute -- the same text an agent calling this tool
+    surface is actually shown. Regression guard: an agent told outright "NO
+    far-field/gain" never learns geometry['far_field_monitor'] exists."""
+    description = run_meep_simulation.description
+    assert "NO far-field/gain" not in description
+    assert "far_field_monitor" in description
+    assert "gain_dbi" in description
+
+
+def test_correlate_simulated_and_measured_tool_description_states_single_port_qualifier():
+    """agent/main.py's own @function_tool-wrapped correlate_simulated_and_measured
+    carries an independently-maintained copy of mcp_server/server.py's tool
+    docstring (issue #317, ADR-0032 prefactor audit). Code review of that
+    issue's fix found the corrected text (in both files) still overstated
+    when openEMS's S-parameters are accepted -- it omitted that
+    simulation/openems.py only ever writes a "touchstone_file" for the
+    SINGLE-PORT case (`if len(names) == 1:`); a multi-port computed=True run
+    has no "touchstone_file" and is rejected too, same as computed=False.
+    Regression guard on the agent-facing `.description` text specifically
+    (see test_run_meep_simulation_tool_description_reflects_far_field_support
+    above for why `.description`, not `.__doc__`, is what an agent actually
+    sees)."""
+    description = correlate_simulated_and_measured.description
+    assert "computed=True" in description
+    assert "computed=False" in description
+    assert "both honestly rejected" not in description
+    assert "single-port" in description
+    assert "multi-port" in description
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

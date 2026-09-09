@@ -1,3 +1,5 @@
+import cmath
+import math
 import os
 import re
 import subprocess
@@ -220,6 +222,117 @@ class OpenemsSimulator(Simulator):
 #     SetupProcessing(): openems.cpp,
 #     github.com/thliebig/openEMS/blob/master/openems.cpp.
 #
+# ADDITIONAL SOURCES CONSULTED FOR NF2FF FAR-FIELD/GAIN EXTRACTION (issue
+# #269 -- fetched directly from github.com/thliebig/openEMS and
+# github.com/thliebig/CSXCAD during this pass):
+#   - <DumpBox> element shape -- root attributes DumpType/DumpMode/FileType/
+#     MultiGridLevel (+ optional SubSampling/OptResolution), tag name
+#     "DumpBox" (CSPropDumpBox::GetTypeXMLString(), CSPropDumpBox.h) reached
+#     via the *parent* class's Write2XML first (CSPropDumpBox extends
+#     CSPropProbeBox, so a DumpBox element also legally carries ProbeBox's
+#     Number/Type/Weight/NormDir/StartTime/StopTime attributes -- this
+#     module emits none of those since openEMS's own field-dump setup path,
+#     openems.cpp's SetupProcessing() DUMPBOX loop, never reads them for a
+#     field dump, only GetDumpType/GetMultiGridLevel/GetStartTime/
+#     GetStopTime/GetFDSamples/GetDumpMode/GetFileType/GetSubSampling/
+#     GetOptResolution -- so ReadFromXML's own documented defaults for the
+#     unemitted ones are exactly what a real run would use anyway):
+#     CSPropDumpBox.cpp/.h and CSPropProbeBox.cpp/.h,
+#     github.com/thliebig/CSXCAD/blob/master/src/.
+#   - DumpType numeric codes (0/1=E/H time-domain, 10/11=E/H frequency-
+#     domain -- this module always uses 10/11, since a specific far-field
+#     frequency list is exactly what an NF2FF box needs) and FileType (0=
+#     VTK, 1=HDF5) / DumpMode (1=node-interpolation, CreateNF2FFBox.m's own
+#     default) meanings, plus the 'Frequency' option's mapping onto a
+#     literal FD_Samples child field: CSXCAD's matlab/AddDump.m,
+#     github.com/thliebig/CSXCAD/blob/master/matlab/AddDump.m.
+#   - The NF2FF recording box itself is NOT a single CSXCAD property type --
+#     it is a *convention* of 12 separate DumpBox properties (one E + one H
+#     dump per enclosing-box face: xn/xp/yn/yp/zn/zp), each a flat
+#     (zero-thickness) Box primitive collapsed onto that face, named
+#     "<name>_E_<face>"/"<name>_H_<face>": openEMS's own matlab/
+#     CreateNF2FFBox.m, github.com/thliebig/openEMS/blob/master/matlab/
+#     CreateNF2FFBox.m. This module follows that per-face-named-property
+#     convention (not the alternative used by openEMS's own Python
+#     interface, python/openEMS/nf2ff.py, which instead adds all 6 faces as
+#     *primitives of a single* DumpBox property and disambiguates the
+#     resulting per-primitive dump files by a positional index suffix, e.g.
+#     "<name>_E_0.h5" -- chosen against here because that index is which
+#     face gets written N-th, which SHIFTS whenever a 'directions' entry is
+#     disabled, making the file name depend on which OTHER faces happen to
+#     be enabled; CreateNF2FFBox.m's per-face stable names have no such
+#     ambiguity).
+#   - Confirmation that a DumpBox property's Name attribute becomes its
+#     output filename verbatim (+ ".h5" for FileType=1, appended by the FD
+#     dump writer) -- `ProcField->SetName(db->GetName()); ...
+#     ProcField->SetFileName(ProcField->GetName());` in
+#     openems.cpp::SetupProcessing()'s DUMPBOX loop, and
+#     `m_HDF5_Dump_File = new HDF5_File_Writer(m_filename+".h5");` in
+#     Common/processfields.cpp, both github.com/thliebig/openEMS/blob/
+#     master/. The same SetupProcessing() loop is also this pass's source
+#     for `ProcField->SetEnable(Enable_Dumps)` applying identically to
+#     DumpBox-driven field dumps as it does to the ProbeBox case already
+#     cited above -- confirming the acceptance criterion that a run
+#     requesting an NF2FF box must not pass --disable-dumps.
+#   - The standalone `nf2ff` command-line tool (a SEPARATE binary from
+#     `openEMS` itself, built from the same source tree) -- CLI contract
+#     "Usage: nf2ff <nf2ff-xml-file>": nf2ff/main.cpp,
+#     github.com/thliebig/openEMS/blob/master/nf2ff/main.cpp.
+#   - The nf2ff tool's own input-XML schema it parses in
+#     nf2ff::AnalyseXMLNode() -- root element "nf2ff" with attributes
+#     freq (comma-separated Hz list), Outfile (result HDF5 path), Radius
+#     (meters, default 1), optional Center/Eps_r/Mue_r, LegacyHDF5 (an
+#     Octave/MATLAB-only compatibility flag this module never sets, so the
+#     tool's own default -- the modern, non-legacy layout below -- applies)
+#     -- plus child elements <theta>/<phi> (comma-separated RADIANS, text
+#     content) and one or more <Planes E_Field="..." H_Field="..."/>
+#     (dump-file names, resolved relative to the tool's own working
+#     directory, matching this module's own subprocess cwd=workdir
+#     convention): nf2ff/nf2ff.cpp, github.com/thliebig/openEMS/blob/
+#     master/nf2ff/nf2ff.cpp, cross-referenced against the MATLAB caller
+#     that builds this same XML (openEMS/matlab/CalcNF2FF.m -- confirms the
+#     'theta'/'phi' unit convention, "in radians", in its own docstring)
+#     and the CLI's own `nf2ff <file>` invocation shape (CalcNF2FF.m's
+#     `system([nf2ff_bin ' ' filename '.xml'])` on Windows).
+#   - The nf2ff tool's own RESULT HDF5 schema, written by nf2ff::Write2HDF5
+#     in the same nf2ff.cpp -- /Mesh/theta, /Mesh/phi, /Mesh/r (1-D
+#     coordinate arrays); a /nf2ff group carrying attributes Frequency,
+#     Prad (total radiated power per frequency, Watts), Dmax (peak
+#     directivity per frequency, unitless linear); and per-frequency
+#     datasets /nf2ff/E_theta/FD/f<n>, /nf2ff/E_phi/FD/f<n> (complex,
+#     shape [n_theta, n_phi]) and /nf2ff/P_rad/FD/f<n> (real, W/m^2 at
+#     the Radius above) -- independently corroborated by openEMS's own
+#     Python result reader, python/openEMS/nf2ff.py's nf2ff_results class,
+#     which reads this exact non-legacy layout.
+#   - Confirmation that h5py reads/writes this complex HDF5 layout as an
+#     ordinary numpy complex array with NO manual real/imag reassembly --
+#     python/openEMS/nf2ff.py's own _ReadFD() docstring states outright:
+#     "h5py maps the compound {r,i} type onto a native complex array" --
+#     and the underlying C++ side confirms the field names are literally
+#     "r"/"i" (HDF5_File_Reader::GetH5Type<complex<float>>() in
+#     tools/hdf5_file_reader.cpp: `H5Tinsert(complex_id,"r",...);
+#     H5Tinsert(complex_id,"i",...);` with the comment "create numpy
+#     compatible complex128"). This is why this module's own test doubles
+#     (tests/test_openems.py) can write synthetic NF2FF result files with
+#     plain `h5py.File(...).create_dataset(name, data=<complex ndarray>)`
+#     and this module can read them back with a plain `f[name][()]` -- no
+#     legacy real/imag-split branch is implemented here (that branch exists
+#     in openEMS's own MATLAB/Octave reader only, for tools that cannot
+#     read HDF5 compound types at all).
+#   - Directivity-from-(E_theta,E_phi,P_rad,Prad) formula --
+#     D(theta,phi) = 4*pi*Radius^2*P_rad(theta,phi)/Prad_total, and
+#     P_rad(theta,phi) = (|E_theta|^2+|E_phi|^2)/(2*Z0) -- read directly out
+#     of the nf2ff tool's own far-field math, nf2ff/nf2ff_calc.cpp's
+#     AddSinglePlane() (`P_rad(tn,pn) = abs(E_theta*conj(E_theta) +
+#     E_phi*conj(E_phi))/(2*fZ0);`) and its `m_maxDir = P_max * (4*PI *
+#     m_radius*m_radius / m_radPower);`, github.com/thliebig/openEMS/blob/
+#     master/nf2ff/nf2ff_calc.cpp. This module recomputes directivity
+#     per-angle from the raw E_theta/E_phi/P_rad/Prad arrays (rather than
+#     trusting the tool's own separately-reported Dmax attribute) so that
+#     the returned "pattern" table and "gain_dbi" (=max over that table,
+#     mirroring simulation/nec2pp.py's own gain_dbi=max(pattern) approach)
+#     are self-consistent from one source of truth.
+#
 # SCOPE OF THIS IMPLEMENTATION (explicitly narrower than a full openEMS
 # feature set -- a scope decision made during this and the prior #39
 # implementation pass, NOT quoted from GitHub issue #39 itself, which
@@ -269,19 +382,25 @@ class OpenemsSimulator(Simulator):
 #     also written and surfaced as "touchstone_file", matching how
 #     simulation/hfss.py's own computed=True S-parameters integrate with
 #     rf_tools/correlation.py.
-#   - Far-field/gain: still NOT computed. A real far-field/gain pattern
-#     requires openEMS's separate nf2ff near-field-to-far-field
-#     post-processing tool, which this pass does not invoke -- this
-#     specific limit (unlike the S-parameter one just fixed) is a genuine
-#     "a whole separate tool would be needed" gap, not something this pass
-#     judged achievable and skipped. parse_openems_output() still returns
-#     an "s_parameters" key structurally parallel to NEC2++'s "impedance"/
-#     "pattern"/"gain_dbi" keys (so downstream code can treat both
-#     simulators' results uniformly without per-simulator branching) even
-#     when S-parameters can't be computed (e.g. no port probe data found,
-#     or mismatched port impedances) -- that fallback carries computed=False
-#     and a note explaining why, rather than fabricated numbers. "far_field"
-#     always carries computed=False and a note, for the reason above.
+#   - Far-field/gain: NOW COMPUTED (issue #269) when `geometry['nf2ff']`
+#     names a recording box (see generate_openems_xml's docstring for its
+#     shape) -- via the real, separate `nf2ff` command-line tool (NOT part
+#     of the `openEMS` binary itself; see the "ADDITIONAL SOURCES" above),
+#     invoked as its own subprocess against the FD field dumps the FDTD run
+#     wrote for that box. Returns computed=True with a real per-angle
+#     "pattern" table and a real "gain_dbi" (structurally parallel to
+#     NEC2++'s "impedance"/"pattern"/"gain_dbi" keys, so downstream code can
+#     treat both simulators' results uniformly) whenever those dump files
+#     exist and the nf2ff tool's result HDF5 parses as expected; falls back
+#     to the honest computed=False path -- same as S-parameters -- when no
+#     NF2FF box was requested at all, its dump files are missing from the
+#     run's workdir (e.g. the geometry didn't actually request one, or a
+#     real openEMS run named/laid out its dumps differently than this
+#     module assumes), or the result HDF5 doesn't parse in the expected
+#     shape. "s_parameters" keeps its own separate computed=False fallback
+#     for its own separate reasons (missing port probe dumps, mismatched
+#     port impedances) -- the two are independent code paths that can each
+#     succeed or fail on their own.
 #   - Convergence metadata (issue #39's other acceptance criterion) IS
 #     real: it is parsed from openEMS's own progress/summary log text
 #     (format cited above) to report whether a run's exit was end-criteria-
@@ -310,6 +429,19 @@ class OpenemsSimulator(Simulator):
 # tests/test_openems.py), with a closed-form known answer (a
 # frequency-independent reflection/transmission coefficient) checked
 # against this module's FFT output, not against real FDTD physics.
+# The NF2FF far-field/gain extraction added in issue #269 is in the same
+# position again, one level further removed: the real `nf2ff` binary is
+# ALSO not installed in this environment (it ships from the same openEMS
+# source tree but is a separate executable -- confirmed absent the same way
+# as `openEMS` itself), so neither has this module ever driven it against
+# real FDTD near-field dumps. The DumpBox XML shape and the nf2ff tool's own
+# input-XML/result-HDF5 schemas are each cited to openEMS/CSXCAD source
+# above; tests exercise the XML generation directly and exercise the
+# post-processing call chain (subprocess invocation, HDF5 result parsing,
+# directivity/gain arithmetic) against a fake "nf2ff" script that writes a
+# synthetic result HDF5 with a closed-form known answer (an isotropic
+# radiator, and a single-direction-peaked pattern), not against real FDTD
+# near-field data or a real nf2ff computation.
 # ---------------------------------------------------------------------------
 
 
@@ -384,6 +516,91 @@ def _required_primitive_fields(prim: dict[str, Any]) -> tuple[str, ...]:
     return ("p1_m", "p2_m")
 
 
+# The six faces of an NF2FF recording box, in openEMS's own CreateNF2FFBox.m
+# order (nd=1..3 for x/y/z, "n"=negative/start face then "p"=positive/stop
+# face for each -- see module docstring citation). Index i's axis is i//2
+# (0=x,1=y,2=z) and its sign is positive iff i is odd.
+_NF2FF_DIRECTIONS = ("xn", "xp", "yn", "yp", "zn", "zp")
+_NF2FF_DEFAULT_DIRECTIONS = (1, 1, 1, 1, 1, 1)
+
+
+def _nf2ff_dump_names(name: str) -> dict[str, tuple[str, str]]:
+    """The (E-dump-property-name, H-dump-property-name) pair for each NF2FF
+    box face, given the box's own `name` -- "<name>_E_<face>"/
+    "<name>_H_<face>", matching CreateNF2FFBox.m's own naming (see module
+    docstring citation). A real openEMS run writes each as
+    "<name>_E_<face>.h5"/"<name>_H_<face>.h5" in the run's workdir (Name
+    attribute + ".h5", see citation)."""
+    return {face: (f"{name}_E_{face}", f"{name}_H_{face}") for face in _NF2FF_DIRECTIONS}
+
+
+def _nf2ff_face_primitive(
+    p1_m: list[float], p2_m: list[float], axis: int, positive: bool
+) -> dict[str, Any]:
+    """A flat (zero-thickness) Box primitive dict covering one face of the
+    NF2FF box spanned by p1_m (the 'start' corner) and p2_m (the 'stop'
+    corner) -- the negative/start face collapses p2's `axis` coordinate onto
+    p1's, the positive/stop face collapses p1's onto p2's, exactly mirroring
+    CreateNF2FFBox.m's own "l_stop(nd) = start(nd)" / "l_start(nd) =
+    stop(nd)" face construction (see module docstring citation)."""
+    p1 = list(p1_m)
+    p2 = list(p2_m)
+    if positive:
+        p1[axis] = p2[axis]
+    else:
+        p2[axis] = p1[axis]
+    return {"shape": "box", "p1_m": p1, "p2_m": p2}
+
+
+def _resolve_nf2ff_params(
+    nf2ff_def: dict[str, Any], default_frequency_hz: float | None
+) -> dict[str, Any]:
+    """Validate and fill in defaults for a `geometry['nf2ff']` recording-box
+    definition (see generate_openems_xml's docstring for the full field
+    list) -- the single source of truth both generate_openems_xml (which
+    only needs name/p1_m/p2_m/directions/frequencies_hz, for the FDTD-XML
+    DumpBox emission) and the post-run NF2FF post-processing path (which
+    additionally needs the angle grid/radius/center/eps_r/mue_r) resolve
+    their defaults from, so the two can never silently drift apart."""
+    missing = [f for f in ("p1_m", "p2_m") if f not in nf2ff_def]
+    if missing:
+        raise ValueError(f"geometry['nf2ff'] missing required field(s): {missing}")
+    directions = list(nf2ff_def.get("directions", _NF2FF_DEFAULT_DIRECTIONS))
+    if len(directions) != 6:
+        raise ValueError(
+            "geometry['nf2ff']['directions'] must have exactly 6 entries "
+            f"(xn,xp,yn,yp,zn,zp), got {len(directions)}"
+        )
+    frequencies_hz = nf2ff_def.get("frequencies_hz")
+    if not frequencies_hz:
+        if default_frequency_hz is None:
+            raise ValueError(
+                "geometry['nf2ff'] needs 'frequencies_hz' (or a top-level "
+                "geometry['frequency_hz']) -- the NF2FF FD_Samples dump "
+                "needs at least one frequency to accumulate during the "
+                "FDTD run"
+            )
+        frequencies_hz = [default_frequency_hz]
+    center_m = nf2ff_def.get("center_m")
+    return {
+        "name": nf2ff_def.get("name", "nf2ff"),
+        "p1_m": list(nf2ff_def["p1_m"]),
+        "p2_m": list(nf2ff_def["p2_m"]),
+        "directions": directions,
+        "frequencies_hz": [float(f) for f in frequencies_hz],
+        "radius_m": float(nf2ff_def.get("radius_m", 1.0)),
+        "center_m": [float(v) for v in center_m] if center_m is not None else None,
+        "eps_r": nf2ff_def.get("eps_r"),
+        "mue_r": nf2ff_def.get("mue_r"),
+        "theta_start_deg": float(nf2ff_def.get("theta_start_deg", 0.0)),
+        "theta_step_deg": float(nf2ff_def.get("theta_step_deg", 10.0)),
+        "theta_count": int(nf2ff_def.get("theta_count", 19)),
+        "phi_start_deg": float(nf2ff_def.get("phi_start_deg", 0.0)),
+        "phi_step_deg": float(nf2ff_def.get("phi_step_deg", 0.0)),
+        "phi_count": int(nf2ff_def.get("phi_count", 1)),
+    }
+
+
 def generate_openems_xml(
     geometry: dict[str, Any],
     fdtd: dict[str, Any] | None = None,
@@ -435,6 +652,31 @@ def generate_openems_xml(
           ],
           "mesh": {                      # rectilinear mesh lines, meters
               "x_lines_m": [float, ...], "y_lines_m": [...], "z_lines_m": [...],
+          },
+          "nf2ff": {                      # optional (issue #269) -- a
+              # near-field-to-far-field recording box; when present, a real
+              # far_field/gain_dbi result is computed post-run (see
+              # run_openems_simulation) instead of the permanent stub.
+              "p1_m", "p2_m": [x, y, z],  # box start/stop corners -- must
+                  # enclose every radiating structure (conductors/ports)
+              "directions": [1, 1, 1, 1, 1, 1],  # optional, xn/xp/yn/yp/
+                  # zn/zp enable flags (default: all 6 faces on)
+              "name": str (default "nf2ff"),
+              "frequencies_hz": [float, ...],  # optional, defaults to
+                  # [geometry['frequency_hz']] -- far field is evaluated at
+                  # exactly these frequencies (accumulated during the FDTD
+                  # run itself, like a DFT, not resampled afterwards)
+              "radius_m": float (default 1.0),   # far-field evaluation
+                  # radius passed to the nf2ff tool
+              "center_m": [x, y, z] (default [0, 0, 0]),  # nf2ff phase
+                  # center -- must lie inside the box
+              "eps_r", "mue_r": float (optional),  # background medium at
+                  # the far-field radius, if not free space
+              "theta_start_deg", "theta_step_deg": float, "theta_count": int,
+              "phi_start_deg", "phi_step_deg": float, "phi_count": int,
+                  # optional far-field angle grid (defaults mirror
+                  # simulation/nec2pp.py's own RP-card pattern defaults: a
+                  # single phi=0 deg cut, theta 0-180 deg in 10 deg steps)
           },
         }
 
@@ -569,6 +811,35 @@ def generate_openems_xml(
             + _primitive_xml(port)
             + "</Primitives></ProbeBox>"
         )
+
+    nf2ff_def = geometry.get("nf2ff")
+    if nf2ff_def:
+        nf2ff_params = _resolve_nf2ff_params(nf2ff_def, default_frequency_hz)
+        freq_attr = ",".join(_fmt(f) for f in nf2ff_params["frequencies_hz"])
+        dump_names = _nf2ff_dump_names(nf2ff_params["name"])
+        for idx, face in enumerate(_NF2FF_DIRECTIONS):
+            if not nf2ff_params["directions"][idx]:
+                continue
+            prim = _nf2ff_face_primitive(
+                nf2ff_params["p1_m"], nf2ff_params["p2_m"], axis=idx // 2, positive=bool(idx % 2)
+            )
+            e_name, h_name = dump_names[face]
+            # DumpType 10/11 = E/H frequency-domain dump, DumpMode=1 =
+            # node-interpolation (CreateNF2FFBox.m's own default),
+            # FileType=1 = HDF5 -- see module docstring citation. No
+            # Number/Type/Weight/NormDir/StartTime/StopTime attributes
+            # (ProbeBox's own, inherited by DumpBox) are emitted -- a real
+            # openEMS run's field-dump setup never reads them, see
+            # citation.
+            for dump_type, dump_name in ((10, e_name), (11, h_name)):
+                parts.append(
+                    f'<DumpBox Name="{dump_name}" DumpType="{dump_type}" DumpMode="1" '
+                    'FileType="1"><FD_Samples>'
+                    + freq_attr
+                    + "</FD_Samples><Primitives>"
+                    + _primitive_xml(prim)
+                    + "</Primitives></DumpBox>"
+                )
 
     parts.append("</Properties>")
     parts.append("</ContinuousStructure>")
@@ -799,12 +1070,309 @@ def _compute_s_parameters_from_probes(workdir: Path, ports: list[dict[str, Any]]
     return result
 
 
+# ---------------------------------------------------------------------------
+# NF2FF far-field/gain post-processing (issue #269) -- invokes the real,
+# separate `nf2ff` command-line tool against the FD field dumps the FDTD run
+# wrote for a geometry['nf2ff'] recording box, then parses its result HDF5
+# into a per-angle "pattern" table plus a "gain_dbi" number, structurally
+# parallel to simulation/nec2pp.py's own pattern/gain_dbi (see this module's
+# header comment for the full citation list).
+# ---------------------------------------------------------------------------
+
+
+def _locate_nf2ff_plane_files(
+    workdir: Path, name: str, directions: list[int]
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Which of the up-to-6 NF2FF E/H dump-file pairs (see
+    _nf2ff_dump_names) actually exist in `workdir`, for the enabled faces in
+    `directions`. Returns (found, missing) -- found is a list of (face,
+    e_filename, h_filename) with BARE filenames (the nf2ff tool resolves
+    Plane filenames relative to its own working directory, matching this
+    module's subprocess cwd=workdir convention -- see module docstring
+    citation), missing lists the enabled face(s) whose dump pair wasn't
+    found (never a partial/guessed reading of an incomplete pair)."""
+    dump_names = _nf2ff_dump_names(name)
+    found: list[tuple[str, str, str]] = []
+    missing: list[str] = []
+    for idx, face in enumerate(_NF2FF_DIRECTIONS):
+        if not directions[idx]:
+            continue
+        e_name, h_name = dump_names[face]
+        e_file, h_file = f"{e_name}.h5", f"{h_name}.h5"
+        if (workdir / e_file).exists() and (workdir / h_file).exists():
+            found.append((face, e_file, h_file))
+        else:
+            missing.append(face)
+    return found, missing
+
+
+def _generate_nf2ff_config_xml(
+    outfile: str,
+    frequencies_hz: list[float],
+    theta_rad: np.ndarray,
+    phi_rad: np.ndarray,
+    planes: list[tuple[str, str, str]],
+    radius_m: float,
+    center_m: list[float] | None,
+    eps_r: float | None,
+    mue_r: float | None,
+) -> str:
+    """Build the nf2ff tool's own input-XML control file -- root element
+    "nf2ff" with freq/Outfile/Radius(+optional Center/Eps_r/Mue_r)
+    attributes, <theta>/<phi> child elements (radians, comma-separated), and
+    one <Planes E_Field=".../ H_Field="..."/> per recorded box face -- see
+    this module's header comment for the full nf2ff::AnalyseXMLNode()
+    citation. Pure string-building, no I/O."""
+    attrs = [
+        f'freq="{",".join(_fmt(f) for f in frequencies_hz)}"',
+        f'Outfile="{outfile}"',
+        f'Radius="{_fmt(radius_m)}"',
+    ]
+    if center_m is not None:
+        attrs.append(f'Center="{",".join(_fmt(v) for v in center_m)}"')
+    if eps_r is not None:
+        attrs.append(f'Eps_r="{_fmt(eps_r)}"')
+    if mue_r is not None:
+        attrs.append(f'Mue_r="{_fmt(mue_r)}"')
+    planes_xml = "".join(f'<Planes E_Field="{e}" H_Field="{h}"/>' for _, e, h in planes)
+    theta_text = ",".join(_fmt(v) for v in theta_rad)
+    phi_text = ",".join(_fmt(v) for v in phi_rad)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f"<nf2ff {' '.join(attrs)}>"
+        f"<theta>{theta_text}</theta><phi>{phi_text}</phi>" + planes_xml + "</nf2ff>\n"
+    )
+
+
+def _build_far_field_result(
+    frequencies_hz: list[float],
+    theta_rad: np.ndarray,
+    phi_rad: np.ndarray,
+    e_theta_by_freq: list[np.ndarray],
+    e_phi_by_freq: list[np.ndarray],
+    p_rad_by_freq: list[np.ndarray],
+    prad_total_by_freq: list[float],
+    radius_m: float,
+) -> dict[str, Any]:
+    """Turn the nf2ff tool's raw per-frequency (E_theta, E_phi, P_rad,
+    Prad_total) arrays into a per-angle "pattern" table plus a "gain_dbi"
+    number -- pure arithmetic, no I/O, directly unit-testable against
+    hand-picked arrays with a known closed-form answer.
+
+    Directivity(theta,phi) = 4*pi*radius_m^2*P_rad(theta,phi)/Prad_total,
+    per nf2ff/nf2ff_calc.cpp's own m_maxDir formula (see module docstring
+    citation) -- computed here per-angle (not read from the tool's own
+    separately-reported Dmax attribute) so "pattern" and "gain_dbi" share
+    one source of truth, mirroring simulation/nec2pp.py's own
+    gain_dbi=max(pattern) approach. A directivity of exactly 0 (no power
+    radiated in that direction) is reported as -999.0 dBi, matching
+    nec2pp's own sentinel for a "not a real number" pattern entry -- such
+    points are excluded from the gain_dbi max, same as nec2pp's own
+    valid_totals filter.
+    """
+    pattern: list[dict[str, Any]] = []
+    for f_idx, freq_hz in enumerate(frequencies_hz):
+        e_theta = e_theta_by_freq[f_idx]
+        e_phi = e_phi_by_freq[f_idx]
+        p_rad = p_rad_by_freq[f_idx]
+        prad_total = prad_total_by_freq[f_idx]
+        for t_idx, theta in enumerate(theta_rad):
+            for p_idx, phi in enumerate(phi_rad):
+                if prad_total > 0.0:
+                    directivity_linear = (
+                        4.0 * math.pi * radius_m**2 * p_rad[t_idx, p_idx] / prad_total
+                    )
+                else:
+                    directivity_linear = 0.0
+                directivity_dbi = (
+                    10.0 * math.log10(directivity_linear) if directivity_linear > 0.0 else -999.0
+                )
+                et = complex(e_theta[t_idx, p_idx])
+                ep = complex(e_phi[t_idx, p_idx])
+                pattern.append(
+                    {
+                        "frequency_hz": freq_hz,
+                        "theta_deg": math.degrees(theta),
+                        "phi_deg": math.degrees(phi),
+                        "directivity_dbi": directivity_dbi,
+                        "e_theta_v_per_m": abs(et),
+                        "e_theta_phase_deg": math.degrees(cmath.phase(et)),
+                        "e_phi_v_per_m": abs(ep),
+                        "e_phi_phase_deg": math.degrees(cmath.phase(ep)),
+                    }
+                )
+
+    valid = [row["directivity_dbi"] for row in pattern if row["directivity_dbi"] > -999.0]
+    gain_dbi = max(valid) if valid else None
+
+    return {
+        "computed": True,
+        "method": (
+            "nf2ff (openEMS's separate near-field-to-far-field "
+            "post-processing tool): Directivity(theta,phi) = "
+            "4*pi*radius_m^2*P_rad(theta,phi)/Prad_total, gain_dbi = "
+            "max(10*log10(Directivity)) over the sampled (frequency, theta, "
+            "phi) grid below -- see simulation/openems.py's module "
+            "docstring for the full citation."
+        ),
+        "radius_m": radius_m,
+        "frequency_hz": list(frequencies_hz),
+        "prad_w": list(prad_total_by_freq),
+        "pattern": pattern,
+        "gain_dbi": gain_dbi,
+        "note": (
+            "gain_dbi is peak DIRECTIVITY across the sampled grid in "
+            "'pattern' (no port-mismatch or extra loss beyond what the FDTD "
+            "materials already modeled is subtracted) -- narrower/coarser "
+            "than the antenna's true 3-D peak if the swept theta/phi grid "
+            "doesn't include its actual maximum-radiation direction."
+        ),
+    }
+
+
+def _compute_far_field_from_nf2ff(
+    workdir: Path,
+    nf2ff_def: dict[str, Any],
+    default_frequency_hz: float | None,
+    executable: str | None = None,
+    timeout_s: int = 600,
+) -> dict[str, Any]:
+    """Orchestrate the real NF2FF far-field/gain computation: locate the FD
+    field dump files the FDTD run wrote for `nf2ff_def`'s recording box,
+    build and run the nf2ff tool's own input-XML config against them, then
+    parse its result HDF5 into far_field/gain_dbi. Returns
+    {"far_field": {...}, "gain_dbi": ...} -- computed=False (with a
+    specific, distinguishing note, never a guess) when the dump files are
+    missing or the result HDF5 doesn't parse as expected; raises
+    SimulatorError (matching OpenemsSimulator.run()'s own style) only for a
+    genuine tool failure (nonzero exit, timeout) -- see module docstring's
+    "warn, never block" convention."""
+    resolved = _resolve_nf2ff_params(nf2ff_def, default_frequency_hz)
+    found, missing = _locate_nf2ff_plane_files(workdir, resolved["name"], resolved["directions"])
+    if not found:
+        return {
+            "far_field": {
+                "computed": False,
+                "note": (
+                    "no NF2FF E/H field dump files found in the run's "
+                    f"workdir for box {resolved['name']!r} (looked for "
+                    f"face(s) {missing}) -- this can mean the run didn't "
+                    "actually write dumps (was --disable-dumps still "
+                    "passed?), the real openEMS binary names/lays out its "
+                    "dump files differently than this module assumes (see "
+                    "module docstring's honest caveat), or (for a fake "
+                    "test executable) the fake script simply doesn't emit "
+                    "them."
+                ),
+            },
+            "gain_dbi": None,
+        }
+
+    theta_rad = np.deg2rad(
+        resolved["theta_start_deg"]
+        + resolved["theta_step_deg"] * np.arange(resolved["theta_count"])
+    )
+    phi_rad = np.deg2rad(
+        resolved["phi_start_deg"] + resolved["phi_step_deg"] * np.arange(resolved["phi_count"])
+    )
+
+    xml_text = _generate_nf2ff_config_xml(
+        outfile=f"{resolved['name']}.h5",
+        frequencies_hz=resolved["frequencies_hz"],
+        theta_rad=theta_rad,
+        phi_rad=phi_rad,
+        planes=found,
+        radius_m=resolved["radius_m"],
+        center_m=resolved["center_m"],
+        eps_r=resolved["eps_r"],
+        mue_r=resolved["mue_r"],
+    )
+    xml_path = workdir / f"{resolved['name']}_nf2ff.xml"
+    xml_path.write_text(xml_text)
+
+    nf2ff_bin = executable or os.getenv("NF2FF_BIN") or "nf2ff"
+    try:
+        completed = subprocess.run(
+            [nf2ff_bin, str(xml_path)],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SimulatorError(f"nf2ff timed out after {timeout_s}s: {exc}") from exc
+    if completed.returncode != 0:
+        raise SimulatorError(f"nf2ff failed ({completed.returncode}): {completed.stderr[-4000:]}")
+
+    result_path = workdir / f"{resolved['name']}.h5"
+    if not result_path.exists():
+        return {
+            "far_field": {
+                "computed": False,
+                "note": (
+                    f"nf2ff exited successfully but did not write the "
+                    f"expected result file {result_path.name!r} -- nothing "
+                    "to read."
+                ),
+            },
+            "gain_dbi": None,
+        }
+
+    import h5py
+
+    n_freq = len(resolved["frequencies_hz"])
+    try:
+        with h5py.File(result_path, "r") as f:
+            prad_total_by_freq = [float(v) for v in np.asarray(f["/nf2ff"].attrs["Prad"])]
+            e_theta_by_freq = [np.asarray(f[f"/nf2ff/E_theta/FD/f{n}"][()]) for n in range(n_freq)]
+            e_phi_by_freq = [np.asarray(f[f"/nf2ff/E_phi/FD/f{n}"][()]) for n in range(n_freq)]
+            p_rad_by_freq = [
+                np.asarray(f[f"/nf2ff/P_rad/FD/f{n}"][()], dtype=float) for n in range(n_freq)
+            ]
+    except (OSError, KeyError) as exc:
+        return {
+            "far_field": {
+                "computed": False,
+                "note": (
+                    f"nf2ff wrote {result_path.name!r} but this module "
+                    "could not read the expected /nf2ff/.../FD/f<N> "
+                    f"datasets or the /nf2ff 'Prad' attribute from it "
+                    f"({exc!r}) -- either the real nf2ff binary's result "
+                    "HDF5 schema differs from what this module assumes "
+                    "(see module docstring's honest caveat), or the number "
+                    f"of frequencies it computed doesn't match the "
+                    f"{n_freq} requested."
+                ),
+            },
+            "gain_dbi": None,
+        }
+
+    far_field = _build_far_field_result(
+        frequencies_hz=resolved["frequencies_hz"],
+        theta_rad=theta_rad,
+        phi_rad=phi_rad,
+        e_theta_by_freq=e_theta_by_freq,
+        e_phi_by_freq=e_phi_by_freq,
+        p_rad_by_freq=p_rad_by_freq,
+        prad_total_by_freq=prad_total_by_freq,
+        radius_m=resolved["radius_m"],
+    )
+    far_field["hdf5_file"] = str(result_path)
+    gain_dbi = far_field.pop("gain_dbi")
+    return {"far_field": far_field, "gain_dbi": gain_dbi}
+
+
 def parse_openems_output(
     raw_output: str,
     end_criteria: float = 1e-5,
     max_timesteps: int | None = None,
     workdir: str | Path | None = None,
     ports: list[dict[str, Any]] | None = None,
+    nf2ff: dict[str, Any] | None = None,
+    default_frequency_hz: float | None = None,
+    nf2ff_executable: str | None = None,
+    nf2ff_timeout_s: int = 600,
 ) -> dict[str, Any]:
     """Parse openEMS console/log text into convergence metadata plus real
     (when `workdir`+`ports` are given and the port probe dump files are
@@ -879,21 +1447,36 @@ def parse_openems_output(
                 "computed when they are."
             ),
         }
-    far_field = {
-        "computed": False,
-        "note": (
-            "Far-field/gain pattern extraction requires openEMS's separate "
-            "nf2ff near-field-to-far-field post-processing tool, which this "
-            "implementation does not invoke -- see simulation/openems.py's "
-            "module docstring 'SCOPE OF THIS IMPLEMENTATION'."
-        ),
-    }
+    if workdir is not None and nf2ff:
+        nf2ff_result = _compute_far_field_from_nf2ff(
+            Path(workdir),
+            nf2ff,
+            default_frequency_hz,
+            executable=nf2ff_executable,
+            timeout_s=nf2ff_timeout_s,
+        )
+        far_field = nf2ff_result["far_field"]
+        gain_dbi = nf2ff_result["gain_dbi"]
+    else:
+        far_field = {
+            "computed": False,
+            "note": (
+                "Far-field/gain pattern extraction needs the run's workdir "
+                "and an 'nf2ff' recording-box definition (to invoke "
+                "openEMS's separate nf2ff near-field-to-far-field "
+                "post-processing tool) -- at least one wasn't given to "
+                "parse_openems_output(), so nothing was computed. See "
+                "simulation/openems.py's module docstring 'SCOPE OF THIS "
+                "IMPLEMENTATION' for what's computed when they are."
+            ),
+        }
+        gain_dbi = None
 
     return {
         "convergence": convergence,
         "s_parameters": s_parameters,
         "far_field": far_field,
-        "gain_dbi": None,
+        "gain_dbi": gain_dbi,
     }
 
 
@@ -903,15 +1486,26 @@ def run_openems_simulation(
     timeout_s: int = 3600,
     executable: str | None = None,
     workdir: str | None = None,
+    nf2ff_executable: str | None = None,
+    nf2ff_timeout_s: int = 600,
 ) -> dict[str, Any]:
     """Generate an openEMS FDTD-XML file from structured geometry/materials/
     ports/mesh, run it via OpenemsSimulator, and parse convergence metadata
     plus S-parameter/far-field results tagged with SIMULATED provenance.
     S-parameters are real (FFT-computed from the run's port ProbeBox
     time-domain dumps) whenever those dump files are present in the run's
-    workdir; far-field remains not computed (needs openEMS's separate
-    nf2ff tool) -- see this module's header comment "SCOPE OF THIS
-    IMPLEMENTATION" for exactly what's covered.
+    workdir. Far-field/gain is real (issue #269) whenever `geometry['nf2ff']`
+    names a recording box (see generate_openems_xml's docstring) -- this
+    also switches the FDTD run's own extra_args to enable field/nf2ff dumps
+    (dropping the default --disable-dumps, per this module's own
+    Enable_Dumps citation), since a run that suppresses dumps would leave
+    the NF2FF box with nothing to read. See this module's header comment
+    "SCOPE OF THIS IMPLEMENTATION" for exactly what's covered either way.
+
+    `nf2ff_executable`/`nf2ff_timeout_s` configure the SEPARATE `nf2ff`
+    post-processing binary (default: the NF2FF_BIN env var, else "nf2ff") --
+    independent of `executable`, which names the `openEMS` FDTD binary
+    itself.
 
     See this module's header comment for the format-verification citations
     and the honest caveat: XML generation and log parsing are built to the
@@ -924,16 +1518,32 @@ def run_openems_simulation(
     fdtd = fdtd or {}
     xml_file.write_text(generate_openems_xml(geometry, fdtd))
 
+    nf2ff_def = geometry.get("nf2ff")
+    job: dict[str, Any] = {
+        "xml_file": str(xml_file),
+        "workdir": str(work_dir),
+        "timeout_s": timeout_s,
+    }
+    if nf2ff_def:
+        # AC (issue #269): a run that requests an NF2FF box must not fall
+        # back to the default --disable-dumps -- an empty extra_args list
+        # restores the plain "openEMS <xml>" invocation with no flags (see
+        # OpenemsSimulator.run()'s own docstring), so field/nf2ff dumps are
+        # enabled for this run.
+        job["extra_args"] = []
+
     simulator = OpenemsSimulator(executable=executable)
-    result = simulator.run(
-        {"xml_file": str(xml_file), "workdir": str(work_dir), "timeout_s": timeout_s}
-    )
+    result = simulator.run(job)
     parsed = parse_openems_output(
         result.outputs.get("stdout", ""),
         end_criteria=float(fdtd.get("end_criteria", 1e-5)),
         max_timesteps=int(fdtd.get("max_timesteps", 30000)),
         workdir=work_dir,
         ports=geometry.get("ports"),
+        nf2ff=nf2ff_def,
+        default_frequency_hz=geometry.get("frequency_hz"),
+        nf2ff_executable=nf2ff_executable,
+        nf2ff_timeout_s=nf2ff_timeout_s,
     )
 
     output: dict[str, Any] = {

@@ -177,6 +177,19 @@ during implementation -- see the per-fact citations below. Accessed
   KiCad's source code is developed and distributed under the GNU General
   Public License (GPL) version 3 or greater". A manual/system install, not
   pip-installable -- documented in README.md's Optional-tools list.
+  - `kicad-cli pcb drc` (issue #272): CLI options `--format`, `--output`,
+    `--severity-*`, `--exit-code-violations` and its own documented
+    exit-code-0-vs-5 contract ("The exit code is 0 if no violations are
+    found, and 5 if any violations are found") --
+    https://docs.kicad.org/9.0/en/cli/cli.html, fetched directly. The DRC
+    JSON report shape it writes (`violations[]` with
+    `type`/`severity`/`description`/`excluded`/`items`; `severity` enum
+    "error"/"warning") is KiCad's own published schema,
+    https://schemas.kicad.org/drc.v1.json (redirects to
+    https://gitlab.com/kicad/code/kicad/-/raw/master/resources/schemas/drc.v1.json),
+    also fetched directly. See run_kicad_drc()/parse_kicad_drc_report()
+    below, and docs/tools/kicad-gerber2ems.md's own [11]/[12] citations to
+    the same two sources.
 
   GERBV (the external rasterizer gerber2ems shells out to internally for
   Gerber-to-PNG conversion, GPL-2.0): confirmed via the maintained fork's
@@ -233,6 +246,10 @@ _STACKUP_FORMAT_VERSION = "1.0"  # gerber2ems's own STACKUP_FORMAT_VERSION
 _CONFIG_FORMAT_VERSION = "1.2"  # gerber2ems's own CONFIG_FORMAT_VERSION
 # (src/gerber2ems/constants.py), checked by its own is_cfg_version_invalid()
 # -- see module docstring citation.
+_KICAD_CLI_DRC_EXIT_CODES_OK = (0, 5)  # kicad-cli's own documented
+# `--exit-code-violations` contract for `pcb drc` (docs.kicad.org/9.0/en/
+# cli/cli.html, see module docstring citation): 0 = no violations, 5 =
+# violations found -- BOTH are successful DRC runs, not tool failures.
 
 
 class KicadGerber2emsSimulator(Simulator):
@@ -721,6 +738,145 @@ def parse_gerber2ems_results(results_dir: str | Path) -> dict[str, Any]:
     return {"computed": True, "ports": ports, "note": None}
 
 
+def parse_kicad_drc_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Interpret one already-parsed KiCad DRC JSON report (the dict
+    `json.loads()` of the file `kicad-cli pcb drc --format json --output
+    <path> ...` writes -- see run_kicad_drc() below, which owns the
+    subprocess invocation and file read) into `{"violation_count": int,
+    "violations": [{"severity", "type", "description"}, ...]}`.
+
+    Pure, no subprocess or file I/O -- this is the "interpret the tool's
+    output" half of the run/parse split this module uses elsewhere
+    (KicadGerber2emsSimulator.run() vs. parse_gerber2ems_port_csv()/
+    parse_gerber2ems_results(); export_kicad_fab_assets() vs.
+    extract_kicad_stackup()), so this filtering logic is directly
+    unit-testable on a plain dict, with no fake executable required.
+
+    The report shape (top-level `violations` array of
+    `{type, severity, description, excluded, items}` objects) is KiCad's own
+    published schema, https://schemas.kicad.org/drc.v1.json (fetched
+    directly during this pass, confirmed against the underlying
+    resources/schemas/drc.v1.json in the kicad/code/kicad source tree --
+    see module docstring citation): `severity` is one of "error"/"warning";
+    `excluded` (default false) marks a violation the PCB designer already
+    reviewed in KiCad's own DRC dialog and told KiCad to stop reporting.
+    This function filters `excluded` violations out of its returned
+    `violations` list -- re-surfacing a violation a human already reviewed
+    and dismissed on this exact board would not be load-bearing for the
+    reader's go/no-go decision (CLAUDE.md: a warning must fire only when it
+    would change the decision).
+    """
+    violations = [
+        {
+            "severity": v.get("severity"),
+            "type": v.get("type"),
+            "description": v.get("description"),
+        }
+        for v in report.get("violations", [])
+        if not v.get("excluded", False)
+    ]
+    return {"violation_count": len(violations), "violations": violations}
+
+
+def run_kicad_drc(
+    board_file: str,
+    workdir: str | Path,
+    kicad_cli_path: str | None = None,
+    timeout_s: int = 600,
+) -> dict[str, Any]:
+    """Run KiCad's own Design Rule Check against `board_file` via `kicad-cli
+    pcb drc --format json --output <workdir>/drc_report.json
+    --exit-code-violations <board_file>` (issue #272 -- the gap flagged in
+    docs/tools/kicad-gerber2ems.md's "Capabilities not yet used here"
+    section), then hand the resulting JSON violations report to
+    parse_kicad_drc_report() (this function's own pure counterpart) to
+    interpret.
+
+    kicad-cli's own CLI reference (https://docs.kicad.org/9.0/en/cli/cli.html,
+    fetched directly during this pass) documents `--exit-code-violations` as:
+    "The exit code is 0 if no violations are found, and 5 if any violations
+    are found" (`_KICAD_CLI_DRC_EXIT_CODES_OK` above) -- BOTH are successful
+    DRC runs that still write the report; neither is a subprocess failure.
+    Only any OTHER exit code (kicad-cli crashed, the board file is
+    unreadable, kicad-cli itself is missing) is treated as one, raising
+    SimulatorError -- mirroring KicadGerber2emsSimulator.run()'s own
+    subprocess.run(..., cwd=..., capture_output=True, text=True, timeout=...,
+    check=False) pattern.
+
+    Returns `{"checked": True, "report_file": str, "violation_count": int,
+    "violations": [{"severity", "type", "description"}, ...]}`. Per
+    CLAUDE.md's "warn, never block": a nonzero `violation_count` is data for
+    the caller to surface, never a reason for this function itself to raise
+    -- see run_kicad_gerber2ems_simulation, which calls this BEFORE
+    export_kicad_fab_assets()/KicadGerber2emsSimulator.run() and folds a
+    nonzero count into that caller's own `warnings` list rather than
+    aborting.
+
+    `kicad_cli_path` mirrors run_kicad_gerber2ems_simulation's own
+    same-named parameter (the same kicad-cli binary already required to
+    launch the headless api-server for fab-asset export, see
+    _real_connect_and_get_board) -- falls back to the `KICAD_CLI_BIN` env
+    var, then the bare command "kicad-cli" on PATH, matching every other
+    *_BIN convention in this repo's simulation/*.py adapters (e.g.
+    GERBER2EMS_BIN above).
+    """
+    executable = kicad_cli_path or os.getenv("KICAD_CLI_BIN") or "kicad-cli"
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    report_file = workdir / "drc_report.json"
+
+    args = [
+        executable,
+        "pcb",
+        "drc",
+        "--format",
+        "json",
+        "--output",
+        str(report_file),
+        "--exit-code-violations",
+        str(board_file),
+    ]
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SimulatorError(f"kicad-cli pcb drc timed out after {timeout_s}s: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise SimulatorError(
+            f"kicad-cli was not found at {executable!r}. Pass kicad_cli_path=, set "
+            "the KICAD_CLI_BIN env var, or install KiCad -- see README.md's "
+            "Optional-tools list."
+        ) from exc
+
+    # See this function's own docstring: 0 and 5 are kicad-cli's own two
+    # SUCCESSFUL --exit-code-violations outcomes (no violations / violations
+    # found); anything else is a genuine tool failure, not a board finding.
+    if completed.returncode not in _KICAD_CLI_DRC_EXIT_CODES_OK:
+        raise SimulatorError(
+            f"kicad-cli pcb drc failed ({completed.returncode}): {completed.stderr[-4000:]}"
+        )
+    if not report_file.is_file():
+        raise SimulatorError(
+            f"kicad-cli pcb drc exited {completed.returncode} but wrote no report to {report_file}"
+        )
+
+    report = json.loads(report_file.read_text())
+    parsed = parse_kicad_drc_report(report)
+
+    return {
+        "checked": True,
+        "report_file": str(report_file),
+        "violation_count": parsed["violation_count"],
+        "violations": parsed["violations"],
+    }
+
+
 def run_kicad_gerber2ems_simulation(
     board_file: str,
     config: dict[str, Any],
@@ -746,6 +902,20 @@ def run_kicad_gerber2ems_simulation(
     docstring), so there is no "far_field" key here to stub, unlike
     simulation/openems.py's own result shape.
 
+    Runs run_kicad_drc() FIRST, before connecting to KiCad for
+    export_kicad_fab_assets()/before KicadGerber2emsSimulator.run() (issue
+    #272) -- its structured result is folded into this dict's own "drc"
+    key. Per CLAUDE.md's "warn, never block": a board with reported DRC
+    violations still proceeds through export and simulation; the
+    violations surface only as a human-readable entry in this dict's own
+    top-level "warnings" list (mirroring export_kicad_fab_assets()'s own
+    warnings: list[str] pattern for its plated-drill-file assumption,
+    folded in alongside it here), never as a raised exception. A genuinely
+    broken DRC invocation (kicad-cli missing/crashed -- see run_kicad_drc's
+    own docstring on the difference) is NOT a board violation and still
+    raises SimulatorError, before this function ever attempts to connect to
+    KiCad.
+
     `connect_fn`/`kipy_api` are test-only injection seams (mirroring
     simulation/hfss.py's hfss_factory) -- omit both for a real call (the
     agent/MCP tool wiring always omits them, so a real invocation always
@@ -762,6 +932,10 @@ def run_kicad_gerber2ems_simulation(
     work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="kicad_gerber2ems_"))
     work_dir.mkdir(parents=True, exist_ok=True)
     fab_dir = work_dir / "fab"
+
+    drc = run_kicad_drc(
+        board_file, workdir=work_dir / "drc", kicad_cli_path=kicad_cli_path, timeout_s=timeout_s
+    )
 
     connect = connect_fn or _real_connect_and_get_board
     kicad_conn, board = connect(board_file, kicad_cli_path=kicad_cli_path)
@@ -781,6 +955,16 @@ def run_kicad_gerber2ems_simulation(
 
     parsed = parse_gerber2ems_results(work_dir / "ems" / "results")
 
+    warnings = list(fab_assets["warnings"])
+    if drc["violation_count"] > 0:
+        warnings.append(
+            f"KiCad DRC found {drc['violation_count']} violation(s) on this board "
+            "(shorts, clearance violations, or similar -- see result['drc']['violations'] "
+            "for detail); the board still proceeded through export and simulation per "
+            "CLAUDE.md's 'warn, never block' -- a human must review these before this "
+            "board is sent to fab."
+        )
+
     return {
         "provenance": "SIMULATED",
         "scope": (
@@ -791,9 +975,11 @@ def run_kicad_gerber2ems_simulation(
         "simulator": result.simulator,
         "status": result.status,
         "workdir": str(result.workdir),
+        "drc": drc,
         "fab_assets": fab_assets,
         "config_file": str(config_file),
         "computed": parsed["computed"],
         "ports": parsed["ports"],
         "note": parsed["note"],
+        "warnings": warnings,
     }

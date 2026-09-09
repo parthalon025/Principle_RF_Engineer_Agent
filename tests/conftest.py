@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import asyncio
+import json
 import os
 import platform
 import stat
@@ -6,7 +10,10 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from agents.tool_context import ToolContext
 from dotenv import load_dotenv
+
+import agent.main as agent_main
 
 load_dotenv()
 
@@ -55,6 +62,40 @@ def make_fake_executable(tmp_path: Path, body: str, name: str = "fake_exe") -> P
         script.write_text(f"#!{sys.executable}\n" + body)
         script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return script
+
+
+def invoke_agent_tool(tool_name: str, **kwargs):
+    """Call an `agent/main.py` `@function_tool`-wrapped tool through the real
+    `agents.tool.FunctionTool.on_invoke_tool` machinery, and return its
+    (JSON-decoded) result.
+
+    `@function_tool` wraps the original function into a non-callable `Tool`
+    object -- a plain `agent_main.<tool_name>(...)` call is not available to
+    test at all, and even if it were, a plain Python call would trivially
+    pass even if the SDK's own JSON-schema generation had silently stripped
+    a parameter the wrapper's signature added (exactly the issue #287/#317
+    bug class this exists to catch: a wrapper param present in the source
+    but absent from the schema the agent runtime actually offers).
+
+    Originally three near-identical copies of this helper (differing only in
+    the hardcoded tool name) lived one-per-file in tests/
+    test_ltspice_agent_wiring.py (the pattern's origin, issue #287),
+    tests/test_elmer_agent_wiring.py, and
+    tests/test_freecad_curved_agent_wiring.py (both issue #317). Code review
+    of #317 flagged that duplication (Fowler: Duplicated Code) and it moved
+    here so a fourth wiring-regression test doesn't grow a fourth copy.
+    """
+    all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
+    tool = next(t for t in all_tools if t.name == tool_name)
+    args_json = json.dumps(kwargs)
+    ctx = ToolContext(
+        context=None,
+        tool_name=tool_name,
+        tool_call_id="test-call",
+        tool_arguments=args_json,
+    )
+    raw = asyncio.run(tool.on_invoke_tool(ctx, args_json))
+    return json.loads(raw) if isinstance(raw, str) else raw
 
 
 @pytest.fixture

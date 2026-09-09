@@ -52,6 +52,10 @@ from rf_tools.calculations import (
     y_to_s,
     z_to_s,
 )
+from rf_tools.filter_synthesis import (
+    realize_lowpass_stepped_impedance_microstrip,
+    synthesize_filter,
+)
 
 # A generic, well-behaved two-port S-parameter matrix (unconditionally
 # stable amplifier-like response) reused across every S/Z/Y/ABCD/stability
@@ -169,6 +173,32 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #326 adds 1 more (search_ink_product, the Digi-Key/Mouser
     # citation-only ink/adhesive lookup fired by an unresolved ink-related
     # Capability warning): 87 + 1 = 88.
+    #
+    # issue #286 adds 1 more (realize_lowpass_stepped_impedance_microstrip_
+    # filter, the stepped-impedance microstrip physical realization of a
+    # synthesized lowpass ladder): 88 + 1 = 89.
+    #
+    # issue #284 adds 1 more (ingest_etsi_ipr_declaration, the SR 000 314
+    # IPR/FRAND-declaration register client): 89 + 1 = 90.
+    #
+    # issue #285 adds 1 more (lookup_3gpp_spec_status, the DynaReport
+    # version/withdrawal status lookup wired onto the tool surface right
+    # beside its ingest_3gpp_spec sibling): 90 + 1 = 91.
+    #
+    # issue #279 adds 1 more (search_fcc_rules, FCC eCFR topic/keyword
+    # discovery search over the Search Service wired onto the tool
+    # surface): 91 + 1 = 92.
+    #
+    # issue #275 adds 1 more (lookup_digikey_product_details, Digi-Key's
+    # ProductDetails endpoint -- parametric attributes and price/quantity
+    # breaks -- wired onto the tool surface alongside its
+    # lookup_digikey_component sibling): 92 + 1 = 93.
+    #
+    # issue #280 adds 1 more (search_uspto_patents, USPTO ODP full-text
+    # discovery search wired onto the tool surface): 93 + 1 = 94.
+    #
+    # ticket #276 adds 1 more (lookup_nexar_part_data, Nexar's cross-
+    # distributor pricing/availability + parametric specs query): 94 + 1 = 95.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -201,6 +231,13 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #219: ingest_patent
         + 1  # issue #257-T2: search_arxiv_papers
         + 1  # issue #326: search_ink_product
+        + 1  # issue #286: realize_lowpass_stepped_impedance_microstrip_filter
+        + 1  # issue #284: ingest_etsi_ipr_declaration
+        + 1  # issue #285: lookup_3gpp_spec_status
+        + 1  # issue #279: search_fcc_rules
+        + 1  # issue #275: lookup_digikey_product_details
+        + 1  # issue #280: search_uspto_patents
+        + 1  # ticket #276: lookup_nexar_part_data
     )
     assert len(registered_names) == expected
 
@@ -208,6 +245,7 @@ def test_registered_tool_count_matches_old_plus_new():
 def test_component_sourcing_tools_are_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "lookup_digikey_component" in registered_names
+    assert "lookup_digikey_product_details" in registered_names
     assert "lookup_mouser_component" in registered_names
     assert "lookup_nexar_component" in registered_names
     assert "reconcile_component_sources" in registered_names
@@ -262,6 +300,15 @@ def test_search_ink_product_never_calls_ingest_document(monkeypatch):
     )
 
     server.search_ink_product("conductive silver ink")
+
+
+def test_lookup_nexar_part_data_is_registered():
+    # ticket #276: Nexar's cross-distributor pricing/availability +
+    # parametric specs query must be reachable from the MCP tool surface,
+    # not just implemented in knowledge/nexar.py -- otherwise nothing that
+    # calls this server can ever invoke it.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "lookup_nexar_part_data" in registered_names
 
 
 def test_ingest_arxiv_paper_is_registered():
@@ -324,8 +371,11 @@ def test_standards_body_sourcing_tools_are_registered():
     # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule were
     # implemented and tested (knowledge/sourcing/threegpp.py, etsi.py,
     # fcc_ecfr.py) but wired onto no tool surface -- this asserts they now are.
+    # issue #285's lookup_3gpp_spec_status joins the same assertion so this
+    # test keeps catching the exact same gap for its own sibling function.
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "ingest_3gpp_spec" in registered_names
+    assert "lookup_3gpp_spec_status" in registered_names
     assert "ingest_etsi_standard" in registered_names
     assert "ingest_fcc_rule" in registered_names
 
@@ -362,6 +412,29 @@ def test_ingest_3gpp_spec_calls_through(monkeypatch):
     }
 
 
+def test_lookup_3gpp_spec_status_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real fetch/parse logic is
+    # exercised in tests/test_sourcing_threegpp.py; this only confirms the
+    # MCP wrapper forwards its one argument to knowledge.sourcing.threegpp.
+    captured = {}
+
+    def fake_lookup(spec_number):
+        captured["spec_number"] = spec_number
+        return {
+            "spec_number": spec_number,
+            "title": "NR; UE radio transmission and reception",
+            "withdrawn": True,
+            "version": None,
+        }
+
+    monkeypatch.setattr(server, "_lookup_3gpp_spec_status", fake_lookup)
+
+    result = server.lookup_3gpp_spec_status("38.101")
+
+    assert captured == {"spec_number": "38.101"}
+    assert result["withdrawn"] is True
+
+
 def test_ingest_etsi_standard_calls_through(monkeypatch):
     captured = {}
 
@@ -390,6 +463,42 @@ def test_ingest_etsi_standard_calls_through(monkeypatch):
     assert captured["supersedes_document_id"] is None
 
 
+def test_ingest_etsi_ipr_declaration_is_registered():
+    # issue #284: the SR 000 314 IPR/FRAND-declaration register client,
+    # wired onto the MCP tool surface alongside its ingest_etsi_standard
+    # sibling.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "ingest_etsi_ipr_declaration" in registered_names
+
+
+def test_ingest_etsi_ipr_declaration_calls_through(monkeypatch):
+    captured = {}
+
+    def fake_ingest(document_url, *, declared_against_document_id, license, classification):
+        captured.update(
+            document_url=document_url,
+            declared_against_document_id=declared_against_document_id,
+            license=license,
+            classification=classification,
+        )
+        return {"status": "ok", "document_id": 4}
+
+    monkeypatch.setattr(server, "_ingest_etsi_ipr_declaration", fake_ingest)
+
+    result = server.ingest_etsi_ipr_declaration(
+        "https://ipr.etsi.org/IPRDetails.aspx?IPRD_ID=198&IPRD_TYPE_ID=2&MODE=2",
+        declared_against_document_id=2,
+        license="ETSI terms",
+        classification="INTERNAL",
+    )
+
+    assert result == {"status": "ok", "document_id": 4}
+    assert captured["document_url"].startswith("https://ipr.etsi.org/IPRDetails.aspx")
+    assert captured["declared_against_document_id"] == 2
+    assert captured["license"] == "ETSI terms"
+    assert captured["classification"] == "INTERNAL"
+
+
 def test_ingest_fcc_rule_calls_through(monkeypatch):
     captured = {}
 
@@ -415,6 +524,55 @@ def test_ingest_fcc_rule_calls_through(monkeypatch):
         "title": 47,
         "supersedes_document_id": None,
     }
+
+
+def test_search_fcc_rules_is_registered():
+    # issue #279: knowledge/sourcing/fcc_ecfr.py's search_fcc_rules (issue
+    # #279's discovery-search addition), wired onto the MCP tool surface
+    # alongside its ingest_fcc_rule sibling.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_fcc_rules" in registered_names
+
+
+def test_search_fcc_rules_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real query/parse logic is
+    # exercised in tests/test_sourcing_fcc_ecfr.py; this only confirms the
+    # MCP wrapper forwards its arguments to knowledge.sourcing.fcc_ecfr and
+    # returns its candidate list unchanged.
+    captured = {}
+    candidates = [
+        {
+            "part": 90,
+            "title": 47,
+            "section": "90.391",
+            "heading": "Maximum EIRP and antenna height.",
+            "full_text_excerpt": "the <strong>EIRP</strong> shall not exceed...",
+        }
+    ]
+
+    def fake_search(query, *, max_results):
+        captured.update(query=query, max_results=max_results)
+        return candidates
+
+    monkeypatch.setattr(server, "_search_fcc_rules", fake_search)
+
+    result = server.search_fcc_rules("EIRP")
+
+    assert result == candidates
+    assert captured == {"query": "EIRP", "max_results": 10}
+
+
+def test_search_fcc_rules_never_calls_ingest_document(monkeypatch):
+    # Mirrors tests/test_sourcing_fcc_ecfr.py's own version of this guard
+    # (and this file's test_search_arxiv_papers_never_calls_ingest_document
+    # for its sibling), one layer up at the MCP wrapper.
+    def fail_if_called(**kwargs):
+        raise AssertionError("search_fcc_rules must never call ingest_document")
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(server, "_search_fcc_rules", lambda query, *, max_results: [])
+
+    server.search_fcc_rules("EIRP")
 
 
 def test_ingest_patent_is_registered():
@@ -459,9 +617,164 @@ def test_ingest_patent_calls_through(monkeypatch):
     }
 
 
+def test_search_uspto_patents_is_registered():
+    # issue #280: knowledge/sourcing/patent.py's search_uspto_patents, wired
+    # onto the MCP tool surface alongside its ingest_patent sibling.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_uspto_patents" in registered_names
+
+
+def test_search_uspto_patents_calls_through(monkeypatch):
+    # Mocked, not hitting the network or a live credential -- the real
+    # search/parse logic is exercised in tests/test_sourcing_patent.py; this
+    # only confirms the MCP wrapper forwards its arguments to
+    # knowledge.sourcing.patent and returns its candidate list unchanged.
+    captured = {}
+    candidates = [{"number": "US12089385", "title": "X", "date": "2024-09-10", "snippet": None}]
+
+    def fake_search(query, *, max_results):
+        captured.update(query=query, max_results=max_results)
+        return candidates
+
+    monkeypatch.setattr(server, "_search_uspto_patents", fake_search)
+
+    result = server.search_uspto_patents("conformal metamaterial absorber X-band")
+
+    assert result == candidates
+    assert captured == {
+        "query": "conformal metamaterial absorber X-band",
+        "max_results": 10,
+    }
+
+
+def test_search_uspto_patents_never_calls_ingest_patent_or_ingest_document(monkeypatch):
+    # Mirrors tests/test_sourcing_patent.py's own version of this guard, one
+    # layer up at the MCP wrapper: search and ingest stay two separate calls.
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("search_uspto_patents must never ingest anything")
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(server, "_ingest_patent", fail_if_called)
+    monkeypatch.setattr(server, "_search_uspto_patents", lambda query, *, max_results: [])
+
+    server.search_uspto_patents("conformal metamaterial skin")
+
+
 def test_correlate_simulated_and_measured_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "correlate_simulated_and_measured" in registered_names
+
+
+def test_correlate_simulated_and_measured_docstring_states_openems_is_sometimes_accepted():
+    """Issue #317 (ADR-0032 prefactor audit): this docstring previously claimed
+    openEMS's S-parameters are "both honestly rejected, not fabricated from" --
+    flatly contradicting agent/main.py's sibling wrapper (and the actual
+    behavior in rf_tools/correlation.py/simulation/openems.py: an openEMS
+    result with computed=True carries a real "touchstone_file" and IS
+    accepted). Regression guard against that specific drift reappearing.
+
+    Also guards a follow-up finding on the same docstring (code review of this
+    issue's own fix): the corrected text still overstated when openEMS is
+    accepted, omitting that simulation/openems.py only ever writes
+    "touchstone_file" for the SINGLE-PORT case (`if len(names) == 1:`) -- a
+    multi-port computed=True run has no "touchstone_file" and its "values"/
+    "z0_ohms" shape doesn't match the generic "s_parameters"/"z0" shape
+    correlate_simulated_and_measured accepts either, so it too is rejected.
+    rf_tools/correlation.py's own module docstring states this caveat
+    directly ("the single-port case, `\"computed\": True`")."""
+    doc = server.correlate_simulated_and_measured.__doc__
+    assert "computed=True" in doc
+    assert "computed=False" in doc
+    assert "both honestly rejected" not in doc
+    assert "single-port" in doc
+    assert "multi-port" in doc
+
+
+def test_mcp_server_and_agent_main_register_the_same_tool_names():
+    """Issue #317 (ADR-0032 prefactor audit) exists because agent/main.py's
+    @function_tool registrations and mcp_server/server.py's @mcp.tool()
+    registrations are two independently hand-maintained copies of the same
+    tool surface (issues #276/#288: a tool added to one file and never to
+    the other). Code review of #317's own fix found the audit it actually
+    performed covered only the two already-known drift instances, not the
+    full pairwise sweep the issue's acceptance criteria asked for. This is
+    the cheap, permanent half of that sweep (ADR-0032's own "Considered and
+    rejected" section calls this exact set-equality check a reasonable
+    stopgap): it doesn't catch docstring wording drift (see the per-tool
+    tests around this one for the specific content drift this issue's
+    review found and fixed), but it does make a repeat of #276/#288 --
+    a tool registered on one surface and invisible on the other -- a loud
+    failure here instead of a silent gap."""
+    import agent.main as agent_main
+
+    agent_tool_names = {t.name for role in agent_main.ROLES.values() for t in role.tools}
+    mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    # route_to_*_role handoffs are agent.py-only (Agents-SDK handoff
+    # mechanism, not an MCP tool); everything else must match both ways.
+    agent_only = {n for n in agent_tool_names - mcp_tool_names if not n.startswith("route_to_")}
+    assert agent_only == set(), f"tools on agent/main.py only: {agent_only}"
+    assert mcp_tool_names - agent_tool_names == set()
+
+
+def test_mcp_server_docstrings_carry_the_behavioral_content_agent_main_states():
+    """Code review of issue #317 (ADR-0032 prefactor audit) found the audit
+    that shipped covered only the one already-known drift instance
+    (correlate_simulated_and_measured) plus one unrelated schema-drift bug,
+    not the full docstring-by-docstring diff the issue's own acceptance
+    criteria asked for across all tool names common to both files. An
+    independent AST-based diff of all 94 common @function_tool/@mcp.tool()
+    pairs' docstrings turned up six more real instances of the same class
+    of drift this issue exists to catch -- substantive behavioral content
+    present in agent/main.py's copy and silently absent from mcp_server/
+    server.py's, not just harmless wording/verbosity trimming:
+
+      - search_knowledge: the ranking-order guarantee (authority_rank
+        first, then native score, never a blended score) was missing.
+      - verify_requirement: the "Folding a FAIL into any approval/release
+        gate is out of scope here" scope statement was missing -- a caller
+        could otherwise assume recording FAIL blocks a release by itself.
+      - extract_components: both the per-field provenance/validation_error
+        behavior and "a non-datasheet/application_note document is a
+        no-op" were missing entirely.
+      - index_document: the entire PUBLIC/INTERNAL fallback-on-outage
+        paragraph (local falls back to external if the self-hosted backend
+        is briefly unreachable) was missing.
+      - reconcile_component_sources: the non-destructive-merge guarantee
+        (an omitted/absent datasheet_document_ids entry preserves the
+        existing row's datasheet_document_id/specifications rather than
+        wiping them) was missing.
+      - lookup_nexar_component: the ALLOW_EXTERNAL_NETWORK_TOOLS/credential
+        gate and Nexar's free-tier ~1,000-matched-part cap were missing.
+
+    (ingest_patent's "still ingested, failure reason recorded" behavior on
+    a failed render_page_images was also restored, but that docstring still
+    differs enough in wording that this test doesn't assert on it here --
+    see the fix commit for that one.)
+
+    This locks in the fix: the fact silently missing from each MCP-surface
+    docstring above must appear in it going forward."""
+    assert "authority_rank first" in server.search_knowledge.__doc__
+    assert "never a single" in server.search_knowledge.__doc__
+
+    verify_doc = " ".join(server.verify_requirement.__doc__.split())
+    assert "out of scope here" in verify_doc
+    assert "only records the status" in verify_doc
+
+    assert "MANUFACTURER-SPECIFIED" in server.extract_components.__doc__
+    assert "validation_error" in server.extract_components.__doc__
+    assert "no-op" in server.extract_components.__doc__
+
+    assert "PUBLIC/INTERNAL" in server.index_document.__doc__
+    assert "briefly unreachable" in server.index_document.__doc__
+
+    reconcile_doc = " ".join(server.reconcile_component_sources.__doc__.split())
+    assert "preserves whatever" in reconcile_doc
+    assert "rather than wiping either" in reconcile_doc
+
+    assert "ALLOW_EXTERNAL_NETWORK_TOOLS=true AND those credentials" in (
+        server.lookup_nexar_component.__doc__
+    )
+    assert "1,000 matched parts" in server.lookup_nexar_component.__doc__
 
 
 def test_run_nec2_simulation_is_registered():
@@ -502,6 +815,44 @@ def test_run_elmer_simulation_is_registered():
 def test_run_ltspice_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_ltspice_simulation" in registered_names
+
+
+def test_run_ltspice_simulation_forwards_job(monkeypatch):
+    # Code review on issue #287: the MCP tool wrapper originally still only
+    # declared netlist/netlist_file/timeout_s, so a `job` dict (the new
+    # structured .net two-port templating path) could never reach
+    # simulation.ltspice.run_ltspice_simulation through this, the actual
+    # agent-facing call path -- FastMCP builds the tool's JSON schema from
+    # this wrapper's own signature, not the wrapped function's. This proves
+    # `job` is now accepted and passed through untouched, alongside
+    # netlist/netlist_file/timeout_s (mirrors run_xyce_simulation's/
+    # run_ngspice_simulation's own job-forwarding wrappers above).
+    captured = {}
+
+    def fake_run(netlist=None, netlist_file=None, job=None, timeout_s=600):
+        captured.update(netlist=netlist, netlist_file=netlist_file, job=job, timeout_s=timeout_s)
+        return {"provenance": "SIMULATED"}
+
+    monkeypatch.setattr(server, "_run_ltspice_simulation", fake_run)
+
+    job = {
+        "components": [{"type": "V", "name": "V1", "n1": "in", "n2": "0", "ac_mag": 1.0}],
+        "ports": [
+            {"role": "input", "name": "V1"},
+            {"role": "output", "kind": "V", "node": "in"},
+        ],
+        "analysis": {
+            "type": "ac",
+            "sweep_type": "dec",
+            "points": 10,
+            "start_freq_hz": 1e6,
+            "stop_freq_hz": 1e8,
+        },
+    }
+    result = server.run_ltspice_simulation(job=job, timeout_s=15)
+
+    assert captured == {"netlist": None, "netlist_file": None, "job": job, "timeout_s": 15}
+    assert result == {"provenance": "SIMULATED"}
 
 
 def test_run_palace_simulation_is_registered():
@@ -746,6 +1097,35 @@ def test_calculate_l_network_match_calls_through():
     want = set(expected)
     for gx, gb in got:
         assert any(gx == pytest.approx(wx) and gb == pytest.approx(wb) for wx, wb in want)
+    assert result["provenance"] == "CALCULATED"
+
+
+# ---------------------------------------------------------------------------
+# Filter physical realization (issue #286)
+# ---------------------------------------------------------------------------
+
+
+def test_realize_lowpass_stepped_impedance_microstrip_filter_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "realize_lowpass_stepped_impedance_microstrip_filter" in registered_names
+
+
+def test_realize_lowpass_stepped_impedance_microstrip_filter_calls_through():
+    result = server.realize_lowpass_stepped_impedance_microstrip_filter(
+        response="butterworth",
+        order=3,
+        eps_r=4.4,
+        h_m=0.0016,
+        cutoff_hz=1e9,
+        z_high_ohm=100.0,
+        z_low_ohm=20.0,
+    )
+    network = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
+    sections = realize_lowpass_stepped_impedance_microstrip(
+        network, eps_r=4.4, h_m=0.0016, z_high_ohm=100.0, z_low_ohm=20.0
+    )
+    assert result["network"] == network.to_dict()
+    assert result["sections"] == [s.to_dict() for s in sections]
     assert result["provenance"] == "CALCULATED"
 
 
@@ -1435,6 +1815,84 @@ def test_run_openparem_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["far_field"]["entries"][0]["gain_dbi"] == pytest.approx(5.23)
 
 
+_FAKE_GMSH_FOR_OPENPAREM_MCP_TEST = """
+import sys
+args = sys.argv[1:]
+out = args[args.index("-o") + 1]
+with open(out, "w") as f:
+    f.write("$MeshFormat\\n2.2 0 8\\n$EndMeshFormat\\n")
+sys.exit(0)
+"""
+
+
+def test_run_openparem_simulation_with_geometry_and_materials_calls_through(
+    tmp_path: Path, monkeypatch
+):
+    """issue #278: the MCP wrapper exposes `geometry` (meshed internally via a
+    real gmsh call, faked out here) and `materials` (a generated local
+    materials file) as alternatives to a pre-supplied mesh_file/materials
+    library, matching run_elmer_simulation's own geometry-first convention."""
+    openparem_script = _write_fake_openparem3d(tmp_path, "cube")
+    monkeypatch.setenv("OPENPAREM3D_BIN", str(openparem_script))
+    gmsh_script = make_fake_executable(
+        tmp_path, _FAKE_GMSH_FOR_OPENPAREM_MCP_TEST, name="fake_gmsh_openparem"
+    )
+
+    ports = {
+        "paths": [
+            {
+                "name": "port",
+                "points": [[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 0.001, 0.0]],
+                "closed": True,
+            },
+            {
+                "name": "front",
+                "points": [
+                    [-0.1, -0.1, -0.1],
+                    [0.1, -0.1, -0.1],
+                    [0.1, -0.1, 0.1],
+                    [-0.1, -0.1, 0.1],
+                ],
+                "closed": True,
+            },
+        ],
+        "boundaries": [{"name": "front", "type": "radiation", "path": "+front"}],
+        "ports": [
+            {
+                "name": "in",
+                "path": "+port",
+                "modes": [{"sport": 1, "integration_path": {"type": "voltage", "path": "+port"}}],
+            }
+        ],
+    }
+    result = server.run_openparem_simulation(
+        ports=ports,
+        geometry={"domain": {"p1_m": [0.0, 0.0, 0.0], "p2_m": [0.02, 0.02, 0.01]}},
+        project={"frequency_plan": {"point": [{"frequency_hz": 2.45e9}]}},
+        project_name="cube",
+        materials=[
+            {
+                "name": "FR4",
+                "relative_permittivity": 4.3,
+                "loss_tangent": 0.025,
+                "frequency_hz": "any",
+                "citations": ["test fixture citation"],
+            }
+        ],
+        timeout_s=10,
+        gmsh_executable=str(gmsh_script),
+        gmsh_timeout_s=10,
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["status"] == "COMPLETED"
+    assert Path(result["msh_file"]).exists()
+    assert Path(result["materials_file"]).exists()
+    project_text = Path(result["project_file"]).read_text()
+    assert "mesh.file                       cube.msh" in project_text
+    assert "materials.local.name" in project_text
+
+
 # ---------------------------------------------------------------------------
 # Elmer FEM VectorHelmholtz simulation (issue #64)
 #
@@ -1725,3 +2183,36 @@ def test_run_freecad_curved_geometry_calls_through(tmp_path: Path, monkeypatch):
     assert result["freecad"]["objects_built"] == ["patch_0"]
     assert result["freecad"]["errors"] == []
     assert result["freecad"]["step_file"] is not None
+
+
+def test_generate_freecad_curved_geometry_forwards_executable(tmp_path: Path, monkeypatch):
+    # Issue #317 (ADR-0032 prefactor audit): the sibling agent/main.py wrapper
+    # originally still only declared primitives/curvature/timeout_s, so the
+    # `executable` override -- already accepted by this MCP-side wrapper and
+    # by geometry.freecad_curved.run_freecad_curved_geometry itself -- could
+    # never reach this tool through the agent-facing call path. That fix is
+    # covered by tests/test_freecad_curved_agent_wiring.py; this test instead
+    # proves `executable` actually takes effect on the MCP surface itself, by
+    # pointing it at a fake FreeCADCmd directly (not via the FREECAD_BIN env
+    # var, which the calls_through test above already exercises) and
+    # confirming an unset/bogus env var doesn't stop it from running.
+    script = _write_fake_freecadcmd(tmp_path)
+    monkeypatch.delenv("FREECAD_BIN", raising=False)
+
+    primitives = [
+        {
+            "name": "patch",
+            "shape": "box",
+            "p1_m": [-0.001, -0.001, 0.0],
+            "p2_m": [0.001, 0.001, 0.0016],
+        }
+    ]
+    curvature = {"kind": "cylinder", "radius_m": 0.05, "axis": "z"}
+    result = server.generate_freecad_curved_geometry(
+        primitives, curvature, timeout_s=10, executable=str(script)
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "FreeCADCmd"
+    assert result["status"] == "COMPLETED"
+    assert result["freecad"]["objects_built"] == ["patch_0"]

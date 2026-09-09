@@ -183,6 +183,7 @@ from designs.release_approval import (
     release_fingerprint_fields,
     request_design_release_approval,
 )
+from designs.requirements_document import read_requirements_document as _read_requirements_document
 from orchestration.approval import (
     LoopStepApprovalReceipt,
     OrchestrationError,
@@ -422,6 +423,16 @@ def decide_pending_approval(
     Raises `ApprovalCliError` for an unknown request id, an unknown
     `decision` value, or a blank `approved_by` -- checked before
     `request_loop_step_approval` is ever called.
+
+    An approval for a pending ARCHITECTURE request additionally reads the
+    design's current Requirements-document status (issue #325, docs/adr/
+    0031) and forwards it to `advance_design_loop_step` -- if that document
+    has not reached `CONFIRMED`, the advance itself raises
+    `OrchestrationError` even though the human just approved the step; the
+    audit record above has already been written by that point, so the
+    refusal is visible in the audit trail and the pending row is left in
+    place (not deleted) for the human to retry once the document is
+    confirmed.
     """
     if decision not in ("approve", "refuse"):
         raise ApprovalCliError(f"decision must be 'approve' or 'refuse', got {decision!r}")
@@ -484,6 +495,20 @@ def decide_pending_approval(
     finally:
         conn.close()
 
+    # issue #325, docs/adr/0031: ARCHITECTURE additionally gates on the
+    # design's Requirements document reaching CONFIRMED. This module already
+    # talks to Postgres directly (unlike orchestration/tooling.py, which
+    # takes requirements_document_status as a caller-supplied pass-through --
+    # see that module's own docstring), so the freshest status is read here,
+    # the same way `row["loop_state"]`/`row["step_input"]` were already read
+    # off the stored pending request. `None` for every other gated step
+    # (MEASUREMENT/REDESIGN_DECISION) -- advance_loop_step ignores it there.
+    requirements_document_status = None
+    if row["step"] == DesignStep.ARCHITECTURE.value:
+        document_result = _read_requirements_document(row["loop_state"]["design_id"])
+        if document_result["status"] == "found":
+            requirements_document_status = document_result["document_status"]
+
     # The receipt is now durable (the audit row committed above) even
     # though the receipt itself is not. Advancing the loop is a SEPARATE
     # action, on its own connection (orchestration.tooling.
@@ -493,7 +518,10 @@ def decide_pending_approval(
     # silently lost; the human can retry `decide` for the same id, which
     # mints a fresh (but fingerprint-identical) receipt and tries again.
     new_state = advance_design_loop_step(
-        row["loop_state"], row["step_input"], approval=receipt.to_dict()
+        row["loop_state"],
+        row["step_input"],
+        approval=receipt.to_dict(),
+        requirements_document_status=requirements_document_status,
     )
 
     conn = _connect()
