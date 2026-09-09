@@ -37,6 +37,7 @@ from designs.element_alphabet import (
     insert_process_record,
     insert_symbol_entry,
     lookup_symbol_entries,
+    reduce_response_at_frequency,
     resolve_symbol_entry,
     resolve_symbol_entry_from_db,
 )
@@ -442,6 +443,62 @@ def test_listing_every_entry_in_a_family():
     all_entries = [entry_a, entry_b, other_family_entry]
     family_entries = [e for e in all_entries if e["element_family"] == "interdigital_elc"]
     assert family_entries == [entry_a, entry_b]
+
+
+# ---------------------------------------------------------------------------
+# reduce_response_at_frequency -- issue #267 acceptance criterion 3: the
+# response-curve-to-scalar reduction the combinatorial dispatch needs, as its
+# own small, directly tested pure function (not inlined in the dispatch
+# branch). Exercised against _RESPONSE's own three-point curve (9/10/11 GHz)
+# above, deliberately handed in OUT OF ORDER in some cases -- a real fetched
+# row is not guaranteed sorted.
+# ---------------------------------------------------------------------------
+
+
+def test_reduce_response_at_frequency_returns_the_exact_point_when_present():
+    value = reduce_response_at_frequency(_RESPONSE, frequency_hz=10.0e9, field_name="phase_deg")
+    assert value == pytest.approx(0.5)
+
+
+def test_reduce_response_at_frequency_interpolates_between_bracketing_points():
+    # Halfway between the 9 GHz (-2.0 deg) and 10 GHz (0.5 deg) points.
+    value = reduce_response_at_frequency(_RESPONSE, frequency_hz=9.5e9, field_name="phase_deg")
+    assert value == pytest.approx(-0.75)
+
+
+def test_reduce_response_at_frequency_is_generic_on_field_name():
+    # The function must not hardcode "phase_deg" internally -- it reduces
+    # whichever field the caller names (optimization.combinatorial.
+    # SymbolOption.achieved_value's own "generic on purpose" contract).
+    value = reduce_response_at_frequency(_RESPONSE, frequency_hz=9.5e9, field_name="magnitude")
+    assert value == pytest.approx((0.98 + 0.99) / 2)
+
+
+def test_reduce_response_at_frequency_does_not_assume_the_input_is_sorted():
+    shuffled = [_RESPONSE[2], _RESPONSE[0], _RESPONSE[1]]
+    value = reduce_response_at_frequency(shuffled, frequency_hz=9.5e9, field_name="phase_deg")
+    assert value == pytest.approx(-0.75)
+
+
+def test_reduce_response_at_frequency_clamps_below_the_lowest_point():
+    value = reduce_response_at_frequency(_RESPONSE, frequency_hz=1.0e9, field_name="phase_deg")
+    assert value == pytest.approx(-2.0)
+
+
+def test_reduce_response_at_frequency_clamps_above_the_highest_point():
+    value = reduce_response_at_frequency(_RESPONSE, frequency_hz=20.0e9, field_name="phase_deg")
+    assert value == pytest.approx(3.0)
+
+
+def test_reduce_response_at_frequency_rejects_an_empty_response():
+    with pytest.raises(ValueError, match="response"):
+        reduce_response_at_frequency([], frequency_hz=10.0e9, field_name="phase_deg")
+
+
+def test_reduce_response_at_frequency_handles_a_single_point_curve():
+    single = [{"frequency_hz": 10.0e9, "magnitude": 0.99, "phase_deg": 0.5}]
+    value = reduce_response_at_frequency(single, frequency_hz=9.0e9, field_name="phase_deg")
+    assert value == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
