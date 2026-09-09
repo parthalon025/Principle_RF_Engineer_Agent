@@ -46,7 +46,7 @@ starts from a real answer instead of institutional memory.
 
 | Tool | What it is, and why this repo uses it | Biggest capability not yet wired up |
 |---|---|---|
-| [Digi-Key Product Information API v4](digikey.md) | OAuth2 REST API to Digi-Key's own distributor catalog. | `ProductDetails`/parametric data is unused — only enough is fetched to find a datasheet; no frequency/impedance/tolerance parametric matching. |
+| [Digi-Key Product Information API v4](digikey.md) | OAuth2 REST API to Digi-Key's own distributor catalog. | `Substitutions`/`RecommendedProducts`/`Associations` (alternate-part discovery) is unused — `ProductDetails`/parametric and pricing data was the biggest gap until ticket #275 wired it into a new `lookup_digikey_product_details()`. |
 | [Mouser Search API](mouser.md) | Flat-API-key REST API to Mouser's own distributor catalog. | `search/keyword` free-text discovery is unused — a part must already be known by exact MPN; pricing/availability/lead-time/compliance fields were the biggest gap until ticket #274 wired them into `lookup_mouser_datasheet()`'s result. |
 | [Nexar API (Octopart data)](nexar.md) | OAuth2 GraphQL API aggregating stock/pricing across *many* distributors at once (Mouser and Digi-Key included). | Multi-distributor pricing/availability aggregation — the trait that most distinguishes Nexar from the other two — is never queried; also unused: per-part ECAD footprint data. |
 
@@ -83,8 +83,10 @@ A few gaps repeat across categories, not just within one tool:
 - **Data already fetched but discarded**: this was Mouser's pricing/availability/compliance
   fields, arriving in the one response this repo's adapter already makes but dropped before
   reaching scoring — a zero-additional-API-cost gap, unlike everything above it. Ticket #274
-  closed it; Digi-Key's `ProductDetails`/parametric data (row above) is the same pattern,
-  still open.
+  closed it for Mouser; Digi-Key's `ProductDetails` turned out to be the same shape — one GET
+  call already returns both parametric attributes and pricing — and ticket #275 closed it too,
+  adding a separate `lookup_digikey_product_details()` rather than folding it into the existing
+  datasheet lookup.
 
 ## Methodology
 
