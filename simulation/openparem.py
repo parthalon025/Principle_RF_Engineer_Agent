@@ -176,7 +176,78 @@ implementation -- accessed 2026-09-02. Per-fact citations below):
 
   - Mesh format constraint -- "Note that OpenParEM only works with the msh22 format of
     gmsh due to library limitations," and gmsh's own `-format msh22` invocation:
-    Installation Manual Sec. 4.2. This module does not generate mesh files (see SCOPE).
+    Installation Manual Sec. 4.2. This module now generates a mesh via
+    `run_openparem_gmsh_meshing()` (issue #278) when the caller supplies `geometry`
+    instead of a pre-meshed `mesh_file` -- reusing `simulation.elmer.
+    generate_gmsh_geo_script()` for the geometry-dict-to-`.geo` translation (identical
+    primitive-dict shape; see that function's own citations) and shelling out to gmsh
+    with `-3 -format msh22 -o <msh_file>` instead of Elmer's `-format msh2` (`simulation/
+    elmer.py`'s `run_gmsh_meshing()`, which this mirrors down to the `GMSH_BIN` env-var
+    convention -- the SAME external `gmsh` binary either adapter invokes, so a second,
+    OpenParEM-specific env var name was deliberately not introduced).
+
+  - Materials-file (`materials.global.name`/`materials.local.name`) keyword syntax --
+    read directly out of BOTH OpenParEM3D_Users_Manual.tex's own "Materials File
+    Specification" appendix (its literal `Verbatim` block, quoting the Debye-model and
+    frequency-list `Material`/`Temperature`/`Frequency`/`Source` grammar) AND
+    src/OpenParEMCommon/OpenParEMmaterials.cpp/.hpp -- the C++ parser that actually reads
+    it (`push_alias()` calls for every keyword synonym, `check()` for what's mandatory):
+      * Header line, confirmed from OpenParEMmaterials.hpp's own default-initializer
+        (`string version_name="#OpenParEMmaterials"; string version_value="1.0";`),
+        matching the manual's own worked examples verbatim: `#OpenParEMmaterials 1.0`.
+      * `Material`/`name=`/`EndMaterial` outer block; inside it, one or more `Temperature`
+        blocks (`temperature`/`temp`/`t`, a double or the literal string `"any"` -- meaning
+        "applies at all temperatures"), each containing EITHER a Debye-model keyword set
+        OR one or more `Frequency` sub-blocks (mutually exclusive -- confirmed from
+        Temperature::load's own dispatch: Debye keywords are only even recognized when
+        `frequencyList.size()==0`, and OpenParEMmaterials.cpp's ERROR1058 explicitly
+        rejects a Debye keyword found alongside a Frequency block); one or more `Source`/
+        `EndSource` blocks (plain, unparsed text lines -- confirmed from `Source::load`,
+        which just collects every line between the markers verbatim, no keyword=value
+        parsing at all).
+      * Debye-model keywords -- confirmed from Temperature's own `push_alias()` calls:
+        `er_infinity`/`epsr_infinity`, `delta_er`/`delta_epsr`, `m1`, `m2`,
+        `relative_permeability`/`mur`, `loss_tangent`/`tand`/`tandel`/`conductivity`/
+        `sigma`. Temperature::check()'s ERROR1061-1067 confirm ALL of temperature,
+        er_infinity, delta_er, m1, m2, relative_permeability, and a loss value
+        (tand/conductivity) are mandatory for a Debye-model Temperature block.
+      * Frequency-list keywords -- confirmed from Frequency's own `push_alias()` calls:
+        `frequency`/`freq`/`f` (a double or `"any"`), `relative_permittivity`/`er`/`epsr`,
+        `relative_permeability`/`mur`, `loss_tangent`/`tand`/`tandel`/`conductivity`/
+        `sigma`, `Rz`. Frequency::check()'s ERROR1053-1057 confirm ALL FIVE of frequency,
+        er, mur, a loss value, AND Rz are mandatory on EVERY Frequency block -- including
+        for a pure dielectric with no conductor at all. This is a load-bearing,
+        non-obvious finding: the manual's own inline comment on `Rz` reads
+        "// for surface roughness if a conductor", which reads like Rz is conditional,
+        but the actual C++ validator requires it unconditionally on every entry (and the
+        manual's OWN worked "air" example, a pure dielectric, sets `Rz=0` rather than
+        omitting it) -- this module follows the code (and the worked example) over the
+        comment's looser wording, defaulting `Rz=0.0` rather than treating it as optional.
+      * Linear interpolation between declared Frequency points, with extrapolation
+        outside the declared range explicitly NOT supported -- confirmed from an
+        inline C++ comment repeated identically in THREE places,
+        `Temperature::get_eps()`/`get_mu()`/`get_Rs()` (all three, OpenParEMmaterials.cpp):
+        "// for linear interpolation - extrapolation is not supported". This is a CODE
+        comment, NOT a manual claim: OpenParEM3D_Users_Manual.tex,
+        OpenParEM3D_Theory_Methodology_Accuracy.tex, and OpenParEM2D_Users_Manual.tex
+        were each searched directly for "interpolat"/"extrapolat" and none describes
+        materials-frequency behavior at all (the one Users-Manual hit is an unrelated
+        ParaView-rendering setting). `generate_openparem_materials_file`'s own handling
+        of a cited validity BAND (`frequency_low_hz`/`frequency_high_hz`) as two
+        identical-valued Frequency points bracketing that band, rather than one, rests
+        on this code-level fact -- see that function's own docstring.
+      * Real worked examples, transcribed verbatim from the manual's "Materials Files"
+        section (not reconstructed from the grammar alone): the "air" Material
+        (`er=1.0006, mur=1, tand=0, Rz=0`, cited to Balanis's "Advanced Engineering
+        Electromagnetics") and the "copper_prepreg" Material (`er=1, mur=1,
+        conductivity=5.813e7, Rz=4.445e-6`, cited to an IPC spec + a named paper) --
+        `generate_openparem_materials_file`'s own default `relative_permittivity=1.0` for
+        a conductivity-only entry (no matching `eps_r`) mirrors copper_prepreg's own
+        `er=1` exactly, and the default `relative_permeability=1.0`/`surface_roughness_
+        rz_m=0.0` mirror both worked examples' shared mur=1 and air's own Rz=0.
+    github.com/OpenParEM/OpenParEM/blob/main/doc/OpenParEM3D_Users_Manual.tex (Sec.
+    "Materials Files" and Appendix "Materials File Specification"),
+    github.com/OpenParEM/OpenParEM/blob/main/src/OpenParEMCommon/OpenParEMmaterials.{cpp,hpp}.
 
   - License -- GPL-3.0-or-later, confirmed from the literal header comment repeated
     verbatim atop every OpenParEM3D source file (e.g. src/OpenParEM3D/project.c):
@@ -192,28 +263,43 @@ missing feature -- OpenParEM's own architecture is a *multi-tool flow*, not a
 single-file-format simulator like NEC2++/openEMS, so "generate everything from a
 structured job dict" does not map onto it the same way):
 
-  - Mesh generation (a real, valid Gmsh msh22 tetrahedral mesh of arbitrary 3D geometry)
-    is NOT done by this module. OpenParEM's own Installation Manual is explicit that this
-    is a separate, user-assembled step via FreeCAD + gmsh ("The user is responsible for
-    pulling together the necessary tools to create the needed [mesh] files. Assembling a
-    tool flow is a very significant task.") -- this module treats an already-meshed
-    `mesh_file` (msh22 format) as a required, externally-supplied input, the same way
-    simulation/hfss.py treats a licensed AEDT installation as an external precondition
-    rather than something this codebase can fabricate.
+  - Mesh generation: `run_openparem_simulation()` can now (issue #278) drive meshing
+    itself when given `geometry` (this repo's own primitive-dict shape) instead of a
+    pre-supplied `mesh_file` -- `generate_gmsh_geo_script()` (reused from
+    `simulation.elmer`, not reimplemented) turns `geometry` into a Gmsh `.geo` script,
+    and `run_openparem_gmsh_meshing()` shells out to the real `gmsh` binary with
+    `-3 -format msh22 -o <msh_file>` to produce the msh22 mesh OpenParEM3D itself
+    requires (see the mesh-format-constraint citation above). A pre-supplied `mesh_file`
+    remains fully supported (and required if `geometry` is not given) -- OpenParEM's own
+    Installation Manual's FreeCAD+gmsh flow is still the richer, curved/multi-material
+    path this module does NOT replace (see "Capabilities not yet used here" in
+    docs/tools/openparem.md for what `generate_gmsh_geo_script()` itself does not cover:
+    curved surfaces, non-box geometry, per-physical-group material tagging beyond a
+    single bulk/excitation split).
   - The materials property library (`materials.global.name`/`materials.local.name` --
     separate text files mapping material NAMES baked into the mesh's physical groups to
-    actual permittivity/conductivity values) is likewise NOT generated here; this module
-    only emits the `.proj` keywords that POINT to these files (with OpenParEM3D's own
-    documented path/name defaults), matching the "point to it, don't fabricate it"
-    treatment given to `mesh_file` above.
+    actual permittivity/conductivity values) can now (issue #278) be generated too, via
+    `generate_openparem_materials_file()` (from a structured per-material dict) and
+    `openparem_materials_from_property_entries()` (converting `designs/
+    material_properties.py`-shaped rows into that per-material shape). This module still
+    does NOT resolve disagreeing citations for the same material+property -- that
+    remains `designs.material_properties.resolve_material_property()`'s job; the
+    converter here requires an already-decided ONE eps_r + ONE loss (tan_delta OR
+    conductivity_s_per_m) entry per material and raises rather than guessing which
+    citation to trust if more than one is handed to it (see that function's own
+    docstring). A caller-supplied materials library on disk (`project["materials"]`
+    pointing at an existing file) remains fully supported as an alternative to the
+    `materials` argument.
   - What THIS module DOES generate, fully programmatically from a structured job dict
     (mirroring simulation/nec2pp.py's deck generation and simulation/openems.py's
     FDTD-XML generation): the `.proj` project-control file (frequency plan, mesh-order/
     refinement/quality settings, reference impedance, Touchstone format, and the
-    `antenna.plot.3D.pattern q=G|D` far-field request this ticket is about), and the
-    ports/boundary/port definition file (Path/Boundary/Port/Mode/IntegrationPath blocks)
-    -- both plain-text, OpenParEM-specific formats fully within this module's own domain,
-    verified against real source + a real worked example as cited above.
+    `antenna.plot.3D.pattern q=G|D` far-field request this ticket is about), the
+    ports/boundary/port definition file (Path/Boundary/Port/Mode/IntegrationPath blocks),
+    the Gmsh `.geo`→msh22 mesh (from `geometry`), and the materials-library text file
+    (from `materials`) -- all plain-text, OpenParEM-specific formats fully within this
+    module's own domain, verified against real source + real worked examples as cited
+    above.
   - `antenna.plot.2D.pattern` (2D angular cuts/slices) and 3D pattern-mesh/current-plot
     export (`antenna.plot.3D.save`/`antenna.plot.raw.save`, ParaView-consumable outputs)
     are NOT exposed -- this ticket asks for scalar gain/directivity/efficiency, which
@@ -230,17 +316,19 @@ structured job dict" does not map onto it the same way):
 
 HONEST CAVEAT: the real `OpenParEM3D` binary is NOT installed in this environment
 (confirmed via `which OpenParEM3D`, exit 1) and was not available to run against these
-generated `.proj`/ports files. `.proj`/ports-file generation and CSV/Touchstone-existence
-parsing are built to the letter of the primary-source citations above (each fact grepped
-directly out of OpenParEM's own C/C++ source, or quoted verbatim from its own
-Installation Manual PDF and a real worked-example project file -- not reconstructed from
-memory or "what seems plausible"), and exercised in tests only against a small fake
-"OpenParEM3D" script that writes the documented output-file shapes (see
-tests/test_openparem.py) -- NOT against real FEM physics or a real OpenParEM3D run.
-Treat any result as unverified end-to-end until it has been run against the real tool at
-least once. OpenParEM being young and comparatively unproven (vs. HFSS/openEMS/NEC2++,
-each with a much longer track record) is an additional reason for caution beyond this
-codebase's usual "no real binary in this sandbox" caveat.
+generated `.proj`/ports/materials files, nor is the real `gmsh` binary available to
+verify a generated `.geo` script actually meshes cleanly. `.proj`/ports/materials-file
+generation and CSV/Touchstone-existence parsing are built to the letter of the
+primary-source citations above (each fact grepped directly out of OpenParEM's own C/C++
+source, or quoted verbatim from its own Installation Manual PDF, Users Manual PDF, and a
+real worked-example project file -- not reconstructed from memory or "what seems
+plausible"), and exercised in tests only against small fake "OpenParEM3D"/"gmsh" scripts
+that write the documented output-file shapes (see tests/test_openparem.py) -- NOT against
+real FEM physics, a real mesh, or a real OpenParEM3D run. Treat any result as unverified
+end-to-end until it has been run against the real tools at least once. OpenParEM being
+young and comparatively unproven (vs. HFSS/openEMS/NEC2++, each with a much longer track
+record) is an additional reason for caution beyond this codebase's usual "no real binary
+in this sandbox" caveat.
 """
 
 import cmath
@@ -253,6 +341,8 @@ from pathlib import Path
 from typing import Any
 
 from .base import SimulationResult, Simulator, SimulatorError
+from .elmer import generate_gmsh_geo_script
+from .elmer import run_gmsh_meshing as _elmer_run_gmsh_meshing
 
 # ---------------------------------------------------------------------------
 # OpenParemSimulator: the Simulator contract (simulation/base.py, unchanged) --
@@ -636,6 +726,368 @@ def generate_openparem_ports_file(ports: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Gmsh msh22 mesh generation (issue #278) -- reuses simulation.elmer's
+# geometry-dict-to-.geo translation (identical primitive-dict shape) and
+# shells out to gmsh with OpenParEM3D's own required mesh format. See module
+# docstring's mesh-format-constraint citation for why this is `msh22`, not
+# Elmer's `msh2`.
+# ---------------------------------------------------------------------------
+
+
+def run_openparem_gmsh_meshing(
+    geo_file: Path,
+    msh_file: Path,
+    workdir: Path,
+    executable: str | None = None,
+    timeout_s: int = 600,
+) -> None:
+    """Invoke gmsh to mesh `geo_file` into `msh_file`, forcing the msh22 ASCII
+    format OpenParEM3D's own parser requires ("OpenParEM only works with the
+    msh22 format of gmsh due to library limitations" -- Installation Manual
+    Sec. 4.2, quoted in this module's docstring) -- unlike
+    `simulation.elmer.run_gmsh_meshing`'s own default, which forces the OLDER
+    msh2 format ElmerGrid's own reader expects.
+
+    A thin, format-pinned wrapper around `simulation.elmer.run_gmsh_meshing`
+    itself (rather than a second copy of its subprocess-invocation/error-
+    handling body) -- both adapters invoke the SAME external `gmsh` binary
+    under the SAME `GMSH_BIN` env-var/executable-override convention, so this
+    only supplies the one thing that differs: `mesh_format="msh22"`.
+    `SimulatorError` on a missing `.geo` file, nonzero exit, or timeout is
+    `run_gmsh_meshing`'s own behavior, inherited unchanged."""
+    _elmer_run_gmsh_meshing(
+        geo_file,
+        msh_file,
+        workdir,
+        executable=executable,
+        timeout_s=timeout_s,
+        mesh_format="msh22",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Materials-file generation (issue #278). See module docstring for the full
+# keyword/default/mandatory-field citation list (verified against both
+# OpenParEM3D_Users_Manual.tex's own Verbatim spec AND
+# src/OpenParEMCommon/OpenParEMmaterials.cpp's push_alias()/check() calls).
+# ---------------------------------------------------------------------------
+
+
+def _material_temperature_token(value: Any) -> str:
+    return "any" if value == "any" else _fmt(value)
+
+
+def _material_citation_lines(material: dict[str, Any]) -> list[str]:
+    """Return one or more Source/EndSource blocks -- OpenParEM3D's own
+    materials-file spec requires at least one per Material (`MaterialDatabase`'s
+    ERROR1083, "must specify at least one Source block"), and this repo never
+    emits an uncited material property (ADR-0015's citation discipline,
+    already enforced by designs/material_properties.py's own `add_entry`)."""
+    name = material.get("name", "<unnamed>")
+    citations = material.get("citations")
+    if citations is None:
+        single = material.get("citation")
+        citations = [single] if single else []
+    elif isinstance(citations, str):
+        citations = [citations]
+    citations = [c for c in citations if c]
+    if not citations:
+        raise ValueError(
+            f"material {name!r} requires a non-empty 'citations' list (or 'citation' "
+            "string) -- OpenParEM's own materials-file spec requires a Source/EndSource "
+            "block per Material, and this repo never emits an uncited material property "
+            "(ADR-0015)"
+        )
+    lines: list[str] = []
+    for citation in citations:
+        lines.append("   Source")
+        lines += [f"      {text_line}" for text_line in str(citation).splitlines()]
+        lines.append("   EndSource")
+    return lines
+
+
+def _frequency_point_tokens(material: dict[str, Any]) -> list[str]:
+    """Return the `frequency=` value(s) for one Temperature block's Frequency
+    sub-blocks -- see generate_openparem_materials_file's own docstring for
+    why a cited validity BAND (frequency_low_hz != frequency_high_hz) becomes
+    TWO identical-valued points bracketing that band, rather than one."""
+    if "frequency_hz" in material:
+        value = material["frequency_hz"]
+        return ["any"] if value == "any" else [_fmt(value)]
+    low = material.get("frequency_low_hz")
+    high = material.get("frequency_high_hz")
+    if low is None or high is None:
+        return ["any"]
+    if low == high:
+        return [_fmt(low)]
+    return [_fmt(low), _fmt(high)]
+
+
+def _resolve_loss(container: dict[str, Any], name: str) -> tuple[str, float]:
+    loss_tangent = container.get("loss_tangent")
+    conductivity = container.get("conductivity_s_per_m")
+    if (loss_tangent is None) == (conductivity is None):
+        raise ValueError(
+            f"material {name!r} must supply exactly one of 'loss_tangent' or "
+            "'conductivity_s_per_m' -- OpenParEM's own Temperature/Frequency blocks "
+            f"require exactly one loss mechanism, got loss_tangent={loss_tangent!r}, "
+            f"conductivity_s_per_m={conductivity!r}"
+        )
+    if loss_tangent is not None:
+        return "loss_tangent", loss_tangent
+    return "conductivity", conductivity
+
+
+def _build_frequency_list_material(material: dict[str, Any]) -> list[str]:
+    name = material.get("name")
+    if not name:
+        raise ValueError(f"material entry missing non-empty 'name': {material!r}")
+
+    relative_permittivity = material.get("relative_permittivity", 1.0)
+    relative_permeability = material.get("relative_permeability", 1.0)
+    loss_keyword, loss_value = _resolve_loss(material, name)
+    rz = material.get("surface_roughness_rz_m", 0.0)
+
+    temperature_token = _material_temperature_token(material.get("temperature_c", "any"))
+    lines = ["Material", f"   name={name}", "   Temperature"]
+    lines.append(f"      temperature={temperature_token}")
+    for freq_token in _frequency_point_tokens(material):
+        lines.append("      Frequency")
+        lines.append(f"         frequency={freq_token}")
+        lines.append(f"         er={_fmt(relative_permittivity)}")
+        lines.append(f"         mur={_fmt(relative_permeability)}")
+        lines.append(f"         {loss_keyword}={_fmt(loss_value)}")
+        lines.append(f"         Rz={_fmt(rz)}")
+        lines.append("      EndFrequency")
+    lines.append("   EndTemperature")
+    lines += _material_citation_lines(material)
+    lines.append("EndMaterial")
+    return lines
+
+
+_DEBYE_REQUIRED_FIELDS = ("epsr_infinity", "delta_epsr", "m1", "m2")
+
+
+def _build_debye_material(material: dict[str, Any]) -> list[str]:
+    name = material.get("name")
+    if not name:
+        raise ValueError(f"material entry missing non-empty 'name': {material!r}")
+    debye = material["debye"]
+    missing = [field for field in _DEBYE_REQUIRED_FIELDS if debye.get(field) is None]
+    if missing:
+        raise ValueError(
+            f"material {name!r}'s 'debye' block is missing required field(s) {missing} "
+            "-- OpenParEM3D's own Temperature::check() requires epsr_infinity/"
+            "delta_epsr/m1/m2 for a Debye-model Material (see module docstring citation)"
+        )
+    relative_permeability = debye.get("relative_permeability", 1.0)
+    loss_keyword, loss_value = _resolve_loss(debye, name)
+
+    temperature_token = _material_temperature_token(debye.get("temperature_c", "any"))
+    lines = ["Material", f"   name={name}", "   Temperature"]
+    lines.append(f"      temperature={temperature_token}")
+    lines.append(f"      epsr_infinity={_fmt(debye['epsr_infinity'])}")
+    lines.append(f"      delta_epsr={_fmt(debye['delta_epsr'])}")
+    lines.append(f"      m1={_fmt(debye['m1'])}")
+    lines.append(f"      m2={_fmt(debye['m2'])}")
+    lines.append(f"      mur={_fmt(relative_permeability)}")
+    lines.append(f"      {loss_keyword}={_fmt(loss_value)}")
+    lines.append("   EndTemperature")
+    lines += _material_citation_lines(material)
+    lines.append("EndMaterial")
+    return lines
+
+
+def generate_openparem_materials_file(materials: list[dict[str, Any]]) -> str:
+    """Generate an OpenParEM3D materials-library text file (usable as either the
+    `materials.global.name` or `materials.local.name` file -- both share this
+    identical format; see module docstring) from a list of structured
+    per-material dicts.
+
+    Each entry in `materials` is EITHER a frequency-list material:
+        {
+          "name": str,                       # required
+          "relative_permittivity": float,    # optional, default 1.0 (OpenParEM's own
+              "copper_prepreg" worked example uses er=1 for a conductivity-only
+              material -- see module docstring citation)
+          "relative_permeability": float,    # optional, default 1.0 (non-magnetic --
+              every material this repo's library models is)
+          "loss_tangent": float,             # exactly one of these two required
+          "conductivity_s_per_m": float,
+          "surface_roughness_rz_m": float,   # optional, default 0.0 (OpenParEM's own
+              "air" worked example; unconditionally required by the real parser
+              regardless of whether the material is a conductor -- see module
+              docstring's Rz citation)
+          "temperature_c": float | "any",    # optional, default "any"
+          "frequency_hz": float | "any",     # a single point or "any" -- mutually
+              exclusive with the next two keys
+          "frequency_low_hz": float, "frequency_high_hz": float,  # a cited validity
+              BAND -- emitted as ONE Frequency point if they're equal, or TWO
+              identical-valued points bracketing the band if not (see
+              _frequency_point_tokens's docstring for why: OpenParEM3D's own C++
+              source -- an inline comment repeated identically in
+              Temperature::get_eps()/get_mu()/get_Rs(), OpenParEMmaterials.cpp,
+              NOT either manual PDF, see module docstring's Materials-file citation
+              -- documents linear interpolation between declared points and
+              explicitly "extrapolation is not supported", so two points at the
+              citation's own validated range edges is the most literal, honest
+              translation of "flat across this exact band, unclaimed outside it").
+              Neither this pair nor `frequency_hz` given -> "any".
+          "citations": list[str] | "citation": str,  # required, non-empty
+        }
+    OR a Debye-model material (mutually exclusive with the frequency-list keys above,
+    matching OpenParEM's own ERROR1058 "Debye variable ... not allowed with frequency
+    blocks defined"):
+        {
+          "name": str,
+          "debye": {
+              "epsr_infinity": float, "delta_epsr": float, "m1": float, "m2": float,
+                  # all four required
+              "relative_permeability": float,  # optional, default 1.0
+              "loss_tangent": float, "conductivity_s_per_m": float,  # exactly one
+              "temperature_c": float | "any",  # optional, default "any"
+          },
+          "citations": list[str] | "citation": str,
+        }
+
+    This function does not resolve disagreeing citations for the same material --
+    see `openparem_materials_from_property_entries` for the converter that turns
+    `designs/material_properties.py`-shaped rows (which CAN disagree across several
+    citations; that library's own `resolve_material_property` is what picks one) into
+    this function's single-value-per-material input shape.
+    """
+    if not materials:
+        raise ValueError("materials must be a non-empty list")
+
+    lines: list[str] = ["#OpenParEMmaterials 1.0", ""]
+    for idx, material in enumerate(materials):
+        if not isinstance(material, dict):
+            raise ValueError(f"materials[{idx}] must be a dict, got {type(material).__name__}")
+        if material.get("debye") is not None:
+            lines += _build_debye_material(material)
+        else:
+            lines += _build_frequency_list_material(material)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
+# designs/material_properties.py -> generate_openparem_materials_file() bridge
+# (issue #278). "Caller fetches, pure function resolves": resolving WHICH
+# citation to trust when several disagree is designs.material_properties.
+# resolve_material_property()'s job (already built); this function only
+# reshapes an already-decided set of per-material rows into OpenParEM's
+# materials-file input shape -- it never picks a winner among disagreeing
+# citations itself.
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_MATERIAL_PROPERTY_NAMES = frozenset({"eps_r", "tan_delta", "conductivity_s_per_m"})
+
+
+def openparem_materials_from_property_entries(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert a flat list of `designs/material_properties.py`-shaped entries
+    (whatever `lookup_entries()`, or a caller's own already-resolved
+    `resolve_material_property()` call, returned -- each carrying `material`,
+    `property`, `frequency_low_hz`, `frequency_high_hz`, `value`, `citation`)
+    into `generate_openparem_materials_file`'s per-material dict shape, one
+    dict per distinct `material` name.
+
+    Deliberately narrow scope (this codebase's "warn, never silently apply the
+    wrong tool" convention): each material must contribute EXACTLY ONE `eps_r`
+    entry and EXACTLY ONE of a `tan_delta` or `conductivity_s_per_m` entry, and
+    the two must share the IDENTICAL frequency_low_hz/frequency_high_hz band --
+    this function does not resolve disagreeing citations (several eps_r entries
+    at different bands is this library's own documented norm, see
+    designs/material_properties.py's "WHY EVERY MATCHING CITATION..." section);
+    a caller with more than one candidate must call `resolve_material_property`
+    (or otherwise pick one) FIRST, then hand this function one already-decided
+    entry per property per material. A missing pair, a mismatched band, more
+    than one entry for the same material+property, or a property name this
+    function does not know how to map onto an OpenParEM keyword all raise
+    `ValueError` naming exactly what's wrong rather than guessing.
+
+    `relative_permeability` (`mur`) and `surface_roughness_rz_m` (`Rz`) are left
+    at `generate_openparem_materials_file`'s own defaults (1.0/0.0) for every
+    material this produces -- `designs/material_properties.py` tracks neither
+    property today (only eps_r/tan_delta/conductivity_s_per_m are ever seeded
+    there), and those defaults are exactly OpenParEM's own worked "air"
+    example's values for a non-magnetic, non-conductor material (see
+    generate_openparem_materials_file's own docstring citation); every material
+    this repo's library actually models (FR4, Rogers laminates, polymers,
+    copper) is likewise non-magnetic.
+    """
+    by_material: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for entry in entries:
+        material = entry.get("material")
+        property_name = entry.get("property")
+        if not material:
+            raise ValueError(f"entry missing non-empty 'material': {entry!r}")
+        if property_name not in _SUPPORTED_MATERIAL_PROPERTY_NAMES:
+            raise ValueError(
+                f"material {material!r} has unsupported property {property_name!r} -- "
+                "generate_openparem_materials_file only knows how to map "
+                f"{sorted(_SUPPORTED_MATERIAL_PROPERTY_NAMES)} onto OpenParEM materials-"
+                "file keywords; add a mapping here rather than silently dropping it"
+            )
+        by_material.setdefault(material, {}).setdefault(property_name, []).append(entry)
+
+    materials: list[dict[str, Any]] = []
+    for material, by_property in by_material.items():
+        eps_entries = by_property.get("eps_r", [])
+        if len(eps_entries) != 1:
+            raise ValueError(
+                f"material {material!r} has {len(eps_entries)} 'eps_r' entries -- "
+                "generate_openparem_materials_file needs exactly one already-resolved "
+                "permittivity value per material (call resolve_material_property first "
+                "to pick one if several citations disagree)"
+            )
+        eps_entry = eps_entries[0]
+
+        tand_entries = by_property.get("tan_delta", [])
+        cond_entries = by_property.get("conductivity_s_per_m", [])
+        if len(tand_entries) + len(cond_entries) != 1:
+            raise ValueError(
+                f"material {material!r} needs exactly one loss entry (a single "
+                f"'tan_delta' or 'conductivity_s_per_m'), found {len(tand_entries)} "
+                f"tan_delta and {len(cond_entries)} conductivity_s_per_m entries"
+            )
+        loss_entry = tand_entries[0] if tand_entries else cond_entries[0]
+        loss_field = "loss_tangent" if tand_entries else "conductivity_s_per_m"
+
+        if (
+            eps_entry["frequency_low_hz"] != loss_entry["frequency_low_hz"]
+            or eps_entry["frequency_high_hz"] != loss_entry["frequency_high_hz"]
+        ):
+            raise ValueError(
+                f"material {material!r}'s eps_r validity band "
+                f"({eps_entry['frequency_low_hz']:g}-{eps_entry['frequency_high_hz']:g} Hz) "
+                "does not match its loss-property validity band "
+                f"({loss_entry['frequency_low_hz']:g}-{loss_entry['frequency_high_hz']:g} Hz)"
+                " -- refusing to pair values from different citations/bands"
+            )
+
+        citations: list[str] = []
+        for source in (eps_entry, loss_entry):
+            citation = source.get("citation")
+            if citation and citation not in citations:
+                citations.append(citation)
+
+        materials.append(
+            {
+                "name": material,
+                "relative_permittivity": eps_entry["value"],
+                loss_field: loss_entry["value"],
+                "frequency_low_hz": eps_entry["frequency_low_hz"],
+                "frequency_high_hz": eps_entry["frequency_high_hz"],
+                "citations": citations,
+            }
+        )
+    return materials
+
+
+# ---------------------------------------------------------------------------
 # Output parsing -- reads the *_results.csv / *_FarField_results.csv / .sNp files
 # OpenParEM3D itself writes (see module docstring for the writer-side citations),
 # never stdout, since (unlike NEC2++) OpenParEM3D's numeric results live only in
@@ -842,38 +1294,114 @@ def parse_openparem_output(workdir: str | Path, project_name: str) -> dict[str, 
 
 
 def run_openparem_simulation(
-    mesh_file: str,
     ports: dict[str, Any],
+    mesh_file: str | None = None,
+    geometry: dict[str, Any] | None = None,
     project: dict[str, Any] | None = None,
     project_name: str = "openparem_project",
+    materials: list[dict[str, Any]] | None = None,
     mpi_processes: int | None = None,
     timeout_s: int = 3600,
     executable: str | None = None,
     workdir: str | None = None,
+    gmsh_executable: str | None = None,
+    gmsh_timeout_s: int = 600,
 ) -> dict[str, Any]:
     """Generate an OpenParEM3D `.proj` file and ports/boundary file from structured
     settings/geometry, run OpenParEM3D via OpenParemSimulator, and parse S-parameter
     and far-field gain/directivity/radiation-efficiency results tagged with SIMULATED
     provenance.
 
-    `mesh_file` must be an already-generated Gmsh msh22 mesh (see module docstring
-    SCOPE -- not produced by this function). `ports` is generate_openparem_ports_file's
-    input shape; `project` is generate_openparem_project_config's input shape minus
-    `mesh_file`/`port_definition_file` (filled in here).
+    Exactly one of `mesh_file` (an already-generated Gmsh msh22 mesh) or `geometry`
+    (this repo's own primitive-dict shape, e.g. `{"domain": {"p1_m": ..., "p2_m":
+    ...}}` -- see `simulation.elmer.generate_gmsh_geo_script`'s own docstring for the
+    full shape) must be given (issue #278). When `geometry` is given, this function
+    drives `generate_gmsh_geo_script()` -> `run_openparem_gmsh_meshing()` (forcing
+    OpenParEM3D's required msh22 format) to produce the mesh itself, before invoking
+    `OpenParemSimulator`.
+
+    `materials` is optional: a list of `generate_openparem_materials_file`'s
+    per-material dicts (or `openparem_materials_from_property_entries`'s output) --
+    when given, a local materials file is generated and wired into `project['materials']`
+    (`materials.local.name`/`.local.path`). Mutually exclusive with a caller-supplied
+    `project['materials']` (which still works unchanged when `materials` is omitted,
+    pointing at a pre-existing library file exactly as before).
+
+    `ports` is `generate_openparem_ports_file`'s input shape; `project` is
+    `generate_openparem_project_config`'s input shape minus `mesh_file`/
+    `port_definition_file`/`materials` (all filled in here).
 
     See this module's header comment for the format-verification citations and the
     honest caveat: generation and parsing are built to the documented/verified
-    OpenParEM3D `.proj`/ports-file/output-file formats, not to a real OpenParEM3D
-    binary run in this environment.
+    OpenParEM3D `.proj`/ports/materials-file/output-file formats, not to a real
+    OpenParEM3D (or gmsh) binary run in this environment.
     """
+    if (mesh_file is None) == (geometry is None):
+        raise ValueError(
+            "run_openparem_simulation requires exactly one of 'mesh_file' (an "
+            "already-meshed msh22 file) or 'geometry' (drive meshing internally via "
+            "generate_gmsh_geo_script + run_openparem_gmsh_meshing) -- got "
+            f"mesh_file={mesh_file!r}, geometry given={geometry is not None}"
+        )
+
     work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="openparem_"))
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    output: dict[str, Any] = {}
+
+    if geometry is not None:
+        geo_file = work_dir / f"{project_name}.geo"
+        geo_file.write_text(generate_gmsh_geo_script(geometry))
+        mesh_filename = f"{project_name}.msh"
+        msh_path = work_dir / mesh_filename
+        run_openparem_gmsh_meshing(
+            geo_file, msh_path, work_dir, executable=gmsh_executable, timeout_s=gmsh_timeout_s
+        )
+        mesh_file = mesh_filename
+        output["geo_file"] = str(geo_file)
+        output["msh_file"] = str(msh_path)
 
     ports_filename = f"{project_name}_ports.txt"
     ports_path = work_dir / ports_filename
     ports_path.write_text(generate_openparem_ports_file(ports))
 
     project_settings = dict(project or {})
+
+    # This function's own docstring documents `project` as `generate_openparem_
+    # project_config`'s input shape MINUS mesh_file/port_definition_file/materials
+    # -- all three are filled in here, below, from the `mesh_file`/`geometry`,
+    # `ports`, and `materials` arguments respectively. Guard all three the same
+    # way (a named ValueError, not a silent overwrite) so a caller who puts one
+    # of these keys in `project` by mistake is told, rather than having it
+    # quietly discarded -- this codebase's "warn, never silently fall through to
+    # the wrong tool" discipline (see module docstring).
+    if "mesh_file" in project_settings:
+        raise ValueError(
+            "run_openparem_simulation got project['mesh_file'] set explicitly -- "
+            "this key is always filled in here from the 'mesh_file' argument (or "
+            "the mesh generated from 'geometry') -- pass the mesh via 'mesh_file'/"
+            "'geometry' instead of inside 'project'"
+        )
+    if "port_definition_file" in project_settings:
+        raise ValueError(
+            "run_openparem_simulation got project['port_definition_file'] set "
+            "explicitly -- this key is always filled in here from the 'ports' "
+            "argument -- do not set it inside 'project'"
+        )
+    if materials is not None:
+        if "materials" in project_settings:
+            raise ValueError(
+                "run_openparem_simulation got both a 'materials' argument and "
+                "project['materials'] -- supply exactly one materials source (a "
+                "caller-written library via project['materials'], or a generated "
+                "local library via 'materials')"
+            )
+        materials_filename = f"{project_name}_materials.txt"
+        materials_path = work_dir / materials_filename
+        materials_path.write_text(generate_openparem_materials_file(materials))
+        project_settings["materials"] = {"local_path": "./", "local_name": materials_filename}
+        output["materials_file"] = str(materials_path)
+
     project_settings["mesh_file"] = mesh_file
     project_settings["port_definition_file"] = ports_filename
     project_file = work_dir / f"{project_name}.proj"
@@ -891,16 +1419,18 @@ def run_openparem_simulation(
 
     parsed = parse_openparem_output(work_dir, project_name)
 
-    output: dict[str, Any] = {
-        "provenance": "SIMULATED",
-        "s_parameters": parsed["s_parameters"],
-        "far_field": parsed["far_field"],
-        "simulator": result.simulator,
-        "status": result.status,
-        "workdir": str(result.workdir),
-        "project_file": str(project_file),
-        "ports_file": str(ports_path),
-    }
+    output.update(
+        {
+            "provenance": "SIMULATED",
+            "s_parameters": parsed["s_parameters"],
+            "far_field": parsed["far_field"],
+            "simulator": result.simulator,
+            "status": result.status,
+            "workdir": str(result.workdir),
+            "project_file": str(project_file),
+            "ports_file": str(ports_path),
+        }
+    )
     if "touchstone_file" in parsed:
         # Surfaced at top level, matching simulation/openems.py's/simulation/hfss.py's
         # own "touchstone_file" convention for rf_tools.correlation integration.

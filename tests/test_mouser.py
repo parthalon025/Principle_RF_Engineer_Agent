@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from knowledge.mouser import lookup_mouser_datasheet
+from knowledge.mouser import lookup_mouser_datasheet, search_mouser_product
 from knowledge.sourcing_common import ExternalNetworkToolsDisabledError
 
 
@@ -30,21 +30,54 @@ def _mouser_raw(
     mpn: str = "LM358DR",
     manufacturer: str = "Texas Instruments",
     datasheet_url: str | None = "https://example.com/lm358.pdf",
+    *,
+    price_breaks: list[dict] | None = None,
+    availability: str | None = None,
+    lead_time: str | None = None,
+    lifecycle_status: str | None = None,
+    is_discontinued: bool | None = None,
+    suggested_replacement: str | None = None,
+    rohs_status: str | None = None,
+    reach_svhc: list | None = None,
+    product_compliance: list[dict] | None = None,
+    trade_compliance: list[dict] | None = None,
 ) -> dict:
     """A recorded-shape Mouser /api/v1/search/partnumber response, per this
     module's cited primary-source research -- see knowledge/mouser.py
-    module docstring."""
+    module docstring.
+
+    The pricing/availability/lifecycle/compliance kwargs (ticket #274)
+    default to None and, when left at that default, are omitted from the
+    returned part dict entirely -- so every pre-existing call site of this
+    fixture (none of which pass them) keeps exercising the "field absent
+    from the raw response" case, matching real Mouser responses for a part
+    with no such data.
+    """
+    part: dict = {
+        "MouserPartNumber": "595-LM358DR",
+        "ManufacturerPartNumber": mpn,
+        "Manufacturer": manufacturer,
+        "DataSheetUrl": datasheet_url,
+    }
+    optional_fields = {
+        "PriceBreaks": price_breaks,
+        "Availability": availability,
+        "LeadTime": lead_time,
+        "LifecycleStatus": lifecycle_status,
+        "IsDiscontinued": is_discontinued,
+        "SuggestedReplacement": suggested_replacement,
+        "ROHSStatus": rohs_status,
+        "REACH-SVHC": reach_svhc,
+        "ProductCompliance": product_compliance,
+        "TradeCompliance": trade_compliance,
+    }
+    for key, value in optional_fields.items():
+        if value is not None:
+            part[key] = value
     return {
         "SearchResults": {
             "NumberOfResult": 1,
-            "Parts": [
-                {
-                    "MouserPartNumber": "595-LM358DR",
-                    "ManufacturerPartNumber": mpn,
-                    "Manufacturer": manufacturer,
-                    "DataSheetUrl": datasheet_url,
-                }
-            ],
+            "Parts": [part],
         }
     }
 
@@ -172,3 +205,173 @@ def test_identity_uses_manufacturer_part_number_not_mouser_catalog_number(tmp_pa
 
     assert result["manufacturer_part_number"] == "LM358DR"
     assert "595-LM358DR" not in result.values()
+
+
+# ---------------------------------------------------------------------------
+# search_mouser_product (issue #326): same real keyword-search request as
+# lookup_mouser_datasheet, WITHOUT the download/ingest half -- a citation-
+# only match for a human to review, never a write to the knowledge base. No
+# `download`/`ingest` seam exists to inject here because this function never
+# calls either.
+# ---------------------------------------------------------------------------
+
+
+def test_search_refuses_without_allow_external_network_tools(monkeypatch):
+    monkeypatch.delenv("ALLOW_EXTERNAL_NETWORK_TOOLS", raising=False)
+    with pytest.raises(ExternalNetworkToolsDisabledError):
+        search_mouser_product("conductive silver ink")
+
+
+def test_search_ok_match_returns_product_and_datasheet_without_ingesting(monkeypatch):
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+
+    result = search_mouser_product(
+        "conductive silver ink",
+        get_api_key=lambda: "fake-api-key",
+        search=lambda query, api_key: _mouser_raw(
+            mpn="8331-14G",
+            manufacturer="MG Chemicals",
+            datasheet_url="https://example.com/8331-14g.pdf",
+        ),
+    )
+
+    assert result == {
+        "status": "ok",
+        "distributor": "mouser",
+        "manufacturer": "MG Chemicals",
+        "manufacturer_part_number": "8331-14G",
+        "datasheet_url": "https://example.com/8331-14g.pdf",
+    }
+
+
+def test_search_no_match_returns_clear_nothing_found_result(monkeypatch):
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+
+    result = search_mouser_product(
+        "no such ink exists anywhere",
+        get_api_key=lambda: "fake-api-key",
+        search=lambda query, api_key: {"SearchResults": {"NumberOfResult": 0, "Parts": []}},
+    )
+
+    assert result == {
+        "status": "no_match",
+        "distributor": "mouser",
+        "queried": "no such ink exists anywhere",
+    }
+
+
+def test_search_match_with_no_datasheet_url_is_reported_as_no_datasheet(monkeypatch):
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+
+    result = search_mouser_product(
+        "conductive silver ink",
+        get_api_key=lambda: "fake-api-key",
+        search=lambda query, api_key: _mouser_raw(datasheet_url=None),
+    )
+
+    assert result["status"] == "no_datasheet"
+    assert result["manufacturer_part_number"] == "LM358DR"
+
+
+def test_search_never_downloads_or_ingests_anything():
+    """search_mouser_product takes no download/ingest parameters at all --
+    there is no way to call it and have it write to the knowledge base
+    (issue #326 acceptance criterion 3)."""
+    import inspect
+
+    params = inspect.signature(search_mouser_product).parameters
+    assert "download" not in params
+    assert "ingest" not in params
+
+
+# Pricing/availability/lead-time/compliance fields (ticket #274) -- see
+# docs/tools/mouser.md "Capabilities not yet used here": every Mouser
+# search/partnumber response already carries these fields for free, but
+# _parse_matches previously discarded all but ManufacturerPartNumber/
+# Manufacturer/DataSheetUrl.
+
+
+def test_ok_match_surfaces_pricing_availability_and_compliance_fields(tmp_path, monkeypatch):
+    """The exact scenario ticket #274's acceptance criteria call for: a
+    response with populated PriceBreaks/Availability/LeadTime/ROHSStatus/
+    REACH-SVHC (plus the other five compliance/lifecycle fields) produces
+    those exact values in lookup_mouser_datasheet()'s "ok" result -- with
+    zero additional API calls (the same canned `search` stub as every other
+    test here)."""
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+    pdf_path = tmp_path / "LM358DR.pdf"
+    price_breaks = [
+        {"Quantity": 1, "Price": "$0.53", "Currency": "USD"},
+        {"Quantity": 100, "Price": "$0.31", "Currency": "USD"},
+    ]
+    reach_svhc = ["Lead", "Bisphenol A"]
+    product_compliance = [{"ComplianceName": "REACH", "ComplianceValue": "Compliant"}]
+    trade_compliance = [{"ECCN": "EAR99"}]
+
+    result = lookup_mouser_datasheet(
+        "LM358DR",
+        license="manufacturer-datasheet",
+        classification="PUBLIC",
+        get_api_key=lambda: "fake-api-key",
+        search=lambda part_number, api_key: _mouser_raw(
+            mpn=part_number,
+            price_breaks=price_breaks,
+            availability="In Stock",
+            lead_time="8 Weeks",
+            lifecycle_status="Active",
+            is_discontinued=False,
+            suggested_replacement="LM358DR2",
+            rohs_status="RoHS Compliant",
+            reach_svhc=reach_svhc,
+            product_compliance=product_compliance,
+            trade_compliance=trade_compliance,
+        ),
+        download=_download_stub(pdf_path),
+        ingest=_IngestSpy(),
+    )
+
+    assert result["status"] == "ok"
+    assert result["price_breaks"] == price_breaks
+    assert result["availability"] == "In Stock"
+    assert result["lead_time"] == "8 Weeks"
+    assert result["lifecycle_status"] == "Active"
+    assert result["is_discontinued"] is False
+    assert result["suggested_replacement"] == "LM358DR2"
+    assert result["rohs_status"] == "RoHS Compliant"
+    assert result["reach_svhc"] == reach_svhc
+    assert result["product_compliance"] == product_compliance
+    assert result["trade_compliance"] == trade_compliance
+
+
+def test_ok_match_with_no_pricing_or_compliance_data_surfaces_none_not_a_crash(
+    tmp_path, monkeypatch
+):
+    """A part with none of the ten fields present in the raw response (the
+    default shape _mouser_raw() already returns) must not crash -- every
+    new key comes through as None, matching this module's existing
+    defensive-parsing posture (module docstring: a wrong/missing shape
+    "fails as 'no match', not a crash")."""
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+    pdf_path = tmp_path / "LM358DR.pdf"
+
+    result = lookup_mouser_datasheet(
+        "LM358DR",
+        license="manufacturer-datasheet",
+        classification="PUBLIC",
+        get_api_key=lambda: "fake-api-key",
+        search=lambda part_number, api_key: _mouser_raw(mpn=part_number),
+        download=_download_stub(pdf_path),
+        ingest=_IngestSpy(),
+    )
+
+    assert result["status"] == "ok"
+    assert result["price_breaks"] is None
+    assert result["availability"] is None
+    assert result["lead_time"] is None
+    assert result["lifecycle_status"] is None
+    assert result["is_discontinued"] is None
+    assert result["suggested_replacement"] is None
+    assert result["rohs_status"] is None
+    assert result["reach_svhc"] is None
+    assert result["product_compliance"] is None
+    assert result["trade_compliance"] is None

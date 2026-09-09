@@ -24,19 +24,29 @@ Sourced against Pozar, "Microwave Engineering" 4th ed., sections 8.3-8.4 and
 Tables 8.3/8.4/8.6. `tests/test_filter_synthesis.py` checks the g-values
 against those published tables rather than against this implementation.
 
-Deliberately *not* here: physical realization. Turning a ladder into microstrip
-stub lengths, coupled-line geometry or a specific vendor's 0402 part is a
-separate problem with its own approximations -- see `geometry/` and the
-simulator adapters. This module stops at ideal lumped elements, which is where
-the closed-form arithmetic stops being exact.
+A fourth step exists for one case (issue #286):
+`realize_lowpass_stepped_impedance_microstrip` turns a *lowpass* ladder's
+ideal L/C values into a physical microstrip layout, using the classic
+stepped-impedance ("Hi-Z, Lo-Z") approximation (Pozar sec. 8.6): a short,
+narrow high-impedance line stands in for each series inductor, a short, wide
+low-impedance line for each shunt capacitor. Highpass/bandpass/bandstop
+ladders are still not realized -- their branches are single capacitors
+(highpass) or two-element resonators (bandpass/bandstop), and the
+stepped-impedance method has no equivalent short-line approximation for
+either; turning a ladder into coupled-line geometry, resonator stubs or a
+specific vendor's 0402 part remains future scope, tracked the same way this
+module's own top-of-file note already tracked physical realization in
+general -- see ADR-0031 for why this path was chosen over driving a
+simulator or the Qucs-S wizard.
 
 Provenance: every value returned here is `CALCULATED` -- deterministic
 arithmetic on the caller's inputs, no measurement and no model fitting. This
 module returns plain numbers and carries no provenance field itself; the
-`synthesize_filter_prototype` tool wrappers tag the result `CALCULATED`
-inline, following `calculate_l_network_match`'s precedent for a synthesis
-tool. It is deliberately not in `designs/provenance.py`'s table, which maps
-only those tools that write an `engineering_results` row.
+`synthesize_filter_prototype`/`realize_lowpass_stepped_impedance_microstrip_filter`
+tool wrappers tag the result `CALCULATED` inline, following
+`calculate_l_network_match`'s precedent for a synthesis tool. It is
+deliberately not in `designs/provenance.py`'s table, which maps only those
+tools that write an `engineering_results` row.
 """
 
 from __future__ import annotations
@@ -45,13 +55,22 @@ import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from rf_tools.calculations import (
+    microstrip_effective_permittivity,
+    microstrip_synthesize_width_m,
+)
+
 __all__ = [
     "FilterElement",
     "FilterNetwork",
+    "MicrostripLineSection",
     "butterworth_g_values",
     "chebyshev_g_values",
     "synthesize_filter",
+    "realize_lowpass_stepped_impedance_microstrip",
 ]
+
+_SPEED_OF_LIGHT_M_S = 299_792_458.0
 
 Response = Literal["butterworth", "chebyshev"]
 Band = Literal["lowpass", "highpass", "bandpass", "bandstop"]
@@ -383,3 +402,175 @@ def synthesize_filter(
         g_values=g,
         elements=elements,
     )
+
+
+@dataclass(frozen=True)
+class MicrostripLineSection:
+    """One physical microstrip line realizing one branch of a lowpass ladder.
+
+    `topology` is always `"L"` or `"C"` (the two topologies a lowpass ladder
+    actually contains) -- it names which `FilterElement` this section
+    approximates, not the line's own shape, and lines up with
+    `characteristic_impedance_ohm`: a `"L"` section always sits at the
+    ladder's `z_high_ohm` and a `"C"` section always at its `z_low_ohm`
+    (see `realize_lowpass_stepped_impedance_microstrip`).
+    """
+
+    position: Position
+    topology: Topology
+    characteristic_impedance_ohm: float
+    width_m: float
+    length_m: float
+    electrical_length_rad: float
+    effective_permittivity: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable form, for crossing an agent/MCP tool boundary --
+        mirrors `FilterNetwork.to_dict`'s reason for existing."""
+        return {
+            "position": self.position,
+            "topology": self.topology,
+            "characteristic_impedance_ohm": self.characteristic_impedance_ohm,
+            "width_m": self.width_m,
+            "length_m": self.length_m,
+            "electrical_length_rad": self.electrical_length_rad,
+            "effective_permittivity": self.effective_permittivity,
+        }
+
+
+def realize_lowpass_stepped_impedance_microstrip(
+    network: FilterNetwork,
+    *,
+    eps_r: float,
+    h_m: float,
+    z_high_ohm: float = 120.0,
+    z_low_ohm: float = 20.0,
+) -> tuple[MicrostripLineSection, ...]:
+    """Realize a lowpass ladder as stepped-impedance ("Hi-Z, Lo-Z") microstrip
+    lines (Pozar, "Microwave Engineering" 4th ed., sec. 8.6; issue #286).
+
+    A short length of transmission line approximates a series inductor when
+    its characteristic impedance is high, and a shunt capacitor when it is
+    low -- comparing the ABCD parameters of a short line (`cos(bl)~1`,
+    `sin(bl)~bl`) against those of an ideal series-L or shunt-C branch gives:
+
+        series L branch: bl = wc * L / z_high_ohm   (a narrow, HIGH-Z line)
+        shunt  C branch: bl = wc * C * z_low_ohm     (a wide, LOW-Z line)
+
+    where `wc` is the network's own `cutoff_hz` in rad/s and `L`/`C` are the
+    branch's already-denormalized `inductance_h`/`capacitance_f`. This is
+    the same pair independently confirmed against two published worked
+    examples of this exact procedure while implementing this function (see
+    `tests/test_filter_synthesis.py`); one of them reproduces Pozar's own
+    5th-order Butterworth example almost exactly (`g` = 0.6180, 1.6180,
+    2.0000, 1.6180, 0.6180 with `z_high_ohm=100`, `z_low_ohm=20` gives
+    `bl` = 0.2472, 0.809, 0.8, 0.809, 0.2472 rad).
+
+    Each section's width comes from `microstrip_synthesize_width_m` at that
+    section's impedance (`z_high_ohm` for `"L"`, `z_low_ohm` for `"C"`) on a
+    substrate of relative permittivity `eps_r` and thickness `h_m`; its
+    physical length is `bl` divided by that width's own guided-wave number
+    `beta = wc * sqrt(eps_eff) / c` -- so, algebraically, `wc` cancels and a
+    section's length depends only on its branch value, impedance and
+    `eps_eff`, not on the cutoff frequency directly. `z_high_ohm` defaults to
+    120 ohm and `z_low_ohm` to 20 ohm, Pozar's own example values and a
+    commonly repeated starting point in the literature reviewed for this
+    ticket; a real board's manufacturable trace-width range should override
+    both.
+
+    Two things this approximation does NOT capture, by construction: it
+    assumes each `bl` is small enough that `sin(bl)~bl` stays a good
+    approximation (a rule of thumb is `bl < pi/4`; accuracy degrades
+    gracefully, not catastrophically, as sections get electrically longer,
+    so this is not gated here -- matching this project's own precedent for
+    not gating a smoothly-degrading approximation at an arbitrary threshold,
+    see `capacitive_grid_sheet_capacitance_f`'s d/p=0.3 note in
+    `rf_tools/calculations.py`), and it uses each width's quasi-static
+    `eps_eff` evaluated at the cutoff frequency only -- no dispersion, no
+    coupling between adjacent sections, and no discontinuity (step)
+    reactance at the width transitions themselves. Cross-check any result
+    that matters against a full-wave simulator or measurement before
+    fabrication, the same caveat `synthesize_filter_prototype` already
+    carries for the ideal lumped-element ladder this extends.
+
+    ONLY the lowpass band is supported (raises `ValueError` otherwise): a
+    highpass ladder's branches are single capacitors/inductors of the
+    *opposite* topology this method has no line-length formula for, and a
+    bandpass/bandstop ladder's branches are two-element resonators
+    (`LC_SERIES`/`LC_PARALLEL`) with no single-line equivalent at all. See
+    this module's own top docstring and issue #286 for that scope choice.
+    """
+    if network.band != "lowpass":
+        raise ValueError(
+            f"realize_lowpass_stepped_impedance_microstrip only supports "
+            f"band='lowpass' networks; got {network.band!r}. The "
+            f"stepped-impedance Hi-Z/Lo-Z method approximates a series "
+            f"inductor as a narrow high-impedance line and a shunt "
+            f"capacitor as a wide low-impedance line -- a highpass, "
+            f"bandpass or bandstop ladder's branches (series C/shunt L, or "
+            f"two-element LC resonators) have no equivalent short-line "
+            f"realization under this method (issue #286)."
+        )
+    if network.cutoff_hz is None:
+        raise ValueError(
+            "network.cutoff_hz is required (a lowpass FilterNetwork from "
+            "synthesize_filter always sets it; this network did not)."
+        )
+    if eps_r <= 1:
+        raise ValueError(f"eps_r must be > 1; got {eps_r!r}.")
+    if h_m <= 0:
+        raise ValueError("h_m must be positive.")
+    if z_high_ohm <= 0 or z_low_ohm <= 0:
+        raise ValueError("z_high_ohm and z_low_ohm must both be positive.")
+    if z_high_ohm <= z_low_ohm:
+        raise ValueError(
+            f"z_high_ohm ({z_high_ohm!r}) must exceed z_low_ohm ({z_low_ohm!r}) "
+            f"-- the method needs a genuinely high line and a genuinely low "
+            f"one; Pozar recommends keeping the ratio as large as the target "
+            f"board's manufacturable trace widths allow."
+        )
+
+    wc = 2 * math.pi * network.cutoff_hz
+    sections = []
+    for element in network.elements:
+        if element.topology == "L":
+            z0 = z_high_ohm
+            if element.inductance_h is None:
+                raise ValueError(
+                    f"element at position {element.position} has topology='L' "
+                    f"but inductance_h=None; a lowpass 'L' branch must carry "
+                    f"the series inductor value this method needs to compute "
+                    f"bl = wc * L / z_high_ohm."
+                )
+            beta_l = wc * element.inductance_h / z0
+        elif element.topology == "C":
+            z0 = z_low_ohm
+            if element.capacitance_f is None:
+                raise ValueError(
+                    f"element at position {element.position} has topology='C' "
+                    f"but capacitance_f=None; a lowpass 'C' branch must carry "
+                    f"the shunt capacitor value this method needs to compute "
+                    f"bl = wc * C * z_low_ohm."
+                )
+            beta_l = wc * element.capacitance_f * z0
+        else:
+            raise ValueError(
+                f"realize_lowpass_stepped_impedance_microstrip has no microstrip "
+                f"realization for a {element.topology!r} branch (issue #286); "
+                f"only the 'L'/'C' branches a lowpass ladder produces are supported."
+            )
+        width_m = microstrip_synthesize_width_m(z0, eps_r, h_m)
+        eps_eff = microstrip_effective_permittivity(eps_r, width_m, h_m)
+        beta = wc * eps_eff**0.5 / _SPEED_OF_LIGHT_M_S
+        sections.append(
+            MicrostripLineSection(
+                position=element.position,
+                topology=element.topology,
+                characteristic_impedance_ohm=z0,
+                width_m=width_m,
+                length_m=beta_l / beta,
+                electrical_length_rad=beta_l,
+                effective_permittivity=eps_eff,
+            )
+        )
+    return tuple(sections)

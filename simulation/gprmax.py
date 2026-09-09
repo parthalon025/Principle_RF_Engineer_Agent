@@ -118,6 +118,32 @@ class GprmaxSimulator(Simulator):
 #     see SCOPE below for why this adapter does not use it): docs/source/
 #     input.rst, github.com/gprMax/gprMax/blob/master/docs/source/
 #     input.rst.
+#   - #add_dispersion_debye / #add_dispersion_lorentz / #add_dispersion_drude
+#     (issue #277) -- each attaches frequency-dependent behaviour to an
+#     ALREADY-declared #material of the same identifier (never a
+#     replacement for #material, a separate command layered on top), with
+#     the #material's own epsilon_r field re-purposed as the
+#     relative-permittivity-at-infinite-frequency for that pole set. Exact
+#     syntax, verified by fetching docs/source/input.rst directly (same
+#     URL as above) rather than reproduced from docs/tools/gprmax.md's own
+#     research pass (which explicitly declined to guess this):
+#       #add_dispersion_debye:   i1 f1 f2 f3 f4 ... str1
+#         i1 = pole count; each pole is a (delta_epsilon_r, tau_s) pair,
+#         delta_epsilon_r = zero-frequency epsilon_r minus the #material's
+#         epsilon_r (i.e. epsilon_r at infinite frequency), tau_s = pole
+#         relaxation time in seconds; str1 = material identifier.
+#       #add_dispersion_lorentz: i1 f1 f2 f3 f4 f5 f6 ... str1
+#         each pole is a (delta_epsilon_r, omega_hz, delta_hz) triplet,
+#         omega_hz = pole frequency (Hz), delta_hz = damping coefficient
+#         (Hz).
+#       #add_dispersion_drude:   i1 f1 f2 f3 f4 ... str1
+#         each pole is an (omega_hz, gamma_hz) pair, omega_hz = pole
+#         frequency (Hz), gamma_hz = inverse relaxation time (Hz).
+#     Worked example reproduced verbatim from that same page ("#material: 4.9
+#     0 1 0 my_water" / "#add_dispersion_debye: 1 75.2 9.231e-12 my_water"
+#     for a single-pole Debye water model, epsilon_r_infinity=4.9,
+#     delta_epsilon_r=80.1-4.9=75.2, tau=9.231e-12s) is reproduced as a
+#     regression test in tests/test_gprmax.py.
 #   - Built-in reserved material identifiers "pec" (perfect electric
 #     conductor) and "free_space" (air, never declared via #material) --
 #     same input.rst.
@@ -346,6 +372,73 @@ def _primitive_command(
     raise ValueError(f"shape must be 'box', 'cylinder', 'plate', or 'edge', got {shape!r}")
 
 
+# Per-model required fields for one dispersion "pole" dict, in the exact
+# order gprMax's #add_dispersion_<model> command expects them (issue #277;
+# see module docstring citation for the verbatim docs/source/input.rst
+# syntax this was verified against directly):
+#   #add_dispersion_debye:   i1 f1 f2 f3 f4 ... str1
+#     (pairs: delta_epsilon_r, tau_s)
+#   #add_dispersion_lorentz: i1 f1 f2 f3 f4 f5 f6 ... str1
+#     (triplets: delta_epsilon_r, omega_hz, delta_hz)
+#   #add_dispersion_drude:   i1 f1 f2 f3 f4 ... str1
+#     (pairs: omega_hz, gamma_hz)
+_DISPERSION_POLE_FIELDS: dict[str, tuple[str, ...]] = {
+    "debye": ("delta_epsilon_r", "tau_s"),
+    "lorentz": ("delta_epsilon_r", "omega_hz", "delta_hz"),
+    "drude": ("omega_hz", "gamma_hz"),
+}
+
+
+def _require_dispersion_fields(dispersion: dict[str, Any], context: str) -> None:
+    """Validate a `dispersion` block carries both `model` and `poles` before
+    `_dispersion_command()` is called on it (issue #277). Shared by both of
+    `generate_gprmax_input()`'s call sites -- `geometry['half_space']
+    ['dispersion']` and each `materials[idx]['dispersion']` -- so the two
+    checks (previously written out near-verbatim at each site) can't drift
+    apart. `context` names the offending field in the caller's own error
+    message, e.g. "geometry['half_space']['dispersion']" or
+    "materials[2]['dispersion']"."""
+    missing = [f for f in ("model", "poles") if f not in dispersion]
+    if missing:
+        raise ValueError(f"{context} missing required field(s): {missing}")
+
+
+def _dispersion_command(model: str, params: dict[str, Any], material_name: str) -> str:
+    """Render one #add_dispersion_debye/_lorentz/_drude command attaching
+    frequency-dependent behaviour to an already-declared #material of the
+    same identifier (issue #277). `params["poles"]` is a list of one dict
+    per pole, each carrying that model's fields (see
+    `_DISPERSION_POLE_FIELDS` above); the emitted `i1` pole count is always
+    `len(params["poles"])`, never a caller-supplied number, so there is no
+    way for a declared count to disagree with the poles actually rendered.
+    Command syntax and per-model parameter order verified directly against
+    gprMax's own docs/source/input.rst -- see this module's header comment
+    citation."""
+    pole_fields = _DISPERSION_POLE_FIELDS.get(model)
+    if pole_fields is None:
+        raise ValueError(
+            f"dispersion['model'] must be 'debye', 'lorentz', or 'drude', got {model!r}"
+        )
+    poles = params.get("poles")
+    if not poles:
+        raise ValueError(
+            f"dispersion['poles'] is required and must be a non-empty list (material "
+            f"{material_name!r}, model {model!r})"
+        )
+    values: list[float] = []
+    for idx, pole in enumerate(poles):
+        missing = [f for f in pole_fields if f not in pole]
+        if missing:
+            raise ValueError(
+                f"dispersion['poles'][{idx}] missing required field(s) {missing} for "
+                f"model {model!r} (material {material_name!r})"
+            )
+        values.extend(pole[f] for f in pole_fields)
+    return f"#add_dispersion_{model}: " + " ".join(
+        [_fmt_int(len(poles)), *(_fmt_num(v) for v in values), material_name]
+    )
+
+
 def generate_gprmax_input(
     geometry: dict[str, Any],
     fdtd: dict[str, Any] | None = None,
@@ -372,6 +465,13 @@ def generate_gprmax_input(
               "magnetic_loss_ohm_m": float = 0.0,
               "z_min_m": float = 0.0,
               "name": str = "ground",
+              "dispersion": {              # optional (issue #277) --
+                  "model": "debye"|"lorentz"|"drude",   # required
+                  "poles": [               # required, non-empty; one dict
+                      {...},               # per pole, fields depend on
+                      ...                  # `model` (see below)
+                  ],
+              },
           },
           "materials": [                   # dielectric/lossy bodies (the
               {                             # antenna's own substrate, a
@@ -381,6 +481,8 @@ def generate_gprmax_input(
                 "radius_m": float,          # cylinder only
                 "epsilon_r": float, "conductivity_s_m": float,
                 "mu_r": float = 1.0, "magnetic_loss_ohm_m": float = 0.0,
+                "dispersion": {...},        # optional, same shape as
+                                             # half_space["dispersion"] above
               }, ...
           ],
           "conductors": [                  # PEC bodies (patch, ground
@@ -407,6 +509,28 @@ def generate_gprmax_input(
               ...
           ],
         }
+
+    `dispersion["poles"]` entry shape, by `model` (issue #277; field names
+    and per-model ordering verified directly against gprMax's own
+    docs/source/input.rst -- see this module's header comment citation for
+    the full "#add_dispersion_debye/_lorentz/_drude" syntax this renders):
+        "debye":   {"delta_epsilon_r": float, "tau_s": float}
+            delta_epsilon_r = (zero-frequency relative permittivity) minus
+            (relative permittivity at infinite frequency, i.e. the
+            epsilon_r already given in this material's own #material
+            line); tau_s = pole relaxation time in seconds.
+        "lorentz": {"delta_epsilon_r": float, "omega_hz": float, "delta_hz": float}
+            delta_epsilon_r as above; omega_hz = pole frequency in Hertz;
+            delta_hz = damping coefficient in Hertz.
+        "drude":   {"omega_hz": float, "gamma_hz": float}
+            omega_hz = pole frequency in Hertz; gamma_hz = inverse pole
+            relaxation time in Hertz.
+    Multiple poles are supported (a list of more than one dict) -- the
+    emitted command's own pole count (`i1`) is always `len(poles)`, never a
+    separately caller-supplied number. Each model's temporal/frequency
+    values must exceed the model's own FDTD time step per gprMax's own
+    documented constraint (not validated here -- gprMax itself will reject
+    a violating deck at run time).
 
     `fdtd` shape: exactly one of `time_window_s` (float seconds) or
     `time_window_iterations` (int) is required (see module docstring for
@@ -491,6 +615,10 @@ def generate_gprmax_input(
                 ]
             )
         )
+        dispersion = half_space.get("dispersion")
+        if dispersion is not None:
+            _require_dispersion_fields(dispersion, "geometry['half_space']['dispersion']")
+            lines.append(_dispersion_command(dispersion["model"], dispersion, hs_name))
         lines.append(
             _primitive_command(
                 "box",
@@ -521,6 +649,10 @@ def generate_gprmax_input(
                 ]
             )
         )
+        dispersion = mat.get("dispersion")
+        if dispersion is not None:
+            _require_dispersion_fields(dispersion, f"materials[{idx}]['dispersion']")
+            lines.append(_dispersion_command(dispersion["model"], dispersion, name))
         lines.append(
             _primitive_command(mat["shape"], mat["p1_m"], mat["p2_m"], name, mat.get("radius_m"))
         )
