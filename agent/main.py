@@ -44,6 +44,7 @@ from knowledge.digikey import lookup_digikey_product_details as _lookup_digikey_
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.ink_lookup import search_ink_product as _search_ink_product
 from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
 from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.nexar import lookup_nexar_part_data as _lookup_nexar_part_data
@@ -2059,6 +2060,26 @@ def lookup_nexar_component(part_number: str, license: str, classification: str) 
 
 
 @function_tool
+def search_ink_product(query: str) -> dict:
+    """Search Digi-Key, then Mouser, for a real, purchasable ink/adhesive product
+    matching query -- e.g. a query assembled from an unresolved ink-related
+    Capability warning's own family/capability_property/reason fields (CONTEXT.md's
+    Capability warning: a candidate stays kept but carries a warning when the
+    currently selected Ink-property library entry doesn't meet a stated need).
+    Returns {"status": "ok", "distributor": "digikey" | "mouser", "manufacturer": ...,
+    "manufacturer_part_number": ..., "datasheet_url": ...} on a match, or
+    {"status": "no_match", "queried": query, "checked": ["digikey", "mouser"]} when
+    neither distributor offers a usable citation -- never a guessed or approximated
+    value. Never calls ingest_document and never writes to the Ink-property library
+    itself: a found product is a citation for a human to review and, if they choose,
+    cite when they add their own library entry -- the same "search and cite, never
+    auto-populate" posture as search_arxiv_papers. Refuses to run unless
+    ALLOW_EXTERNAL_NETWORK_TOOLS=true, the same self-gate lookup_digikey_component/
+    lookup_mouser_component already enforce."""
+    return _search_ink_product(query)
+
+
+@function_tool
 def lookup_nexar_part_data(part_number: str) -> dict:
     """Search Nexar's GraphQL API (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET) for
     part_number's multi-distributor pricing/availability and parametric specs in one query
@@ -2689,8 +2710,16 @@ def run_candidate_search(
 #                   ingest_document" shape as search_arxiv_papers above --
 #                   and (issue #219) ingest_patent, the USPTO
 #                   grant/publication fetcher, same bucket and same
-#                   unauthenticated-endpoint posture as those four, since
-#                   standing up the knowledge base for
+#                   unauthenticated-endpoint posture as those four, plus
+#                   (issue #326) search_ink_product: fired only once an
+#                   ink-related Capability warning already names a gap,
+#                   this searches the SAME Digi-Key/Mouser APIs
+#                   lookup_digikey_component/lookup_mouser_component reach,
+#                   but never downloads or ingests anything -- a citation
+#                   (product name + datasheet URL) for a human to review,
+#                   the same "search and cite, never auto-populate" shape
+#                   search_arxiv_papers already has, since standing up the
+#                   knowledge base for
 #                   the team is systems-level work. Shares the cascaded-IP3/
 #                   IM3 tools with microwave -- linearity budgeting is both a
 #                   chain-level (systems) and single-stage (microwave)
@@ -2886,6 +2915,7 @@ _ALL_TOOLS = [
     lookup_nexar_component,
     lookup_nexar_part_data,
     reconcile_component_sources,
+    search_ink_product,
     create_design,
     read_design,
     record_decision,
@@ -2985,12 +3015,16 @@ ROLE_SPECS: list[RoleSpec] = [
             "IPR/(F)RAND-declaration register against a standard already "
             "ingested via ingest_etsi_ipr_declaration, searching FCC eCFR "
             "rule text by topic/keyword via search_fcc_rules before you "
-            "already know which part covers it, and fetching US "
+            "already know which part covers it, fetching US "
             "patents and published patent applications from the USPTO via "
             "ingest_patent, or searching the USPTO Open Data Portal by topic "
             "via search_uspto_patents first (issue #280) -- same 'search "
             "precedent before inventing' discipline as arXiv, credentialed "
-            "this time) other roles rely on. Defer network-level "
+            "this time -- and (issue #326) resolving an unresolved ink-"
+            "related Capability warning via search_ink_product -- searching "
+            "Digi-Key/Mouser for a real, purchasable product citation, "
+            "never a settled property value) other roles rely on. Defer "
+            "network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -3028,6 +3062,7 @@ ROLE_SPECS: list[RoleSpec] = [
             lookup_nexar_component,
             lookup_nexar_part_data,
             reconcile_component_sources,
+            search_ink_product,
         ],
     ),
     RoleSpec(

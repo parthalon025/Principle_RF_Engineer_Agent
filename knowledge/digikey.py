@@ -320,6 +320,64 @@ def lookup_digikey_datasheet(
     }
 
 
+def search_digikey_product(
+    query: str,
+    *,
+    get_token: GetTokenFn = _get_access_token,
+    search: SearchFn = _search_by_part_number,
+) -> dict[str, Any]:
+    """Search Digi-Key's Product Information API v4 for `query` and return
+    the best match's identity and datasheet link ONLY -- no download step,
+    no `ingest_document` call, unlike `lookup_digikey_datasheet` above
+    (issue #326: an ink/adhesive lookup fired from an unresolved Capability
+    warning is a citation for a human to review, never a write to the
+    Ink-property library or the knowledge base -- the same "search and cite,
+    never auto-populate" posture `knowledge.sourcing.arxiv.search_arxiv_papers`
+    already established for a literature search). There is deliberately no
+    `download`/`ingest` parameter to inject here, unlike
+    `lookup_digikey_datasheet`: this function has no code path that could
+    call either.
+
+    Same real OAuth2 token request and keyword-search POST as
+    `lookup_digikey_datasheet` (see module docstring), same
+    ALLOW_EXTERNAL_NETWORK_TOOLS gate, same defensive `_parse_matches`. Only
+    the "then do something with the match" half differs.
+
+    Returns `{"status": "no_match" | "no_datasheet" | "ok", ...}` -- the
+    same three-way contract as `lookup_digikey_datasheet`, minus the
+    `"ingest"` key on `"ok"`: `"no_match"` when Digi-Key returned zero
+    products for `query` (a real "nothing found" result, never a guessed
+    value); `"no_datasheet"` when a product matched but has no datasheet
+    URL on file; `"ok"` with `manufacturer`/`manufacturer_part_number`/
+    `datasheet_url` when a real, purchasable product with a citable
+    datasheet was found.
+    """
+    require_external_network_tools_enabled("Digi-Key")
+
+    token = get_token()
+    raw = search(query, token)
+    matches = _parse_matches(raw)
+    if not matches:
+        return {"status": "no_match", "distributor": "digikey", "queried": query}
+
+    best = matches[0]
+    if not best.datasheet_url:
+        return {
+            "status": "no_datasheet",
+            "distributor": "digikey",
+            "manufacturer": best.manufacturer,
+            "manufacturer_part_number": best.manufacturer_part_number,
+        }
+
+    return {
+        "status": "ok",
+        "distributor": "digikey",
+        "manufacturer": best.manufacturer,
+        "manufacturer_part_number": best.manufacturer_part_number,
+        "datasheet_url": best.datasheet_url,
+    }
+
+
 @dataclass(frozen=True)
 class _DigikeyProductDetails:
     """The parametric-attribute and pricing fields Digi-Key's `ProductDetails`

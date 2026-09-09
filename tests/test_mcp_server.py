@@ -170,31 +170,35 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #257-T2 adds 1 more (search_arxiv_papers, arXiv topic/keyword
     # discovery search wired onto the tool surface): 86 + 1 = 87.
     #
+    # issue #326 adds 1 more (search_ink_product, the Digi-Key/Mouser
+    # citation-only ink/adhesive lookup fired by an unresolved ink-related
+    # Capability warning): 87 + 1 = 88.
+    #
     # issue #286 adds 1 more (realize_lowpass_stepped_impedance_microstrip_
     # filter, the stepped-impedance microstrip physical realization of a
-    # synthesized lowpass ladder): 87 + 1 = 88.
+    # synthesized lowpass ladder): 88 + 1 = 89.
     #
     # issue #284 adds 1 more (ingest_etsi_ipr_declaration, the SR 000 314
-    # IPR/FRAND-declaration register client): 88 + 1 = 89.
+    # IPR/FRAND-declaration register client): 89 + 1 = 90.
     #
     # issue #285 adds 1 more (lookup_3gpp_spec_status, the DynaReport
     # version/withdrawal status lookup wired onto the tool surface right
-    # beside its ingest_3gpp_spec sibling): 89 + 1 = 90.
+    # beside its ingest_3gpp_spec sibling): 90 + 1 = 91.
     #
     # issue #279 adds 1 more (search_fcc_rules, FCC eCFR topic/keyword
     # discovery search over the Search Service wired onto the tool
-    # surface): 90 + 1 = 91.
+    # surface): 91 + 1 = 92.
     #
     # issue #275 adds 1 more (lookup_digikey_product_details, Digi-Key's
     # ProductDetails endpoint -- parametric attributes and price/quantity
     # breaks -- wired onto the tool surface alongside its
-    # lookup_digikey_component sibling): 91 + 1 = 92.
+    # lookup_digikey_component sibling): 92 + 1 = 93.
     #
     # issue #280 adds 1 more (search_uspto_patents, USPTO ODP full-text
-    # discovery search wired onto the tool surface): 92 + 1 = 93.
+    # discovery search wired onto the tool surface): 93 + 1 = 94.
     #
     # ticket #276 adds 1 more (lookup_nexar_part_data, Nexar's cross-
-    # distributor pricing/availability + parametric specs query): 93 + 1 = 94.
+    # distributor pricing/availability + parametric specs query): 94 + 1 = 95.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -226,6 +230,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 3  # issue #215: ingest_3gpp_spec, ingest_etsi_standard, ingest_fcc_rule
         + 1  # issue #219: ingest_patent
         + 1  # issue #257-T2: search_arxiv_papers
+        + 1  # issue #326: search_ink_product
         + 1  # issue #286: realize_lowpass_stepped_impedance_microstrip_filter
         + 1  # issue #284: ingest_etsi_ipr_declaration
         + 1  # issue #285: lookup_3gpp_spec_status
@@ -244,6 +249,57 @@ def test_component_sourcing_tools_are_registered():
     assert "lookup_mouser_component" in registered_names
     assert "lookup_nexar_component" in registered_names
     assert "reconcile_component_sources" in registered_names
+
+
+def test_search_ink_product_is_registered():
+    # issue #326: knowledge/ink_lookup.py's search_ink_product, wired onto
+    # the MCP tool surface alongside its lookup_digikey_component/
+    # lookup_mouser_component siblings.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_ink_product" in registered_names
+
+
+def test_search_ink_product_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real search/fallback logic is
+    # exercised in tests/test_ink_lookup.py; this only confirms the MCP
+    # wrapper forwards its argument to knowledge.ink_lookup and returns its
+    # result unchanged.
+    captured = {}
+    match = {
+        "status": "ok",
+        "distributor": "digikey",
+        "manufacturer": "MG Chemicals",
+        "manufacturer_part_number": "8331-14G",
+        "datasheet_url": "https://example.com/8331-14g.pdf",
+    }
+
+    def fake_search(query):
+        captured["query"] = query
+        return match
+
+    monkeypatch.setattr(server, "_search_ink_product", fake_search)
+
+    result = server.search_ink_product("conductive silver ink")
+
+    assert result == match
+    assert captured == {"query": "conductive silver ink"}
+
+
+def test_search_ink_product_never_calls_ingest_document(monkeypatch):
+    # issue #326 acceptance criterion 3: search and ingest stay two
+    # separate calls, mirrors test_search_arxiv_papers_never_calls_
+    # ingest_document's own version of this guard.
+    def fail_if_called(**kwargs):
+        raise AssertionError("search_ink_product must never call ingest_document")
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(
+        server,
+        "_search_ink_product",
+        lambda query: {"status": "no_match", "queried": query, "checked": []},
+    )
+
+    server.search_ink_product("conductive silver ink")
 
 
 def test_lookup_nexar_part_data_is_registered():

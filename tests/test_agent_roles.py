@@ -315,6 +315,28 @@ def test_systems_role_gets_component_sourcing_tools():
         assert "reconcile_component_sources" not in role_names
 
 
+def test_systems_role_gets_ink_lookup_tool():
+    # issue #326: search_ink_product (knowledge/ink_lookup.py's Digi-Key/
+    # Mouser citation-only ink/adhesive lookup) is the same knowledge-
+    # sourcing concern as its lookup_digikey_component/lookup_mouser_
+    # component siblings -- same role.
+    names = _tool_names(ROLES["systems"])
+    assert "search_ink_product" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "search_ink_product" not in role_names
+
+
+def test_search_ink_product_is_categorized_approval_self_gated():
+    # Matches lookup_digikey_component's/lookup_mouser_component's own
+    # category: search_ink_product reaches the same credentialed Digi-Key/
+    # Mouser APIs and is gated by the same
+    # require_external_network_tools_enabled() self-gate, unlike
+    # search_arxiv_papers' credential-free ingestion_auto category.
+    assert category_for("search_ink_product") == category_for("lookup_digikey_component")
+    assert category_for("search_ink_product") == "approval_self_gated"
+
+
 def test_systems_role_gets_digikey_product_details_tool():
     # ticket #275: parametric-attribute/pricing lookup sits beside its
     # lookup_digikey_component sibling -- same component-sourcing concern,
