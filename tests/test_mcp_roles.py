@@ -74,14 +74,17 @@ def test_every_role_has_a_static_allow_list_filter():
 
 def test_principal_filter_matches_principal_direct_tools_exactly():
     # The ticket's own headline regression: the principal's filter must be
-    # sourced from _PRINCIPAL_DIRECT_TOOLS (15 tools), never from
-    # ROLE_SPECS's own dead `principal.tools = _ALL_TOOLS` entry (89 tools)
-    # -- getting this wrong reproduces the already-fixed 91-tool-principal
-    # reliability bug (see agent/main.py's _PRINCIPAL_DIRECT_TOOLS comment).
+    # sourced from _PRINCIPAL_DIRECT_TOOLS (16 tools -- issue #327 added
+    # search_literature_for_capability_warning as the 16th, principal-
+    # exclusive since it fires on a capability_warnings entry the design
+    # loop itself produced), never from ROLE_SPECS's own dead
+    # `principal.tools = _ALL_TOOLS` entry (89 tools) -- getting this wrong
+    # reproduces the already-fixed 91-tool-principal reliability bug (see
+    # agent/main.py's _PRINCIPAL_DIRECT_TOOLS comment).
     principal_allowed = set(ROLE_MCP_TOOL_FILTERS["principal"]["allowed_tool_names"])
     expected = {tool.name for tool in _PRINCIPAL_DIRECT_TOOLS}
     assert principal_allowed == expected
-    assert len(principal_allowed) == 15
+    assert len(principal_allowed) == 16
 
 
 def test_principal_filter_does_not_match_role_specs_dead_entry():

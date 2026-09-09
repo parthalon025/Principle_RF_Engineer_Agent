@@ -174,31 +174,34 @@ def test_registered_tool_count_matches_old_plus_new():
     # citation-only ink/adhesive lookup fired by an unresolved ink-related
     # Capability warning): 87 + 1 = 88.
     #
+    # issue #327 adds 1 more (search_literature_for_capability_warning, the
+    # Capability-warning literature-search tool, ADR-0033): 88 + 1 = 89.
+    #
     # issue #286 adds 1 more (realize_lowpass_stepped_impedance_microstrip_
     # filter, the stepped-impedance microstrip physical realization of a
-    # synthesized lowpass ladder): 88 + 1 = 89.
+    # synthesized lowpass ladder): 89 + 1 = 90.
     #
     # issue #284 adds 1 more (ingest_etsi_ipr_declaration, the SR 000 314
-    # IPR/FRAND-declaration register client): 89 + 1 = 90.
+    # IPR/FRAND-declaration register client): 90 + 1 = 91.
     #
     # issue #285 adds 1 more (lookup_3gpp_spec_status, the DynaReport
     # version/withdrawal status lookup wired onto the tool surface right
-    # beside its ingest_3gpp_spec sibling): 90 + 1 = 91.
+    # beside its ingest_3gpp_spec sibling): 91 + 1 = 92.
     #
     # issue #279 adds 1 more (search_fcc_rules, FCC eCFR topic/keyword
     # discovery search over the Search Service wired onto the tool
-    # surface): 91 + 1 = 92.
+    # surface): 92 + 1 = 93.
     #
     # issue #275 adds 1 more (lookup_digikey_product_details, Digi-Key's
     # ProductDetails endpoint -- parametric attributes and price/quantity
     # breaks -- wired onto the tool surface alongside its
-    # lookup_digikey_component sibling): 92 + 1 = 93.
+    # lookup_digikey_component sibling): 93 + 1 = 94.
     #
     # issue #280 adds 1 more (search_uspto_patents, USPTO ODP full-text
-    # discovery search wired onto the tool surface): 93 + 1 = 94.
+    # discovery search wired onto the tool surface): 94 + 1 = 95.
     #
     # ticket #276 adds 1 more (lookup_nexar_part_data, Nexar's cross-
-    # distributor pricing/availability + parametric specs query): 94 + 1 = 95.
+    # distributor pricing/availability + parametric specs query): 95 + 1 = 96.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -231,6 +234,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #219: ingest_patent
         + 1  # issue #257-T2: search_arxiv_papers
         + 1  # issue #326: search_ink_product
+        + 1  # issue #327: search_literature_for_capability_warning
         + 1  # issue #286: realize_lowpass_stepped_impedance_microstrip_filter
         + 1  # issue #284: ingest_etsi_ipr_declaration
         + 1  # issue #285: lookup_3gpp_spec_status
@@ -365,6 +369,70 @@ def test_search_arxiv_papers_never_calls_ingest_document(monkeypatch):
     monkeypatch.setattr(server, "_search_arxiv_papers", lambda query, *, max_results: [])
 
     server.search_arxiv_papers("metamaterial")
+
+
+def test_search_literature_for_capability_warning_is_registered():
+    # issue #327 (ADR-0033): knowledge/literature_search.py's
+    # search_literature_for_capability_warning, wired onto the MCP tool
+    # surface.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_literature_for_capability_warning" in registered_names
+
+
+def test_search_literature_for_capability_warning_calls_through(monkeypatch):
+    # Mocked, not hitting a database or the network -- the real search/
+    # validation logic is exercised in tests/test_literature_search.py; this
+    # only confirms the MCP wrapper forwards its arguments unchanged and
+    # returns the underlying result unchanged.
+    captured = {}
+    result = {"found": False, "candidates": [], "message": "nothing citable found"}
+
+    def fake_search(capability_warning, material_or_ink_name):
+        captured["capability_warning"] = capability_warning
+        captured["material_or_ink_name"] = material_or_ink_name
+        return result
+
+    monkeypatch.setattr(server, "_search_literature_for_capability_warning", fake_search)
+
+    warning = {
+        "family": "patch_antenna",
+        "capability_kind": "material",
+        "capability_property": "eps_r",
+    }
+    returned = server.search_literature_for_capability_warning(warning, "MXene ink film")
+
+    assert returned == result
+    assert captured == {"capability_warning": warning, "material_or_ink_name": "MXene ink film"}
+
+
+def test_search_literature_for_capability_warning_never_calls_ingest_document(monkeypatch):
+    # AC3: search and ingest stay two separate calls. Mirrors
+    # test_search_arxiv_papers_never_calls_ingest_document above, one layer
+    # up at the MCP wrapper -- the underlying search itself is stubbed here
+    # too (same as that test does for _search_arxiv_papers) so this stays a
+    # wrapper-wiring check, not a live DB/network call; the real never-
+    # calls-ingest_document behavior against real search logic is covered
+    # in tests/test_literature_search.py.
+    def fail_if_called(**kwargs):
+        raise AssertionError(
+            "search_literature_for_capability_warning must never call ingest_document"
+        )
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(
+        server,
+        "_search_literature_for_capability_warning",
+        lambda capability_warning, material_or_ink_name: {
+            "found": False,
+            "candidates": [],
+            "message": "none",
+        },
+    )
+
+    server.search_literature_for_capability_warning(
+        {"family": "patch_antenna", "capability_kind": "material", "capability_property": "eps_r"},
+        "MXene ink film",
+    )
 
 
 def test_standards_body_sourcing_tools_are_registered():
