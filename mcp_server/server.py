@@ -23,6 +23,7 @@ from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
 from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datasheet
+from knowledge.digikey import lookup_digikey_product_details as _lookup_digikey_product_details
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -1833,6 +1834,26 @@ def lookup_digikey_component(part_number: str, license: str, classification: str
     same part. NOT run against the real API in this environment -- see
     knowledge/digikey.py's module docstring."""
     return _lookup_digikey_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def lookup_digikey_product_details(part_number: str) -> dict:
+    """Look up part_number's parametric attributes and price/quantity breaks
+    via Digi-Key's ProductDetails endpoint (ticket #275) -- a narrower,
+    separate contract from lookup_digikey_component's "find and ingest a
+    datasheet PDF": does not download or ingest anything, takes no license/
+    classification. Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true
+    AND DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET are configured, reusing the
+    same OAuth2 token and X-DIGIKEY-Client-Id header lookup_digikey_component
+    already uses. Returns {"status": "no_match" | "ok", ...}; on "ok",
+    manufacturer/manufacturer_part_number match lookup_digikey_component's
+    identity contract, plus parameters (Digi-Key's raw per-category
+    parametric attribute list), price_breaks/my_pricing (list and contract
+    pricing), and digikey_product_number/package/category/
+    quantity_available/product_status/discontinued/end_of_life/
+    datasheet_url. NOT run against the real API in this environment -- see
+    knowledge/digikey.py's module docstring."""
+    return _lookup_digikey_product_details(part_number)
 
 
 @mcp.tool()

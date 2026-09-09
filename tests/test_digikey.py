@@ -179,6 +179,13 @@ def test_product_missing_manufacturer_product_number_is_skipped(monkeypatch):
     assert ingest_spy.calls == []
 
 
+# ProductDetails parametric-attribute and pricing fields (ticket #275) -- see
+# docs/tools/digikey.md "Capabilities not yet used here": ProductDetails is a
+# distinct endpoint lookup_digikey_datasheet never calls at all (not a field
+# on KeywordSearch's response that was merely discarded), returning generic
+# per-category parametric attributes and price/quantity breaks.
+
+
 def _digikey_product_details_raw(
     mpn: str = "LM358DR",
     manufacturer: str = "Texas Instruments",

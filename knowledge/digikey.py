@@ -227,6 +227,17 @@ def _fetch_product_details(part_number: str, access_token: str) -> dict[str, Any
         return json.loads(resp.read())
 
 
+def _nested_field(value: Any, key: str = "Name", default: Any = None) -> Any:
+    """Digi-Key represents several attributes -- `Manufacturer`, `Category`,
+    `ProductStatus`, `PackageType` (see module docstring's ticket #275
+    addendum) -- as a nested `{"Id": ..., <key>: ...}` object rather than a
+    bare scalar. Unwrap that shape defensively, the same way `_parse_matches`
+    always has: if `value` is a dict, read `key` off it; otherwise return
+    `default`. Shared by `_parse_matches` and `_parse_product_details` below
+    so this ternary isn't repeated once per field."""
+    return value.get(key) if isinstance(value, dict) else default
+
+
 def _parse_matches(raw: dict[str, Any]) -> list[ComponentMatch]:
     """See module docstring's honest caveat on the `"Products"`/PascalCase
     field-name assumption."""
@@ -236,7 +247,7 @@ def _parse_matches(raw: dict[str, Any]) -> list[ComponentMatch]:
         if not mpn:
             continue
         mfr = product.get("Manufacturer")
-        mfr_name = mfr.get("Name") if isinstance(mfr, dict) else mfr
+        mfr_name = _nested_field(mfr, default=mfr)
         matches.append(
             ComponentMatch(
                 distributor="digikey",
@@ -327,8 +338,22 @@ class _DigikeyProductDetails:
     fields every distributor can report -- see that dataclass's own
     docstring). Kept local to this module and this function's own result
     dict, per this ticket's own instruction not to touch `ComponentMatch`
-    or the Mouser/Nexar clients -- same pattern as
-    `knowledge.mouser._MouserPricingAndCompliance` (ticket #274).
+    or the Mouser/Nexar clients -- the same "new fields stay local,
+    `ComponentMatch` stays untouched" principle
+    `knowledge.mouser._MouserPricingAndCompliance` (ticket #274) follows.
+
+    NOT structurally identical to that sibling, though: Mouser's dataclass
+    carries only its ten new fields and comes back paired in a tuple
+    alongside an unmodified `ComponentMatch` (`knowledge/mouser.py`'s
+    `_parse_matches` returns `list[tuple[ComponentMatch,
+    _MouserPricingAndCompliance]]`), because ticket #274 extended that
+    module's existing `_parse_matches`/`lookup_mouser_datasheet` pipeline in
+    place. `lookup_digikey_product_details` below is a separate lookup path
+    against a different endpoint, not an extension of this module's own
+    `_parse_matches`/`lookup_digikey_datasheet` pipeline -- there is no
+    `ComponentMatch` produced by this call to pair with, so
+    `_DigikeyProductDetails` re-declares `manufacturer`/
+    `manufacturer_part_number` itself instead.
 
     `parameters`/`price_breaks`/`my_pricing` are passed through as raw
     lists of dicts in Digi-Key's own PascalCase field names (ParameterId/
@@ -383,19 +408,19 @@ def _parse_product_details(raw: dict[str, Any]) -> _DigikeyProductDetails | None
         return None
 
     mfr = product.get("Manufacturer")
-    mfr_name = mfr.get("Name") if isinstance(mfr, dict) else mfr
+    mfr_name = _nested_field(mfr, default=mfr)
 
     category = product.get("Category")
-    category_name = category.get("Name") if isinstance(category, dict) else None
+    category_name = _nested_field(category)
 
     status = product.get("ProductStatus")
-    status_name = status.get("Status") if isinstance(status, dict) else None
+    status_name = _nested_field(status, key="Status")
 
     variations = product.get("ProductVariations") or []
     first_variation = variations[0] if variations and isinstance(variations[0], dict) else {}
 
     package = first_variation.get("PackageType")
-    package_name = package.get("Name") if isinstance(package, dict) else None
+    package_name = _nested_field(package)
 
     return _DigikeyProductDetails(
         manufacturer=mfr_name,

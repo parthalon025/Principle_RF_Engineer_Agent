@@ -128,9 +128,12 @@ approval_self_gated:
   # confinement check (run_hfss_simulation), or (ticket #67)
   # knowledge/sourcing_common.py's require_external_network_tools_enabled()
   # -- ALLOW_EXTERNAL_NETWORK_TOOLS=true, checked before any credential is
-  # read or any outbound request is built -- for the three distributor
-  # lookup tools, which place a real, credentialed call to a third party
-  # the instant they run. Deliberately NOT listed under approval_required:
+  # read or any outbound request is built -- for the distributor lookup
+  # tools, which place a real, credentialed call to a third party the
+  # instant they run (ticket #275 adds a fourth, lookup_digikey_product_
+  # details, calling the same gate its lookup_digikey_component sibling
+  # already does -- see knowledge/digikey.py). Deliberately NOT listed
+  # under approval_required:
   # this policy file adds no second gate on top of an already-working one
   # -- see docs/adr's grilling notes and orchestration/policy.py's module
   # docstring for why a blanket approval_required block would just
@@ -148,6 +151,7 @@ approval_self_gated:
   # actuation capability, so there is nothing left to categorize here.
   - run_hfss_simulation
   - lookup_digikey_component
+  - lookup_digikey_product_details
   - lookup_mouser_component
   - lookup_nexar_component
 
@@ -159,8 +163,9 @@ ingestion_auto:
   # approval_self_gated exists for a tool that ALREADY enforces its own
   # independent gate before it runs -- concretely, knowledge/
   # sourcing_common.py's require_external_network_tools_enabled()
-  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the three distributor lookups
-  # (lookup_digikey_component/lookup_mouser_component/lookup_nexar_component)
+  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the distributor lookups
+  # (lookup_digikey_component/lookup_digikey_product_details/
+  # lookup_mouser_component/lookup_nexar_component)
   # call because each places a real, CREDENTIALED call to a third party
   # (an API key/secret read from the environment) the instant it runs. None
   # of the three new sourcing clients do that, or need to: 3GPP's FTP

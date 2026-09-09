@@ -286,6 +286,16 @@ def test_systems_role_gets_component_sourcing_tools():
         assert "reconcile_component_sources" not in role_names
 
 
+def test_systems_role_gets_digikey_product_details_tool():
+    # ticket #275: parametric-attribute/pricing lookup sits beside its
+    # lookup_digikey_component sibling -- same component-sourcing concern,
+    # same role.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_digikey_product_details" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        assert "lookup_digikey_product_details" not in _tool_names(ROLES[key])
+
+
 def test_microwave_role_gets_network_and_component_analysis():
     names = _tool_names(ROLES["microwave"])
     assert "analyze_touchstone_file" in names

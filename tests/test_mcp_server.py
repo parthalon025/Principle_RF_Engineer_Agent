@@ -184,6 +184,11 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #279 adds 1 more (search_fcc_rules, FCC eCFR topic/keyword
     # discovery search over the Search Service wired onto the tool
     # surface): 90 + 1 = 91.
+    #
+    # issue #275 adds 1 more (lookup_digikey_product_details, Digi-Key's
+    # ProductDetails endpoint -- parametric attributes and price/quantity
+    # breaks -- wired onto the tool surface alongside its
+    # lookup_digikey_component sibling): 91 + 1 = 92.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -219,6 +224,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #284: ingest_etsi_ipr_declaration
         + 1  # issue #285: lookup_3gpp_spec_status
         + 1  # issue #279: search_fcc_rules
+        + 1  # issue #275: lookup_digikey_product_details
     )
     assert len(registered_names) == expected
 
@@ -226,6 +232,7 @@ def test_registered_tool_count_matches_old_plus_new():
 def test_component_sourcing_tools_are_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "lookup_digikey_component" in registered_names
+    assert "lookup_digikey_product_details" in registered_names
     assert "lookup_mouser_component" in registered_names
     assert "lookup_nexar_component" in registered_names
     assert "reconcile_component_sources" in registered_names
