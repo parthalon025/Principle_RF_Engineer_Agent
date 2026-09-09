@@ -491,6 +491,7 @@ prior art, the superposition coupling error bar, and the rest.
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Design lifecycle and operational conventions |
 | [`docs/LICENSE_MATRIX.md`](docs/LICENSE_MATRIX.md) | Full upstream-license inventory |
 | [`docs/FREE_AND_OPEN_SOURCE_TOOLING.md`](docs/FREE_AND_OPEN_SOURCE_TOOLING.md) | The free/OSS survey behind the solver choices |
+| [`docs/tools/`](docs/tools/README.md) | Per-tool capability research for every external simulator, geometry tool, component-sourcing API, and knowledge-ingestion source this repo wires up — what each can do beyond what its adapter uses today |
 | [`docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`](docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md) | Gap analysis of the knowledge pipeline (embedding-version tracking, chunk dedup, retrieval feedback) |
 | [`verification/README.md`](verification/README.md) | The verification matrix, plus the retrieval-quality gate and simulator reference cases |
 | [`AGENTS.md`](AGENTS.md) / [`docs/agents/`](docs/agents/) | Repo conventions for AI coding agents |
