@@ -28,12 +28,16 @@ from pathlib import Path
 import pytest
 from conftest import make_fake_executable
 
+from designs.material_properties import add_entry
 from simulation.base import SimulatorError
 from simulation.openparem import (
     OpenParemSimulator,
+    generate_openparem_materials_file,
     generate_openparem_ports_file,
     generate_openparem_project_config,
+    openparem_materials_from_property_entries,
     parse_openparem_output,
+    run_openparem_gmsh_meshing,
     run_openparem_simulation,
 )
 
@@ -76,6 +80,14 @@ MONOPOLE_PROJECT = {
     "mesh_file": "monopole_antenna.msh",
     "frequency_plan": {"linear": [{"start_hz": 1e9, "stop_hz": 3e9, "step_hz": 1e9}]},
     "far_field": {"quantity": "G"},
+}
+
+# A small rectangular-domain geometry, structurally the same primitive-dict
+# shape simulation/elmer.py's generate_gmsh_geo_script() already consumes
+# (geometry/unit_cell.py's own "box"/"p1_m"/"p2_m" convention) -- see
+# tests/test_elmer.py's DOMAIN_GEOMETRY for the sibling fixture this mirrors.
+MESH_GEOMETRY = {
+    "domain": {"p1_m": [0.0, 0.0, 0.0], "p2_m": [0.02, 0.02, 0.01]},
 }
 
 
@@ -272,6 +284,398 @@ def test_generate_openparem_ports_file_invalid_integration_path_type_raises():
     ports = {**MONOPOLE_PORTS, "ports": [bad_port]}
     with pytest.raises(ValueError, match="type"):
         generate_openparem_ports_file(ports)
+
+
+# ---------------------------------------------------------------------------
+# Materials-file generation (issue #278) -- keyword syntax verified against
+# OpenParEM3D_Users_Manual.tex's own "Materials File Specification" Verbatim
+# block AND src/OpenParEMCommon/OpenParEMmaterials.cpp's push_alias()/check()
+# calls; see simulation/openparem.py's module docstring for the full,
+# per-fact citation list this mirrors the ports/.proj sections' own discipline.
+# ---------------------------------------------------------------------------
+
+FR4_MATERIAL = {
+    "name": "FR4",
+    "relative_permittivity": 4.3,
+    "loss_tangent": 0.025,
+    "frequency_low_hz": 7.0e9,
+    "frequency_high_hz": 10.0e9,
+    "citations": ["X-band UWB antenna paper, 7-10 GHz, doi:10.25046/aj040210"],
+}
+
+
+def test_generate_openparem_materials_file_header():
+    text = generate_openparem_materials_file([FR4_MATERIAL])
+    assert text.split("\n")[0] == "#OpenParEMmaterials 1.0"
+
+
+def test_generate_openparem_materials_file_name_and_block_structure():
+    text = generate_openparem_materials_file([FR4_MATERIAL])
+    assert "Material" in text.split("\n")
+    assert "   name=FR4" in text
+    assert "   Temperature" in text
+    assert "EndMaterial" in text
+
+
+def test_generate_openparem_materials_file_single_frequency_point_when_band_degenerate():
+    material = {**FR4_MATERIAL, "frequency_low_hz": 10e9, "frequency_high_hz": 10e9}
+    text = generate_openparem_materials_file([material])
+    lines = text.split("\n")
+    assert lines.count("      Frequency") == lines.count("      EndFrequency") == 1
+    assert "         frequency=1e+10" in text
+
+
+def test_generate_openparem_materials_file_band_emits_two_bracketing_frequency_points():
+    """A cited validity BAND (low != high) becomes two identical-valued
+    Frequency points at its low/high ends -- see generate_openparem_materials_file's
+    own docstring for why: OpenParEM's own manual documents linear interpolation
+    between declared points and explicitly "extrapolation is not supported",
+    so two points bracketing the citation's own range is the literal, honest
+    translation of "flat across this cited band, unclaimed outside it"."""
+    text = generate_openparem_materials_file([FR4_MATERIAL])
+    lines = text.split("\n")
+    assert lines.count("      Frequency") == lines.count("      EndFrequency") == 2
+    assert "         frequency=7e+09" in text
+    assert "         frequency=1e+10" in text
+    # both points carry the SAME er/loss values -- flat across the band
+    assert text.count("         er=4.3") == 2
+    assert text.count("         loss_tangent=0.025") == 2
+
+
+def test_generate_openparem_materials_file_er_mur_rz_keywords():
+    text = generate_openparem_materials_file([FR4_MATERIAL])
+    assert "         er=4.3" in text
+    assert "         mur=1" in text  # default relative_permeability -- see docstring
+    assert "         Rz=0" in text  # default surface_roughness_rz_m -- see docstring
+
+
+def test_generate_openparem_materials_file_conductivity_keyword_for_conductors():
+    copper = {
+        "name": "copper",
+        "relative_permittivity": 1,
+        "conductivity_s_per_m": 5.813e7,
+        "surface_roughness_rz_m": 4.445e-6,
+        "frequency_hz": "any",
+        "citations": ["IPC spec, 20 degC"],
+    }
+    text = generate_openparem_materials_file([copper])
+    assert "         conductivity=5.813e+07" in text
+    assert "loss_tangent" not in text
+    assert "         frequency=any" in text
+    assert "         Rz=4.445e-06" in text
+
+
+def test_generate_openparem_materials_file_both_loss_tangent_and_conductivity_raises():
+    material = {**FR4_MATERIAL, "conductivity_s_per_m": 1.0}
+    with pytest.raises(ValueError, match="loss_tangent.*conductivity_s_per_m|exactly one"):
+        generate_openparem_materials_file([material])
+
+
+def test_generate_openparem_materials_file_missing_loss_raises():
+    material = {k: v for k, v in FR4_MATERIAL.items() if k != "loss_tangent"}
+    with pytest.raises(ValueError, match="loss_tangent|conductivity_s_per_m|exactly one"):
+        generate_openparem_materials_file([material])
+
+
+def test_generate_openparem_materials_file_missing_name_raises():
+    material = {k: v for k, v in FR4_MATERIAL.items() if k != "name"}
+    with pytest.raises(ValueError, match="name"):
+        generate_openparem_materials_file([material])
+
+
+def test_generate_openparem_materials_file_missing_citation_raises():
+    material = {k: v for k, v in FR4_MATERIAL.items() if k != "citations"}
+    with pytest.raises(ValueError, match="citation"):
+        generate_openparem_materials_file([material])
+
+
+def test_generate_openparem_materials_file_source_endsource_block_per_entry():
+    text = generate_openparem_materials_file([FR4_MATERIAL])
+    assert "   Source" in text.split("\n")
+    assert "      X-band UWB antenna paper, 7-10 GHz, doi:10.25046/aj040210" in text
+    assert "   EndSource" in text.split("\n")
+
+
+def test_generate_openparem_materials_file_multiple_citations_multiple_source_blocks():
+    material = {**FR4_MATERIAL, "citations": ["citation one", "citation two"]}
+    text = generate_openparem_materials_file([material])
+    assert text.count("   Source") == 2
+    assert text.count("   EndSource") == 2
+    assert "      citation one" in text
+    assert "      citation two" in text
+
+
+def test_generate_openparem_materials_file_multiple_materials():
+    copper = {
+        "name": "copper",
+        "relative_permittivity": 1,
+        "conductivity_s_per_m": 5.813e7,
+        "frequency_hz": "any",
+        "citations": ["IPC spec"],
+    }
+    text = generate_openparem_materials_file([FR4_MATERIAL, copper])
+    assert "   name=FR4" in text
+    assert "   name=copper" in text
+    assert text.count("EndMaterial") == 2
+
+
+def test_generate_openparem_materials_file_empty_list_raises():
+    with pytest.raises(ValueError, match="materials"):
+        generate_openparem_materials_file([])
+
+
+# Debye-model materials (OpenParEM3D_Users_Manual.tex's OTHER documented
+# Material shape -- mutually exclusive with the frequency-list format per
+# OpenParEMmaterials.cpp's own ERROR1058 "Debye variable ... not allowed with
+# frequency blocks defined").
+DEBYE_MATERIAL = {
+    "name": "debye_dielectric",
+    "debye": {
+        "epsr_infinity": 3.0,
+        "delta_epsr": 1.2,
+        "m1": 0.1,
+        "m2": 0.9,
+        "loss_tangent": 0.01,
+    },
+    "citations": ["Debye fit, via issue #278 test fixture"],
+}
+
+
+def test_generate_openparem_materials_file_debye_mode_keywords():
+    text = generate_openparem_materials_file([DEBYE_MATERIAL])
+    assert "      epsr_infinity=3" in text
+    assert "      delta_epsr=1.2" in text
+    assert "      m1=0.1" in text
+    assert "      m2=0.9" in text
+    assert "      mur=1" in text
+    assert "      loss_tangent=0.01" in text
+    assert "Frequency" not in text  # Debye mode has no Frequency sub-blocks
+
+
+def test_generate_openparem_materials_file_debye_missing_required_field_raises():
+    material = {
+        "name": "bad_debye",
+        "debye": {"epsr_infinity": 3.0, "delta_epsr": 1.2, "m1": 0.1},  # missing m2
+        "citations": ["x"],
+    }
+    with pytest.raises(ValueError, match="m2"):
+        generate_openparem_materials_file([material])
+
+
+# ---------------------------------------------------------------------------
+# openparem_materials_from_property_entries -- converts
+# designs/material_properties.py-shaped rows (as lookup_entries()/a caller's
+# own resolve_material_property() call would return) into
+# generate_openparem_materials_file()'s per-material dict shape.
+# ---------------------------------------------------------------------------
+
+
+def _property_entries(material="FR4", low=7.0e9, high=10.0e9, eps=4.3, tand=0.025):
+    return [
+        add_entry(
+            material=material,
+            property_name="eps_r",
+            frequency_low_hz=low,
+            frequency_high_hz=high,
+            value=eps,
+            unit="unitless",
+            provenance="LITERATURE-SUPPORTED",
+            citation="X-band UWB antenna paper, 7-10 GHz",
+        ),
+        add_entry(
+            material=material,
+            property_name="tan_delta",
+            frequency_low_hz=low,
+            frequency_high_hz=high,
+            value=tand,
+            unit="unitless",
+            provenance="LITERATURE-SUPPORTED",
+            citation="X-band UWB antenna paper, 7-10 GHz",
+        ),
+    ]
+
+
+def test_openparem_materials_from_property_entries_builds_one_material():
+    materials = openparem_materials_from_property_entries(_property_entries())
+    assert len(materials) == 1
+    assert materials[0]["name"] == "FR4"
+    assert materials[0]["relative_permittivity"] == pytest.approx(4.3)
+    assert materials[0]["loss_tangent"] == pytest.approx(0.025)
+    assert materials[0]["frequency_low_hz"] == pytest.approx(7.0e9)
+    assert materials[0]["frequency_high_hz"] == pytest.approx(10.0e9)
+    assert materials[0]["citations"] == ["X-band UWB antenna paper, 7-10 GHz"]
+
+
+def test_openparem_materials_from_property_entries_conductivity_variant():
+    entries = [
+        add_entry(
+            material="copper",
+            property_name="eps_r",
+            frequency_low_hz=1e9,
+            frequency_high_hz=1e9,
+            value=1.0,
+            unit="unitless",
+            provenance="LITERATURE-SUPPORTED",
+            citation="IPC spec",
+        ),
+        add_entry(
+            material="copper",
+            property_name="conductivity_s_per_m",
+            frequency_low_hz=1e9,
+            frequency_high_hz=1e9,
+            value=5.813e7,
+            unit="S/m",
+            provenance="LITERATURE-SUPPORTED",
+            citation="IPC spec",
+        ),
+    ]
+    materials = openparem_materials_from_property_entries(entries)
+    assert materials[0]["conductivity_s_per_m"] == pytest.approx(5.813e7)
+    assert "loss_tangent" not in materials[0]
+
+
+def test_openparem_materials_from_property_entries_feeds_generate_materials_file():
+    """End-to-end acceptance-criterion check: a designs/material_properties.py-
+    shaped entry pair, run through the converter, produces a materials file
+    with a Source/EndSource citation block."""
+    materials = openparem_materials_from_property_entries(_property_entries())
+    text = generate_openparem_materials_file(materials)
+    assert "   Source" in text.split("\n")
+    assert "      X-band UWB antenna paper, 7-10 GHz" in text
+    assert "   EndSource" in text.split("\n")
+
+
+def test_openparem_materials_from_property_entries_multiple_materials():
+    entries = _property_entries(material="FR4") + _property_entries(
+        material="RO4350B", eps=3.66, tand=0.0037
+    )
+    materials = openparem_materials_from_property_entries(entries)
+    names = {m["name"] for m in materials}
+    assert names == {"FR4", "RO4350B"}
+
+
+def test_openparem_materials_from_property_entries_mismatched_bands_raises():
+    entries = _property_entries()
+    entries[1] = {**entries[1], "frequency_low_hz": 8.0e9}  # tan_delta band no longer matches
+    with pytest.raises(ValueError, match="band"):
+        openparem_materials_from_property_entries(entries)
+
+
+def test_openparem_materials_from_property_entries_ambiguous_eps_r_raises():
+    """Two disagreeing eps_r citations for one material -- resolving which one
+    wins is resolve_material_property's job, not this converter's; it must
+    raise rather than silently pick one (this repo's own "never collapse
+    citations" rule, designs/material_properties.py's own docstring)."""
+    entries = _property_entries() + [
+        add_entry(
+            material="FR4",
+            property_name="eps_r",
+            frequency_low_hz=9.1e9,
+            frequency_high_hz=10.2e9,
+            value=4.4,
+            unit="unitless",
+            provenance="LITERATURE-SUPPORTED",
+            citation="a second, disagreeing citation",
+        )
+    ]
+    with pytest.raises(ValueError, match="eps_r"):
+        openparem_materials_from_property_entries(entries)
+
+
+def test_openparem_materials_from_property_entries_both_tand_and_conductivity_raises():
+    entries = _property_entries() + [
+        add_entry(
+            material="FR4",
+            property_name="conductivity_s_per_m",
+            frequency_low_hz=7.0e9,
+            frequency_high_hz=10.0e9,
+            value=1e-3,
+            unit="S/m",
+            provenance="LITERATURE-SUPPORTED",
+            citation="another citation",
+        )
+    ]
+    with pytest.raises(ValueError, match="loss"):
+        openparem_materials_from_property_entries(entries)
+
+
+def test_openparem_materials_from_property_entries_unsupported_property_raises():
+    entries = _property_entries() + [
+        add_entry(
+            material="FR4",
+            property_name="thermal_conductivity",
+            frequency_low_hz=7.0e9,
+            frequency_high_hz=10.0e9,
+            value=1.0,
+            unit="W/mK",
+            provenance="ASSUMED",
+            note="irrelevant to OpenParEM",
+        )
+    ]
+    with pytest.raises(ValueError, match="unsupported|thermal_conductivity"):
+        openparem_materials_from_property_entries(entries)
+
+
+# ---------------------------------------------------------------------------
+# run_openparem_gmsh_meshing subprocess contract (issue #278) -- mirrors
+# tests/test_elmer.py's run_gmsh_meshing tests exactly, except this forces
+# `-format msh22` (OpenParEM3D's own required mesh format -- "OpenParEM only
+# works with the msh22 format of gmsh due to library limitations", Installation
+# Manual Sec. 4.2, already cited in simulation/openparem.py's module docstring)
+# rather than Elmer's `-format msh2`.
+# ---------------------------------------------------------------------------
+
+
+def test_run_openparem_gmsh_meshing_invokes_dash_3_format_msh22(tmp_path: Path):
+    script = make_fake_executable(
+        tmp_path,
+        'import sys\nwith open("argv.txt", "w") as f:\n    f.write(" ".join(sys.argv[1:]))\n',
+        name="fake_gmsh",
+    )
+    geo_file = tmp_path / "model.geo"
+    geo_file.write_text('SetFactory("OpenCASCADE");\n')
+    msh_file = tmp_path / "model.msh"
+
+    run_openparem_gmsh_meshing(geo_file, msh_file, tmp_path, executable=str(script), timeout_s=10)
+
+    argv = (tmp_path / "argv.txt").read_text().split()
+    assert str(geo_file) in argv
+    assert "-3" in argv
+    assert "-format" in argv
+    assert argv[argv.index("-format") + 1] == "msh22"
+    assert "-o" in argv
+    assert argv[argv.index("-o") + 1] == str(msh_file)
+
+
+def test_run_openparem_gmsh_meshing_nonzero_exit_raises_simulator_error(tmp_path: Path):
+    script = make_fake_executable(
+        tmp_path,
+        'import sys\nsys.stderr.write("bad geo script\\n")\nsys.exit(1)\n',
+        name="fake_gmsh",
+    )
+    geo_file = tmp_path / "model.geo"
+    geo_file.write_text("bad")
+    with pytest.raises(SimulatorError, match="bad geo script"):
+        run_openparem_gmsh_meshing(
+            geo_file, tmp_path / "model.msh", tmp_path, executable=str(script)
+        )
+
+
+def test_run_openparem_gmsh_meshing_missing_geo_file_raises(tmp_path: Path):
+    with pytest.raises(SimulatorError, match="not found"):
+        run_openparem_gmsh_meshing(
+            tmp_path / "does_not_exist.geo", tmp_path / "model.msh", tmp_path, executable="gmsh"
+        )
+
+
+def test_run_openparem_gmsh_meshing_timeout_raises_simulator_error(tmp_path: Path):
+    script = make_fake_executable(tmp_path, "import time\ntime.sleep(5)\n", name="fake_gmsh")
+    geo_file = tmp_path / "model.geo"
+    geo_file.write_text("x")
+    with pytest.raises(SimulatorError, match="timed out"):
+        run_openparem_gmsh_meshing(
+            geo_file, tmp_path / "model.msh", tmp_path, executable=str(script), timeout_s=1
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -603,3 +1007,127 @@ def test_run_openparem_simulation_no_far_field_when_not_requested(tmp_path: Path
     )
     assert result["s_parameters"]["computed"] is True
     assert result["far_field"]["computed"] is False
+
+
+# ---------------------------------------------------------------------------
+# run_openparem_simulation driven from `geometry` (issue #278) -- meshing is
+# generated internally via generate_gmsh_geo_script() (reused from
+# simulation.elmer) + run_openparem_gmsh_meshing(), instead of requiring a
+# pre-supplied mesh_file.
+# ---------------------------------------------------------------------------
+
+_FAKE_GMSH_PY = """
+import sys
+
+args = sys.argv[1:]
+with open("gmsh_argv.txt", "w") as f:
+    f.write(" ".join(args))
+
+out_path = args[args.index("-o") + 1]
+with open(out_path, "w") as f:
+    f.write("$MeshFormat\\n2.2 0 8\\n$EndMeshFormat\\n")
+
+sys.exit(0)
+"""
+
+
+def test_run_openparem_simulation_with_geometry_meshes_via_fake_gmsh_msh22(tmp_path: Path):
+    """Acceptance criterion: calling run_openparem_simulation() with a
+    `geometry` dict and no pre-supplied `mesh_file` invokes a fake `gmsh`
+    with the `-format msh22` flag (not `msh2`) and produces a `.proj` file
+    whose `mesh.file` keyword points at the resulting mesh."""
+    gmsh_script = make_fake_executable(tmp_path, _FAKE_GMSH_PY, name="fake_gmsh")
+    openparem_script = _make_fake_openparem3d_py(tmp_path, "cube")
+    run_dir = tmp_path / "run_geom"
+
+    result = run_openparem_simulation(
+        geometry=MESH_GEOMETRY,
+        ports=MONOPOLE_PORTS,
+        project={"frequency_plan": {"point": [{"frequency_hz": 2.45e9}]}},
+        project_name="cube",
+        timeout_s=10,
+        executable=str(openparem_script),
+        gmsh_executable=str(gmsh_script),
+        gmsh_timeout_s=10,
+        workdir=str(run_dir),
+    )
+
+    gmsh_argv = (run_dir / "gmsh_argv.txt").read_text().split()
+    assert "-3" in gmsh_argv
+    assert "-format" in gmsh_argv
+    assert gmsh_argv[gmsh_argv.index("-format") + 1] == "msh22"
+
+    project_text = Path(result["project_file"]).read_text()
+    assert "mesh.file                       cube.msh" in project_text
+    assert (run_dir / "cube.msh").exists()
+    assert result["geo_file"] == str(run_dir / "cube.geo")
+    assert result["msh_file"] == str(run_dir / "cube.msh")
+
+
+def test_run_openparem_simulation_requires_exactly_one_of_mesh_file_or_geometry(tmp_path: Path):
+    with pytest.raises(ValueError, match="mesh_file.*geometry|geometry.*mesh_file"):
+        run_openparem_simulation(
+            ports=MONOPOLE_PORTS,
+            project={"frequency_plan": {"point": [{"frequency_hz": 2.45e9}]}},
+            project_name="cube",
+        )
+
+
+def test_run_openparem_simulation_both_mesh_file_and_geometry_raises(tmp_path: Path):
+    with pytest.raises(ValueError, match="mesh_file.*geometry|geometry.*mesh_file"):
+        run_openparem_simulation(
+            mesh_file="m.msh",
+            geometry=MESH_GEOMETRY,
+            ports=MONOPOLE_PORTS,
+            project={"frequency_plan": {"point": [{"frequency_hz": 2.45e9}]}},
+            project_name="cube",
+        )
+
+
+# ---------------------------------------------------------------------------
+# run_openparem_simulation driven from `materials` (issue #278) -- a local
+# materials file is generated via generate_openparem_materials_file() instead
+# of requiring a pre-existing materials library on disk.
+# ---------------------------------------------------------------------------
+
+
+def test_run_openparem_simulation_with_materials_writes_local_materials_file(tmp_path: Path):
+    script = _make_fake_openparem3d_py(tmp_path, "monopole")
+    run_dir = tmp_path / "run_materials"
+
+    result = run_openparem_simulation(
+        mesh_file="m.msh",
+        ports=MONOPOLE_PORTS,
+        project={"frequency_plan": {"point": [{"frequency_hz": 2.45e9}]}},
+        project_name="monopole",
+        materials=[FR4_MATERIAL],
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(run_dir),
+    )
+
+    assert "materials_file" in result
+    materials_text = Path(result["materials_file"]).read_text()
+    assert materials_text.split("\n")[0] == "#OpenParEMmaterials 1.0"
+    assert "   name=FR4" in materials_text
+
+    project_text = Path(result["project_file"]).read_text()
+    assert "materials.local.name" in project_text
+    assert "monopole_materials.txt" in project_text
+
+
+def test_run_openparem_simulation_materials_conflicts_with_project_materials_raises(
+    tmp_path: Path,
+):
+    with pytest.raises(ValueError, match="materials"):
+        run_openparem_simulation(
+            mesh_file="m.msh",
+            ports=MONOPOLE_PORTS,
+            project={
+                "frequency_plan": {"point": [{"frequency_hz": 2.45e9}]},
+                "materials": {"local_name": "already_set.txt"},
+            },
+            materials=[FR4_MATERIAL],
+            project_name="monopole",
+            workdir=str(tmp_path / "run_conflict"),
+        )

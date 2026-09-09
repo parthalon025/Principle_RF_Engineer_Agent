@@ -93,43 +93,61 @@ the CLI contract above) and treats a nonzero exit as failure;
 Touchstone format, and the `antenna.plot.3D.pattern q=G|D` line that
 requests far-field gain or directivity); **`generate_openparem_ports_file()`**
 writes the ports/boundary definition file (`Path`/`Boundary`/`Port`/
-`Mode`/`IntegrationPath` blocks); **`parse_openparem_output()`** reads back
+`Mode`/`IntegrationPath` blocks); **`run_openparem_gmsh_meshing()`** (issue
+#278) shells out to `gmsh` with `-3 -format msh22`, reusing
+`simulation.elmer.generate_gmsh_geo_script()` for the geometry-dict-to-`.geo`
+translation, to produce a mesh from this repo's own geometry primitive dicts
+instead of requiring one already made by hand; **`generate_openparem_materials_file()`**
+(issue #278) writes the materials-library text file (Debye or per-frequency
+dielectric/conductor entries, each with a `Source`/`EndSource` citation
+block) from structured per-material data, and
+**`openparem_materials_from_property_entries()`** converts
+`designs/material_properties.py`'s own citation-bearing rows into that
+shape; **`parse_openparem_output()`** reads back
 `_results.csv` (S-parameters, from whichever of RI/mag-deg/dB-deg column
 format was requested) and `_FarField_results.csv` (`gain_dbi`/
 `directivity_dbi`/`radiation_efficiency`, unit-labeled since gain/
 directivity are dB but efficiency is a linear 0-1 fraction); and
-**`run_openparem_simulation()`** orchestrates all of it, returning results
-tagged `provenance: "SIMULATED"`.
+**`run_openparem_simulation()`** orchestrates all of it — accepting either a
+pre-supplied `mesh_file` or a `geometry` dict to mesh internally, and either
+a pre-existing materials library or a `materials` list to generate one —
+returning results tagged `provenance: "SIMULATED"`.
 
-What it does **not** do: generate the 3D mesh (an externally supplied msh22
-file is required — matching OpenParEM's own "user assembles a tool flow"
-architecture), generate materials property files (only the `.proj` keywords
-pointing to them), or emit 2D angular-cut patterns or ParaView pattern
+What it does **not** do: emit 2D angular-cut patterns or ParaView pattern
 exports (`antenna.plot.2D.pattern`, `antenna.plot.3D.save`) — only the
-scalar gain/directivity/efficiency request is wired up. The module's own
-docstring states plainly that the real `OpenParEM3D` binary is not
-installed in this environment (`which OpenParEM3D` exits 1) and that
-generation/parsing has only been exercised against a fake stand-in script
-in tests, never a real FEM solve — every result from this adapter is
-unverified end-to-end until it is run against the real tool at least once,
-a caution this repo weighs more heavily here given OpenParEM's roughly
-one-year public history.
+scalar gain/directivity/efficiency request is wired up; mesh curved surfaces
+or assign more than a single bulk/excitation material split (`generate_gmsh_geo_script()`'s
+own box-primitive scope, reused as-is rather than extended here); or resolve
+disagreeing citations for the same material+property across several
+sources — `designs/material_properties.py`'s own `resolve_material_property()`
+remains the one place that judgment call is made, and the materials-file
+converter requires an already-decided single value per material, raising
+rather than guessing if handed more than one. The module's own
+docstring states plainly that the real `OpenParEM3D` (and `gmsh`) binaries
+are not installed in this environment (`which OpenParEM3D` exits 1) and that
+generation/parsing has only been exercised against fake stand-in scripts
+in tests, never a real FEM solve or a real mesh — every result from this
+adapter is unverified end-to-end until it is run against the real tools at
+least once, a caution this repo weighs more heavily here given OpenParEM's
+roughly one-year public history.
 
 ## Capabilities not yet used here
 
-The single biggest gap for this repo's purpose (thin conformal
-metasurfaces, patch antennas, absorbers) is **mesh and materials-file
-generation itself**: a caller must hand this adapter an already-meshed
-msh22 file and already-written materials library, both produced entirely
-outside this codebase via a manually assembled FreeCAD+gmsh flow — no
-design this program proposes can reach an OpenParEM3D result without a
-human doing that assembly by hand first. Beyond that: **`antenna.plot.2D.pattern`**
+Mesh and materials-file generation (this repo's own primitive-dict geometry
+→ a real msh22 mesh, and citation-bearing material data → OpenParEM's own
+text format) is now wired up (issue #278) for the box/excitation geometry
+shape `generate_gmsh_geo_script()` already supports and for single-citation
+per-material property data. What remains open: **curved or multi-material
+meshing** beyond that single bulk/excitation box split (a conformal
+metasurface draped over a curved host, or a design with more than two
+distinct material regions, still has no path from this repo's geometry
+output to a mesh); **`antenna.plot.2D.pattern`**
 (a full angular radiation-pattern cut, not just scalar peak numbers) and
 the ParaView-consumable 3D pattern/current exports would let a candidate's
 actual radiation shape be inspected rather than only its summary numbers;
 and the **`builder`** helper (keyword-driven generation of some setup
-files) is unused — this adapter regenerates `.proj`/ports-file text
-directly. OpenParEM has no periodic/Floquet unit-cell capability at all
+files) is unused — this adapter regenerates `.proj`/ports-file/materials-file
+text directly. OpenParEM has no periodic/Floquet unit-cell capability at all
 (Palace fills that gap in this repo; see `docs/tools/palace.md`).
 
 ## Sources
