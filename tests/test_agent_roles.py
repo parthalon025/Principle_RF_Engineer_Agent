@@ -103,6 +103,7 @@ def test_principal_role_is_scoped_not_broad():
     assert "ingest_arxiv_paper" not in names
     assert "ingest_3gpp_spec" not in names
     assert "ingest_etsi_standard" not in names
+    assert "ingest_etsi_ipr_declaration" not in names
     assert "ingest_fcc_rule" not in names
     assert "ingest_patent" not in names
     assert "extract_components" not in names
@@ -174,6 +175,19 @@ def test_systems_role_gets_standards_body_sourcing_tools():
         assert "ingest_3gpp_spec" not in role_names
         assert "ingest_etsi_standard" not in role_names
         assert "ingest_fcc_rule" not in role_names
+
+
+def test_systems_role_gets_etsi_ipr_declaration_sourcing_tool():
+    # issue #284: ingest_etsi_ipr_declaration (the SR 000 314 IPR/FRAND-
+    # declaration register client) is the same knowledge-authoring concern
+    # as its ingest_etsi_standard sibling -- same bucket, same reasoning.
+    names = _tool_names(ROLES["systems"])
+    assert "ingest_etsi_ipr_declaration" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "ingest_etsi_ipr_declaration" not in role_names
+    # Not principal-direct either -- reachable via the systems handoff only.
+    assert "ingest_etsi_ipr_declaration" not in _tool_names(ROLES["principal"])
 
 
 def test_systems_role_gets_patent_sourcing_tool():
