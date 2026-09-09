@@ -570,7 +570,7 @@ def generate_palace_config(
 ) -> dict[str, Any]:
     """Generate a Palace JSON config for a driven Floquet-port unit-cell
     simulation. `geometry` is the same dict passed to generate_palace_mesh
-    (see its docstring), plus two more optional keys:
+    (see its docstring), plus three more optional keys:
         "background": {"epsilon_r": float, "mue_r": float, "loss_tan": float},
         "floquet": {
             "wave_vector_1_per_m": [kx, ky, kz] (default [0,0,0], normal
@@ -582,6 +582,43 @@ def generate_palace_config(
             "polarization": "TE" (default) | "TM" | "RHC" | "LHC",
             "max_order": int (default 0 -- specular diffraction order only),
         }
+        "ground_backed": bool (default False) -- see below.
+
+    `ground_backed` (default False) selects between this module's two
+    unit-cell shapes, matching `designs/design_families.py`'s own
+    `requires_ground_plane`/`port_count` distinction (see that module's
+    `DesignFamily.__post_init__` docstring for the physics reasoning: a
+    ground-backed structure has zero transmission by construction, so its
+    reflection alone -- one port -- tells the whole story, while a
+    structure with no ground plane needs a second port to see power that
+    left out the back):
+
+      - False (default -- UNCHANGED from before this option existed): the
+        original two-port transmissive cell (this module's SCOPE, an
+        all-dielectric grating/photonic-crystal shape) -- port 1 at z=0
+        (excited) and port 2 at z=Lz (not excited), both in
+        config["Boundaries"]["FloquetPort"], no
+        config["Boundaries"]["PEC"] key at all. Every geometry dict this
+        module accepted before this option existed omits "ground_backed",
+        so this default reproduces that config byte-for-byte.
+      - True: a ground-backed, one-port cell (`REFLECTION_PHASE`/
+        `DIFFUSIVE`'s declared physics, issue #252) -- only port 1 (z=0,
+        excited) is emitted into config["Boundaries"]["FloquetPort"]
+        (exactly one entry), and the cell's opposite face (z=Lz, the same
+        mesh boundary attribute BOUND_Z_MAX that would otherwise carry
+        port 2) is instead emitted as a Perfect Electric Conductor
+        boundary -- config["Boundaries"]["PEC"]["Attributes"] ==
+        [BOUND_Z_MAX] -- so the wave meets a metal backing instead of a
+        second port. The "PEC": {"Attributes": [int, ...]} shape is
+        confirmed against Palace's own Configuration File Reference page
+        (awslabs.github.io/palace/dev/config/reference/, "PEC" section --
+        "Integer array of mesh boundary attributes this object applies
+        to"), the same per-boundary "Attributes" convention this module
+        already uses for FloquetPort and Periodic. generate_palace_mesh
+        needs no change for this: it already writes a boundary face at
+        BOUND_Z_MAX regardless of which Palace boundary condition
+        references that attribute number, so the same mesh serves both
+        shapes.
 
     `sweep` (optional): {"start_hz": float, "stop_hz": float, "points":
     int}, same shape as run_hfss_simulation's own sweep dict -- defaults to
@@ -618,6 +655,8 @@ def generate_palace_config(
         )
     max_order = int(floquet.get("max_order", 0))
 
+    ground_backed = bool(geometry.get("ground_backed", False))
+
     solver_order = int(solver_order)
     if solver_order < 1:
         raise ValueError(f"solver_order must be >= 1 (finite-element order), got {solver_order}")
@@ -645,6 +684,54 @@ def generate_palace_config(
             }
         )
 
+    # Port 1 (z=0) is ALWAYS excited and ALWAYS present -- the only
+    # difference ground_backed makes is what sits at the opposite face
+    # (z=Lz, mesh boundary attribute BOUND_Z_MAX): a second, non-excited
+    # Floquet port (the original two-port transmissive shape) when False,
+    # or a PEC boundary (a ground-backed, one-port cell) when True. See
+    # this function's own docstring for the "ground_backed" key and the
+    # Palace config-reference citation for the "PEC" boundary shape.
+    floquet_ports = [
+        {
+            "Index": 1,
+            "Attributes": [BOUND_Z_MIN],
+            "Excitation": True,
+            "IncidentPolarization": polarization,
+            "MaxOrder": max_order,
+        }
+    ]
+    boundaries: dict[str, Any] = {
+        "Periodic": {
+            "FloquetWaveVector": [float(v) for v in wave_vector],
+            "FloquetReferenceFrequency": reference_frequency_hz / 1e9,
+            "BoundaryPairs": [
+                {
+                    "DonorAttributes": [BOUND_X_MIN],
+                    "ReceiverAttributes": [BOUND_X_MAX],
+                    "Translation": [lx, 0.0, 0.0],
+                },
+                {
+                    "DonorAttributes": [BOUND_Y_MIN],
+                    "ReceiverAttributes": [BOUND_Y_MAX],
+                    "Translation": [0.0, ly, 0.0],
+                },
+            ],
+        },
+    }
+    if ground_backed:
+        boundaries["PEC"] = {"Attributes": [BOUND_Z_MAX]}
+    else:
+        floquet_ports.append(
+            {
+                "Index": 2,
+                "Attributes": [BOUND_Z_MAX],
+                "Excitation": False,
+                "IncidentPolarization": polarization,
+                "MaxOrder": max_order,
+            }
+        )
+    boundaries["FloquetPort"] = floquet_ports
+
     return {
         "Problem": {"Type": "Driven", "Output": str(output_dir)},
         # L0=1.0 is set EXPLICITLY, never omitted -- Palace's own default
@@ -653,40 +740,7 @@ def generate_palace_config(
         # docstring citation.
         "Model": {"Mesh": str(mesh_file), "L0": 1.0},
         "Domains": {"Materials": materials_json},
-        "Boundaries": {
-            "Periodic": {
-                "FloquetWaveVector": [float(v) for v in wave_vector],
-                "FloquetReferenceFrequency": reference_frequency_hz / 1e9,
-                "BoundaryPairs": [
-                    {
-                        "DonorAttributes": [BOUND_X_MIN],
-                        "ReceiverAttributes": [BOUND_X_MAX],
-                        "Translation": [lx, 0.0, 0.0],
-                    },
-                    {
-                        "DonorAttributes": [BOUND_Y_MIN],
-                        "ReceiverAttributes": [BOUND_Y_MAX],
-                        "Translation": [0.0, ly, 0.0],
-                    },
-                ],
-            },
-            "FloquetPort": [
-                {
-                    "Index": 1,
-                    "Attributes": [BOUND_Z_MIN],
-                    "Excitation": True,
-                    "IncidentPolarization": polarization,
-                    "MaxOrder": max_order,
-                },
-                {
-                    "Index": 2,
-                    "Attributes": [BOUND_Z_MAX],
-                    "Excitation": False,
-                    "IncidentPolarization": polarization,
-                    "MaxOrder": max_order,
-                },
-            ],
-        },
+        "Boundaries": boundaries,
         "Solver": {
             # Emitted explicitly for the same reason as "L0" above: Palace's
             # own default (1) is a silent accuracy ceiling, not a neutral
