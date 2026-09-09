@@ -117,14 +117,13 @@ The adapter cannot answer "what is the current version of spec X" — the
 caller must already know 3GPP's version string, and it never consults
 DynaReport's withdrawal flag, so a spec like TS 38.101 (see above) can be
 ingested as if current — the same shape of gap this repo's ETSI adapter
-has. Closing either would mean parsing DynaReport's HTML (the Portal's
-filters would do it better, but sit behind a member-login wall this
-adapter has no credentials for). Forge's YANG/OpenAPI models were not
-pursued: they describe network-management and core-network signalling
-interfaces, not RF/antenna parameters — a real gap, but low priority for
-this repo's thin-conformal-surface work. Unlike arXiv's OAI-PMH harvesting
-(`arxiv.py`), there is no bulk/corpus pull — each call fetches one spec at
-a time.
+has. Closing either means parsing DynaReport's HTML (the Portal's filters
+would do it better, but sit behind a member-login wall this adapter has no
+credentials for). Forge's YANG/OpenAPI models were not pursued: they
+describe network-management and core-network signalling interfaces, not
+RF/antenna parameters — a real gap, but low priority here. Unlike arXiv's
+OAI-PMH harvesting (`arxiv.py`), there is no bulk/corpus pull — each call
+fetches one spec at a time.
 
 ## Sources
 
