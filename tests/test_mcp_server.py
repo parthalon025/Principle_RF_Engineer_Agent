@@ -180,6 +180,10 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #285 adds 1 more (lookup_3gpp_spec_status, the DynaReport
     # version/withdrawal status lookup wired onto the tool surface right
     # beside its ingest_3gpp_spec sibling): 89 + 1 = 90.
+    #
+    # issue #279 adds 1 more (search_fcc_rules, FCC eCFR topic/keyword
+    # discovery search over the Search Service wired onto the tool
+    # surface): 90 + 1 = 91.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -214,6 +218,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #286: realize_lowpass_stepped_impedance_microstrip_filter
         + 1  # issue #284: ingest_etsi_ipr_declaration
         + 1  # issue #285: lookup_3gpp_spec_status
+        + 1  # issue #279: search_fcc_rules
     )
     assert len(registered_names) == expected
 
@@ -439,6 +444,55 @@ def test_ingest_fcc_rule_calls_through(monkeypatch):
         "title": 47,
         "supersedes_document_id": None,
     }
+
+
+def test_search_fcc_rules_is_registered():
+    # issue #279: knowledge/sourcing/fcc_ecfr.py's search_fcc_rules (issue
+    # #279's discovery-search addition), wired onto the MCP tool surface
+    # alongside its ingest_fcc_rule sibling.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_fcc_rules" in registered_names
+
+
+def test_search_fcc_rules_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real query/parse logic is
+    # exercised in tests/test_sourcing_fcc_ecfr.py; this only confirms the
+    # MCP wrapper forwards its arguments to knowledge.sourcing.fcc_ecfr and
+    # returns its candidate list unchanged.
+    captured = {}
+    candidates = [
+        {
+            "part": 90,
+            "title": 47,
+            "section": "90.391",
+            "heading": "Maximum EIRP and antenna height.",
+            "full_text_excerpt": "the <strong>EIRP</strong> shall not exceed...",
+        }
+    ]
+
+    def fake_search(query, *, max_results):
+        captured.update(query=query, max_results=max_results)
+        return candidates
+
+    monkeypatch.setattr(server, "_search_fcc_rules", fake_search)
+
+    result = server.search_fcc_rules("EIRP")
+
+    assert result == candidates
+    assert captured == {"query": "EIRP", "max_results": 10}
+
+
+def test_search_fcc_rules_never_calls_ingest_document(monkeypatch):
+    # Mirrors tests/test_sourcing_fcc_ecfr.py's own version of this guard
+    # (and this file's test_search_arxiv_papers_never_calls_ingest_document
+    # for its sibling), one layer up at the MCP wrapper.
+    def fail_if_called(**kwargs):
+        raise AssertionError("search_fcc_rules must never call ingest_document")
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(server, "_search_fcc_rules", lambda query, *, max_results: [])
+
+    server.search_fcc_rules("EIRP")
 
 
 def test_ingest_patent_is_registered():

@@ -222,6 +222,15 @@ ingestion_auto:
   # own sense (it reaches an external network endpoint, not just this
   # project's own knowledge base); "external, credential-free knowledge/
   # sourcing operation" is still the closest fit.
+  #
+  # issue #279: search_fcc_rules (knowledge/sourcing/fcc_ecfr.py's
+  # topic/keyword discovery search over eCFR's Search Service) sits here
+  # for exactly the same reason as search_arxiv_papers above -- same
+  # credential-free eCFR API ingest_fcc_rule already uses, same ungated
+  # posture, same "returns candidates only, never calls ingest_document"
+  # exception to this category's usual write-a-document shape (see
+  # tests/test_sourcing_fcc_ecfr.py's
+  # test_search_fcc_rules_never_calls_ingest_document).
   - ingest_document
   - ingest_arxiv_paper
   - search_arxiv_papers
@@ -230,6 +239,8 @@ ingestion_auto:
   - ingest_etsi_standard
   - ingest_etsi_ipr_declaration
   - ingest_fcc_rule
+  - search_fcc_rules
+  - search_fcc_rules
   - ingest_patent
   - index_document
   - extract_components

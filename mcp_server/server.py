@@ -36,6 +36,7 @@ from knowledge.sourcing.arxiv import search_arxiv_papers as _search_arxiv_papers
 from knowledge.sourcing.etsi import ingest_etsi_ipr_declaration as _ingest_etsi_ipr_declaration
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
+from knowledge.sourcing.fcc_ecfr import search_fcc_rules as _search_fcc_rules
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
@@ -1691,8 +1692,10 @@ def ingest_fcc_rule(
 ) -> dict:
     """Fetch FCC rule text via eCFR's public versioner API (no
     authentication) and ingest it into the knowledge base as
-    source_type='standard'. Fetch-by-identifier only, not search -- you must
-    already know the identifier:
+    source_type='standard'. Fetch-by-identifier only -- you must already
+    know the part number; use search_fcc_rules first if you only have a
+    plain-English topic (e.g. "EIRP" or "spurious emissions") and need to
+    find which part covers it.
     part: the CFR part number, e.g. 15 for the Part 15 unlicensed-device
     rules, or 97 for the Part 97 amateur-radio rules.
     title: the CFR title number, default 47 (Telecommunication) -- pass a
@@ -1717,6 +1720,27 @@ def ingest_fcc_rule(
         title=title,
         supersedes_document_id=supersedes_document_id,
     )
+
+
+@mcp.tool()
+def search_fcc_rules(query: str, max_results: int = 10) -> list:
+    """Search eCFR's full-text Search Service by topic/keyword (issue #279)
+    and return a ranked list of Title-47 candidates for review -- NOT
+    documents in the corpus. Each candidate carries part/title/section/
+    heading/full_text_excerpt; use "search precedent before inventing"
+    (CLAUDE.md) to judge relevance before spending an ingestion pass on it.
+    Pass a chosen candidate's part straight to ingest_fcc_rule unchanged
+    (same title=47 default), along with the license/classification
+    ADR-0001 requires for that specific rule -- this tool never calls
+    ingest_document itself, so finding a rule here never counts as trusting
+    it. query is a full-text search over every CFR title's rule text (e.g.
+    "EIRP" or "spurious emissions") -- not ingest_fcc_rule's fetch-by-
+    already-known-part-number. Non-Title-47 hits are filtered out before
+    they reach you, since ingest_fcc_rule only ever fetches Title 47. A
+    topic with no matches returns [] (a real "no Title 47 rule mentions
+    this" result); an unreachable eCFR API raises instead of returning an
+    empty list, so the two cases are never confused."""
+    return _search_fcc_rules(query, max_results=max_results)
 
 
 @mcp.tool()

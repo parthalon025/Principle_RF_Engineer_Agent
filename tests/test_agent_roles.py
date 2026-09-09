@@ -105,6 +105,7 @@ def test_principal_role_is_scoped_not_broad():
     assert "ingest_etsi_standard" not in names
     assert "ingest_etsi_ipr_declaration" not in names
     assert "ingest_fcc_rule" not in names
+    assert "search_fcc_rules" not in names
     assert "ingest_patent" not in names
     assert "extract_components" not in names
     assert "analyze_touchstone_file" not in names
@@ -203,6 +204,32 @@ def test_systems_role_gets_3gpp_spec_status_lookup_tool():
     # Not principal-direct either -- reachable via the systems handoff only,
     # same as ingest_3gpp_spec (see test_principal_role_is_scoped_not_broad).
     assert "lookup_3gpp_spec_status" not in _tool_names(ROLES["principal"])
+
+
+def test_systems_role_gets_fcc_rules_discovery_search_tool():
+    # issue #279: search_fcc_rules (topic/keyword discovery over eCFR's
+    # Search Service) is wired onto the same role as its sibling
+    # ingest_fcc_rule -- both are the same "bring FCC rule text into reach
+    # of the design loop" knowledge-sourcing concern, discovery finding
+    # candidate parts ahead of the deliberate ingest step.
+    names = _tool_names(ROLES["systems"])
+    assert "search_fcc_rules" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "search_fcc_rules" not in role_names
+    # Not principal-direct either -- reachable via the systems handoff only,
+    # same as ingest_fcc_rule (see test_principal_role_is_scoped_not_broad).
+    assert "search_fcc_rules" not in _tool_names(ROLES["principal"])
+
+
+def test_search_fcc_rules_is_categorized_ingestion_auto():
+    # Matches ingest_fcc_rule's category: a knowledge/sourcing operation,
+    # not a calculation -- see policies/tool_policy.yaml's ingestion_auto
+    # comment on why a credential-free eCFR sourcing call belongs here even
+    # though this particular tool, unlike its ingest_fcc_rule sibling, never
+    # itself writes a document.
+    assert category_for("search_fcc_rules") == category_for("ingest_fcc_rule")
+    assert category_for("search_fcc_rules") == "ingestion_auto"
 
 
 def test_systems_role_gets_patent_sourcing_tool():
