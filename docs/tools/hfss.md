@@ -83,36 +83,60 @@ anything else and requires *all four* of: `HFSS_ENABLED=true`, a
 `HFSS_ALLOWED_WORKSTATION_ID`, `ansys.aedt.core` actually importable, and an
 `ANSYSEM_ROOT*` environment variable (the marker AEDT's own installer sets).
 Given a pass, `_apply_hfss_geometry()` builds axis-aligned box
-materials/conductors via `Modeler3D.create_box`, assigns materials, creates
-one **lumped port**, and applies a length-based mesh operation;
-`_create_setup_and_solve()` creates a **Driven Modal** setup and a linear
-frequency sweep and calls `Analysis.analyze()`; `_extract_hfss_results()`
-reads S(1,1) via `PostProcessorCommon.get_solution_data()` and exports a
-Touchstone file via `export_touchstone()`; `_archive_hfss_run()` saves the
-project and archives project + results JSON. Everything is tagged
-`provenance: "SIMULATED"`. Per the module's own "HONEST CAVEAT": pyaedt is not
-installed and no licensed AEDT exists in this environment, so none of this
-has been exercised against a real HFSS run — only against a hand-written fake
-in `tests/test_hfss.py`.
+materials/conductors via `Modeler3D.create_box`, assigns materials, then
+builds one of two mutually-exclusive excitations from `geometry`: a single
+**lumped port** (`geometry["port"]`, the original path), or — since issue
+\#273 — a **periodic Floquet-port unit cell** (`geometry["periodic"]`): a
+bounding box sized from an explicit `period_x_m`/`period_y_m`, its side
+walls auto-assigned as periodic ("lattice pair") boundaries via
+`Hfss.auto_assign_lattice_pairs()`, and a **Floquet port** created on a top
+sheet via `Hfss.create_floquet_port()` with explicit lattice vectors (not
+pyaedt's own internal auto-detection). Either way, a length-based mesh
+operation is applied; `_create_setup_and_solve()` creates a **Driven Modal**
+setup and a linear frequency sweep and calls `Analysis.analyze()` — unchanged
+either way, since a Floquet-port unit cell solves as Driven Modal the same as
+a lumped-port job. Result extraction then branches on which port was built:
+`_extract_hfss_results()` reads S(1,1) for the lumped-port case;
+`_extract_hfss_floquet_results()` reads each Floquet mode's own
+self-reflection coefficient — `S(<port>:<mode>,<port>:<mode>)` — for the
+periodic case, both via `PostProcessorCommon.get_solution_data()`, and both
+export a Touchstone file via `export_touchstone()`. `_archive_hfss_run()`
+saves the project and archives project + results JSON either way. Everything
+is tagged `provenance: "SIMULATED"`. Per the module's own "HONEST CAVEAT":
+pyaedt is not installed and no licensed AEDT exists in this environment, so
+none of this has been exercised against a real HFSS run — only against a
+hand-written fake in `tests/test_hfss.py`.
+
+The periodic path builds exactly **one** Floquet port, on the unit cell's top
+face — a reflection-only characterization (this repo's dominant case, per
+CLAUDE.md's 0°-vs-180°-reflection-phase framing). A ground-backed cell is
+just a full-footprint conductor box supplied in `geometry["conductors"]`, the
+same mechanism the lumped-port path already uses for a ground plane — no
+separate "ground_backed" flag exists, unlike `simulation/palace.py`'s.
 
 ## Capabilities not yet used here
 
-The adapter uses exactly one solution type (Driven Modal, single lumped
-port, box-only geometry) out of HFSS's full set. Not wired up: **Eigenmode**
-solves (would characterize an absorber/FSS unit cell's resonance directly);
-**Floquet/periodic boundaries** for unit-cell metasurface characterization —
-the single biggest gap for this repo's actual purpose, since HFSS is the most
-mature tool available here for that job, yet the adapter currently only
-models isolated, non-periodic geometry; **SBR+** and **hybrid FEM-IE** for an
-element mounted on an electrically large host platform (a vehicle or
-aircraft skin, this repo's own core scenario); **curved/non-box geometry**
-(cylinders, conformal shells — noted as explicitly out of scope in the module
-docstring); **Optimetrics** parametric sweep/optimization, which could drive
-this repo's own candidate-scoring loop directly inside HFSS instead of only
-sweeping externally; and **Distributed Solve/HPC**, relevant once solves get
-large enough to need it. None of PyAEDT's non-HFSS automation (Maxwell,
-Icepak, Q3D, Circuit/Nexxim, EDB) is used, which is appropriate since this
-repo's scope is RF/EM surfaces, not thermal or power-electronics simulation.
+The adapter uses Driven Modal exclusively (box-only geometry), and — since
+issue \#273 — two of the two excitation shapes that matter for this repo's
+core problem: a single lumped port, and a one-port (reflection-only)
+periodic Floquet unit cell. Not wired up: **Eigenmode** solves (would
+characterize an absorber/FSS unit cell's resonance directly); a **two-port
+transmissive Floquet setup** (a second Floquet port on the unit cell's
+opposite face, for an all-dielectric/non-ground-backed structure — the shape
+`simulation/palace.py`'s own `ground_backed=False` already supports) and
+**non-rectangular lattices** (this module's periodic geometry is a
+rectangular box; an oblique/hexagonal lattice would need different lattice
+vectors than the axis-aligned ones this pass computes); **SBR+** and
+**hybrid FEM-IE** for an element mounted on an electrically large host
+platform (a vehicle or aircraft skin, this repo's own core scenario);
+**curved/non-box geometry** (cylinders, conformal shells — noted as
+explicitly out of scope in the module docstring); **Optimetrics** parametric
+sweep/optimization, which could drive this repo's own candidate-scoring loop
+directly inside HFSS instead of only sweeping externally; and **Distributed
+Solve/HPC**, relevant once solves get large enough to need it. None of
+PyAEDT's non-HFSS automation (Maxwell, Icepak, Q3D, Circuit/Nexxim, EDB) is
+used, which is appropriate since this repo's scope is RF/EM surfaces, not
+thermal or power-electronics simulation.
 
 ## Sources
 
@@ -130,4 +154,6 @@ repo's scope is RF/EM surfaces, not thermal or power-electronics simulation.
 - [12] https://raw.githubusercontent.com/ansys/pyaedt/main/LICENSE — PyAEDT's LICENSE file, confirmed MIT License text
 - [13] https://zoftwarehub.com/products/ansys-hfss/pricing — third-party pricing aggregator (not an Ansys source; cited only as a rough-order-of-magnitude estimate since Ansys publishes no public price list)
 - [14] https://www.itqlick.com/ansys-hfss/pricing — second third-party pricing aggregator, same caveat
+- [15] https://raw.githubusercontent.com/ansys/pyaedt/main/src/ansys/aedt/core/hfss.py — `Hfss.auto_assign_lattice_pairs`, `Hfss.create_floquet_port`, `Hfss.assign_lattice_pair`, `Hfss.assign_primary`/`assign_secondary` full signatures/docstrings/bodies, plus `Hfss.create_fresnel_variables`/`Hfss.get_fresnel_floquet_ports`'s real bodies confirming the `S(<port>:<mode>,<port>:<mode>)` self-reflection expression convention and the `"<PortName>:<ModeNumber>"` excitation-name convention (issue #273)
+- [16] https://raw.githubusercontent.com/ansys/pyaedt/main/tests/system/general/test_hfss.py — ansys/pyaedt's own test suite, confirming (a) no `assign_master`/`assign_slave` method exists in current pyaedt and (b) a box's face-index ordering for `assign_lattice_pair` is NOT stable across AEDT versions (hedged there with an `if DESKTOP_VERSION > "2022.2"` branch) — the reason this repo's own periodic path uses `auto_assign_lattice_pairs` (object-level, no face index) instead
 - `simulation/hfss.py` and `simulation/base.py` (this repo) — current adapter implementation, `Simulator` interface, and the workstation-confinement gate

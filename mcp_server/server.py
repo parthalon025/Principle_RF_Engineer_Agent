@@ -872,10 +872,12 @@ def run_hfss_simulation(
     design_name: str = "hfss_design",
 ) -> dict:
     """Simulate a structure with HFSS via PyAEDT: create a project, apply geometry
-    (box material/conductor primitives with materials in meters, a lumped port,
-    length-based mesh -- see simulation.hfss._apply_hfss_geometry for the full
-    shape), solve, extract S-parameters, export a Touchstone file, and archive the
-    solved project plus extracted report. Returns "SIMULATED" provenance. CRITICAL:
+    (box material/conductor primitives with materials in meters, either a single
+    lumped port or a periodic Floquet-port unit cell (geometry["periodic"], issue
+    #273), length-based mesh -- see simulation.hfss._apply_hfss_geometry for the
+    full shape), solve, extract S-parameters (per-mode reflection for the Floquet
+    case), export a Touchstone file, and archive the solved project plus extracted
+    report. Returns "SIMULATED" provenance. CRITICAL:
     unlike run_nec2_simulation/run_openems_simulation, HFSS is commercial, licensed
     software that fundamentally cannot run without a paid license -- execution is
     confined to a configured, explicitly-designated licensed workstation and
