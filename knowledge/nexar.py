@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -57,6 +56,7 @@ from knowledge.sourcing_common import (
     ComponentMatch,
     download_to_file,
     make_workdir,
+    post_json,
     require_external_network_tools_enabled,
 )
 
@@ -93,28 +93,15 @@ def _get_access_token() -> str:
     data = urlencode(
         {"client_id": client_id, "client_secret": client_secret, "grant_type": "client_credentials"}
     ).encode()
-    req = urllib.request.Request(
-        _TOKEN_URL,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- real OAuth2 token call
-        payload = json.loads(resp.read())
+    payload = post_json(_TOKEN_URL, data, {"Content-Type": "application/x-www-form-urlencoded"})
     return payload["access_token"]
 
 
 def _search_by_part_number(part_number: str, access_token: str) -> dict[str, Any]:
     """Real GraphQL exact-MPN query -- see module docstring citation."""
     body = json.dumps({"query": _QUERY, "variables": {"mpn": part_number}}).encode()
-    req = urllib.request.Request(
-        _GRAPHQL_URL,
-        data=body,
-        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- real GraphQL call
-        return json.loads(resp.read())
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    return post_json(_GRAPHQL_URL, body, headers)
 
 
 def _parse_matches(raw: dict[str, Any]) -> list[ComponentMatch]:

@@ -129,7 +129,6 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,6 +140,7 @@ from knowledge.sourcing_common import (
     ComponentMatch,
     download_to_file,
     make_workdir,
+    post_json,
     require_external_network_tools_enabled,
 )
 
@@ -176,11 +176,7 @@ def _get_access_token() -> str:
     data = urlencode(
         {"client_id": client_id, "client_secret": client_secret, "grant_type": "client_credentials"}
     ).encode()
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- real OAuth2 token call
-        payload = json.loads(resp.read())
+    payload = post_json(url, data, {"Content-Type": "application/x-www-form-urlencoded"})
     return payload["access_token"]
 
 
@@ -189,19 +185,13 @@ def _search_by_part_number(part_number: str, access_token: str) -> dict[str, Any
     client_id = os.environ["DIGIKEY_CLIENT_ID"]
     url = _SEARCH_URL_SANDBOX if _use_sandbox() else _SEARCH_URL
     body = json.dumps({"Keywords": part_number}).encode()
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "X-DIGIKEY-Client-Id": client_id,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- real search call
-        return json.loads(resp.read())
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "X-DIGIKEY-Client-Id": client_id,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    return post_json(url, body, headers)
 
 
 def _fetch_product_details(part_number: str, access_token: str) -> dict[str, Any]:

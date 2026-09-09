@@ -2,9 +2,16 @@
 via the vendored arxiv-doc-builder skill's PDF converters
 (`.claude/skills/arxiv-doc-builder`).
 
-Fetch by identifier only, like every other client in this package. Patent
-*search* -- "find me patents about conformal metamaterial skins" -- is not
-built here or anywhere in this repo.
+`ingest_patent` below fetches by identifier only, like every other
+fetch-by-number client in this package. Patent *search* -- "find me
+patents about conformal metamaterial skins" -- was not built here or
+anywhere in this repo when this sentence was first written; issue #280
+closed that gap, and `search_uspto_patents`, documented in this same
+docstring's "DISCOVERY SEARCH" section below, is the result. The two are
+separate entry points with separate postures (credential-free/ungated
+fetch-by-number vs. credentialed/gated topic search) -- see that section
+for why, and `ingest_patent`'s own docstring for why it still cannot
+derive one patent number from another.
 
 SOURCE, VERIFIED DIRECTLY, NOT RECONSTRUCTED FROM MEMORY
 --------------------------------------------------------
@@ -75,11 +82,14 @@ by text and cannot tell a claim from a worked example (see
 to; it is repeated here because this is the module that puts patents into
 the corpus in the first place.
 
-Not gated behind ALLOW_EXTERNAL_NETWORK_TOOLS: that gate
-(`knowledge/sourcing_common.py`) exists for the three CREDENTIALED
-distributor APIs. USPTO, like this package's 3GPP/ETSI/FCC/arXiv siblings,
-needs no account or credential -- same ungated posture as those, and the
-same `ingestion_auto` category in `policies/tool_policy.yaml`.
+`ingest_patent`/`patent_pdf_url` above are NOT gated behind
+ALLOW_EXTERNAL_NETWORK_TOOLS: that gate (`knowledge/sourcing_common.py`)
+exists for CREDENTIALED calls -- originally the three distributor APIs,
+and now `search_uspto_patents` below too (issue #280). The fetch-by-number
+PDF download itself still needs no account or credential -- same ungated
+posture as this package's 3GPP/ETSI/FCC/arXiv siblings, and the same
+`ingestion_auto` category in `policies/tool_policy.yaml` -- unlike the
+discovery-search function below it in this same file.
 
 DISCOVERY SEARCH (issue #280): `search_uspto_patents` BELOW IS A DIFFERENT
 POSTURE FROM EVERYTHING ABOVE IT -- CREDENTIALED, GATED
@@ -194,7 +204,6 @@ import os
 import re
 import subprocess
 import tempfile
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -205,7 +214,7 @@ import yaml
 
 from knowledge.ingest import ingest_document
 from knowledge.sourcing._http import download_bytes
-from knowledge.sourcing_common import require_external_network_tools_enabled
+from knowledge.sourcing_common import post_json, require_external_network_tools_enabled
 
 _USPTO_PDF_URL_BASE = "https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf"
 
@@ -820,20 +829,20 @@ def _search_uspto_odp(query: str, api_key: str, max_results: int) -> dict[str, A
     (`q`/`limit`/`offset`) is the best-corroborated of the shapes found
     across independent secondhand sources but was NOT itself confirmed
     against a live authenticated call -- see the docstring's honest
-    caveat."""
+    caveat.
+
+    The actual `Request`/`urlopen`/JSON-decode is
+    `knowledge.sourcing_common.post_json` -- the same helper
+    `knowledge/digikey.py`, `knowledge/mouser.py` and `knowledge/nexar.py`
+    use for their own credentialed POSTs, factored out there rather than
+    duplicated here a sixth time (see that function's own docstring)."""
     body = json.dumps({"q": query, "limit": max_results, "offset": 0}).encode()
-    req = urllib.request.Request(
-        _ODP_SEARCH_URL,
-        data=body,
-        headers={
-            "X-Api-Key": api_key,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- real ODP search call
-        return json.loads(resp.read())
+    headers = {
+        "X-Api-Key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    return post_json(_ODP_SEARCH_URL, body, headers)
 
 
 def _candidate_identifier(metadata: dict[str, Any]) -> PatentIdentifier | None:
