@@ -1425,6 +1425,8 @@ def _jsonify_correlation_comparison(comparison: dict[str, Any]) -> dict[str, Any
                 "rms_diff": value["rms_diff"],
                 "max_abs_diff": value["max_abs_diff"],
             }
+            if "tolerance_comparison" in value:
+                jsonified[key]["tolerance_comparison"] = value["tolerance_comparison"]
         else:
             jsonified[key] = value
     return jsonified
@@ -1465,6 +1467,7 @@ def _handle_correlation(
         fixture_path=step_input.get("fixture_path"),
         output_fixture_path=step_input.get("output_fixture_path"),
         temperature_tolerance_c=step_input.get("temperature_tolerance_c", 5.0),
+        known_tolerance_db=step_input.get("known_tolerance_db"),
     )
     result = {**result, "comparison": _jsonify_correlation_comparison(result["comparison"])}
     return "correlation", result, result.get("provenance", "CALCULATED")
