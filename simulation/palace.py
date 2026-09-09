@@ -219,11 +219,13 @@ passes through, this adapter now returns the same answer the tool's own
 authors publish, to well within a percent.
 
 STILL NOT PROVEN: only this one all-dielectric geometry, at one incidence
-angle, has been run. Embedded PEC conductors are still unimplemented (see
-SCOPE below), no measured (as opposed to simulated) result has ever been
-compared against, and every result this module returns remains SIMULATED
-provenance -- a solver agreeing with another run of the same solver is not
-a bench measurement.
+angle, has been run. Embedded PEC conductor patches can now be meshed (see
+SCOPE below) but that geometry has never itself been run through a real
+Palace binary, so its config["Boundaries"]["PEC"] key name is still an
+inferred assumption, not a confirmed one; no measured (as opposed to
+simulated) result has ever been compared against, and every result this
+module returns remains SIMULATED provenance -- a solver agreeing with
+another run of the same solver is not a bench measurement.
 
 SCOPE OF THIS IMPLEMENTATION: a single rectangular periodic unit cell,
 periodic (via config["Boundaries"]["Periodic"]) on its four x/y-normal
@@ -238,11 +240,21 @@ subdivided by the caller's geometry["mesh"]["nx"/"ny"/"nz"] (default 2
 elements per feature-interval -- deliberately coarse; this is a caller-
 controlled modeling parameter, not a converged default, matching this
 codebase's convention of never fabricating a falsely-authoritative mesh
-density). Embedded PEC conductor patches (the metallic-metasurface case,
-as opposed to an all-dielectric grating/photonic-crystal unit cell) are
-NOT implemented in this pass -- a real, explicitly-scoped gap (would need
-interior mesh-face boundary-attribute assignment, not attempted here), not
-a silent omission.
+density). geometry["pec_patches"] (issue #252 ticket 1) adds zero or more
+embedded conductor (PEC) patches -- the metallic-metasurface case, as
+opposed to an all-dielectric grating/photonic-crystal unit cell -- each
+meshed as its own INTERIOR boundary-attribute assignment (a flat 2D face
+dropped into the hex grid at a caller-chosen, strictly-interior coordinate,
+never a domain material box) with its own config["Boundaries"]["PEC"]
+attribute, distinct from the six cell-face attributes and from every
+domain/material attribute. See generate_palace_mesh()'s and
+generate_palace_config()'s docstrings for the schema and the honest caveat
+on the "PEC" config key name (inferred from Palace's documented
+Boundaries-section pattern, not yet independently confirmed the way
+FloquetPort was by issue #210's real binary run). STILL NOT implemented:
+a ground-backed, one-port cell (a PEC termination on the z=Lz face in place
+of the second, non-excited Floquet port) -- a separate, explicitly-scoped
+gap, not attempted here, not a silent omission.
 """
 
 import csv
@@ -336,8 +348,21 @@ BOUND_Y_MAX = 4
 BOUND_Z_MIN = 5  # Floquet port 1 (excited)
 BOUND_Z_MAX = 6  # Floquet port 2
 
+# First boundary attribute for an embedded conductor (PEC) patch (issue #252
+# ticket 1). Each entry in geometry["pec_patches"] gets BOUND_PEC_START + its
+# index in that list -- a plain, deterministic offset past the six cell-face
+# attributes above, mirroring how _material_attribute() below assigns each
+# geometry["materials"] entry idx+2 in the *domain* attribute space. Boundary
+# attributes (this module's "boundary" mesh section) and domain attributes
+# (the "elements" section) are independent MFEM numbering spaces, so a PEC
+# patch's boundary attribute never collides with a material's domain
+# attribute even though both start counting near 1-2 -- see
+# generate_palace_mesh()'s docstring.
+BOUND_PEC_START = 7
+
 _CUBE_GEOM_TYPE = 5  # MFEM Geometry::CUBE, see module docstring citation
 _SQUARE_GEOM_TYPE = 3  # MFEM Geometry::SQUARE, same citation
+_AXIS_NAMES = ("x", "y", "z")
 
 
 def _fmt(value: float) -> str:
@@ -378,6 +403,53 @@ def _material_attribute(
     return 1
 
 
+def _pec_patch_axis(
+    patch: dict[str, Any], idx: int, cell_lengths: tuple[float, float, float]
+) -> tuple[int, float, tuple[float, float], tuple[float, float]]:
+    """Validate one geometry["pec_patches"] entry and return
+    (normal_axis, coordinate, span_a, span_b): which of x/y/z (0/1/2) the
+    patch is perpendicular to, the coordinate along that axis, and its
+    [lo, hi] extent along each of the other two axes (in axis order).
+
+    A PEC patch is expressed the same way an embedded dielectric material
+    box is -- p1_m/p2_m corners -- but a patch is a flat 2D face (meshed as
+    an interior boundary, not a domain material), so exactly ONE of the
+    three p1_m/p2_m coordinates must match: that shared coordinate names the
+    face's plane. Zero matching coordinates is a real 3D box, not a face;
+    two or three is a degenerate line/point. Either is rejected as
+    malformed, and so is a patch sitting on the unit cell's own outer face
+    (coordinate 0 or the cell's full length along that axis), which would
+    collide with the periodic/Floquet-port boundary attributes already
+    assigned to that face -- a PEC patch is required to be strictly
+    interior, matching the "interior boundary-attribute assignment" this
+    feature is scoped to (see generate_palace_mesh()'s docstring).
+    """
+    p1, p2 = patch["p1_m"], patch["p2_m"]
+    equal_axes = [a for a in range(3) if abs(p1[a] - p2[a]) < 1e-9]
+    if len(equal_axes) != 1:
+        raise ValueError(
+            f"pec_patches[{idx}] must be a flat, axis-aligned rectangle -- exactly one of "
+            f"p1_m/p2_m's three coordinates must match (that shared coordinate names which "
+            f"face the patch lies on), got {len(equal_axes)} matching coordinate(s) "
+            f"(p1_m={p1!r}, p2_m={p2!r})"
+        )
+    normal_axis = equal_axes[0]
+    coordinate = float(p1[normal_axis])
+    length = cell_lengths[normal_axis]
+    if not (1e-9 < coordinate < length - 1e-9):
+        raise ValueError(
+            f"pec_patches[{idx}] must be strictly interior to the unit cell along its "
+            f"normal axis ({_AXIS_NAMES[normal_axis]}={coordinate!r}, cell "
+            f"{_AXIS_NAMES[normal_axis]} range is (0, {length!r})) -- a patch on the cell's "
+            "own boundary face would collide with the existing periodic/Floquet-port "
+            "boundary attributes there"
+        )
+    other_axes = [a for a in range(3) if a != normal_axis]
+    span_a = tuple(sorted((p1[other_axes[0]], p2[other_axes[0]])))
+    span_b = tuple(sorted((p1[other_axes[1]], p2[other_axes[1]])))
+    return normal_axis, coordinate, span_a, span_b
+
+
 def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     """Generate a structured hexahedral mesh of a rectangular periodic unit
     cell as MFEM ".mesh" v1.0 text (see module docstring citation).
@@ -391,6 +463,9 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
                "epsilon_r": float (default 1.0), "mue_r": float (default 1.0),
                "loss_tan": float (default 0.0)}, ...
           ],
+          "pec_patches": [                # optional embedded conductor patches
+              {"name": str (optional), "p1_m": [x,y,z], "p2_m": [x,y,z]}, ...
+          ],
           "mesh": {"nx": int, "ny": int, "nz": int},  # optional, each
               default 2 -- elements per feature-interval along that axis;
               see module docstring's SCOPE note on why this is coarse by
@@ -401,6 +476,26 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     z=0/z=lz are the two Floquet port faces -- see BOUND_* constants above
     and generate_palace_config() for how config["Boundaries"] references
     these same six boundary attributes.
+
+    Each "pec_patches" entry (issue #252 ticket 1) is a flat, axis-aligned
+    conductor patch -- a real metasurface element, as opposed to a
+    "materials" entry's dielectric volume -- expressed the same p1_m/p2_m
+    corner way, EXCEPT that exactly one of the three coordinates must match
+    between p1_m and p2_m: that shared coordinate is the plane the patch
+    lies in, and the patch is meshed as an INTERIOR boundary-attribute
+    assignment (a 2D face dropped into the middle of the existing hex grid,
+    reusing whichever grid line already passes through that coordinate or
+    adding one via the same feature-line mechanism materials use) rather
+    than a domain material box. It must be strictly interior to the unit
+    cell along its normal axis (not on x=0/lx, y=0/ly or z=0/lz, which
+    already carry the six BOUND_* attributes above) -- see
+    _pec_patch_axis()'s docstring for the exact validation. Each patch gets
+    its own boundary attribute, BOUND_PEC_START + its index in this list
+    (module-level constant above), independent of the domain attributes
+    "materials" entries occupy -- so a PEC patch never disturbs dielectric
+    material numbering, and generate_palace_config() below computes the same
+    attribute numbers independently (same deterministic idx-based rule) to
+    stay in sync without any data passed between the two calls.
 
     Returns {"mesh_text": str, "num_elements": int, "num_boundary_faces":
     int, "num_vertices": int}.
@@ -420,14 +515,32 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
         if missing:
             raise ValueError(f"material {idx} missing required field(s): {missing}")
 
+    pec_patches = geometry.get("pec_patches", [])
+    for idx, patch in enumerate(pec_patches):
+        missing = [f for f in ("p1_m", "p2_m") if f not in patch]
+        if missing:
+            raise ValueError(f"pec_patches[{idx}] missing required field(s): {missing}")
+    # Validated up front (axis, flatness, strict-interior -- see
+    # _pec_patch_axis()) so every patch's boundary faces can be generated
+    # below from geometry alone, the same way materials' domain attributes
+    # are computed from geometry alone via _material_attribute().
+    patch_axes = [
+        _pec_patch_axis(patch, idx, (lx, ly, lz)) for idx, patch in enumerate(pec_patches)
+    ]
+
     mesh_cfg = geometry.get("mesh", {})
     nx = int(mesh_cfg.get("nx", 2))
     ny = int(mesh_cfg.get("ny", 2))
     nz = int(mesh_cfg.get("nz", 2))
 
-    x_feats = [c for m in materials for c in (m["p1_m"][0], m["p2_m"][0])]
-    y_feats = [c for m in materials for c in (m["p1_m"][1], m["p2_m"][1])]
-    z_feats = [c for m in materials for c in (m["p1_m"][2], m["p2_m"][2])]
+    # PEC patches contribute feature points the same way material boxes do
+    # (both carry p1_m/p2_m corners) -- a patch's own coordinates become
+    # grid lines too, so its face lands exactly on the hex grid with no
+    # extra subdivision logic.
+    feature_sources = materials + pec_patches
+    x_feats = [c for m in feature_sources for c in (m["p1_m"][0], m["p2_m"][0])]
+    y_feats = [c for m in feature_sources for c in (m["p1_m"][1], m["p2_m"][1])]
+    z_feats = [c for m in feature_sources for c in (m["p1_m"][2], m["p2_m"][2])]
     x_grid = _feature_lines(0.0, lx, x_feats, nx)
     y_grid = _feature_lines(0.0, ly, y_feats, ny)
     z_grid = _feature_lines(0.0, lz, z_feats, nz)
@@ -533,6 +646,53 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
                 )
             )
 
+    # Embedded conductor (PEC) patches (issue #252 ticket 1): an INTERIOR
+    # boundary face at a fixed grid index along the patch's normal axis --
+    # not one of the six outer cell faces above -- covering whichever
+    # (other-axis-a, other-axis-b) grid cells fall inside the patch's
+    # rectangle. `grids`/`counts` let the same quad-building logic below run
+    # for any of the three normal-axis orientations (x, y or z) rather than
+    # duplicating the BOUND_Z_MIN-style loop three times.
+    grids = (x_grid, y_grid, z_grid)
+    for patch_idx, (normal_axis, coordinate, span_a, span_b) in enumerate(patch_axes):
+        attr = BOUND_PEC_START + patch_idx
+        axis_grid = grids[normal_axis]
+        # Exact match is guaranteed: `coordinate` was fed into
+        # _feature_lines() as an interior feature point for this axis above,
+        # so it reproduces verbatim as one of that axis's grid lines.
+        k0 = axis_grid.index(coordinate)
+        other_axes = [a for a in range(3) if a != normal_axis]
+        grid_a, grid_b = grids[other_axes[0]], grids[other_axes[1]]
+        lo_a, hi_a = span_a
+        lo_b, hi_b = span_b
+
+        def corner(a_idx: int, b_idx: int, _na=normal_axis, _oa=other_axes, _k0=k0) -> int:
+            idx3 = [0, 0, 0]
+            idx3[_na] = _k0
+            idx3[_oa[0]] = a_idx
+            idx3[_oa[1]] = b_idx
+            return vidx(idx3[0], idx3[1], idx3[2])
+
+        for ia in range(len(grid_a) - 1):
+            a_mid = (grid_a[ia] + grid_a[ia + 1]) / 2
+            if not (lo_a - 1e-9 <= a_mid <= hi_a + 1e-9):
+                continue
+            for ib in range(len(grid_b) - 1):
+                b_mid = (grid_b[ib] + grid_b[ib + 1]) / 2
+                if not (lo_b - 1e-9 <= b_mid <= hi_b + 1e-9):
+                    continue
+                boundary.append(
+                    (
+                        attr,
+                        [
+                            corner(ia, ib),
+                            corner(ia + 1, ib),
+                            corner(ia + 1, ib + 1),
+                            corner(ia, ib + 1),
+                        ],
+                    )
+                )
+
     lines = ["MFEM mesh v1.0", "", "dimension", "3", "", "elements", str(len(elements))]
     lines += [
         f"{attr} {_CUBE_GEOM_TYPE} " + " ".join(str(v) for v in verts) for attr, verts in elements
@@ -582,6 +742,12 @@ def generate_palace_config(
             "polarization": "TE" (default) | "TM" | "RHC" | "LHC",
             "max_order": int (default 0 -- specular diffraction order only),
         }
+    geometry["pec_patches"], if present, produces a
+    config["Boundaries"]["PEC"]["Attributes"] entry listing each patch's
+    boundary attribute (BOUND_PEC_START + its index) -- see
+    generate_palace_mesh()'s docstring for the "pec_patches" schema itself,
+    shared between the two functions, and this function's body for the
+    honest caveat on the "PEC" config key name.
 
     `sweep` (optional): {"start_hz": float, "stop_hz": float, "points":
     int}, same shape as run_hfss_simulation's own sweep dict -- defaults to
@@ -645,7 +811,15 @@ def generate_palace_config(
             }
         )
 
-    return {
+    # PEC boundary attributes: BOUND_PEC_START + each pec_patches[] entry's
+    # index, computed here from geometry alone (never from
+    # generate_palace_mesh's return value) so mesh and config independently
+    # agree the same way materials' domain Attributes already do above --
+    # see generate_palace_mesh()'s docstring.
+    pec_patches = geometry.get("pec_patches", [])
+    pec_attributes = [BOUND_PEC_START + idx for idx in range(len(pec_patches))]
+
+    config: dict[str, Any] = {
         "Problem": {"Type": "Driven", "Output": str(output_dir)},
         # L0=1.0 is set EXPLICITLY, never omitted -- Palace's own default
         # (1.0e-6, i.e. micrometers) would silently misinterpret this
@@ -704,6 +878,27 @@ def generate_palace_config(
             },
         },
     }
+
+    if pec_attributes:
+        # ASSUMPTION, not independently confirmed from local sources (no
+        # vendored Palace config schema/docs in this repo, and this pass had
+        # no network access to awslabs.github.io/palace to re-fetch one --
+        # see this module's SOURCES CONSULTED docstring block for how every
+        # other Boundaries key here WAS confirmed): a perfect-electric-
+        # conductor boundary is config["Boundaries"]["PEC"]["Attributes"],
+        # an integer array of mesh boundary attributes, mirroring the
+        # documented shape of every other config["Boundaries"] subsection
+        # already in this function (Periodic, FloquetPort each key off an
+        # "Attributes" array the same way). This is issue #252 ticket 1's
+        # own specified shape, judged the best documented inference from
+        # Palace's established Boundaries-section pattern until a real
+        # config-schema fetch or a real Palace run confirms or corrects it
+        # the same way issue #210 did for FloquetPort/port-floquet-S.csv
+        # above (see this module's "VALIDATED AGAINST A REAL PALACE BINARY"
+        # section) -- not yet done for this key.
+        config["Boundaries"]["PEC"] = {"Attributes": pec_attributes}
+
+    return config
 
 
 # ---------------------------------------------------------------------------

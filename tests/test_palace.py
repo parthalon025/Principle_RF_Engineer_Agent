@@ -42,6 +42,7 @@ from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.palace import (
+    BOUND_PEC_START,
     BOUND_X_MAX,
     BOUND_X_MIN,
     BOUND_Y_MAX,
@@ -172,6 +173,121 @@ def test_generate_palace_mesh_missing_material_field_raises():
         "materials": [{"p1_m": [0, 0, 0]}],  # p2_m missing
     }
     with pytest.raises(ValueError, match="p2_m"):
+        generate_palace_mesh(geometry)
+
+
+# ---------------------------------------------------------------------------
+# Embedded conductor (PEC) patches -- issue #252 ticket 1. A patch is meshed
+# as an INTERIOR boundary-attribute assignment (a flat 2D face), never a
+# domain material box like the dielectric materials above.
+# ---------------------------------------------------------------------------
+
+# A single flat conductor patch, centered in x/y, sitting halfway through
+# the cell in z (0.005 m, strictly interior to the 0.01 m cell) -- its own
+# coordinates become mesh grid lines automatically via the same
+# feature-line mechanism a material box's edges use.
+PEC_PATCH_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "pec_patches": [
+        {"name": "patch", "p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+    "mesh": {"nx": 1, "ny": 1, "nz": 1},
+}
+
+
+def _attrs_in(section_name: str, mesh_result: dict) -> set[int]:
+    lines = mesh_result["mesh_text"].split("\n")
+    count_key = "num_boundary_faces" if section_name == "boundary" else "num_elements"
+    start = lines.index(section_name) + 2
+    return {int(line.split()[0]) for line in lines[start : start + mesh_result[count_key]]}
+
+
+def test_generate_palace_mesh_pec_patch_gets_a_boundary_attribute_not_a_domain_one():
+    result = generate_palace_mesh(PEC_PATCH_GEOMETRY)
+    # Background only -- a PEC patch has no volume, so it contributes
+    # nothing to the domain ("elements") attribute space.
+    assert _attrs_in("elements", result) == {1}
+    boundary_attrs = _attrs_in("boundary", result)
+    assert BOUND_PEC_START in boundary_attrs
+    assert boundary_attrs == {
+        BOUND_X_MIN,
+        BOUND_X_MAX,
+        BOUND_Y_MIN,
+        BOUND_Y_MAX,
+        BOUND_Z_MIN,
+        BOUND_Z_MAX,
+        BOUND_PEC_START,
+    }
+
+
+def test_generate_palace_mesh_multiple_pec_patches_get_distinct_attributes():
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [
+            {"p1_m": [0.002, 0.002, 0.003], "p2_m": [0.008, 0.008, 0.003]},
+            {"p1_m": [0.002, 0.002, 0.007], "p2_m": [0.008, 0.008, 0.007]},
+        ],
+        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    }
+    result = generate_palace_mesh(geometry)
+    boundary_attrs = _attrs_in("boundary", result)
+    assert BOUND_PEC_START in boundary_attrs
+    assert BOUND_PEC_START + 1 in boundary_attrs
+
+
+def test_generate_palace_mesh_pec_patch_alongside_materials_leaves_material_numbering_intact():
+    geometry = {
+        **GRATING_GEOMETRY,
+        "pec_patches": [
+            {"p1_m": [0.002, 0.002, 0.06], "p2_m": [0.006, 0.006, 0.06]},
+        ],
+    }
+    result = generate_palace_mesh(geometry)
+    # 1 = background, 2 = the dielectric bar -- unchanged by the added patch.
+    assert _attrs_in("elements", result) == {1, 2}
+    assert BOUND_PEC_START in _attrs_in("boundary", result)
+
+
+def test_generate_palace_mesh_pec_patch_missing_field_raises():
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.002, 0.005]}],  # p2_m missing
+    }
+    with pytest.raises(ValueError, match="p2_m"):
+        generate_palace_mesh(geometry)
+
+
+def test_generate_palace_mesh_pec_patch_not_flat_raises():
+    """A patch must be a flat 2D face -- exactly one of its three p1_m/p2_m
+    coordinates must match. A real 3D box (zero matching coordinates) can't
+    be meshed as a single interior face."""
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.002, 0.002], "p2_m": [0.008, 0.008, 0.008]}],
+    }
+    with pytest.raises(ValueError, match="flat"):
+        generate_palace_mesh(geometry)
+
+
+def test_generate_palace_mesh_pec_patch_degenerate_to_a_line_raises():
+    """Two matching coordinates collapse the patch to a line, not a face."""
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.005, 0.005], "p2_m": [0.008, 0.005, 0.005]}],
+    }
+    with pytest.raises(ValueError, match="flat"):
+        generate_palace_mesh(geometry)
+
+
+def test_generate_palace_mesh_pec_patch_on_cell_boundary_raises():
+    """A patch coincident with the unit cell's own outer face would collide
+    with the periodic/Floquet-port boundary attributes already assigned to
+    that face -- rejected rather than silently overlapping them."""
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [{"p1_m": [0.002, 0.002, 0.0], "p2_m": [0.008, 0.008, 0.0]}],
+    }
+    with pytest.raises(ValueError, match="interior"):
         generate_palace_mesh(geometry)
 
 
@@ -336,6 +452,40 @@ def test_generate_palace_config_is_json_serializable():
         GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
     )
     json.dumps(config)  # must not raise
+
+
+def test_generate_palace_config_no_pec_patches_omits_pec_section():
+    config = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert "PEC" not in config["Boundaries"]
+
+
+def test_generate_palace_config_pec_boundary_section_matches_mesh_attribute_numbering():
+    geometry = {
+        "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+        "pec_patches": [
+            {"p1_m": [0.002, 0.002, 0.003], "p2_m": [0.008, 0.008, 0.003]},
+            {"p1_m": [0.002, 0.002, 0.007], "p2_m": [0.008, 0.008, 0.007]},
+        ],
+        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    }
+    mesh_result = generate_palace_mesh(geometry)
+    mesh_pec_attrs = sorted(a for a in _attrs_in("boundary", mesh_result) if a >= BOUND_PEC_START)
+
+    config = generate_palace_config(
+        geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert config["Boundaries"]["PEC"]["Attributes"] == mesh_pec_attrs
+    assert mesh_pec_attrs == [BOUND_PEC_START, BOUND_PEC_START + 1]
+
+
+def test_generate_palace_config_pec_section_is_json_serializable():
+    config = generate_palace_config(
+        PEC_PATCH_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    json.dumps(config)  # must not raise
+    assert config["Boundaries"]["PEC"]["Attributes"] == [BOUND_PEC_START]
 
 
 # ---------------------------------------------------------------------------
