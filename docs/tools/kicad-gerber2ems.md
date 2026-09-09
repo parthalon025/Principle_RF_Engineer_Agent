@@ -79,30 +79,49 @@ software with no purchase price; none is on PyPI as `gerber2ems` itself
 
 ## How this repo uses it today
 
-`simulation/kicad_gerber2ems.py` wires up exactly one path end-to-end:
-`export_kicad_fab_assets()` connects to a headless KiCad instance and exports
-Gerber, drill, and position files plus a translated `stackup.json`;
-`generate_gerber2ems_config()` builds gerber2ems's `simulation.json`;
-`KicadGerber2emsSimulator.run()` subprocess-invokes `gerber2ems -a`; and
-`parse_gerber2ems_port_csv()`/`parse_gerber2ems_results()` parse the resulting
-`Port_<n>_data.csv` files into S-parameters, impedance, and trace delay. The
-orchestrating function `run_kicad_gerber2ems_simulation()` returns a result
-dict explicitly scoped as `"PCB signal-integrity only... NOT antenna
-far-field/gain"` and capped at `SIMULATED` provenance -- nothing here has been
-run against real installed tools yet (per the module's own honest-caveats
-section). No schematic capture, DRC, 3D viewer, SPICE simulation, or library
+`simulation/kicad_gerber2ems.py` wires up two paths end-to-end. First,
+**`run_kicad_drc()`** (issue #272) subprocess-invokes `kicad-cli pcb drc
+--format json --output <path> --exit-code-violations <board_file>` directly
+against the `.kicad_pcb` file (no headless IPC connection needed for this
+step) and parses the resulting JSON violations report -- KiCad's own
+published schema, `https://schemas.kicad.org/drc.v1.json` -- into a
+`{severity, type, description}` list, filtering out any violation the PCB
+designer already reviewed and excluded in KiCad's own DRC dialog. It treats
+`kicad-cli`'s own two documented `--exit-code-violations` outcomes (exit 0 =
+none found, exit 5 = violations found) as equally successful DRC runs, per
+CLAUDE.md's "warn, never block"; only an unexpected exit code (kicad-cli
+missing, crashed, or the board file unreadable) is a real tool failure.
+Second, the original pipeline: `export_kicad_fab_assets()` connects to a
+headless KiCad instance and exports Gerber, drill, and position files plus a
+translated `stackup.json`; `generate_gerber2ems_config()` builds
+gerber2ems's `simulation.json`; `KicadGerber2emsSimulator.run()`
+subprocess-invokes `gerber2ems -a`; and `parse_gerber2ems_port_csv()`/
+`parse_gerber2ems_results()` parse the resulting `Port_<n>_data.csv` files
+into S-parameters, impedance, and trace delay.
+
+The orchestrating function `run_kicad_gerber2ems_simulation()` runs
+`run_kicad_drc()` FIRST, before ever connecting to KiCad for
+`export_kicad_fab_assets()`/before `KicadGerber2emsSimulator.run()`. A board
+with reported DRC violations still proceeds through export and simulation --
+the violations surface only as a human-readable entry in the result's own
+`warnings` list (alongside `export_kicad_fab_assets()`'s existing
+plated-drill-file warning) and as structured detail under a `drc` key,
+never as a raised exception. The returned result dict is explicitly scoped
+as `"PCB signal-integrity only... NOT antenna far-field/gain"` and capped at
+`SIMULATED` provenance -- nothing here has been run against real installed
+tools yet (per the module's own honest-caveats section). No schematic
+capture, graphical Rule Editor, 3D viewer, SPICE simulation, or library
 management is touched.
 
 ## Capabilities not yet used here
 
-The single most consequential gap: **KiCad's DRC and its graphical Rule Editor
-are never invoked**, so a board this pipeline simulates could be electrically
-unbuildable (shorts, clearance violations) with nothing in this repo catching
-it before a human commits fab time or money -- relevant given this program's
-"warn before spending real material or machine time" principle. Also unused:
-KiCad's SPICE simulator (useful for the lumped-element matching-network side of
-a feed design before laying out copper); its 3D/STEP export (useful for
-checking conformal/curved-mount fit); and gerber2ems's differential-pair and
+KiCad's DRC is now invoked (see above); its graphical Rule Editor (for
+authoring custom design rules beyond KiCad's own defaults) is still unused
+-- this pipeline only runs whatever rule set is already saved in the board
+file, it does not author or edit rules. Also unused: KiCad's SPICE simulator
+(useful for the lumped-element matching-network side of a feed design before
+laying out copper); its 3D/STEP export (useful for checking
+conformal/curved-mount fit); and gerber2ems's differential-pair and
 multi-trace batch modes, which this adapter's config passthrough supports but
 nothing in this repo yet exercises for periodic/unit-cell array feed networks.
 
@@ -118,6 +137,14 @@ nothing in this repo yet exercises for periodic/unit-cell array feed networks.
 - [8] https://dev-docs.kicad.org/en/apis-and-binding/ipc-api/for-addon-developers/index.html
 - [9] gerber2ems repo structure/README (see [5])
 - [10] https://gitlab.com/kicad/code/kicad-python (project metadata; README fetched via raw path https://gitlab.com/kicad/code/kicad-python/-/raw/main/README.md)
+- [11] `pcb drc` CLI options (`--format`, `--output`, `--severity-*`,
+  `--exit-code-violations` and its exit-code-0-vs-5 contract):
+  https://docs.kicad.org/9.0/en/cli/cli.html
+- [12] DRC JSON report schema (`violations[]` with `type`/`severity`/
+  `description`/`excluded`/`items`; `severity` enum "error"/"warning"):
+  https://schemas.kicad.org/drc.v1.json, which redirects to
+  https://gitlab.com/kicad/code/kicad/-/raw/master/resources/schemas/drc.v1.json
+  (both fetched directly, issue #272 research pass)
 
 Note: WebFetch on the plain GitLab project page returned only metadata (no
 README text); the raw README path was fetched separately for capability

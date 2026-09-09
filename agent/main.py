@@ -1414,15 +1414,23 @@ def run_kicad_gerber2ems_simulation(board_file: str, config: dict, timeout_s: in
     even stub. Returns "SIMULATED" provenance. REQUIRES the PCB design to already
     place "Simulation_Port"-valued footprints (reference designators SP1, SP2, ...)
     at the trace endpoints of interest -- this is gerber2ems's own PCB-design-time
-    port-discovery convention, not something this tool can synthesize. Format/API
-    verified against gerber2ems's and kicad-python's own primary sources (see
-    simulation/kicad_gerber2ems.py's module docstring for the full citation list)
-    but NOT against a real KiCad/kicad-cli/gerbv/gerber2ems/openEMS installation --
-    none is installed in this environment; treat any result as unverified end-to-end
-    until it has been run against the real tools at least once. One honestly-flagged
-    gap beyond that: kicad-python's drill export does not yet expose a plated/
-    non-plated-hole split, so a board with unplated holes may get a mis-labeled drill
-    file (see that module's own docstring and each result's own `warnings`)."""
+    port-discovery convention, not something this tool can synthesize.
+
+    Runs KiCad's own Design Rule Check (`kicad-cli pcb drc`) FIRST, before export
+    or simulation (issue #272) -- the result's "drc" key carries the violation
+    count/detail, and "warnings" carries a human-readable note if any were found.
+    Per CLAUDE.md's "warn, never block", a board with DRC violations still gets
+    exported and simulated; nothing here withholds a result over it.
+
+    Format/API verified against gerber2ems's, kicad-python's, and kicad-cli's own
+    primary sources (see simulation/kicad_gerber2ems.py's module docstring and
+    run_kicad_drc's own docstring for the full citation list) but NOT against a
+    real KiCad/kicad-cli/gerbv/gerber2ems/openEMS installation -- none is installed
+    in this environment; treat any result as unverified end-to-end until it has
+    been run against the real tools at least once. One honestly-flagged gap beyond
+    that: kicad-python's drill export does not yet expose a plated/non-plated-hole
+    split, so a board with unplated holes may get a mis-labeled drill file (see
+    that module's own docstring and each result's own `warnings`)."""
     return _run_kicad_gerber2ems_simulation(
         board_file=board_file, config=config, timeout_s=timeout_s
     )
