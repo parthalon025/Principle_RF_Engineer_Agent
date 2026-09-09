@@ -203,6 +203,9 @@ from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
 from rf_tools.absorber import absorber_band_response as _absorber_band_response
+from rf_tools.calculations import (
+    curvature_exceeds_validity_box as _curvature_exceeds_validity_box,
+)
 from rf_tools.calculations import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
 from rf_tools.calculations import (
     reflection_coefficient_from_impedance as _reflection_coefficient_from_impedance,
@@ -575,6 +578,187 @@ def _require_fields(step_input: dict[str, Any], required: set[str], step_name: s
         )
 
 
+# ---------------------------------------------------------------------------
+# Considered-and-dropped ledger (ADR-0025; CONTEXT.md's "Considered-and-
+# dropped ledger"; issue #322). An ARCHITECTURE or REDESIGN_DECISION
+# step_input may carry an optional `considered_and_dropped` list -- per
+# entry, the `family` weighed, whether it was `verdict`="kept"/"dropped",
+# one free-text `reason`, and a `reason_kind` (ADR-0025's 2026-09-08
+# correction): "human-decision" / "capability-verdict" /
+# "engineering-judgment". No gate: a step_input carrying no such key at all
+# is untouched and the step proceeds exactly as before (ADR-0025's own "No
+# gate" -- recording this ledger is never required).
+#
+# ADR-0025's 2026-09-09 CORRECTION (issue #322 is the implementation
+# ticket). Its own 2026-09-08 correction had briefly read `capability-
+# verdict` as "the configured fabrication capability cannot build it" --
+# which directly contradicted ADR-0021's rule that an unbuildable candidate
+# must be REPORTED, never dropped. The fix is not a gate on dropping (this
+# module never drops anything; the LLM caller decides what to propose) but
+# a gate on the LABEL: `reason_kind="capability-verdict"` may only be
+# recorded for a family excluded by its OWN characterised validity box
+# (CONTEXT.md's Validity box) for a property the design's REQUIREMENTS
+# themselves state -- never a fact about configured shop equipment/ink/
+# material, which never appears in `requirements` at all (that gap is
+# #324's separate Capability warning, which never excludes a candidate).
+# `human-decision`/`engineering-judgment` carry no such extra requirement --
+# only `capability-verdict` is narrowed.
+#
+# Concretely, a capability-verdict entry must additionally name
+# `requirement_id` (a real key in `requirements`) and `validity_box_property`
+# (a real key stated on THAT requirement) -- so a later run can re-check the
+# SAME lookup against the requirement's CURRENT value (see
+# `capability_verdict_holds` below, reused by
+# `orchestration.tooling.reevaluate_capability_verdicts`) and flip a stale
+# exclusion to reconsiderable the moment that property changes, never
+# against equipment. `curvature` is the one validity-box property this
+# codebase has a published closed-form bound for (docs/
+# curvature-effects-on-em-surfaces.md's `S <= 2*theta_max*R`) -- a
+# capability-verdict entry naming it must also carry `theta_max_deg` (the
+# excluded family/element's own characterised angular-stability limit), and
+# the entry is rejected outright if the requirement's stated curvature does
+# not actually exceed that bound, so the label cannot be used as a generic
+# "we don't like this family" excuse. Any OTHER `validity_box_property` is
+# accepted once it is confirmed to be a real, requirement-stated property
+# (structural check only -- no other closed-form validity box is published
+# in this codebase yet; a documented scope limit, not an oversight, mirroring
+# ADR-0025's own numeric-vs-categorical distinction for relaxation reporting).
+_LEDGER_VERDICTS = frozenset({"kept", "dropped"})
+_LEDGER_REASON_KINDS = frozenset({"human-decision", "capability-verdict", "engineering-judgment"})
+
+
+def capability_verdict_holds(entry: dict[str, Any], requirements: dict[str, Any]) -> bool:
+    """True if a `reason_kind="capability-verdict"` ledger `entry` is still
+    justified by `requirements`' CURRENT stated properties -- the exact
+    same check `_validate_capability_verdict_entry` enforces at write time,
+    reused (never re-derived) by
+    `orchestration.tooling.reevaluate_capability_verdicts` so a later run's
+    re-evaluation cannot silently drift from the rule that justified writing
+    the entry in the first place.
+
+    Returns `False` (never raises) for any reason the exclusion can no
+    longer be confirmed against `requirements` as they stand right now: a
+    missing/renamed `requirement_id`, a `validity_box_property` no longer
+    stated on that requirement, a malformed/missing `curvature` value, or a
+    stated curvature that no longer exceeds `S <= 2*theta_max*R` for this
+    entry's own `theta_max_deg`. Every one of those is "the property that
+    excluded this family changed or vanished" -- exactly ADR-0025's
+    "flips to reconsiderable the moment that property changes."
+    """
+    if not isinstance(requirements, dict):
+        return False
+    requirement = requirements.get(entry.get("requirement_id"))
+    validity_box_property = entry.get("validity_box_property")
+    if not isinstance(requirement, dict) or validity_box_property not in requirement:
+        return False
+    if validity_box_property == "curvature":
+        curvature = requirement["curvature"]
+        try:
+            return _curvature_exceeds_validity_box(
+                curvature["arc_length_m"], curvature["host_radius_m"], entry["theta_max_deg"]
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+    # No other validity-box property has a published closed-form check in
+    # this codebase (see this section's own module comment) -- structural
+    # presence (already confirmed above) is all that can be reconfirmed.
+    return True
+
+
+def _validate_capability_verdict_entry(
+    entry: dict[str, Any], requirements: dict[str, Any], prefix: str
+) -> None:
+    if entry["verdict"] != "dropped":
+        raise DesignLoopValidationError(
+            f"{prefix} has reason_kind='capability-verdict' but verdict={entry['verdict']!r} "
+            "-- a family excluded by its own validity box is, by definition, dropped; "
+            "'kept' + 'capability-verdict' is a contradiction (a soft preference for a "
+            "kept family belongs under reason_kind='engineering-judgment' instead)"
+        )
+    missing = {"requirement_id", "validity_box_property"} - entry.keys()
+    if missing:
+        raise DesignLoopValidationError(
+            f"{prefix} has reason_kind='capability-verdict' but is missing required "
+            f"field(s) {sorted(missing)} -- a capability-verdict must name which "
+            "requirement and which of its own stated properties it was excluded "
+            "against (ADR-0021/ADR-0025: never a shop-equipment fact)"
+        )
+    requirement_id = entry["requirement_id"]
+    if requirement_id not in requirements:
+        raise DesignLoopValidationError(
+            f"{prefix}['requirement_id']={requirement_id!r} is not a key in this "
+            "design's requirements -- capability-verdict must trace to a real "
+            "customer requirement, never to configured shop equipment/ink/material"
+        )
+    requirement = requirements[requirement_id]
+    validity_box_property = entry["validity_box_property"]
+    if not isinstance(requirement, dict) or validity_box_property not in requirement:
+        raise DesignLoopValidationError(
+            f"{prefix}['validity_box_property']={validity_box_property!r} is not a "
+            f"stated property of requirement {requirement_id!r} -- a capability-verdict "
+            "may only be recorded against a property the requirement itself states"
+        )
+    if validity_box_property == "curvature" and "theta_max_deg" not in entry:
+        raise DesignLoopValidationError(
+            f"{prefix} has validity_box_property='curvature' but is missing "
+            "'theta_max_deg' -- the excluded family/element's own characterised "
+            "angular-stability limit"
+        )
+    if not capability_verdict_holds(entry, requirements):
+        raise DesignLoopValidationError(
+            f"{prefix} claims reason_kind='capability-verdict' for "
+            f"validity_box_property={validity_box_property!r}, but the requirement's "
+            "own current stated value does not actually violate that validity box -- "
+            "capability-verdict may only be recorded for a real violation, never a "
+            "generic 'this family is not preferred'"
+        )
+
+
+def _validate_considered_and_dropped(
+    entries: Any, requirements: dict[str, Any], step_name: str
+) -> None:
+    """Validate an optional `considered_and_dropped` ledger on an
+    ARCHITECTURE/REDESIGN_DECISION step_input -- see this section's own
+    module comment above for the full shape and the issue #322 narrowing.
+    `None` (the key absent) is a no-op: recording this ledger is never
+    required (ADR-0025's "No gate")."""
+    if entries is None:
+        return
+    if not isinstance(entries, list):
+        raise DesignLoopValidationError(
+            f"{step_name} step_input['considered_and_dropped'] must be a list, "
+            f"got {type(entries).__name__}"
+        )
+    for index, entry in enumerate(entries):
+        prefix = f"{step_name} step_input['considered_and_dropped'][{index}]"
+        if not isinstance(entry, dict):
+            raise DesignLoopValidationError(f"{prefix} must be a dict, got {type(entry).__name__}")
+        missing = {"family", "verdict", "reason", "reason_kind"} - entry.keys()
+        if missing:
+            raise DesignLoopValidationError(
+                f"{prefix} is missing required field(s): {sorted(missing)}"
+            )
+        for text_field in ("family", "reason"):
+            if not isinstance(entry[text_field], str) or not entry[text_field].strip():
+                raise DesignLoopValidationError(
+                    f"{prefix}[{text_field!r}] must be a non-empty string, "
+                    f"got {entry[text_field]!r}"
+                )
+        if entry["verdict"] not in _LEDGER_VERDICTS:
+            raise DesignLoopValidationError(
+                f"{prefix}['verdict'] must be one of {sorted(_LEDGER_VERDICTS)}, "
+                f"got {entry['verdict']!r}"
+            )
+        reason_kind = entry["reason_kind"]
+        if reason_kind not in _LEDGER_REASON_KINDS:
+            raise DesignLoopValidationError(
+                f"{prefix}['reason_kind'] must be one of {sorted(_LEDGER_REASON_KINDS)}, "
+                f"got {reason_kind!r}"
+            )
+        if reason_kind == "capability-verdict":
+            _validate_capability_verdict_entry(entry, requirements, prefix)
+
+
 def _handle_architecture(
     _state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -605,6 +789,9 @@ def _handle_architecture(
         family = _get_design_family(step_input["design_family"])
     except _UnknownDesignFamilyError as exc:
         raise DesignLoopValidationError(str(exc)) from exc
+    _validate_considered_and_dropped(
+        step_input.get("considered_and_dropped"), _state.requirements, "architecture"
+    )
 
     recorded = dict(step_input)
     # `design_family` keeps the caller's own string verbatim -- a human wrote
@@ -1996,6 +2183,9 @@ def _handle_redesign_decision(
             "'release'/'manufacture' action -- this loop never proceeds to "
             "manufacturing release (docs/BUILD_PLAN.md's Phase 12)."
         )
+    _validate_considered_and_dropped(
+        step_input.get("considered_and_dropped"), _state.requirements, "redesign_decision"
+    )
     return "redesign_decision", dict(step_input), None
 
 

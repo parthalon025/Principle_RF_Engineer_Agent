@@ -124,6 +124,20 @@ CREATE TABLE IF NOT EXISTS decision_records (
 -- (db/apply_schema.py), where CREATE TABLE IF NOT EXISTS is a no-op.
 ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family TEXT;
 
+-- Issue #322 (ADR-0025's Considered-and-dropped ledger; CONTEXT.md's entry
+-- of the same name). Per entry: the family weighed, whether it was kept or
+-- dropped, a free-text reason, and a reason kind
+-- (human-decision/capability-verdict/engineering-judgment) -- structured,
+-- not prose, so a later run can look an entry up deterministically
+-- (ADR-0026's rejection memory) rather than parsing free text. Nullable
+-- default '[]'::jsonb, same "ALTER TABLE ADD COLUMN IF NOT EXISTS" pattern
+-- as design_family immediately above: only architecture_decision/
+-- redesign_decision rows ever carry entries (orchestration/tooling.py's
+-- ADR-0011 flush), and recording this ledger is never required (ADR-0025's
+-- "No gate") -- an empty array is the honest default for a decision that
+-- states none.
+ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS considered_and_dropped JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 -- Issue #154 (ADR-0015, CONTEXT.md: Material-property library). Every
 -- citation is its own row, keyed by (material, property, frequency band) --
 -- deliberately no UNIQUE constraint on that triple, since two independent,

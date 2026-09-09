@@ -495,6 +495,67 @@ def test_record_decision_persists_and_round_trips_design_family(db_conn):
     assert dr["design_family"] == "patch_antenna"
 
 
+def test_record_decision_defaults_considered_and_dropped_to_empty_list(db_conn):
+    """Issue #322 (ADR-0025's Considered-and-dropped ledger). A caller that
+    never states one (every non-design-loop decision, and today most
+    design-loop ones too) gets `[]`, matching this column's schema
+    default -- never NULL, so a reader can always iterate it."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-LEDGER-DEFAULT")
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-LEDGER-DEFAULT-topology",
+        decision="Used a pi-network instead of an L-network.",
+        alternatives=[],
+        rationale="Pi-network gives an extra degree of freedom for Q.",
+        evidence=[],
+    )
+    assert row["considered_and_dropped"] == []
+
+
+def test_record_decision_persists_and_round_trips_considered_and_dropped(db_conn):
+    """Issue #322 (ADR-0025's Considered-and-dropped ledger; CONTEXT.md's
+    entry of the same name). A design-loop ARCHITECTURE/REDESIGN_DECISION
+    flush (orchestration/tooling.py) passes a real ledger; it must land in
+    the row and read back out via read_design -- this function stores it
+    verbatim, the reason_kind narrowing (issue #322) is enforced upstream by
+    orchestration.design_loop before a decision ever reaches this call."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-LEDGER")
+    ledger = [
+        {
+            "family": "reflection_phase_surface",
+            "verdict": "dropped",
+            "reason": "host curvature exceeds this family's angle-stable element validity box",
+            "reason_kind": "capability-verdict",
+            "requirement_id": "R1",
+            "validity_box_property": "curvature",
+            "theta_max_deg": 45.0,
+        },
+        {
+            "family": "patch_antenna",
+            "verdict": "kept",
+            "reason": "meets band/gain target with a simple, low-cost fabrication",
+            "reason_kind": "engineering-judgment",
+        },
+    ]
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-LEDGER-architecture",
+        decision="rectangular microstrip patch on FR4",
+        alternatives=[],
+        rationale="meets band/gain target with a simple, low-cost fabrication",
+        evidence=[],
+        design_family="patch_antenna",
+        considered_and_dropped=ledger,
+    )
+    assert row["considered_and_dropped"] == ledger
+
+    result = read_design(db_conn, design_id)
+    (dr,) = result["decision_records"]
+    assert dr["considered_and_dropped"] == ledger
+
+
 def test_record_decision_round_trips_alternatives_and_evidence_as_jsonb(db_conn):
     design_id = _make_design(db_conn, design_key="DES-DEC-2")
     alternatives = [

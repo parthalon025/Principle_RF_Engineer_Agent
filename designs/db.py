@@ -125,6 +125,7 @@ def record_decision(
     rationale: str,
     evidence: list[Any],
     design_family: str | None = None,
+    considered_and_dropped: list[Any] | None = None,
     approval_required: bool = True,
 ) -> dict[str, Any]:
     """Insert a new `decision_records` row, always starting
@@ -147,6 +148,15 @@ def record_decision(
     does not validate the value against a known-family list -- that
     belongs to the still-open design family registry (docs/adr/0018), not
     this write path.
+
+    `considered_and_dropped` (issue #322; ADR-0025's Considered-and-dropped
+    ledger) is optional, defaulting to `[]` -- same "only a design-loop
+    ARCHITECTURE/REDESIGN_DECISION call ever states one" shape as
+    `design_family` immediately above. This function stores it verbatim; the
+    `reason_kind="capability-verdict"` narrowing (issue #322) is enforced
+    upstream, by `orchestration.design_loop`'s step validation, before a
+    decision ever reaches this write path -- this is a storage layer, not a
+    second place to re-check the rule.
     """
     existing = find_decision_by_record_key(conn, record_key)
     if existing is not None:
@@ -157,8 +167,9 @@ def record_decision(
             """
             INSERT INTO decision_records
                 (design_id, record_key, decision, alternatives, rationale,
-                 evidence, design_family, approval_required, approval_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 evidence, design_family, considered_and_dropped, approval_required,
+                 approval_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -169,6 +180,7 @@ def record_decision(
                 rationale,
                 Json(evidence),
                 design_family,
+                Json(considered_and_dropped if considered_and_dropped is not None else []),
                 approval_required,
                 "PENDING",
             ),
@@ -303,7 +315,8 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
 
         cur.execute(
             "SELECT id, record_key, decision, alternatives, rationale, evidence, "
-            "design_family, approval_required, approval_status, created_at "
+            "design_family, considered_and_dropped, approval_required, approval_status, "
+            "created_at "
             "FROM decision_records WHERE design_id = %s ORDER BY id",
             (design_id,),
         )
