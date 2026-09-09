@@ -266,7 +266,8 @@ class SimulationAdapter:
     """The solver a family's SIMULATION step routes to, with its reason.
 
     `name` is the dispatch key the design loop matches against its own
-    handler table (currently "NEC2" and "MEEP_FLOQUET"). `reason` says why
+    handler table (currently "NEC2", "MEEP_FLOQUET" and "PALACE_FLOQUET").
+    `reason` says why
     that solver can pose THIS family's question -- recorded because a solver
     choice nobody wrote a reason for is indistinguishable from a default
     nobody chose, which is what issue #241 exists to remove.
