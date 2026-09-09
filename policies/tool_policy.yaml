@@ -128,9 +128,11 @@ approval_self_gated:
   # confinement check (run_hfss_simulation), or (ticket #67)
   # knowledge/sourcing_common.py's require_external_network_tools_enabled()
   # -- ALLOW_EXTERNAL_NETWORK_TOOLS=true, checked before any credential is
-  # read or any outbound request is built -- for the three distributor
-  # lookup tools, which place a real, credentialed call to a third party
-  # the instant they run. Deliberately NOT listed under approval_required:
+  # read or any outbound request is built -- for the distributor lookup
+  # tools (one per distributor, plus, since ticket #276, Nexar's second
+  # lookup_nexar_part_data query), which place a real, credentialed call to
+  # a third party the instant they run. Deliberately NOT listed under
+  # approval_required:
   # this policy file adds no second gate on top of an already-working one
   # -- see docs/adr's grilling notes and orchestration/policy.py's module
   # docstring for why a blanket approval_required block would just
@@ -150,6 +152,12 @@ approval_self_gated:
   - lookup_digikey_component
   - lookup_mouser_component
   - lookup_nexar_component
+  # ticket #276: lookup_nexar_part_data places the same real, credentialed
+  # call to Nexar as lookup_nexar_component (same require_external_network_
+  # tools_enabled("Nexar") gate, same NEXAR_CLIENT_ID/SECRET), just querying
+  # multi-distributor pricing/specs instead of a datasheet -- same category,
+  # same reasoning, for the same reason it doesn't get a second gate here.
+  - lookup_nexar_part_data
 
 ingestion_auto:
   # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule join
@@ -159,8 +167,9 @@ ingestion_auto:
   # approval_self_gated exists for a tool that ALREADY enforces its own
   # independent gate before it runs -- concretely, knowledge/
   # sourcing_common.py's require_external_network_tools_enabled()
-  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the three distributor lookups
-  # (lookup_digikey_component/lookup_mouser_component/lookup_nexar_component)
+  # (ALLOW_EXTERNAL_NETWORK_TOOLS=true), which the distributor lookups
+  # (lookup_digikey_component/lookup_mouser_component/lookup_nexar_component,
+  # plus, since ticket #276, lookup_nexar_part_data)
   # call because each places a real, CREDENTIALED call to a third party
   # (an API key/secret read from the environment) the instant it runs. None
   # of the three new sourcing clients do that, or need to: 3GPP's FTP
@@ -174,7 +183,7 @@ ingestion_auto:
   #
   # issue #219: ingest_patent sits here, ungated, for exactly the reason
   # ingest_arxiv_paper does -- and deliberately NOT in approval_self_gated
-  # beside the three distributor lookups. The distinction that category
+  # beside the distributor lookups. The distinction that category
   # actually draws is a CREDENTIAL: Digi-Key/Mouser/Nexar place an
   # authenticated, account-billed call to a third party the instant they
   # run, which is why knowledge/sourcing_common.py gates them. The USPTO

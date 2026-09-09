@@ -54,11 +54,11 @@ instruction:
     article (101000452264). This is a single, complete, on-page worked
     query already using exactly this sub-field set together, the strongest
     confirmation level this module has for any field.
-  - `sellers { company { name } offers { inventoryLevel } } }` -- quoted
+  - `sellers { company { name } offers { inventoryLevel } }` -- quoted
     verbatim from the "Total Availability" example query (searching
     `supSearchMpn(q: "acs770", ...)`) in support.nexar.com's "Nexar
     Playground GraphQL Query Examples" article (101000494582).
-  - `sellers { company { name } offers { prices { quantity price } } } }`
+  - `sellers { company { name } offers { prices { quantity price } } }`
     -- quoted verbatim from the same article's "Pricing Breaks" example
     query (also `supSearchMpn(q: "acs770", ...)`).
   - `inventoryLevel` and `prices { quantity price }` are confirmed as real
@@ -147,6 +147,13 @@ GetTokenFn = Callable[[], str]
 SearchFn = Callable[[str, str], dict[str, Any]]
 DownloadFn = Callable[[str, Path], Path]
 IngestFn = Callable[..., dict[str, Any]]
+# `lookup_nexar_part_data` (ticket #276) reuses `SearchFn` unchanged for its
+# own `search` parameter -- same `(part_number, access_token) -> raw dict`
+# shape as `lookup_nexar_datasheet`'s, since only the query text posted
+# underneath differs (see `_search_part_data_by_part_number` below), not the
+# seam's signature. Grouped here with the other `*Fn` aliases per this
+# module's (and digikey.py's/mouser.py's) convention of declaring every
+# Callable alias in one block right after the module constants.
 
 
 def _get_access_token() -> str:
@@ -170,9 +177,16 @@ def _get_access_token() -> str:
     return payload["access_token"]
 
 
-def _search_by_part_number(part_number: str, access_token: str) -> dict[str, Any]:
-    """Real GraphQL exact-MPN query -- see module docstring citation."""
-    body = json.dumps({"query": _QUERY, "variables": {"mpn": part_number}}).encode()
+def _post_graphql(query: str, part_number: str, access_token: str) -> dict[str, Any]:
+    """The actual network I/O both `_search_by_part_number` and
+    `_search_part_data_by_part_number` (ticket #276) perform -- same
+    endpoint, same auth header, same request/response shape; the only thing
+    that ever differs between `lookup_nexar_datasheet`'s query and
+    `lookup_nexar_part_data`'s is which GraphQL query TEXT gets posted, so
+    that's the one thing this helper takes as a parameter rather than
+    hard-coding. Factored out so that difference doesn't require copying
+    the surrounding request-building boilerplate a second time."""
+    body = json.dumps({"query": query, "variables": {"mpn": part_number}}).encode()
     req = urllib.request.Request(
         _GRAPHQL_URL,
         data=body,
@@ -183,46 +197,59 @@ def _search_by_part_number(part_number: str, access_token: str) -> dict[str, Any
         return json.loads(resp.read())
 
 
-def _parse_matches(raw: dict[str, Any]) -> list[ComponentMatch]:
+def _search_by_part_number(part_number: str, access_token: str) -> dict[str, Any]:
+    """Real GraphQL exact-MPN query -- see module docstring citation. Posts
+    `_QUERY` via the shared `_post_graphql` helper."""
+    return _post_graphql(_QUERY, part_number, access_token)
+
+
+def _iter_matched_parts(raw: dict[str, Any]):
+    """Walk the `supSearchMpn.results[]` envelope both `_QUERY` and
+    `_PART_DATA_QUERY` share by construction (same `supSearchMpn` operation,
+    just a different field selection on `part`), yielding each result's
+    `part` dict that carries an `mpn` -- a part with no `mpn` is skipped
+    here rather than by each caller separately (module docstring's honest
+    caveat: a wrong/missing shape "fails as 'no match', not a crash").
+    Shared by `_parse_matches` and `_parse_part_data` (ticket #276) so this
+    envelope-walking/mpn-skip rule lives in exactly one place instead of
+    being duplicated field-for-field between the two."""
     results = (((raw.get("data") or {}).get("supSearchMpn") or {}).get("results")) or []
-    matches: list[ComponentMatch] = []
     for result in results:
         part = result.get("part") or {}
-        mpn = part.get("mpn")
-        if not mpn:
-            continue
-        manufacturer = (part.get("manufacturer") or {}).get("name")
-        best_datasheet = part.get("bestDatasheet") or {}
-        matches.append(
-            ComponentMatch(
-                distributor="nexar",
-                manufacturer=manufacturer,
-                manufacturer_part_number=mpn,
-                datasheet_url=best_datasheet.get("url"),
-            )
-        )
-    return matches
+        if part.get("mpn"):
+            yield part
 
 
-PartDataSearchFn = Callable[[str, str], dict[str, Any]]
+def _match_from_part(part: dict[str, Any]) -> ComponentMatch:
+    """Build the shared `ComponentMatch` identity from one already-
+    `mpn`-validated `part` dict (see `_iter_matched_parts`). Used by both
+    `_parse_matches` and `_parse_part_data` (ticket #276) since `_QUERY` and
+    `_PART_DATA_QUERY` request the identical `mpn`/`manufacturer`/
+    `bestDatasheet` identity fields alongside their differing extra
+    fields."""
+    manufacturer = (part.get("manufacturer") or {}).get("name")
+    best_datasheet = part.get("bestDatasheet") or {}
+    return ComponentMatch(
+        distributor="nexar",
+        manufacturer=manufacturer,
+        manufacturer_part_number=part["mpn"],
+        datasheet_url=best_datasheet.get("url"),
+    )
+
+
+def _parse_matches(raw: dict[str, Any]) -> list[ComponentMatch]:
+    return [_match_from_part(part) for part in _iter_matched_parts(raw)]
 
 
 def _search_part_data_by_part_number(part_number: str, access_token: str) -> dict[str, Any]:
     """Real GraphQL query for `lookup_nexar_part_data` (ticket #276) -- see
-    module docstring citation. Posts `_PART_DATA_QUERY`, not `_QUERY`:
-    reusing `_search_by_part_number` as-is would silently send the narrow
-    identity-only query and never return `specs`/`sellers -> offers`,
-    defeating this ticket's purpose, so this is a distinct function even
-    though it mirrors `_search_by_part_number`'s shape field-for-field."""
-    body = json.dumps({"query": _PART_DATA_QUERY, "variables": {"mpn": part_number}}).encode()
-    req = urllib.request.Request(
-        _GRAPHQL_URL,
-        data=body,
-        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- real GraphQL call
-        return json.loads(resp.read())
+    module docstring citation. Posts `_PART_DATA_QUERY`, not `_QUERY`, via
+    the shared `_post_graphql` helper: reusing `_search_by_part_number` as-
+    is would silently send the narrow identity-only query and never return
+    `specs`/`sellers -> offers`, defeating this ticket's purpose, so this
+    stays a distinct function even though the two now share their actual
+    network I/O."""
+    return _post_graphql(_PART_DATA_QUERY, part_number, access_token)
 
 
 @dataclass(frozen=True)
@@ -305,36 +332,19 @@ def _parse_seller_offers(part: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _parse_part_data(raw: dict[str, Any]) -> list[tuple[ComponentMatch, _NexarPartData]]:
-    """Same envelope-walking as `_parse_matches` above, paired with each
-    match's `_NexarPartData` (ticket #276) -- kept alongside rather than
-    folded into `ComponentMatch` so the shared dataclass
-    (knowledge/digikey.py, knowledge/mouser.py,
+    """Same envelope-walking as `_parse_matches` above (both go through the
+    shared `_iter_matched_parts`), paired with each match's `_NexarPartData`
+    (ticket #276) -- kept alongside rather than folded into `ComponentMatch`
+    so the shared dataclass (knowledge/digikey.py, knowledge/mouser.py,
     knowledge/component_resolution.py) is untouched, mirroring
     `knowledge.mouser._parse_matches`'s identical resolution."""
-    results = (((raw.get("data") or {}).get("supSearchMpn") or {}).get("results")) or []
-    parsed: list[tuple[ComponentMatch, _NexarPartData]] = []
-    for result in results:
-        part = result.get("part") or {}
-        mpn = part.get("mpn")
-        if not mpn:
-            continue
-        manufacturer = (part.get("manufacturer") or {}).get("name")
-        best_datasheet = part.get("bestDatasheet") or {}
-        parsed.append(
-            (
-                ComponentMatch(
-                    distributor="nexar",
-                    manufacturer=manufacturer,
-                    manufacturer_part_number=mpn,
-                    datasheet_url=best_datasheet.get("url"),
-                ),
-                _NexarPartData(
-                    specs=_parse_specs(part),
-                    offers=_parse_seller_offers(part),
-                ),
-            )
+    return [
+        (
+            _match_from_part(part),
+            _NexarPartData(specs=_parse_specs(part), offers=_parse_seller_offers(part)),
         )
-    return parsed
+        for part in _iter_matched_parts(raw)
+    ]
 
 
 def lookup_nexar_datasheet(
@@ -403,7 +413,7 @@ def lookup_nexar_part_data(
     part_number: str,
     *,
     get_token: GetTokenFn = _get_access_token,
-    search: PartDataSearchFn = _search_part_data_by_part_number,
+    search: SearchFn = _search_part_data_by_part_number,
 ) -> dict[str, Any]:
     """Search Nexar (Octopart data) for `part_number` via the extended
     exact-MPN GraphQL query (`_PART_DATA_QUERY`) that also requests `specs`
