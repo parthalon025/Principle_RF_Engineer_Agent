@@ -115,9 +115,11 @@ MODULE SHAPE. The same pure/I-O seam `designs/material_properties.py`
 already establishes:
 
   - Pure, DB-free functions (`add_process_record`, `add_symbol_entry`,
-    `lookup_symbol_entries`, `resolve_symbol_entry`) -- all of both
-    tickets' actual validation/lookup logic, exhaustively unit-tested in
-    `tests/test_element_alphabet.py` with no database needed.
+    `lookup_symbol_entries`, `resolve_symbol_entry`,
+    `reduce_response_at_frequency`) -- all of both tickets' (plus issue
+    #267's response-curve-to-scalar reduction) actual validation/lookup
+    logic, exhaustively unit-tested in `tests/test_element_alphabet.py`
+    with no database needed.
   - Thin I/O wrappers (`insert_process_record`, `fetch_process_record`,
     `insert_symbol_entry`, `fetch_symbol_entries`,
     `resolve_symbol_entry_from_db`) -- read/write the `process_records`/
@@ -417,6 +419,78 @@ def resolve_symbol_entry(
         entries, element_family, symbol, frequency_hz, incidence_angle_deg, process_id
     )
     return matches[0] if matches else None
+
+
+def reduce_response_at_frequency(
+    response: list[dict[str, Any]],
+    frequency_hz: float,
+    field_name: str,
+) -> float:
+    """Reduce one symbol-alphabet entry's characterised `response` curve --
+    a list of `{frequency_hz, magnitude, phase_deg}` points, NOT guaranteed
+    sorted (a fetched row is whatever order it was inserted/measured in) --
+    to the single scalar value of `field_name` at `frequency_hz` (issue
+    #267 acceptance criterion 3): the shape `optimization.combinatorial.
+    SymbolOption.achieved_value` needs, so a design-loop caller can turn a
+    real measured curve into one number per candidate symbol.
+
+    Sorts a COPY of `response` by its own `frequency_hz` field first (never
+    mutates the caller's list, never assumes it arrived sorted), then:
+
+      - if `frequency_hz` is at or below the lowest stored point, or at or
+        above the highest, returns that nearest endpoint's `field_name`
+        value -- clamped, not extrapolated: the nearest actually-measured
+        fact stands in for a point outside the curve, the same "nearest
+        available fact, not a guessed one" reasoning nearest-point
+        selection already uses inside the bracketed case below.
+      - otherwise linearly interpolates `field_name` between the two
+        points bracketing `frequency_hz` -- more defensible than picking
+        the single nearer point once a curve has more than one point,
+        which every real fixture in this alphabet does (issue #267
+        acceptance criterion 3 explicitly allows either).
+
+    `field_name` names which field of each response point to read
+    (`"phase_deg"`, `"magnitude"`, ...) -- a caller-supplied string, not a
+    hardcoded `"phase_deg"` internally, mirroring `SymbolOption.
+    achieved_value`'s own "generic on purpose" docstring: this function
+    never assumes the quantity being reduced is a reflection phase
+    specifically, only that it is a real number recorded at each
+    `frequency_hz` point. REFLECTION_PHASE/DIFFUSIVE's own dispatch call
+    site is what names `"phase_deg"` explicitly, because a coding cell IS
+    its reflection phase there (design_families.py's own comment on both
+    families) -- not because this function assumes it.
+
+    Raises `InvalidSymbolAlphabetEntryError` if `response` is empty -- there
+    is no measured point here to reduce, and returning a made-up number
+    would misrepresent an assumption as a measurement (this module's own
+    "provenance is never a caller choice" discipline, applied to a derived
+    value instead of a stored one) -- the same named-exception discipline
+    every other input-validation failure in this module already uses,
+    rather than a bare `ValueError` this one function would otherwise be
+    the sole exception to.
+    """
+    if not response:
+        raise InvalidSymbolAlphabetEntryError(
+            "response is empty -- there is no measured point to reduce a scalar from"
+        )
+    points = sorted(response, key=lambda point: point["frequency_hz"])
+    if frequency_hz <= points[0]["frequency_hz"]:
+        return float(points[0][field_name])
+    if frequency_hz >= points[-1]["frequency_hz"]:
+        return float(points[-1][field_name])
+    for lower, upper in zip(points, points[1:], strict=False):
+        if lower["frequency_hz"] <= frequency_hz <= upper["frequency_hz"]:
+            span = upper["frequency_hz"] - lower["frequency_hz"]
+            if span == 0:
+                # Two points stored at the identical frequency -- nothing to
+                # interpolate across; the earlier (sort-stable) one stands.
+                return float(lower[field_name])
+            fraction = (frequency_hz - lower["frequency_hz"]) / span
+            return float(lower[field_name] + fraction * (upper[field_name] - lower[field_name]))
+    raise AssertionError(  # pragma: no cover -- unreachable given the clamps above
+        f"frequency_hz={frequency_hz!r} was not bracketed by any pair of sorted "
+        "response points despite failing both endpoint clamp checks"
+    )
 
 
 # ---------------------------------------------------------------------------
