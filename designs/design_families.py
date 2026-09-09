@@ -722,6 +722,12 @@ REFLECTION_PHASE = DesignFamily(
     simulation_tier=SimulationTier.TIER_B,
     requires_ground_plane=True,
     spine_fields=SPINE_FIELDS,
+    # Issue #109/CONTEXT.md's own name for this family's Tier B OPTIMIZATION
+    # search: which already-characterised symbol goes in which grid square,
+    # not a continuous-dimension search -- orchestration/design_loop.py's
+    # _handle_optimization dispatches on this field (issue #255 tickets 1-3;
+    # #267 is the ticket that finally gave this branch somewhere real to go).
+    optimizer_class="COMBINATORIAL",
     # Deliberately nothing to declare, not an omission (#239). What this
     # family needs is a per-cell reflection PHASE -- by how much a bounce off
     # one cell shifts the wave's timing -- and no closed form in this repo
@@ -790,6 +796,9 @@ DIFFUSIVE = DesignFamily(
     simulation_tier=SimulationTier.TIER_B,
     requires_ground_plane=True,
     spine_fields=SPINE_FIELDS,
+    # Same COMBINATORIAL Tier B search as REFLECTION_PHASE, and for the same
+    # reason -- see that family's own comment just above its declaration.
+    optimizer_class="COMBINATORIAL",
     # Deliberately nothing to declare (#239), for the same reason as
     # REFLECTION_PHASE and one more. A coding cell IS its reflection phase --
     # a "0" and a "1" differ by 180 degrees of it -- so this family needs the

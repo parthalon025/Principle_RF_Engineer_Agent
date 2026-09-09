@@ -2393,12 +2393,47 @@ def test_optimizer_class_for_reads_none_for_a_family_that_declares_nothing():
 
 def test_optimizer_class_for_reads_an_explicitly_declared_value(monkeypatch):
     """The helper reads whatever the registry entry declares -- proven with
-    a fake family so this test does not depend on any real family having
-    opted into COMBINATORIAL yet (none has)."""
+    a fake PATCH-shaped family so this test's assertion is about the
+    helper's own read-the-declaration behaviour, independently of which
+    real family(s) currently declare COMBINATORIAL (issue #267 gave
+    REFLECTION_PHASE/DIFFUSIVE that declaration for real; see
+    test_reflection_phase_and_diffusive_declare_combinatorial_optimizer_class
+    below for that claim)."""
     combinatorial = _dc_replace(design_families_module.PATCH, optimizer_class="COMBINATORIAL")
     monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: combinatorial)
     state = _at_optimization("PATCH")
     assert _optimizer_class_for(state) == "COMBINATORIAL"
+
+
+def test_reflection_phase_and_diffusive_declare_combinatorial_optimizer_class():
+    """Issue #267 acceptance criterion 1: REFLECTION_PHASE and DIFFUSIVE --
+    CONTEXT.md/issue #109's own Tier B "which characterised symbol goes in
+    which grid square" families -- declare optimizer_class="COMBINATORIAL"
+    in designs/design_families.py, so _handle_optimization's dispatch
+    (Group below) actually routes them to the real combinatorial search
+    below instead of raising "not wired yet" (ticket 1's interim state)."""
+    assert design_families_module.REFLECTION_PHASE.optimizer_class == "COMBINATORIAL"
+    assert design_families_module.DIFFUSIVE.optimizer_class == "COMBINATORIAL"
+
+
+def test_every_other_registered_family_s_optimizer_class_is_unaffected_by_267():
+    """Byte-for-byte regression, matching issue #255 ticket 1's own
+    regression-coverage style (see test_optimization_routes_patch_to_the_
+    unchanged_patch_length_search below): opting REFLECTION_PHASE/DIFFUSIVE
+    into COMBINATORIAL must not change ANY other registered family's own
+    declared optimizer_class -- every one of them is still unset (`None`),
+    the same "no family has opted in" state ADR-0018 left them in."""
+    unaffected = {
+        "ABSORBER": design_families_module.ABSORBER,
+        "ABSORBER_TRANSMISSIVE": design_families_module.ABSORBER_TRANSMISSIVE,
+        "PATCH": design_families_module.PATCH,
+        "POLARIZATION_CONVERTER": design_families_module.POLARIZATION_CONVERTER,
+    }
+    for name, family in unaffected.items():
+        assert family.optimizer_class is None, (
+            f"{name} declares optimizer_class={family.optimizer_class!r}; issue "
+            "#267 must only change REFLECTION_PHASE/DIFFUSIVE"
+        )
 
 
 def test_no_architecture_decision_means_there_is_no_optimizer_class_to_read():
