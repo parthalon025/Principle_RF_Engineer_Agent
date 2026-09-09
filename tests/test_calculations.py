@@ -9,6 +9,7 @@ from rf_tools.calculations import (
     aperture_gain,
     cascade_gain_db,
     cascade_output_ip3_linear,
+    curvature_exceeds_validity_box,
     curvature_length_correction_factor,
     curvature_shifted_resonant_frequency_hz,
     db_to_linear,
@@ -902,6 +903,52 @@ def test_curvature_shifted_resonant_frequency_matches_factor():
     # The model always predicts a shift upward from the flat design (see
     # module docstring for the honest caveat on direction/magnitude).
     assert result > f_flat_hz
+
+
+# --- curvature_exceeds_validity_box: S <= 2*theta_max*R (issue #322) ---
+#
+# docs/curvature-effects-on-em-surfaces.md section 4.2's worked table:
+# an angle-stable element (theta_max = 60 degrees) on a 100 mm host radius
+# tolerates a 209 mm usable arc; a mushroom-type element (theta_max = 30
+# degrees) on the same host tolerates only 105 mm.
+
+
+def test_curvature_exceeds_validity_box_matches_worked_khan_example():
+    # Khan et al.'s own worked result: a central angle of 90 degrees (full
+    # arc S = 2*R for that angle) is exactly the bound for an element
+    # stable to 45 degrees -- S == 2*theta_max*R sits ON the bound, not
+    # past it, so this is NOT a violation.
+    theta_max_deg = 45.0
+    host_radius_m = 0.1
+    bound_m = 2 * math.radians(theta_max_deg) * host_radius_m
+    assert curvature_exceeds_validity_box(bound_m, host_radius_m, theta_max_deg) is False
+    assert curvature_exceeds_validity_box(bound_m + 1e-6, host_radius_m, theta_max_deg) is True
+
+
+def test_curvature_exceeds_validity_box_angle_stable_vs_mushroom_element():
+    # docs/curvature-effects-on-em-surfaces.md's own worked table, R = 100 mm.
+    host_radius_m = 0.100
+    angle_stable_bound_m = 0.209  # theta_max = 60 degrees
+    mushroom_bound_m = 0.105  # theta_max = 30 degrees
+    arc_length_m = 0.15  # inside the angle-stable element's budget, past the mushroom's
+    assert curvature_exceeds_validity_box(arc_length_m, host_radius_m, 60.0) is False
+    assert curvature_exceeds_validity_box(arc_length_m, host_radius_m, 30.0) is True
+    assert angle_stable_bound_m > arc_length_m > mushroom_bound_m  # sanity on the fixture
+
+
+def test_curvature_exceeds_validity_box_invalid_inputs_raise():
+    with pytest.raises(ValueError):
+        curvature_exceeds_validity_box(0.0, 0.10, 45.0)
+    with pytest.raises(ValueError):
+        curvature_exceeds_validity_box(-0.1, 0.10, 45.0)
+    with pytest.raises(ValueError):
+        curvature_exceeds_validity_box(0.1, 0.0, 45.0)
+    with pytest.raises(ValueError):
+        curvature_exceeds_validity_box(0.1, -0.10, 45.0)
+    with pytest.raises(ValueError):
+        curvature_exceeds_validity_box(0.1, 0.10, 0.0)
+    with pytest.raises(ValueError):
+        curvature_exceeds_validity_box(0.1, 0.10, 91.0)
 
 
 def test_curvature_shifted_resonant_frequency_invalid_f_flat_raises():

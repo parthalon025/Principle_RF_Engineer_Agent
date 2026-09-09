@@ -29,6 +29,7 @@ import pytest
 import skrf as rf
 from conftest import make_fake_executable
 from dotenv import load_dotenv
+from psycopg.types.json import Json
 
 from designs.requirement_targets import (
     confirm_requirement_target,
@@ -37,12 +38,13 @@ from designs.requirement_targets import (
 )
 from designs.service import read_design
 from orchestration.approval import request_loop_step_approval
-from orchestration.design_loop import DesignStep
+from orchestration.design_loop import DesignLoopValidationError, DesignStep
 from orchestration.solver import run_candidate_search
 from orchestration.tooling import (
     DesignLoopPersistenceError,
     advance_design_loop_step,
     inspect_design_loop_state,
+    reevaluate_capability_verdicts,
     start_new_design_loop,
 )
 from rf_tools.calculations import patch_resonant_frequency_hz
@@ -50,6 +52,33 @@ from rf_tools.calculations import patch_resonant_frequency_hz
 load_dotenv()
 
 REQUIREMENTS = {"R1": {"requirement": "gain >= 5 dBi over 2.4-2.5 GHz"}}
+
+# Issue #322: a requirement stating a host curvature that VIOLATES
+# S <= 2*theta_max*R for a 45-degree-stable element --
+# arc_length_m=0.30 > 2*45deg*0.10 == ~0.157.
+CURVATURE_REQUIREMENTS = {
+    "R1": {
+        "requirement": "conform to a 100 mm radius housing across a 300 mm bend",
+        "curvature": {"arc_length_m": 0.30, "host_radius_m": 0.10},
+    }
+}
+
+
+def _capability_verdict_entry(**overrides: Any) -> dict[str, Any]:
+    """Duplicated from tests/test_design_loop.py's own helper of the same
+    name, not imported -- matching this suite's own "duplicated, not
+    imported" convention (this module's docstring)."""
+    entry = {
+        "family": "reflection_phase_surface",
+        "verdict": "dropped",
+        "reason": "host curvature exceeds this family's angle-stable element validity box",
+        "reason_kind": "capability-verdict",
+        "requirement_id": "R1",
+        "validity_box_property": "curvature",
+        "theta_max_deg": 45.0,
+    }
+    entry.update(overrides)
+    return entry
 
 
 @pytest.fixture
@@ -335,6 +364,7 @@ def _drive_to_redesign_decision(
     tmp_path: Path,
     verification_status: str = "PASS",
     design_family: str = "patch_antenna",
+    considered_and_dropped: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Real ARCHITECTURE -> ... -> CORRELATION, leaving `state` positioned
     at REDESIGN_DECISION -- callers advance the final gated step themselves
@@ -345,16 +375,19 @@ def _drive_to_redesign_decision(
     (issue #167) lets a caller drive two iterations with two DIFFERENT
     families, to prove the ADR-0011 flush's design_family carry-forward is
     scoped to each iteration's own flush batch, not a stale value left over
-    from a previous one."""
-    state = _grant_and_advance(
-        state,
-        DesignStep.ARCHITECTURE,
-        {
-            "decision": "rectangular microstrip patch on FR4",
-            "rationale": "meets band/gain target with a simple, low-cost fabrication",
-            "design_family": design_family,
-        },
-    )
+    from a previous one. `considered_and_dropped` (issue #322) lets a caller
+    attach a Considered-and-dropped ledger to this iteration's ARCHITECTURE
+    decision -- omitted entirely (not `[]`) when the caller supplies none,
+    matching `alternatives`'s own `.get(..., [])`-default convention rather
+    than asserting an empty list is what every caller wants."""
+    architecture_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target with a simple, low-cost fabrication",
+        "design_family": design_family,
+    }
+    if considered_and_dropped is not None:
+        architecture_input["considered_and_dropped"] = considered_and_dropped
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, architecture_input)
     state = advance_design_loop_step(
         state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
     )
@@ -562,6 +595,184 @@ def test_flush_persists_alternatives_the_caller_supplied(cleanup_designs, tmp_pa
 
     assert stored["verification_items"][0]["status"] == "PASS"
     assert stored["verification_items"][0]["method"] == "analysis"
+
+
+# ---------------------------------------------------------------------------
+# Issue #322: the Considered-and-dropped ledger's `considered_and_dropped`
+# key must survive the ADR-0011 flush, and a persisted
+# `reason_kind="capability-verdict"` entry must be re-evaluatable against
+# this design's CURRENT stated requirements -- never against configured
+# shop equipment.
+# ---------------------------------------------------------------------------
+
+
+def test_flush_persists_a_capability_verdict_ledger_entry(cleanup_designs, tmp_path):
+    """Acceptance criterion 4: the persisted ledger entry shape after a
+    flush -- a validity-box exclusion lands verbatim on the ARCHITECTURE
+    decision_records row, alongside a kept engineering-judgment entry for
+    the family actually chosen."""
+    state = start_new_design_loop(
+        "TOOL-LEDGER", "Capability Verdict Ledger Test", "A", CURVATURE_REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    ledger = [
+        _capability_verdict_entry(),
+        {
+            "family": "patch_antenna",
+            "verdict": "kept",
+            "reason": "the only family whose curvature validity box the host survives",
+            "reason_kind": "engineering-judgment",
+        },
+    ]
+    state = _drive_to_redesign_decision(state, tmp_path, considered_and_dropped=ledger)
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+    assert state["completed"] is True
+
+    stored = read_design(design_id)
+    decision_records = {d["record_key"].rsplit("-", 1)[-1]: d for d in stored["decision_records"]}
+    assert decision_records["architecture"]["considered_and_dropped"] == ledger
+    # Nothing on REDESIGN_DECISION's own step_input stated a ledger --
+    # matching alternatives's own `.get(..., [])` default, not the
+    # ARCHITECTURE row's design_family carry-forward (this key never
+    # carries forward across decisions).
+    assert decision_records["redesign_decision"]["considered_and_dropped"] == []
+
+
+def test_advance_design_loop_step_rejects_a_capability_verdict_that_does_not_violate_the_bound(
+    cleanup_designs,
+):
+    """The issue #322 narrowing is enforced through the SAME tooling.py
+    entry point an agent/MCP caller actually uses, not only through
+    orchestration.design_loop's own pure state machine (already covered
+    exhaustively in tests/test_design_loop.py) -- nothing here reaches the
+    database, since the raise happens before any flush."""
+    comfortable_requirements = {
+        "R1": {
+            "requirement": "conform to a 500 mm radius housing across a 100 mm bend",
+            "curvature": {"arc_length_m": 0.10, "host_radius_m": 0.50},
+        }
+    }
+    state = start_new_design_loop(
+        "TOOL-LEDGER-REJECT", "Capability Verdict Rejection Test", "A", comfortable_requirements
+    )
+    cleanup_designs.append(state["design_id"])
+    architecture_input = {
+        "decision": "rectangular microstrip patch on FR4",
+        "rationale": "meets band/gain target with a simple, low-cost fabrication",
+        "design_family": "patch_antenna",
+        "considered_and_dropped": [_capability_verdict_entry()],
+    }
+    with pytest.raises(DesignLoopValidationError, match="does not actually violate"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, architecture_input)
+
+
+def test_reevaluate_capability_verdicts_flips_to_reconsiderable_when_curvature_changes(
+    cleanup_designs, tmp_path
+):
+    """Acceptance criterion 2: re-evaluated every run against the
+    requirement's own CURRENT stated properties, never a frozen snapshot --
+    and never against shop equipment, which this test never touches."""
+    state = start_new_design_loop(
+        "TOOL-LEDGER-REEVAL", "Capability Verdict Reevaluation Test", "A", CURVATURE_REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    state = _drive_to_redesign_decision(
+        state, tmp_path, considered_and_dropped=[_capability_verdict_entry()]
+    )
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    still_violating = reevaluate_capability_verdicts(design_id)
+    assert still_violating == [
+        {
+            "record_key": f"TOOL-LEDGER-REEVAL-{state['loop_id']}-iter1-architecture",
+            "family": "reflection_phase_surface",
+            "requirement_id": "R1",
+            "validity_box_property": "curvature",
+            "status": "excluded",
+        }
+    ]
+
+    # The requirement's OWN stated curvature changes -- not any equipment
+    # configuration -- via the exact raw-SQL-sabotage pattern this suite
+    # already uses (test_flush_failure_is_atomic_and_leaves_design_status_
+    # untouched) to simulate a fact this ticket adds no production write
+    # path for yet.
+    conn = psycopg.connect(os.environ["DATABASE_URL"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE designs SET requirements = %s WHERE id = %s",
+                (
+                    Json(
+                        {
+                            "R1": {
+                                "requirement": (
+                                    "conform to a 100 mm radius housing across a 300 mm bend"
+                                ),
+                                "curvature": {"arc_length_m": 0.05, "host_radius_m": 0.10},
+                            }
+                        }
+                    ),
+                    design_id,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    now_reconsiderable = reevaluate_capability_verdicts(design_id)
+    assert now_reconsiderable[0]["status"] == "reconsiderable"
+    assert now_reconsiderable[0]["family"] == "reflection_phase_surface"
+
+
+def test_reevaluate_capability_verdicts_skips_non_capability_verdict_entries(
+    cleanup_designs, tmp_path
+):
+    """Only reason_kind='capability-verdict' entries are ever subject to
+    re-evaluation (ADR-0025) -- a kept engineering-judgment entry for the
+    chosen family is never reported as excluded/reconsiderable."""
+    state = start_new_design_loop(
+        "TOOL-LEDGER-SKIP", "Capability Verdict Skip Test", "A", REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    ledger = [
+        {
+            "family": "patch_antenna",
+            "verdict": "kept",
+            "reason": "meets band/gain target with a simple, low-cost fabrication",
+            "reason_kind": "engineering-judgment",
+        }
+    ]
+    state = _drive_to_redesign_decision(state, tmp_path, considered_and_dropped=ledger)
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    assert reevaluate_capability_verdicts(design_id) == []
+
+
+def test_reevaluate_capability_verdicts_raises_for_an_unknown_design_id():
+    with pytest.raises(DesignLoopPersistenceError, match="no design found"):
+        reevaluate_capability_verdicts(-1)
 
 
 @pytest.mark.parametrize(

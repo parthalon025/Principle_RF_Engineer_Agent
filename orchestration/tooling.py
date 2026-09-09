@@ -7,6 +7,13 @@ agent/main.py's start_design_loop/advance_design_loop_step/
 inspect_design_loop_state tools (principal role) and
 mcp_server/server.py's mirrors of the same.
 
+This module also owns `reevaluate_capability_verdicts` (issue #322) -- a
+fourth, read-only query over a design's already-persisted Considered-and-
+dropped ledger, not a design-loop step tool in the sense above (it neither
+starts, advances, nor even needs an in-flight loop state, only a
+`design_id`), so it is not itself surfaced as one more agent/MCP step tool
+by this ticket -- see that function's own docstring.
+
 Each function here takes/returns plain dicts so the loop's state crosses
 the agent/MCP JSON tool boundary and back unchanged -- the caller (an
 agent conversation, or any other MCP client) holds it and passes it back
@@ -112,6 +119,7 @@ from .design_loop import (
     DesignStep,
     LoopDecision,
     advance_loop_step,
+    capability_verdict_holds,
     start_design_loop,
 )
 
@@ -246,6 +254,15 @@ def _flush_target_for(
                 "rationale": decision.input["rationale"],
                 "evidence": [],
                 "design_family": design_family,
+                # Issue #322: the Considered-and-dropped ledger (ADR-0025),
+                # already validated (reason_kind="capability-verdict"'s
+                # issue #322 narrowing included) at the step that recorded
+                # it -- orchestration.design_loop's
+                # _validate_considered_and_dropped -- so this flush only
+                # ever carries it through, the same ".get(..., [])" default
+                # `alternatives` immediately above already established for
+                # a caller who legitimately supplied none.
+                "considered_and_dropped": decision.input.get("considered_and_dropped", []),
             },
         )
     if decision.kind == "verification_record":
@@ -599,3 +616,70 @@ def inspect_design_loop_state(state: dict[str, Any]) -> dict[str, Any]:
     result["design_key"] = state.get("design_key")
     result["persisted_decision_count"] = state.get("persisted_decision_count", 0)
     return result
+
+
+def reevaluate_capability_verdicts(design_id: int) -> list[dict[str, Any]]:
+    """Re-check every persisted `reason_kind="capability-verdict"`
+    Considered-and-dropped ledger entry for `design_id` against that
+    design's CURRENT `requirements` -- issue #322 acceptance criterion 2:
+    "re-evaluated every run against the requirement's own current stated
+    properties ... never against shop equipment." Not one of this module's
+    three JSON-in/JSON-out design-loop tools (see this module's own
+    docstring) -- a read-only query a caller runs whenever it wants a fresh
+    view (e.g. before proposing a new ARCHITECTURE decision), same "fresh
+    read, never a frozen snapshot" spirit as `_fresh_requirements` above,
+    which this function reuses the same connection/read pattern from.
+
+    Scans every `decision_records` row this design has -- ARCHITECTURE and
+    REDESIGN_DECISION rows are the only ones that ever carry a
+    `considered_and_dropped` ledger (orchestration.design_loop's step
+    handlers), but this reads whatever is actually there rather than
+    assuming which record_key suffixes exist. Non-capability-verdict
+    entries (human-decision/engineering-judgment) are skipped entirely --
+    ADR-0025's own rule is that only a capability-verdict ever expires.
+
+    Returns one dict per capability-verdict entry found, `{"record_key",
+    "family", "requirement_id", "validity_box_property", "status"}` where
+    `status` is `"excluded"` (the entry's own violation still holds against
+    the CURRENT requirement) or `"reconsiderable"` (it no longer does --
+    the requirement's stated property changed, or vanished, since the
+    entry was written). The actual check is `orchestration.design_loop.
+    capability_verdict_holds` -- the SAME function that validated the entry
+    at write time, reused rather than re-derived, so this re-evaluation
+    cannot silently drift from the rule that justified writing it.
+
+    Raises `DesignLoopPersistenceError` if `design_id` names no real
+    `designs` row -- unlike `_fresh_requirements`'s deliberately tolerant
+    "no fresher source, keep what the caller had" fallback (for a
+    synthetic, never-persisted `design_id` in tests), there is no
+    fallback value here for a caller who asked to re-evaluate a specific
+    design's own persisted ledger and named one that does not exist.
+    """
+    conn = designs_db.get_connection()
+    try:
+        design = designs_db.read_design(conn, design_id)
+    finally:
+        conn.close()
+    if design is None:
+        raise DesignLoopPersistenceError(
+            f"reevaluate_capability_verdicts: no design found for design_id={design_id!r}"
+        )
+
+    requirements = design["requirements"]
+    results: list[dict[str, Any]] = []
+    for row in design["decision_records"]:
+        for entry in row.get("considered_and_dropped") or []:
+            if entry.get("reason_kind") != "capability-verdict":
+                continue
+            still_holds = capability_verdict_holds(entry, requirements)
+            status = "excluded" if still_holds else "reconsiderable"
+            results.append(
+                {
+                    "record_key": row["record_key"],
+                    "family": entry.get("family"),
+                    "requirement_id": entry.get("requirement_id"),
+                    "validity_box_property": entry.get("validity_box_property"),
+                    "status": status,
+                }
+            )
+    return results

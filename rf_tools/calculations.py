@@ -1,6 +1,6 @@
 import cmath
 import math
-from math import log10, sin
+from math import log10, radians, sin
 
 import numpy as np
 
@@ -756,6 +756,56 @@ def curvature_shifted_resonant_frequency_hz(
         raise ValueError("Flat-design resonant frequency f_flat_hz must be positive.")
     factor = curvature_length_correction_factor(l_m, radius_of_curvature_m)
     return f_flat_hz * factor
+
+
+# --- Periodic/coded-surface curvature validity box (S <= 2*theta_max*R) ---
+#
+# A DIFFERENT curvature question than the patch model above: not "how much
+# does the resonant frequency shift", but "does a Tier B coded/periodic
+# surface's element still behave the way it was characterised, once the
+# host bends it". docs/curvature-effects-on-em-surfaces.md section 4.2
+# derives the rule from Khan et al.'s measured central-angle/element-
+# stability relation: on a cylinder of radius R, a cell an arc distance s
+# from the crown sees a local incidence angle theta(s) = s/R (section 0(i)).
+# An element is only characterised (CONTEXT.md's Validity box) up to some
+# angular-stability limit theta_max before its reflection response leaves
+# the tolerance the design actually needs -- so the usable aperture arc
+# length is bounded by
+#
+#     S <= 2 * theta_max * R
+#
+# (the special case S = 2*45degrees*R is Khan et al.'s own worked result).
+# Exceeding it is exactly the validity-box violation issue #322/ADR-0021/
+# ADR-0025 mean by a family's OWN characterised limits excluding it -- a
+# fact about the requirement's stated host curvature and the chosen
+# family's own characterised element, never about configured shop
+# equipment.
+
+
+def curvature_exceeds_validity_box(
+    arc_length_m: float, host_radius_m: float, theta_max_deg: float
+) -> bool:
+    """True if a periodic/coded surface's stated host curvature puts its
+    outermost cells beyond the characterised element's angular-stability
+    limit -- i.e. `arc_length_m > 2 * theta_max * host_radius_m` (module
+    notes above, "Periodic/coded-surface curvature validity box"; docs/
+    curvature-effects-on-em-surfaces.md section 4.2).
+
+    `arc_length_m` (S) is the requirement's own stated usable aperture arc
+    length along the bend; `host_radius_m` (R) is the host's stated radius
+    of curvature; `theta_max_deg` is the chosen family/element's OWN
+    characterised angular-stability limit (never a shop-equipment figure).
+    Both S and R must be positive, and theta_max_deg must be in (0, 90]
+    degrees (no published element stays angle-stable at or past grazing
+    incidence) -- raises ValueError otherwise, the geometry is undefined.
+    """
+    if arc_length_m <= 0:
+        raise ValueError("arc_length_m must be positive.")
+    if host_radius_m <= 0:
+        raise ValueError("host_radius_m must be positive.")
+    if not 0 < theta_max_deg <= 90:
+        raise ValueError("theta_max_deg must be in (0, 90] degrees.")
+    return arc_length_m > 2 * radians(theta_max_deg) * host_radius_m
 
 
 # --- Metamaterial unit-cell effective-medium parameters (Maxwell-Garnett) ---

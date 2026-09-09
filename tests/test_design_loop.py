@@ -34,6 +34,7 @@ Phase 12 -- the final ticket of the 23-ticket build-out).
 import re
 from dataclasses import replace as _dc_replace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -521,6 +522,234 @@ def test_architecture_decision_records_the_design_family_alongside_decision_and_
     # structured field.
     assert architecture_decision.result["decision"] == step_input["decision"]
     assert architecture_decision.result["rationale"] == step_input["rationale"]
+
+
+# ---------------------------------------------------------------------------
+# Issue #322 (ADR-0021; ADR-0025's 2026-09-08 correction, narrowed further):
+# an ARCHITECTURE/REDESIGN_DECISION step_input may carry an optional
+# `considered_and_dropped` ledger. `reason_kind="capability-verdict"` may
+# ONLY be recorded for a family excluded by its own characterised validity
+# box, evaluated against a property the design's REQUIREMENTS themselves
+# state -- never against configured shop equipment/ink/material.
+# ---------------------------------------------------------------------------
+
+# A requirement stating a host curvature that VIOLATES S <= 2*theta_max*R
+# for a 45-degree-stable element: arc_length_m=0.30 > 2*45deg*0.10 == ~0.157.
+_CURVATURE_REQUIREMENTS = {
+    "R1": {
+        "requirement": "conform to a 100 mm radius housing across a 300 mm bend",
+        "curvature": {"arc_length_m": 0.30, "host_radius_m": 0.10},
+    }
+}
+
+
+def _capability_verdict_entry(**overrides: Any) -> dict[str, Any]:
+    entry = {
+        "family": "reflection_phase_surface",
+        "verdict": "dropped",
+        "reason": "host curvature exceeds this family's angle-stable element validity box",
+        "reason_kind": "capability-verdict",
+        "requirement_id": "R1",
+        "validity_box_property": "curvature",
+        "theta_max_deg": 45.0,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _architecture_step_input(considered_and_dropped: list | None = None) -> dict[str, Any]:
+    step_input = {
+        "decision": "printed carbon absorber patch",
+        "rationale": "the only family whose curvature validity box the host survives",
+        "design_family": "patch_antenna",
+    }
+    if considered_and_dropped is not None:
+        step_input["considered_and_dropped"] = considered_and_dropped
+    return step_input
+
+
+def test_architecture_records_a_valid_capability_verdict_ledger_entry():
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    step_input = _architecture_step_input([_capability_verdict_entry()])
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+    recorded = state.decisions[-1].result["considered_and_dropped"]
+    assert recorded == [_capability_verdict_entry()]
+
+
+def test_architecture_accepts_a_ledger_with_no_capability_verdict_entries():
+    """human-decision/engineering-judgment entries carry none of the extra
+    capability-verdict fields, and neither needs requirements to say
+    anything about curvature at all."""
+    state = start_design_loop(REQUIREMENTS)
+    ledger = [
+        {
+            "family": "printed_dipole",
+            "verdict": "dropped",
+            "reason": "narrowband versus the stated requirement",
+            "reason_kind": "engineering-judgment",
+        },
+        {
+            "family": "patch_antenna",
+            "verdict": "kept",
+            "reason": "meets band/gain target with simple, low-cost fabrication",
+            "reason_kind": "engineering-judgment",
+        },
+    ]
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, step_input_override=_architecture_step_input(ledger)
+    )
+    assert state.decisions[-1].result["considered_and_dropped"] == ledger
+
+
+def test_architecture_step_input_with_no_ledger_key_is_unaffected():
+    """ADR-0025's own 'No gate': omitting considered_and_dropped entirely
+    changes nothing about the step."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, step_input_override=_architecture_step_input()
+    )
+    assert "considered_and_dropped" not in state.decisions[-1].result
+
+
+def test_capability_verdict_rejected_when_curvature_does_not_actually_violate_the_bound():
+    """The heart of issue #322's narrowing: capability-verdict cannot be
+    used as a generic 'we don't like this family' label -- the requirement's
+    own stated curvature must actually exceed S <= 2*theta_max*R for the
+    entry's own stated theta_max_deg."""
+    requirements = {
+        "R1": {
+            "requirement": "conform to a 500 mm radius housing across a 100 mm bend",
+            "curvature": {"arc_length_m": 0.10, "host_radius_m": 0.50},  # comfortably inside
+        }
+    }
+    state = start_design_loop(requirements)
+    step_input = _architecture_step_input([_capability_verdict_entry()])
+    with pytest.raises(DesignLoopValidationError, match="does not actually violate"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_capability_verdict_rejected_for_an_equipment_shaped_property():
+    """Nothing else can produce reason_kind='capability-verdict' (issue
+    #322 acceptance criterion 1): a property that is not a key the
+    requirement itself states -- e.g. a shop-equipment fact like a printer's
+    feature floor -- is rejected outright, never silently accepted."""
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    entry = _capability_verdict_entry(validity_box_property="printer_feature_floor_mm")
+    step_input = _architecture_step_input([entry])
+    with pytest.raises(DesignLoopValidationError, match="not a stated property"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_capability_verdict_rejected_for_an_unknown_requirement_id():
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    entry = _capability_verdict_entry(requirement_id="NOT-A-REAL-REQUIREMENT")
+    step_input = _architecture_step_input([entry])
+    with pytest.raises(
+        DesignLoopValidationError, match="is not a key in this design's requirements"
+    ):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_capability_verdict_rejected_when_verdict_is_kept():
+    """A family excluded by its own validity box is, by definition,
+    dropped -- 'kept' + 'capability-verdict' is a contradiction issue #322
+    catches rather than silently accepting."""
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    entry = _capability_verdict_entry(verdict="kept")
+    step_input = _architecture_step_input([entry])
+    with pytest.raises(DesignLoopValidationError, match="contradiction"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_capability_verdict_requires_requirement_id_and_validity_box_property():
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    entry = {
+        "family": "reflection_phase_surface",
+        "verdict": "dropped",
+        "reason": "curvature exceeds the validity box",
+        "reason_kind": "capability-verdict",
+        # deliberately no requirement_id/validity_box_property
+    }
+    step_input = _architecture_step_input([entry])
+    with pytest.raises(DesignLoopValidationError, match="missing required field"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_capability_verdict_curvature_requires_theta_max_deg():
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    entry = _capability_verdict_entry()
+    del entry["theta_max_deg"]
+    step_input = _architecture_step_input([entry])
+    with pytest.raises(DesignLoopValidationError, match="theta_max_deg"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_ledger_entry_rejects_an_unknown_reason_kind():
+    state = start_design_loop(REQUIREMENTS)
+    entry = {
+        "family": "patch_antenna",
+        "verdict": "dropped",
+        "reason": "we just didn't like it",
+        "reason_kind": "vibes",
+    }
+    step_input = _architecture_step_input([entry])
+    with pytest.raises(DesignLoopValidationError, match="reason_kind"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_ledger_entry_rejects_an_unknown_verdict():
+    state = start_design_loop(REQUIREMENTS)
+    entry = {
+        "family": "patch_antenna",
+        "verdict": "maybe",
+        "reason": "still deciding",
+        "reason_kind": "engineering-judgment",
+    }
+    step_input = _architecture_step_input([entry])
+    with pytest.raises(DesignLoopValidationError, match="verdict"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+def test_redesign_decision_also_validates_the_considered_and_dropped_ledger():
+    """The same narrowing applies wherever the ledger can be written --
+    ADR-0025's own batch record is not exclusive to ARCHITECTURE."""
+    state = start_design_loop(_CURVATURE_REQUIREMENTS)
+    state = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, step_input_override=_architecture_step_input()
+    )
+    state = _advance_to(state, DesignStep.REDESIGN_DECISION)
+    step_input = {
+        "decision": "abandon this geometry, try another patch variant",
+        "rationale": "the first geometry cannot meet the gain target",
+        "next_action": "iterate",
+        "considered_and_dropped": [
+            _capability_verdict_entry(validity_box_property="printer_feature_floor_mm")
+        ],
+    }
+    with pytest.raises(DesignLoopValidationError, match="not a stated property"):
+        _grant_and_advance(state, DesignStep.REDESIGN_DECISION, step_input_override=step_input)
+
+
+def test_capability_verdict_holds_flips_false_when_curvature_changes():
+    """capability_verdict_holds is the exact mechanism
+    orchestration.tooling.reevaluate_capability_verdicts (issue #322 -- "re-
+    evaluated every run") reuses -- exercised directly here as a pure
+    function, no database required."""
+    entry = _capability_verdict_entry()
+    still_violating = _CURVATURE_REQUIREMENTS
+    assert design_loop_module.capability_verdict_holds(entry, still_violating) is True
+
+    now_comfortable = {
+        "R1": {
+            "requirement": "conform to a 100 mm radius housing across a 300 mm bend",
+            "curvature": {"arc_length_m": 0.05, "host_radius_m": 0.10},  # no longer violates
+        }
+    }
+    assert design_loop_module.capability_verdict_holds(entry, now_comfortable) is False
+
+    requirement_removed = {}
+    assert design_loop_module.capability_verdict_holds(entry, requirement_removed) is False
 
 
 # ---------------------------------------------------------------------------
