@@ -64,11 +64,14 @@ starts from a real answer instead of institutional memory.
 
 A few gaps repeat across categories, not just within one tool:
 
-- **Discovery is the recurring hole in the knowledge-ingestion tier.** arXiv, ETSI, 3GPP,
-  and USPTO patents all expose only "fetch a document whose identifier I already know" —
-  none is wired up for "find me documents about X." Closing that would change what kind
-  of question the agent's own literature search can answer without a human supplying an
-  ID first.
+- **Discovery was the recurring hole in the knowledge-ingestion tier — now half-closed.**
+  ETSI, 3GPP, and USPTO patents still expose only "fetch a document whose identifier I
+  already know" — none is wired up for "find me documents about X." arXiv (issue #257)
+  and FCC eCFR (issue #279) both now have a discovery-search sibling
+  (`search_arxiv_papers`, `search_fcc_rules`) returning candidates for a plain-topic
+  query, ahead of the deliberate ingest step. Closing the remaining three would change
+  what kind of question the agent's own literature search can answer without a human
+  supplying an ID first.
 - **Periodic/Floquet unit-cell characterization** — this program's central metamaterial
   need — exists natively in HFSS and Palace, but only Palace's adapter uses it, and even
   there embedded metal conductors (the common real case) aren't supported yet. NEC2++,
