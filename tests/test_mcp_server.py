@@ -615,11 +615,110 @@ def test_correlate_simulated_and_measured_docstring_states_openems_is_sometimes_
     flatly contradicting agent/main.py's sibling wrapper (and the actual
     behavior in rf_tools/correlation.py/simulation/openems.py: an openEMS
     result with computed=True carries a real "touchstone_file" and IS
-    accepted). Regression guard against that specific drift reappearing."""
+    accepted). Regression guard against that specific drift reappearing.
+
+    Also guards a follow-up finding on the same docstring (code review of this
+    issue's own fix): the corrected text still overstated when openEMS is
+    accepted, omitting that simulation/openems.py only ever writes
+    "touchstone_file" for the SINGLE-PORT case (`if len(names) == 1:`) -- a
+    multi-port computed=True run has no "touchstone_file" and its "values"/
+    "z0_ohms" shape doesn't match the generic "s_parameters"/"z0" shape
+    correlate_simulated_and_measured accepts either, so it too is rejected.
+    rf_tools/correlation.py's own module docstring states this caveat
+    directly ("the single-port case, `\"computed\": True`")."""
     doc = server.correlate_simulated_and_measured.__doc__
     assert "computed=True" in doc
     assert "computed=False" in doc
     assert "both honestly rejected" not in doc
+    assert "single-port" in doc
+    assert "multi-port" in doc
+
+
+def test_mcp_server_and_agent_main_register_the_same_tool_names():
+    """Issue #317 (ADR-0032 prefactor audit) exists because agent/main.py's
+    @function_tool registrations and mcp_server/server.py's @mcp.tool()
+    registrations are two independently hand-maintained copies of the same
+    tool surface (issues #276/#288: a tool added to one file and never to
+    the other). Code review of #317's own fix found the audit it actually
+    performed covered only the two already-known drift instances, not the
+    full pairwise sweep the issue's acceptance criteria asked for. This is
+    the cheap, permanent half of that sweep (ADR-0032's own "Considered and
+    rejected" section calls this exact set-equality check a reasonable
+    stopgap): it doesn't catch docstring wording drift (see the per-tool
+    tests around this one for the specific content drift this issue's
+    review found and fixed), but it does make a repeat of #276/#288 --
+    a tool registered on one surface and invisible on the other -- a loud
+    failure here instead of a silent gap."""
+    import agent.main as agent_main
+
+    agent_tool_names = {t.name for role in agent_main.ROLES.values() for t in role.tools}
+    mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    # route_to_*_role handoffs are agent.py-only (Agents-SDK handoff
+    # mechanism, not an MCP tool); everything else must match both ways.
+    agent_only = {n for n in agent_tool_names - mcp_tool_names if not n.startswith("route_to_")}
+    assert agent_only == set(), f"tools on agent/main.py only: {agent_only}"
+    assert mcp_tool_names - agent_tool_names == set()
+
+
+def test_mcp_server_docstrings_carry_the_behavioral_content_agent_main_states():
+    """Code review of issue #317 (ADR-0032 prefactor audit) found the audit
+    that shipped covered only the one already-known drift instance
+    (correlate_simulated_and_measured) plus one unrelated schema-drift bug,
+    not the full docstring-by-docstring diff the issue's own acceptance
+    criteria asked for across all tool names common to both files. An
+    independent AST-based diff of all 94 common @function_tool/@mcp.tool()
+    pairs' docstrings turned up six more real instances of the same class
+    of drift this issue exists to catch -- substantive behavioral content
+    present in agent/main.py's copy and silently absent from mcp_server/
+    server.py's, not just harmless wording/verbosity trimming:
+
+      - search_knowledge: the ranking-order guarantee (authority_rank
+        first, then native score, never a blended score) was missing.
+      - verify_requirement: the "Folding a FAIL into any approval/release
+        gate is out of scope here" scope statement was missing -- a caller
+        could otherwise assume recording FAIL blocks a release by itself.
+      - extract_components: both the per-field provenance/validation_error
+        behavior and "a non-datasheet/application_note document is a
+        no-op" were missing entirely.
+      - index_document: the entire PUBLIC/INTERNAL fallback-on-outage
+        paragraph (local falls back to external if the self-hosted backend
+        is briefly unreachable) was missing.
+      - reconcile_component_sources: the non-destructive-merge guarantee
+        (an omitted/absent datasheet_document_ids entry preserves the
+        existing row's datasheet_document_id/specifications rather than
+        wiping them) was missing.
+      - lookup_nexar_component: the ALLOW_EXTERNAL_NETWORK_TOOLS/credential
+        gate and Nexar's free-tier ~1,000-matched-part cap were missing.
+
+    (ingest_patent's "still ingested, failure reason recorded" behavior on
+    a failed render_page_images was also restored, but that docstring still
+    differs enough in wording that this test doesn't assert on it here --
+    see the fix commit for that one.)
+
+    This locks in the fix: the fact silently missing from each MCP-surface
+    docstring above must appear in it going forward."""
+    assert "authority_rank first" in server.search_knowledge.__doc__
+    assert "never a single" in server.search_knowledge.__doc__
+
+    verify_doc = " ".join(server.verify_requirement.__doc__.split())
+    assert "out of scope here" in verify_doc
+    assert "only records the status" in verify_doc
+
+    assert "MANUFACTURER-SPECIFIED" in server.extract_components.__doc__
+    assert "validation_error" in server.extract_components.__doc__
+    assert "no-op" in server.extract_components.__doc__
+
+    assert "PUBLIC/INTERNAL" in server.index_document.__doc__
+    assert "briefly unreachable" in server.index_document.__doc__
+
+    reconcile_doc = " ".join(server.reconcile_component_sources.__doc__.split())
+    assert "preserves whatever" in reconcile_doc
+    assert "rather than wiping either" in reconcile_doc
+
+    assert "ALLOW_EXTERNAL_NETWORK_TOOLS=true AND those credentials" in (
+        server.lookup_nexar_component.__doc__
+    )
+    assert "1,000 matched parts" in server.lookup_nexar_component.__doc__
 
 
 def test_run_nec2_simulation_is_registered():
@@ -2028,3 +2127,36 @@ def test_run_freecad_curved_geometry_calls_through(tmp_path: Path, monkeypatch):
     assert result["freecad"]["objects_built"] == ["patch_0"]
     assert result["freecad"]["errors"] == []
     assert result["freecad"]["step_file"] is not None
+
+
+def test_generate_freecad_curved_geometry_forwards_executable(tmp_path: Path, monkeypatch):
+    # Issue #317 (ADR-0032 prefactor audit): the sibling agent/main.py wrapper
+    # originally still only declared primitives/curvature/timeout_s, so the
+    # `executable` override -- already accepted by this MCP-side wrapper and
+    # by geometry.freecad_curved.run_freecad_curved_geometry itself -- could
+    # never reach this tool through the agent-facing call path. That fix is
+    # covered by tests/test_freecad_curved_agent_wiring.py; this test instead
+    # proves `executable` actually takes effect on the MCP surface itself, by
+    # pointing it at a fake FreeCADCmd directly (not via the FREECAD_BIN env
+    # var, which the calls_through test above already exercises) and
+    # confirming an unset/bogus env var doesn't stop it from running.
+    script = _write_fake_freecadcmd(tmp_path)
+    monkeypatch.delenv("FREECAD_BIN", raising=False)
+
+    primitives = [
+        {
+            "name": "patch",
+            "shape": "box",
+            "p1_m": [-0.001, -0.001, 0.0],
+            "p2_m": [0.001, 0.001, 0.0016],
+        }
+    ]
+    curvature = {"kind": "cylinder", "radius_m": 0.05, "axis": "z"}
+    result = server.generate_freecad_curved_geometry(
+        primitives, curvature, timeout_s=10, executable=str(script)
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["simulator"] == "FreeCADCmd"
+    assert result["status"] == "COMPLETED"
+    assert result["freecad"]["objects_built"] == ["patch_0"]

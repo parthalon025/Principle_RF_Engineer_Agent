@@ -8,35 +8,22 @@ FreeCADCmd install; the MCP surface already could.
 
 This proves `executable` is now part of the agent-side wrapper's signature
 and is forwarded through untouched, mirroring `tests/test_mcp_server.py`'s
-`test_generate_freecad_curved_geometry_forwards_executable`-shaped coverage
-for the sibling MCP tool surface, and `tests/test_ltspice_agent_wiring.py`'s
-documented reason for going through the real `FunctionTool.on_invoke_tool`
-machinery rather than a plain Python call: `@function_tool` wraps the
-original function into a non-callable `Tool` object.
+`test_generate_freecad_curved_geometry_forwards_executable` (added alongside
+this test to close the same gap on the MCP-side wrapper) for the sibling MCP
+tool surface, and `tests/test_ltspice_agent_wiring.py`'s documented reason
+for going through the real `FunctionTool.on_invoke_tool` machinery rather
+than a plain Python call: `@function_tool` wraps the original function into
+a non-callable `Tool` object (that file's own invoke-through-on_invoke_tool
+helper now lives shared as `conftest.invoke_agent_tool`, after code review
+of this same issue flagged the copy this file originally added as
+duplicated code).
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-
-from agents.tool_context import ToolContext
+from conftest import invoke_agent_tool
 
 import agent.main as agent_main
-
-
-def _invoke_freecad_curved_agent_tool(**kwargs):
-    all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
-    tool = next(t for t in all_tools if t.name == "generate_freecad_curved_geometry")
-    args_json = json.dumps(kwargs)
-    ctx = ToolContext(
-        context=None,
-        tool_name="generate_freecad_curved_geometry",
-        tool_call_id="test-call",
-        tool_arguments=args_json,
-    )
-    raw = asyncio.run(tool.on_invoke_tool(ctx, args_json))
-    return json.loads(raw) if isinstance(raw, str) else raw
 
 
 def test_generate_freecad_curved_geometry_agent_tool_forwards_executable(monkeypatch):
@@ -55,7 +42,8 @@ def test_generate_freecad_curved_geometry_agent_tool_forwards_executable(monkeyp
 
     primitives = [{"kind": "box", "center_m": [0, 0, 0], "size_m": [0.01, 0.01, 0.001]}]
     curvature = {"kind": "cylinder", "radius_m": 0.5, "axis": "x"}
-    result = _invoke_freecad_curved_agent_tool(
+    result = invoke_agent_tool(
+        "generate_freecad_curved_geometry",
         primitives=primitives,
         curvature=curvature,
         timeout_s=45,
