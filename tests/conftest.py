@@ -84,6 +84,16 @@ def invoke_agent_tool(tool_name: str, **kwargs):
     tests/test_freecad_curved_agent_wiring.py (both issue #317). Code review
     of #317 flagged that duplication (Fowler: Duplicated Code) and it moved
     here so a fourth wiring-regression test doesn't grow a fourth copy.
+
+    Falls back to the raw string on a JSON decode failure (added for issue
+    #319): a tool that raises is caught by the OpenAI Agents SDK's own
+    default failure handling (no caller here has ever set
+    `failure_error_function=None`) and returned as a plain, human-readable,
+    NOT-JSON error string ("An error occurred while running the tool...")
+    rather than propagated -- `tests/test_mcp_tool_call_parity.py` is the
+    first caller to deliberately exercise that path, and a bare
+    `json.loads` would crash on it instead of handing the caller the
+    message to inspect.
     """
     all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
     tool = next(t for t in all_tools if t.name == tool_name)
@@ -95,7 +105,114 @@ def invoke_agent_tool(tool_name: str, **kwargs):
         tool_arguments=args_json,
     )
     raw = asyncio.run(tool.on_invoke_tool(ctx, args_json))
-    return json.loads(raw) if isinstance(raw, str) else raw
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return raw
+
+
+class McpRoutedToolCallTimedOut(TimeoutError):
+    """Raised by `invoke_role_mcp_tool` when the NEW `mcp_servers=[server]`-
+    routed path (issue #318, `agent/mcp_roles.py`) does not return within
+    `timeout_s`. Issue #319 found this is not hypothetical: on native
+    Windows, a tool whose implementation shells out to its own subprocess
+    (every `run_*_simulation` tool -- NEC2++, openEMS, HFSS, Elmer, Palace,
+    MEEP, gprMax, Qucs, LTspice, ngspice, Xyce, gerber2ems -- calls its own
+    `subprocess.run()` from inside `mcp_server.server`'s own stdio-transport
+    subprocess) never returns at all over this path -- confirmed
+    independent of the OpenAI Agents SDK using the raw `mcp` client
+    directly (see `tests/test_mcp_tool_call_parity.py`'s module docstring
+    for that reproduction): a genuine third-party (`mcp`/`anyio`) Windows
+    stdio-transport limitation, not a bug in this repo's own
+    `agent/mcp_roles.py` construction. A caller hitting this is not a test
+    bug to silence with a longer timeout -- it is the documented finding
+    itself. `build_role_mcp_server`'s own `client_session_timeout_seconds=
+    None` (issue #319's other fix) means the SDK itself will never time
+    this out on its own -- this wrapper's `timeout_s` is the only thing
+    bounding a call that would otherwise hang the test suite forever."""
+
+
+async def _invoke_role_mcp_tool_async(role_key: str, tool_name: str, **kwargs):
+    from agents import RunContextWrapper
+
+    from agent.mcp_roles import build_role_agent
+
+    agent = build_role_agent(role_key)
+    server = agent.mcp_servers[0]
+    async with server:
+        run_context = RunContextWrapper(context=None)
+        tools = await agent.get_mcp_tools(run_context)
+        tool = next(t for t in tools if t.name == tool_name)
+        args_json = json.dumps(kwargs)
+        ctx = ToolContext(
+            context=None,
+            tool_name=tool_name,
+            tool_call_id="test-call",
+            tool_arguments=args_json,
+        )
+        return await tool.on_invoke_tool(ctx, args_json)
+
+
+def invoke_role_mcp_tool(
+    role_key: str, tool_name: str, *, harness_timeout_s: float = 30.0, **kwargs
+):
+    """Call a tool through the NEW `mcp_servers=[server]`-routed path built
+    in issue #318 (`agent/mcp_roles.py`, ADR-0032) -- the live behavior-
+    parity counterpart `invoke_agent_tool` above (the OLD direct-call path)
+    issue #319 exists to compare against.
+
+    Reuses `agent.mcp_roles.build_role_agent`'s REAL `Agent` object and its
+    REAL `Agent.get_mcp_tools()` (the exact method `Runner.run` calls at
+    the start of every turn to gather an agent's tools, confirmed by
+    reading `agents/agent.py` directly) rather than hand-rolling the MCP
+    tool-listing/conversion machinery a second time, so this genuinely
+    exercises the same code path production would -- not an approximation
+    of it. Spawns a real `python -m mcp_server.server` subprocess (see
+    `agent/mcp_roles.py`'s own docstring for why one per role, not a shared
+    connection) for the lifetime of this one call and tears it down again;
+    a real Agent session in production connects once and reuses the
+    connection across many tool calls within a run, so this per-call
+    connect/disconnect overhead is test-harness cost, not part of what's
+    being measured for behavioral equivalence -- see
+    `tests/test_mcp_tool_call_parity.py`'s latency-sanity check, which
+    measures per-call cost separately from one-time connection setup for
+    exactly this reason.
+
+    Returns the RAW `on_invoke_tool()` result unchanged -- unlike
+    `invoke_agent_tool` above, this does NOT unwrap/JSON-decode it, because
+    that shape difference (a bare Python value on the OLD path vs. a
+    `{"type": "text", "text": "<json>"}` envelope on the NEW path, or an
+    un-parseable plain-English error string on either path) is itself part
+    of what issue #319 exists to compare -- decoding it away here would
+    hide the finding from every caller. Use `_decode_mcp_tool_output` in
+    `tests/test_mcp_tool_call_parity.py` to normalize both sides for a
+    value-level comparison once the raw shapes have been inspected.
+
+    Bounded by `harness_timeout_s` (default 30s, keyword-only and
+    harness-prefixed deliberately -- several real tools, `run_nec2_
+    simulation` included, already have their OWN `timeout_s` parameter
+    forwarded through `**kwargs`, and this wrapper's bound must never
+    collide with that): raises `McpRoutedToolCallTimedOut` -- not a bare,
+    unexplained `asyncio.TimeoutError` -- if the call does not return in
+    time, since issue #319 found real, reproducible cases (any tool that
+    shells out to its own subprocess) where it never returns at all on
+    this platform.
+    """
+    try:
+        return asyncio.run(
+            asyncio.wait_for(
+                _invoke_role_mcp_tool_async(role_key, tool_name, **kwargs),
+                timeout=harness_timeout_s,
+            )
+        )
+    except TimeoutError as exc:
+        raise McpRoutedToolCallTimedOut(
+            f"{tool_name!r} on role {role_key!r} did not return within "
+            f"{harness_timeout_s}s over the MCP-routed path -- see "
+            "McpRoutedToolCallTimedOut's own docstring."
+        ) from exc
 
 
 @pytest.fixture
