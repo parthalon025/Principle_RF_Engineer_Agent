@@ -317,6 +317,113 @@ scoring only, say, OPTIMIZATION's frequency target, without inventing a
 target for a step nobody stated a requirement for.
 
 ------------------------------------------------------------------------
+PREDICTION: A CANDIDATE'S STATED GUESS, SCORED AGAINST ITS OWN RELEVANT
+STEP, IN THE SAME PASS (issue #253, docs/adr/0022).
+
+A candidate dict may carry an optional `"prediction"` key -- `{"value":
+<float>, "tolerance": <float>}`, in the unit of whichever step's target it
+is compared against (see "which step" below) -- stating what the LLM
+expects THIS candidate's scored quantity to come out to, before this
+module looks at the answer. Exactly like `"note"` above, this is never
+required and never gates: a candidate with no `"prediction"` key, or one
+that is present but malformed (not a dict, a non-numeric or missing
+`value`/`tolerance`, a negative `tolerance`), simply reads as no
+prediction stated -- never raises, never blocks that candidate's drive.
+
+WHICH STEP A PREDICTION IS ABOUT: the first step (in driven order) that
+`score_specs` actually scores -- computed once per call, before any
+candidate runs (`steps_to_drive` and `score_specs` are already fixed at
+that point), never per candidate. The common case this module's tests and
+the ADR's own examples use is a single-entry `score_specs` (e.g. only
+OPTIMIZATION's achieved frequency scored), where this is simply "the one
+step being scored" and no choice is actually being made. A caller who
+scores more than one step in the same call has every one of those steps'
+own scores in `trail`'s per-step `steps` list regardless -- only WHICH
+step a stated Prediction is compared against is fixed to the first.
+
+STATUS -- computed immediately after that relevant step's own score is
+known (or is known to have never been reached), same pass, never a later
+one:
+
+  - `"UNSCOREABLE"`: no prediction was stated (or what was stated could
+    not be parsed as a valid value/tolerance pair), OR a valid prediction
+    WAS stated but its own `tolerance` is not narrower than the relevant
+    step's target's own `tolerance` (ADR-0022's own example: "82 +/- 15"
+    cannot honestly separate a pass from a fail against a target whose own
+    tolerance is, say, 10 -- reusing `target["tolerance"]` directly as the
+    yardstick, no new target concept invented) -- including when that
+    target carries no `tolerance` at all, since there is then no yardstick
+    to compare narrowness against.
+  - `"PREDICTED"`: a valid prediction was stated, but the candidate never
+    reached a scored value for its relevant step to compare against --
+    it failed (at that step or an earlier one) before a comparison was
+    possible. This is deliberately the resolution to a real ambiguity in
+    ADR-0022's status vocabulary (`PREDICTED -> CONFIRMED/REFUTED`, plus
+    `UNSCOREABLE`): since status is computed in this same pass rather than
+    a later one, `PREDICTED` would otherwise never appear in a returned
+    trail entry at all. Making it the status for "stated, but failed
+    before its relevant step produced a value" keeps it a real, reachable
+    state instead of dead vocabulary, and is the one place this module
+    knowingly departs from the ADR's own worked "failed candidate" example
+    (which named `UNSCOREABLE`) -- `UNSCOREABLE` stays reserved for the
+    two cases above instead, so it always means "the stated tolerance
+    itself could never separate a pass from a fail", never "the run
+    failed".
+  - `"CONFIRMED"` / `"REFUTED"`: the relevant step DID produce a score
+    (whether or not some LATER step then failed -- see design question 4;
+    a candidate's relevant step succeeding is what matters here, not
+    whether the whole candidate did), the stated tolerance IS narrower
+    than the target's own, and the actual value fell inside
+    (`"CONFIRMED"`) or outside (`"REFUTED"`) the stated `value +/-
+    tolerance` band.
+
+`residual` is `predicted - actual` (signed, matching `designs.success_
+score.score_point_target`'s own `deviation` sign convention) for
+`"CONFIRMED"`/`"REFUTED"` only -- `None` for `"PREDICTED"`/`"UNSCOREABLE"`,
+since neither has an actual value a residual could honestly be computed
+against.
+
+`provenance` is always `"INFERRED"`, unconditionally -- including when no
+prediction was stated at all. This is the exact `designs/success_score.py`
+precedent this module already imports `INFERRED` from: a Requirement
+target's `provenance` stays `"ASSUMED"` forever regardless of confirmation
+because confirming a reading changes how much to trust it, not what kind
+of evidence it is (that module's own "CRITICAL CORRECTION" section). A
+Prediction is permanently `"INFERRED"` on identical logic -- an LLM's
+stated guess does not become anything else because this module's own
+arithmetic later happened to agree with it. Unlike `note_provenance`
+(`None` when no note was given), `provenance` here is never `None`: the
+field itself always exists on every trail entry, so a reader never has to
+special-case "was a prediction even attempted" before reading it.
+
+This never influences `overall_score_percent`/`all_targets_met`/
+`best_candidate_index`/any stopping rule -- `_score_prediction` (below) is
+a pure function of already-computed values, called strictly for its own
+return value, after every field that DOES drive convergence is already
+finalized for that candidate. See `tests/test_solver.py`'s own regression
+test running the same batch with and without Predictions attached and
+asserting every pre-existing field is byte-for-byte identical.
+
+------------------------------------------------------------------------
+MECHANISM CLAIM: ONE TESTABLE REASON FOR THE WHOLE BATCH, NOT ONE GUESS
+PER CANDIDATE (issue #253, docs/adr/0022).
+
+`mechanism_claim` is a single optional string parameter on the call
+itself, not a candidate field -- a Prediction (above) states what value a
+candidate is expected to score; a Mechanism claim states WHY the batch was
+shaped the way it was (ADR-0022's own example: "the shortest candidate
+scores worst"), one ordering statement for the batch as a whole. It is
+carried straight through onto the result dict's own `mechanism_claim`
+field, verbatim, and is never parsed, validated, or scored by this
+module -- exactly as Predictions are never allowed to influence
+`overall_score_percent`/convergence, the reverse also holds: nothing here
+checks whether the claim held up. That reading is left to a human, or a
+later LLM turn, working from the batch's own `trail`. Omitted, it reads
+`None`; present, it appears unchanged, including on every early-return
+path (`loop_completed`/`gated_step_pending_approval`/`out_of_scope_step`),
+since the claim is recorded before any candidate runs.
+
+------------------------------------------------------------------------
 STOPPING RULES -- the three this ticket names, plus two structural halts.
 
   - `"target_satisfaction"`: the first candidate whose `overall_score_
@@ -402,11 +509,12 @@ recorded numbers, exactly like every OTHER score this module computes.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import designs.db as designs_db
 from designs.requirement_targets import TargetStatus
-from designs.success_score import success_score
+from designs.success_score import INFERRED, success_score
 
 from .design_loop import GATED_STEPS, DesignStep
 from .score_fields import SCORE_FIELD_SOURCES
@@ -415,6 +523,17 @@ from .tooling import advance_design_loop_step
 _logger = logging.getLogger(__name__)
 
 CALCULATED = "CALCULATED"
+
+# Prediction status vocabulary -- ADR-0022's own four names, with PREDICTED's
+# meaning resolved for the "same pass" constraint (see this module's
+# docstring, "PREDICTION"). Kept as plain module-level strings, matching
+# this module's own CALCULATED constant above, rather than a new enum --
+# ADR-0022 is explicit this is not a parallel confidence scale, so it does
+# not get the ceremony designs.requirement_targets.TargetStatus has.
+PREDICTED = "PREDICTED"
+CONFIRMED = "CONFIRMED"
+REFUTED = "REFUTED"
+UNSCOREABLE = "UNSCOREABLE"
 
 # The exact and only span this module ever drives -- see this module's
 # docstring, "SCOPE". Order matters: _steps_from below relies on it.
@@ -758,6 +877,109 @@ def _overall_score(step_trail: list[dict[str, Any]]) -> tuple[float | None, bool
     return overall, all_met
 
 
+def _parse_stated_prediction(stated: Any) -> tuple[float | None, float | None]:
+    """`(value, tolerance)` parsed out of a candidate's raw `"prediction"`
+    field, or `(None, None)` for anything that is not a well-formed
+    prediction -- absent entirely, not a dict, a missing/non-numeric
+    `value` or `tolerance`, or a negative `tolerance`. Never raises: this
+    module's Prediction handling is explicitly under no gate (this
+    module's docstring, "PREDICTION"), so a malformed `"prediction"` reads
+    exactly like an absent one -- `(None, None)`, which `_score_prediction`
+    below turns into `UNSCOREABLE`."""
+    if not isinstance(stated, dict):
+        return None, None
+    raw_value = stated.get("value")
+    raw_tolerance = stated.get("tolerance")
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        return None, None
+    if not math.isfinite(raw_value):
+        return None, None
+    if isinstance(raw_tolerance, bool) or not isinstance(raw_tolerance, (int, float)):
+        return None, None
+    if not math.isfinite(raw_tolerance) or raw_tolerance < 0:
+        return None, None
+    return float(raw_value), float(raw_tolerance)
+
+
+def _score_prediction(
+    stated: Any,
+    target: dict[str, Any],
+    relevant_step: DesignStep,
+    step_trail: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """One candidate's Prediction sub-dict -- see this module's docstring,
+    "PREDICTION", for the full rule this implements. Pure function: takes
+    the candidate's raw `"prediction"` field, the target `relevant_step`
+    was scored against (`score_specs[relevant_step.value]["target"]`), and
+    that candidate's OWN already-driven `step_trail` (`_drive_candidate`'s
+    `"steps"` list) -- never mutates any of them, never raises, and never
+    influences anything this module uses for convergence.
+
+    Returns `{"value", "tolerance", "status", "residual", "provenance"}`
+    -- always present, even when no prediction was stated at all (`value`/
+    `tolerance`/`residual` are `None`, `status` is `UNSCOREABLE`,
+    `provenance` is still `"INFERRED"`)."""
+    value, tolerance = _parse_stated_prediction(stated)
+    if value is None:
+        return {
+            "value": None,
+            "tolerance": None,
+            "status": UNSCOREABLE,
+            "residual": None,
+            "provenance": INFERRED,
+        }
+
+    relevant_entry = next(
+        (entry for entry in step_trail if entry["step"] == relevant_step.value), None
+    )
+    actual_value = None
+    if relevant_entry is not None and relevant_entry["score"] is not None:
+        actual_value = relevant_entry["score"]["actual_value"]
+
+    if actual_value is None:
+        # Stated, but this candidate never reached a scored value for its
+        # relevant step to compare against -- see this module's docstring,
+        # "PREDICTION", for why this is PREDICTED rather than UNSCOREABLE.
+        return {
+            "value": value,
+            "tolerance": tolerance,
+            "status": PREDICTED,
+            "residual": None,
+            "provenance": INFERRED,
+        }
+
+    decision_tolerance = target.get("tolerance") if isinstance(target, dict) else None
+    tolerance_is_narrower = (
+        isinstance(decision_tolerance, (int, float))
+        and not isinstance(decision_tolerance, bool)
+        and tolerance < decision_tolerance
+    )
+    if not tolerance_is_narrower:
+        # ADR-0022's own rule: a stated tolerance that is not narrower than
+        # the target's own cannot honestly separate a pass from a fail --
+        # UNSCOREABLE by construction, never CONFIRMED, however close
+        # `value` and `actual_value` happen to be. Also covers a target
+        # with no stated tolerance at all: there is then no yardstick to
+        # compare narrowness against.
+        return {
+            "value": value,
+            "tolerance": tolerance,
+            "status": UNSCOREABLE,
+            "residual": None,
+            "provenance": INFERRED,
+        }
+
+    residual = value - actual_value
+    status = CONFIRMED if abs(residual) <= tolerance else REFUTED
+    return {
+        "value": value,
+        "tolerance": tolerance,
+        "status": status,
+        "residual": residual,
+        "provenance": INFERRED,
+    }
+
+
 def _prior_best_from_design(
     design_id: int,
     scoreable_steps: list[DesignStep],
@@ -879,6 +1101,7 @@ def run_candidate_search(
     plateau_epsilon: float = 0.5,
     target_satisfaction_threshold: float = 100.0,
     design_id: int | None = None,
+    mechanism_claim: str | None = None,
 ) -> dict[str, Any]:
     """Drive a batch of LLM-proposed candidates through a design loop's
     ungated ANALYSIS/SIMULATION/OPTIMIZATION span, candidate after
@@ -901,7 +1124,12 @@ def run_candidate_search(
         assumed to be 50 ohms (issue #101) -- plus `target_frequency_
         hz`/`length_lower_m`/`length_upper_m` for OPTIMIZATION). An
         optional `"note"` key, if present, is forwarded to every scored
-        step's `success_score(note=...)` call for that candidate.
+        step's `success_score(note=...)` call for that candidate. An
+        optional `"prediction"` key -- `{"value": <float>, "tolerance":
+        <float>}` -- states this candidate's expected value for its
+        RELEVANT step (see "PREDICTION" in this module's docstring for
+        which step that is and the full status rule); absent or malformed,
+        it reads as no prediction stated, never raises, never blocks.
       - `score_specs`: a non-empty dict keyed by step name (`"analysis"`/
         `"simulation"`/`"optimization"`), each value `{"target": <a
         designs.requirement_targets PROPOSED/CONFIRMED target dict>,
@@ -937,6 +1165,17 @@ def run_candidate_search(
         `best_candidate_state` -- those three remain scoped to THIS call's
         own newly-evaluated candidates only, since a historical score has
         no matching NEW state to hand back.
+      - `mechanism_claim`: optional (default `None`). A single testable
+        ordering statement for why this batch was proposed the way it was
+        (e.g. "the shortest candidate scores worst") -- one claim for the
+        whole batch, never per candidate (that is what each candidate's
+        own `"prediction"` key is for; see `candidates` above and
+        "PREDICTION" in this module's docstring). Carried straight through
+        onto the result dict's own `mechanism_claim` field, verbatim,
+        never parsed or scored by this module (ADR-0022; issue #253) --
+        present on every return path, including the early
+        `loop_completed`/`gated_step_pending_approval`/`out_of_scope_step`
+        stops, since it is recorded before any candidate runs.
 
     Raises `SolverError` for a malformed call (bad `state`/`candidates`/
     `score_specs`/`design_id` shape, or an out-of-range budget/plateau
@@ -958,6 +1197,8 @@ def run_candidate_search(
         identically).
       - `loop_id` / `iteration` / `design_id`: copied from `state`, for a
         reader who has only this result at hand.
+      - `mechanism_claim`: the `mechanism_claim` argument, verbatim, or
+        `None` if omitted -- see that argument's own entry above.
       - `convergence_rule`: always `"worst_of_scored_steps"` -- see
         "DESIGN QUESTION 3".
       - `target_satisfaction_threshold` / `plateau_window` /
@@ -978,7 +1219,11 @@ def run_candidate_search(
         ("evaluated"|"failed"), "error", "failed_at_step", "steps" (that
         candidate's own per-step trail -- "step"/"decision_provenance"/
         "raw_result"/"score"), "overall_score_percent",
-        "all_targets_met"}`.
+        "all_targets_met", "prediction"}`. `"prediction"` is always
+        present -- `{"value", "tolerance", "status" ("PREDICTED"/
+        "CONFIRMED"/"REFUTED"/"UNSCOREABLE"), "residual", "provenance"
+        (always "INFERRED")}` -- see "PREDICTION" in this module's
+        docstring; it never affects any OTHER field in this dict.
       - `best_candidate_index` / `best_candidate_overall_score_percent`:
         the best-scoring, non-failed candidate found (ties keep the
         earliest), or both `None` if none scored.
@@ -1015,6 +1260,7 @@ def run_candidate_search(
         "loop_id": state.get("loop_id"),
         "iteration": state.get("iteration"),
         "design_id": state.get("design_id"),
+        "mechanism_claim": mechanism_claim,
         "convergence_rule": "worst_of_scored_steps",
         "target_satisfaction_threshold": target_satisfaction_threshold,
         "plateau_window": plateau_window,
@@ -1079,6 +1325,14 @@ def run_candidate_search(
             "ever be scored"
         )
 
+    # Which step a candidate's "prediction" is compared against -- the
+    # FIRST step (in driven order) score_specs actually scores, fixed once
+    # here for the whole call, before any candidate runs. See this
+    # module's docstring, "PREDICTION", "WHICH STEP". The guard above
+    # already guarantees at least one such step exists.
+    prediction_step = next(step for step in steps_to_drive if step.value in score_specs)
+    prediction_target = score_specs[prediction_step.value]["target"]
+
     effective_budget = (
         len(candidates) if evaluation_budget is None else min(evaluation_budget, len(candidates))
     )
@@ -1109,6 +1363,9 @@ def run_candidate_search(
         driven = _drive_candidate(state, steps_to_drive, candidate, score_specs)
         overall, all_met = _overall_score(driven["steps"])
         failed = driven["failed_at_step"] is not None
+        prediction = _score_prediction(
+            candidate.get("prediction"), prediction_target, prediction_step, driven["steps"]
+        )
 
         entry: dict[str, Any] = {
             "candidate_index": i,
@@ -1119,6 +1376,7 @@ def run_candidate_search(
             "steps": driven["steps"],
             "overall_score_percent": overall,
             "all_targets_met": all_met,
+            "prediction": prediction,
         }
         report["trail"].append(entry)
         report["candidates_evaluated"] += 1
