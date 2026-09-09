@@ -76,7 +76,13 @@ def insert_document(
     """Insert a new `documents` row for `draft`.
 
     - Same checksum already stored -> raises `DuplicateDocumentError`
-      instead of inserting; no duplicate row is created.
+      instead of inserting; no duplicate row is created. Checked twice: once
+      up front (the common case, and the only check that can name the
+      pre-existing row without a round trip), and again by catching the
+      database's own `documents_checksum_sha256_key` partial unique index if
+      a concurrent insert of the identical checksum won the race in between
+      -- the up-front check alone cannot see a write that commits after it
+      ran but before this one does.
     - `draft.supersedes_document_id` set -> that document must exist, be
       ACTIVE, and share this draft's `source_type`, or `InvalidSupersessionError`
       is raised; otherwise its status flips to SUPERSEDED and the new row's
@@ -91,56 +97,61 @@ def insert_document(
     if existing is not None:
         raise DuplicateDocumentError(existing["id"], existing)
 
-    with conn.transaction():
-        supersedes_id = draft.supersedes_document_id
-        if supersedes_id is not None:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute("SELECT * FROM documents WHERE id = %s", (supersedes_id,))
-                prior = cur.fetchone()
-            if prior is None:
-                raise InvalidSupersessionError(supersedes_id, "no such document")
-            if prior["status"] != DocumentStatus.ACTIVE.value:
-                raise InvalidSupersessionError(
-                    supersedes_id, f"not ACTIVE (status={prior['status']!r})"
-                )
-            if prior["source_type"] != draft.source_type.value:
-                raise InvalidSupersessionError(
-                    supersedes_id,
-                    f"source_type mismatch (target is {prior['source_type']!r}, "
-                    f"upload is {draft.source_type.value!r})",
-                )
-
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                """
-                INSERT INTO documents (
-                    title, source_uri, source_type, author, revision,
-                    license, authority_rank, checksum_sha256, metadata,
-                    status, supersedes_document_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING *
-                """,
-                (
-                    draft.title,
-                    draft.source_uri,
-                    draft.source_type.value,
-                    draft.author,
-                    draft.revision,
-                    draft.license,
-                    authority_rank,
-                    draft.checksum_sha256,
-                    Json(draft.metadata),
-                    DocumentStatus.ACTIVE.value,
-                    supersedes_id,
-                ),
-            )
-            new_row = cur.fetchone()
-
+    try:
+        with conn.transaction():
+            supersedes_id = draft.supersedes_document_id
             if supersedes_id is not None:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute("SELECT * FROM documents WHERE id = %s", (supersedes_id,))
+                    prior = cur.fetchone()
+                if prior is None:
+                    raise InvalidSupersessionError(supersedes_id, "no such document")
+                if prior["status"] != DocumentStatus.ACTIVE.value:
+                    raise InvalidSupersessionError(
+                        supersedes_id, f"not ACTIVE (status={prior['status']!r})"
+                    )
+                if prior["source_type"] != draft.source_type.value:
+                    raise InvalidSupersessionError(
+                        supersedes_id,
+                        f"source_type mismatch (target is {prior['source_type']!r}, "
+                        f"upload is {draft.source_type.value!r})",
+                    )
+
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    "UPDATE documents SET status = %s WHERE id = %s",
-                    (DocumentStatus.SUPERSEDED.value, supersedes_id),
+                    """
+                    INSERT INTO documents (
+                        title, source_uri, source_type, author, revision,
+                        license, authority_rank, checksum_sha256, metadata,
+                        status, supersedes_document_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (
+                        draft.title,
+                        draft.source_uri,
+                        draft.source_type.value,
+                        draft.author,
+                        draft.revision,
+                        draft.license,
+                        authority_rank,
+                        draft.checksum_sha256,
+                        Json(draft.metadata),
+                        DocumentStatus.ACTIVE.value,
+                        supersedes_id,
+                    ),
                 )
+                new_row = cur.fetchone()
+
+                if supersedes_id is not None:
+                    cur.execute(
+                        "UPDATE documents SET status = %s WHERE id = %s",
+                        (DocumentStatus.SUPERSEDED.value, supersedes_id),
+                    )
+    except psycopg.errors.UniqueViolation:
+        existing = find_document_by_checksum(conn, draft.checksum_sha256)
+        assert existing is not None
+        raise DuplicateDocumentError(existing["id"], existing) from None
 
     assert new_row is not None
     return new_row

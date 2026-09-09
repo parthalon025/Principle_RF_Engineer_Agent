@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import os
+from urllib.parse import urlsplit
 
 import psycopg
 import pytest
@@ -515,6 +516,14 @@ _TEST_DATABASE_URL = os.environ.get(
 )
 
 
+def _redacted(database_url: str) -> str:
+    """Host/port/dbname only, for a skip-reason message -- issue #367:
+    _TEST_DATABASE_URL (password included) was landing in test output."""
+    parts = urlsplit(database_url)
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://{parts.hostname or ''}{port}{parts.path}"
+
+
 def _database_reachable() -> bool:
     try:
         with psycopg.connect(_TEST_DATABASE_URL, connect_timeout=3):
@@ -528,7 +537,7 @@ _DB_REACHABLE = _database_reachable()
 
 @pytest.mark.skipif(
     not _DB_REACHABLE,
-    reason=f"no reachable Postgres at {_TEST_DATABASE_URL!r} in this sandbox",
+    reason=f"no reachable Postgres at {_redacted(_TEST_DATABASE_URL)!r} in this sandbox",
 )
 class TestSymbolAlphabetEntryDatabaseRoundTrip:
     """`insert_process_record`/`insert_symbol_entry`/`fetch_process_record`/

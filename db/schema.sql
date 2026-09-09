@@ -504,3 +504,56 @@ CREATE TABLE IF NOT EXISTS requirements_documents (
 
 CREATE INDEX IF NOT EXISTS requirements_documents_design_id_idx
 ON requirements_documents (design_id);
+
+-- Issue #367 (DB standards cleanup). Four fixes below, each an idempotent
+-- ALTER so it lands the same way on a fresh container and on an
+-- already-initialized database -- CREATE TABLE IF NOT EXISTS alone cannot
+-- retrofit any of these onto a table that already exists.
+
+-- `read_design` (designs/db.py) filters both of these by design_id on
+-- every single design read, and `read_engineering_results_for_scoring`
+-- (called from orchestration/solver.py on every scored candidate search)
+-- filters engineering_results the same way -- both were missing the index
+-- `pending_loop_step_approvals`/`pending_design_release_approvals` already
+-- carry for the identical access pattern.
+CREATE INDEX IF NOT EXISTS engineering_results_design_id_idx
+ON engineering_results (design_id);
+
+CREATE INDEX IF NOT EXISTS decision_records_design_id_idx
+ON decision_records (design_id);
+
+-- Every real write path (record_decision/record_engineering_result/
+-- create_design's verification_items insert/approval_cli.py's two
+-- pending-approval inserts) already guarantees a real design_id -- this
+-- backs that guarantee at the schema layer too, matching the convention
+-- already used for document_chunks.document_id and
+-- symbol_alphabet_entries.process_id (and, correctly, requirements_documents.
+-- design_id above). SET NOT NULL is a no-op if a column is already NOT
+-- NULL, so this is safe to re-run.
+ALTER TABLE engineering_results ALTER COLUMN design_id SET NOT NULL;
+ALTER TABLE verification_items ALTER COLUMN design_id SET NOT NULL;
+ALTER TABLE decision_records ALTER COLUMN design_id SET NOT NULL;
+ALTER TABLE pending_loop_step_approvals ALTER COLUMN design_id SET NOT NULL;
+ALTER TABLE pending_design_release_approvals ALTER COLUMN design_id SET NOT NULL;
+
+-- ADR-0002's dedup guarantee ("a document with this checksum already
+-- exists") was enforced only by knowledge/db.py's check-then-insert, with
+-- the check running before the INSERT's own transaction even opens -- two
+-- concurrent ingests of the same file could both pass the check before
+-- either committed. A partial index (checksum_sha256 is nullable) backs
+-- the guarantee at the database level; knowledge/db.py's insert_document
+-- catches the resulting UniqueViolation and raises the same
+-- DuplicateDocumentError the sequential path already raises.
+CREATE UNIQUE INDEX IF NOT EXISTS documents_checksum_sha256_key
+ON documents (checksum_sha256) WHERE checksum_sha256 IS NOT NULL;
+
+-- UNIQUE(manufacturer, part_number) does not dedupe two NULL-manufacturer
+-- rows against each other (Postgres treats NULLs as distinct by default),
+-- so knowledge/db.py's upsert_component silently inserted a second row
+-- instead of updating the first whenever a supplier feed omitted the
+-- manufacturer field -- verified live against this database. Drop-then-add
+-- under the same constraint name so this is safe to re-run.
+ALTER TABLE components DROP CONSTRAINT IF EXISTS components_manufacturer_part_number_key;
+ALTER TABLE components
+    ADD CONSTRAINT components_manufacturer_part_number_key
+    UNIQUE NULLS NOT DISTINCT (manufacturer, part_number);
