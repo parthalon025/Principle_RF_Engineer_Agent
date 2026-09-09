@@ -322,3 +322,157 @@ def test_arxiv_authority_rank_sits_between_paper_and_internal_history_tiers():
     rank = arxiv_preprint_authority_rank()
     assert default_authority_rank(SourceType.PAPER) < rank
     assert rank < default_authority_rank(SourceType.DESIGN_RECORD)
+
+
+# --- search_arxiv_papers (issue #257: discovery search, fetch_fn seam,
+# candidates only -- never ingests) --------------------------------------
+
+# A canned two-entry `search_query` Atom response, shaped like arXiv's real
+# query API output (the same Atom + arxiv: extension namespaces
+# arxiv_doc_builder/arxiv_metadata.py's fetch_metadata parses for the by-id
+# form of this feed) -- indentation inside <title>/<summary> deliberately
+# mirrors arXiv's actual pretty-printed responses, to exercise whitespace
+# collapsing.
+_SEARCH_ATOM_MULTI = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"
+      xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <link href="http://arxiv.org/api/query?search_query=all:metamaterial" rel="self"
+        type="application/atom+xml"/>
+  <title type="html">ArXiv Query: search_query=all:metamaterial</title>
+  <id>http://arxiv.org/api/dGhpcyBpcyBhIHRlc3Q</id>
+  <updated>2024-01-16T00:00:00-05:00</updated>
+  <opensearch:totalResults>2</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <opensearch:itemsPerPage>2</opensearch:itemsPerPage>
+  <entry>
+    <id>http://arxiv.org/abs/2401.01234v2</id>
+    <updated>2024-01-16T00:00:00Z</updated>
+    <published>2024-01-15T00:00:00Z</published>
+    <title>
+   Adaptive Metamaterial Skins for Conformal Antennas
+    </title>
+    <summary>
+  We present a design for adaptive metamaterial skins that behave as a
+  magnetic mirror across X-band.
+    </summary>
+    <author><name>Jane Doe</name></author>
+    <author><name>John Smith</name></author>
+    <link href="http://arxiv.org/abs/2401.01234v2" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2401.01234v2" rel="related"
+          type="application/pdf"/>
+    <arxiv:primary_category term="physics.app-ph" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="physics.app-ph" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/cond-mat/0207270v1</id>
+    <updated>2002-07-11T00:00:00Z</updated>
+    <published>2002-07-11T00:00:00Z</published>
+    <title>Legacy Frequency Selective Surface Absorbers</title>
+    <summary>An early study of frequency selective surface absorbers.</summary>
+    <author><name>A. Researcher</name></author>
+    <link href="http://arxiv.org/abs/cond-mat/0207270v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/cond-mat/0207270v1" rel="related"
+          type="application/pdf"/>
+    <arxiv:primary_category term="cond-mat.mtrl-sci" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cond-mat.mtrl-sci" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>
+"""
+
+# A real "no matches" arXiv response -- zero <entry> elements, not a fetch
+# failure.
+_SEARCH_ATOM_EMPTY = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <link href="http://arxiv.org/api/query?search_query=all:zzznomatchzzz" rel="self"
+        type="application/atom+xml"/>
+  <title type="html">ArXiv Query: search_query=all:zzznomatchzzz</title>
+  <id>http://arxiv.org/api/abc123</id>
+  <updated>2024-01-16T00:00:00-05:00</updated>
+  <opensearch:totalResults>0</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <opensearch:itemsPerPage>0</opensearch:itemsPerPage>
+</feed>
+"""
+
+
+def test_search_arxiv_papers_parses_multi_entry_response_in_feed_order():
+    candidates = arxiv.search_arxiv_papers(
+        "metamaterial absorber",
+        fetch_fn=lambda url: _SEARCH_ATOM_MULTI.encode("utf-8"),
+    )
+
+    assert [c["id"] for c in candidates] == ["2401.01234v2", "cond-mat/0207270v1"]
+
+    first = candidates[0]
+    assert first["title"] == "Adaptive Metamaterial Skins for Conformal Antennas"
+    assert first["published"] == "2024-01-15"
+    assert first["abstract"] == (
+        "We present a design for adaptive metamaterial skins that behave "
+        "as a magnetic mirror across X-band."
+    )
+
+    second = candidates[1]
+    assert second["title"] == "Legacy Frequency Selective Surface Absorbers"
+    assert second["published"] == "2002-07-11"
+    assert second["abstract"] == "An early study of frequency selective surface absorbers."
+
+
+def test_search_arxiv_papers_returns_empty_list_on_zero_matches():
+    candidates = arxiv.search_arxiv_papers(
+        "zzznomatchzzz", fetch_fn=lambda url: _SEARCH_ATOM_EMPTY.encode("utf-8")
+    )
+    assert candidates == []
+
+
+def test_search_arxiv_papers_propagates_fetch_fn_error_instead_of_swallowing_it():
+    def failing_fetch(url):
+        raise OSError("network unreachable")
+
+    with pytest.raises(OSError, match="network unreachable"):
+        arxiv.search_arxiv_papers("metamaterial", fetch_fn=failing_fetch)
+
+
+def test_search_arxiv_papers_threads_max_results_into_query_url():
+    captured_urls: list[str] = []
+
+    def fake_fetch(url):
+        captured_urls.append(url)
+        return _SEARCH_ATOM_EMPTY.encode("utf-8")
+
+    arxiv.search_arxiv_papers("metamaterial", max_results=25, fetch_fn=fake_fetch)
+
+    assert len(captured_urls) == 1
+    assert "max_results=25" in captured_urls[0]
+    assert "search_query=" in captured_urls[0]
+
+
+def test_search_arxiv_papers_candidate_ids_round_trip_through_arxiv_id_re():
+    candidates = arxiv.search_arxiv_papers(
+        "metamaterial", fetch_fn=lambda url: _SEARCH_ATOM_MULTI.encode("utf-8")
+    )
+
+    assert len(candidates) == 2
+    for candidate in candidates:
+        assert arxiv._ARXIV_ID_RE.match(candidate["id"])
+
+
+def test_search_arxiv_papers_never_calls_ingest_document(monkeypatch):
+    """Enforces user story 19: search and ingest stay two separate calls,
+    with nothing wired to auto-chain them. `ingest_document` is
+    monkeypatched to raise if it is ever called, so any accidental
+    auto-ingest path fails this test loudly instead of passing silently."""
+
+    def fail_if_called(**kwargs):
+        raise AssertionError("search_arxiv_papers must never call ingest_document")
+
+    monkeypatch.setattr(arxiv, "ingest_document", fail_if_called)
+
+    candidates = arxiv.search_arxiv_papers(
+        "metamaterial", fetch_fn=lambda url: _SEARCH_ATOM_MULTI.encode("utf-8")
+    )
+
+    # Sanity: the search itself ran and found results -- this isn't passing
+    # merely because nothing happened.
+    assert len(candidates) == 2
