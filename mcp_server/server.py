@@ -1635,8 +1635,11 @@ def lookup_digikey_component(part_number: str, license: str, classification: str
 @mcp.tool()
 def lookup_mouser_component(part_number: str, license: str, classification: str) -> dict:
     """Same contract as lookup_digikey_component, against Mouser's Search API
-    (MOUSER_API_KEY). NOT run against the real API in this environment -- see
-    knowledge/mouser.py's module docstring."""
+    (MOUSER_API_KEY). On "ok", also carries price_breaks/availability/lead_time/
+    lifecycle_status/is_discontinued/suggested_replacement/rohs_status/reach_svhc/
+    product_compliance/trade_compliance -- so a manufacturability or export-
+    compliance check needs no second call. NOT run against the real API in this
+    environment -- see knowledge/mouser.py's module docstring."""
     return _lookup_mouser_datasheet(part_number, license=license, classification=classification)
 
 

@@ -130,7 +130,13 @@ class _MouserPricingAndCompliance:
     is_discontinued: bool | None
     suggested_replacement: str | None
     rohs_status: str | None
-    reach_svhc: list[Any] | None
+    # `list[str]`, not `list[dict]` like its three list-of-records siblings above --
+    # Mouser's own V1 Swagger spec (api.mouser.com/api/docs/V1, fetched directly)
+    # defines `REACH-SVHC` as `{"items": {"type": "string"}, "type": "array"}`, a
+    # flat list of substance names, unlike `PriceBreaks`/`ProductCompliance`/
+    # `TradeCompliance`, each `{"items": {"$ref": "#/definitions/<Name>"}}` --
+    # confirmed against the primary source, not assumed for consistency with them.
+    reach_svhc: list[str] | None
     product_compliance: list[dict[str, Any]] | None
     trade_compliance: list[dict[str, Any]] | None
 
