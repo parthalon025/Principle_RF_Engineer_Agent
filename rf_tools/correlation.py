@@ -311,12 +311,126 @@ def _build_temperature_note(
     )
 
 
+_TOLERANCE_WITHIN = "WITHIN_KNOWN_TOLERANCE"
+_TOLERANCE_EXCEEDS = "EXCEEDS_KNOWN_TOLERANCE"
+_TOLERANCE_NO_RECORD = "NO_TOLERANCE_ON_RECORD"
+
+
+def _classify_tolerance(diff_db: float, bound: float | None) -> str:
+    """Bucket one S-parameter's already-computed `max_magnitude_diff_db`
+    against its bound (`None` when no bound is on record for it)."""
+    if bound is None:
+        return _TOLERANCE_NO_RECORD
+    return _TOLERANCE_WITHIN if diff_db <= bound else _TOLERANCE_EXCEEDS
+
+
+def _build_tolerance_comparison(
+    comparison: dict[str, Any], known_tolerance_db: float | dict[str, float] | None
+) -> tuple[str, dict[str, str]]:
+    """Mechanically compare each S-parameter's already-computed
+    `max_magnitude_diff_db` (`compare_touchstone`'s own number, not
+    recomputed here) against `known_tolerance_db`, bucketing each into one
+    of exactly three values -- `WITHIN_KNOWN_TOLERANCE`, `EXCEEDS_KNOWN_
+    TOLERANCE`, `NO_TOLERANCE_ON_RECORD`. See `correlate_simulation_
+    measurement`'s docstring for what this is (a mechanical bound check)
+    and is not (never allocates blame between the simulation and the
+    design -- docs/adr/0009-no-specialist-peer-review-in-design-loop.md).
+
+    A uniform `float` applies the same bound to every S-parameter present
+    in `comparison`. A `dict` supplies a per-parameter bound, keyed the
+    same way `comparison` itself is (lower-case `s11`/`s21`/...; see
+    `correlate_simulation_measurement`'s docstring for the exact casing
+    requirement and what happens on a mismatched key). A parameter missing
+    from the dict -- or every parameter, when `known_tolerance_db` is
+    `None` entirely -- gets `NO_TOLERANCE_ON_RECORD`, the same honest
+    "nothing to compare against" default `_build_temperature_note` uses
+    when no temperature data is present.
+
+    Returns `(tolerance_comparison_note, detail)` -- matching
+    `_build_temperature_note`'s shape exactly: a plain-language note plus
+    a `{param: tolerance_comparison_value}` dict. This function only reads
+    `comparison`; the caller merges `detail` into `comparison[param]
+    ["tolerance_comparison"]` itself, the same way it already merges
+    `_build_temperature_note`'s result.
+
+    Raises `CorrelationError` if `known_tolerance_db` is a dict containing
+    a key that doesn't match any of `comparison`'s own keys.
+    """
+    param_keys = [
+        key
+        for key, value in comparison.items()
+        if isinstance(value, dict) and "max_magnitude_diff_db" in value
+    ]
+
+    if known_tolerance_db is None:
+        detail = {key: _TOLERANCE_NO_RECORD for key in param_keys}
+        return (
+            "No known_tolerance_db was supplied -- tolerance_comparison is "
+            f"NO_TOLERANCE_ON_RECORD for every S-parameter ({sorted(param_keys)}). "
+            "This does not mean the simulation and measurement agree or "
+            "disagree; it means no already-known bound was on hand to "
+            "compare the measured diff against.",
+            detail,
+        )
+
+    if isinstance(known_tolerance_db, dict):
+        valid_keys = set(param_keys)
+        for bad_key in known_tolerance_db:
+            if bad_key not in valid_keys:
+                raise CorrelationError(
+                    f"known_tolerance_db key {bad_key!r} does not match any "
+                    f"of comparison's own keys {sorted(valid_keys)}. Keys "
+                    "must match comparison's own lower-case S-parameter "
+                    "keys exactly (e.g. 's11', not 'S11')."
+                )
+
+    detail: dict[str, str] = {}
+    within: list[str] = []
+    exceeds: list[str] = []
+    no_record: list[str] = []
+    for key in param_keys:
+        diff_db = comparison[key]["max_magnitude_diff_db"]
+        bound = (
+            known_tolerance_db.get(key)
+            if isinstance(known_tolerance_db, dict)
+            else known_tolerance_db
+        )
+        status = _classify_tolerance(diff_db, bound)
+        detail[key] = status
+        if status == _TOLERANCE_WITHIN:
+            within.append(f"{key} ({diff_db:.3g} dB <= {bound:g} dB)")
+        elif status == _TOLERANCE_EXCEEDS:
+            exceeds.append(f"{key} ({diff_db:.3g} dB > {bound:g} dB)")
+        else:
+            no_record.append(key)
+
+    parts: list[str] = []
+    if within:
+        parts.append(f"within its known tolerance: {', '.join(within)}")
+    if exceeds:
+        parts.append(f"EXCEEDING its known tolerance: {', '.join(exceeds)}")
+    if no_record:
+        parts.append(f"no tolerance on record for: {', '.join(sorted(no_record))}")
+
+    bound_desc = (
+        f"a per-S-parameter bound {known_tolerance_db!r}"
+        if isinstance(known_tolerance_db, dict)
+        else f"a uniform {known_tolerance_db:g} dB bound"
+    )
+    note = (
+        f"Compared each S-parameter's max_magnitude_diff_db against "
+        f"{bound_desc} supplied via known_tolerance_db: " + "; ".join(parts) + "."
+    )
+    return note, detail
+
+
 def correlate_simulation_measurement(
     simulated: dict[str, Any] | rf.Network,
     measured: dict[str, Any] | rf.Network,
     fixture_path: str | None = None,
     output_fixture_path: str | None = None,
     temperature_tolerance_c: float = 5.0,
+    known_tolerance_db: float | dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Correlate a SIMULATED result against a MEASURED result: normalize
     frequency grid, reference impedance, and (when a fixture is given)
@@ -348,6 +462,30 @@ def correlate_simulation_measurement(
     `measured` happen to carry a `temperature_c` field; otherwise this is
     a documented no-op (see this module's docstring).
 
+    `known_tolerance_db` (optional, issue #254): a caller-supplied,
+    already-known bound in the same dB units `comparison`'s
+    `max_magnitude_diff_db` already reports, either a single `float`
+    applied uniformly to every S-parameter or a `dict` supplying a bound
+    per S-parameter. A dict's keys MUST match `comparison`'s own keys
+    exactly, which are lower-case -- `"s11"`/`"s12"`/`"s21"`/`"s22"` --
+    NOT the upper-case `"S11"`-style casing `s_parameters` uses elsewhere
+    in this module, e.g. `{"s11": 0.5, "s21": 1.0}`. A dict key that
+    doesn't match any of `comparison`'s own keys (including a mismatched-
+    case key like `"S11"`) raises `CorrelationError` naming the bad key
+    and the valid keys, rather than silently recording
+    `NO_TOLERANCE_ON_RECORD` for it.
+
+    When supplied, each S-parameter's entry in `comparison` gains a
+    mechanical `tolerance_comparison` field -- `"WITHIN_KNOWN_TOLERANCE"`,
+    `"EXCEEDS_KNOWN_TOLERANCE"`, or (for any S-parameter with no bound on
+    record, including every one when this argument is omitted entirely)
+    `"NO_TOLERANCE_ON_RECORD"`. This is a strictly mechanical inside/
+    outside/no-data comparison against a number the caller supplies -- it
+    never decides whether the simulation model or the fabricated design
+    explains a gap (docs/adr/0009-no-specialist-peer-review-in-design-
+    loop.md); that judgment stays in REDESIGN_DECISION's free-text
+    `rationale`.
+
     Returns a dict with:
       - `comparison`: `compare_touchstone`'s own return shape (per
         S-parameter `diff`/`magnitude_diff_db`/`max_magnitude_diff_db`/
@@ -359,6 +497,10 @@ def correlate_simulation_measurement(
       - `temperature_note` / `temperature_detail`: what temperature
         handling actually did (a documented no-op unless data was
         present).
+      - `tolerance_comparison_note`: plain language describing what was
+        compared against `known_tolerance_db` and what bound was used, or
+        that nothing was supplied to compare against (see
+        `known_tolerance_db` above).
       - `simulated_provenance` / `measured_provenance`: the provenance tag
         carried by each input, when present (defaulting to "SIMULATED"/
         "MEASURED" -- this project's own conventions for these two input
@@ -475,12 +617,19 @@ def correlate_simulation_measurement(
 
         comparison = compare_touchstone(str(simulated_path), str(measured_normalized_path))
 
+    tolerance_comparison_note, tolerance_comparison_detail = _build_tolerance_comparison(
+        comparison, known_tolerance_db
+    )
+    for key, status in tolerance_comparison_detail.items():
+        comparison[key]["tolerance_comparison"] = status
+
     return {
         "comparison": comparison,
         "reference_impedance_note": reference_impedance_note,
         "calibration_plane_note": calibration_plane_note,
         "temperature_note": temperature_note,
         "temperature_detail": temperature_detail,
+        "tolerance_comparison_note": tolerance_comparison_note,
         "simulated_provenance": simulated_provenance,
         "measured_provenance": measured_provenance,
         "provenance": "CALCULATED",

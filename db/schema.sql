@@ -196,6 +196,108 @@ CREATE TABLE IF NOT EXISTS material_family_brackets (
     UNIQUE(family, property)
 );
 
+-- Issue #256 (ADR-0027, "the alphabet admits only printed letters, and a
+-- letter's identity includes the process that made it"). A Process record
+-- is the "stated box" ADR-0027 point 4 requires before an
+-- Element/Coding-Alphabet library entry (a "letter") can be admitted as a
+-- measurement rather than an assumption: machine, ink and grade, substrate
+-- stack, pass count, achieved film thickness, and cure schedule -- ADR-0027's
+-- own field list, transcribed exactly, not re-derived.
+--
+-- `ink`/`ink_grade` are two columns, not one, because ADR-0027 lists them as
+-- two facts ("ink and grade") and issue #256's own field list glosses that
+-- as "ink (name/grade)" -- the ink material and its grade are independently
+-- meaningful and independently queryable (e.g. "every record on ACI SC1502
+-- carbon, any grade").
+--
+-- No UNIQUE constraint across these fields, deliberately, mirroring
+-- `material_properties` above rather than `material_family_brackets`: two
+-- runs on nominally identical settings are still two distinct,
+-- independently-referenceable Process records, since "achieved" film
+-- thickness in particular can vary run to run (issue #256's own Solution
+-- section).
+--
+-- This table is referenced by, but does not itself reference,
+-- `symbol_alphabet_entries` -- that table, and the NOT NULL foreign key
+-- enforcing ADR-0027's "no entry without a process reference" rule (user
+-- story 4), is separate, dependent work (issue #256's ticket 2).
+CREATE TABLE IF NOT EXISTS process_records (
+    id BIGSERIAL PRIMARY KEY,
+    machine TEXT NOT NULL,
+    ink TEXT NOT NULL,
+    ink_grade TEXT NOT NULL,
+    substrate_stack TEXT NOT NULL,
+    pass_count DOUBLE PRECISION NOT NULL,
+    achieved_film_thickness_m DOUBLE PRECISION NOT NULL,
+    cure_schedule TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Issue #256 ticket 2 (ADR-0027). A symbol-alphabet entry is a "letter":
+-- one printed-and-measured Symbol, keyed by the five-part key ADR-0027
+-- point 4 settled -- `(element family, symbol, band, incidence-angle
+-- range, process)`. `process_id` is `NOT NULL REFERENCES
+-- process_records(id)` because ADR-0027 is explicit that "an entry
+-- carrying no process reference is an assumption, not a measurement"
+-- (issue #256 user story 4) -- enforced here at the schema level as well
+-- as by `designs.element_alphabet.add_symbol_entry`'s own pure-function
+-- check, so an insert against a process id that doesn't exist fails
+-- loudly (FK violation) rather than creating a dangling reference (user
+-- story 16).
+--
+-- `frequency_low_hz`/`frequency_high_hz` and `incidence_angle_low_deg`/
+-- `incidence_angle_high_deg` are both stored as ranges, never a single
+-- point -- the same "a band, not a point" discipline `material_properties`
+-- already applies to frequency (issue #256 user story 14).
+--
+-- `geometry` (JSONB) holds the same primitive-dict shape
+-- `geometry/unit_cell.py` already produces/consumes -- a single "box"/
+-- "polygon" primitive dict, or a list of them -- so a fetched entry can be
+-- handed straight into `generate_unit_cell_array`/
+-- `generate_coded_unit_cell_array`'s `unit_cell`/`symbol_library` argument
+-- with no reshaping (user story 10). `response` (JSONB) holds the
+-- characterised `|Gamma|`/`angle Gamma` vs. frequency curve as an array of
+-- `{frequency_hz, magnitude, phase_deg}` points (user story 13) -- not a
+-- single test point.
+--
+-- No UNIQUE constraint on the five key fields, deliberately, the same
+-- reasoning as `process_records` above: two entries that agree on
+-- family/symbol/band/incidence-angle range but differ only in
+-- `process_id` (e.g. the same outline printed in carbon ink vs. MXene) are
+-- two separate letters, never merged (ADR-0027 point 4's own worked
+-- example; issue #256 user story 17). Nothing here expires or
+-- invalidates a row on a process change either (ADR-0027 point 3): a
+-- lookup against a process id that no longer matches simply returns
+-- nothing, which is a query-time behaviour (`designs/element_alphabet.py`),
+-- not a schema-level status column -- ADR-0027 explicitly rejected a
+-- library with a status field.
+--
+-- `provenance` is stored on the row (for consistency with how every other
+-- provenance-carrying table in this codebase names its own evidence class
+-- explicitly -- issue #256's Implementation Decisions) even though its
+-- value is never a caller choice: every row this program writes here is
+-- `MEASURED` (`knowledge.provenance.MEASURED`), enforced at the pure
+-- function layer, not by a CHECK constraint -- mirroring how
+-- `material_properties.provenance` is TEXT NOT NULL with the closed vocabulary
+-- enforced in Python, not SQL.
+CREATE TABLE IF NOT EXISTS symbol_alphabet_entries (
+    id BIGSERIAL PRIMARY KEY,
+    element_family TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    frequency_low_hz DOUBLE PRECISION NOT NULL,
+    frequency_high_hz DOUBLE PRECISION NOT NULL,
+    incidence_angle_low_deg DOUBLE PRECISION NOT NULL,
+    incidence_angle_high_deg DOUBLE PRECISION NOT NULL,
+    process_id BIGINT NOT NULL REFERENCES process_records(id),
+    geometry JSONB NOT NULL,
+    response JSONB NOT NULL,
+    provenance TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS symbol_alphabet_entries_family_symbol_idx
+ON symbol_alphabet_entries (element_family, symbol);
+
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw
 ON document_chunks USING hnsw (embedding vector_cosine_ops);
 
@@ -236,3 +338,131 @@ ON document_chunks USING gin (to_tsvector('english', content));
 
 CREATE INDEX IF NOT EXISTS designs_requirements_gin
 ON designs USING gin (requirements);
+
+-- Issue #258 ticket 1 (orchestration/approval_audit.py): the durable,
+-- independent audit trail for every human approval/refusal decision made
+-- against the design-loop gate (orchestration/approval.py) or the
+-- design-release gate (designs/release_approval.py). Both of those gates'
+-- signing keys are process-local and deliberately non-persistent -- a
+-- receipt does not survive a restart, by design -- so this table is the
+-- only record of "who decided what, when" that outlives one process.
+--
+-- `fingerprint_fields` is the exact decision content a human was shown
+-- (the same dict `request_loop_step_approval`/`request_design_release_
+-- approval` fingerprint their receipt to), stored in full -- never a
+-- summary -- so the record answers "what exactly did they approve", not
+-- just "did they approve something". `decision_fingerprint` is that same
+-- content's canonical SHA-256 hash (the identical algorithm both approval
+-- modules already use for their own receipts), stored alongside it so a
+-- caller holding a still-live receipt can confirm this audit row is for
+-- the same decision without re-deriving the hash.
+--
+-- `loop_id` is nullable: only a loop-step gate decision has one (a
+-- design-release decision's fingerprint has no loop_id at all) -- see
+-- orchestration/approval_audit.py's module docstring.
+--
+-- No UPDATE or DELETE statement is ever issued against this table by
+-- orchestration/approval_audit.py -- that module structurally provides no
+-- function that could (tests/test_approval_audit.py's structural test
+-- holds this at the Python-API level). This table has no trigger
+-- enforcing that at the SQL level; the guarantee is that nothing in this
+-- codebase's own I/O layer ever asks for one.
+CREATE TABLE IF NOT EXISTS approval_audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    gate TEXT NOT NULL,
+    loop_id TEXT,
+    fingerprint_fields JSONB NOT NULL,
+    decision_fingerprint TEXT NOT NULL,
+    approved_by TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS approval_audit_log_loop_id_idx
+ON approval_audit_log (loop_id);
+
+-- Issue #258 ticket 2 (orchestration/approval_cli.py): the working queue
+-- behind the local, human-only loop-step approval surface.
+--
+-- WHY THIS TABLE EXISTS. orchestration/design_loop.py's own module
+-- docstring ("STATE DESIGN") is explicit that a `DesignLoopState` is a
+-- plain, caller-held dict -- "this project has no long-running server
+-- process ... DesignLoopState is a plain, JSON-serializable dataclass the
+-- CALLER holds and passes back in on each step-advancing call (like a
+-- session token), not server-side persisted state." orchestration/tooling.py
+-- only ever writes to Postgres at a REDESIGN_DECISION flush -- i.e. AFTER
+-- that same iteration's ARCHITECTURE/MEASUREMENT/REDESIGN_DECISION gates
+-- have ALL already been satisfied. The direct consequence: at the moment a
+-- loop is actually sitting at a gated step waiting on a human (the state
+-- the approval surface exists to unblock), NOTHING about that loop has ever
+-- been written to Postgres yet -- `designs.status`, `decision_records`, and
+-- `engineering_results` all stay exactly as they were before this
+-- iteration started. There is no query over the tables above that can ever
+-- find "a loop currently sitting at a gated step" -- there is nothing there
+-- to find.
+--
+-- This table is what closes that gap: a human who hits a gate (from the
+-- agent conversation, or a script) writes ONE row here, up front, carrying
+-- everything orchestration.tooling.advance_design_loop_step will need to
+-- actually complete the step later -- the full state snapshot AND the
+-- step_input being proposed -- plus the exact fingerprint_fields
+-- (`orchestration.design_loop._decision_fingerprint_fields`'s
+-- `{loop_id, iteration, step, content}`) that `request_loop_step_approval`
+-- will bind the resulting receipt to. `orchestration/approval_cli.py`'s
+-- `list_pending_approvals` reads this table directly (no join needed to
+-- express "not yet resolved"): a request row is deleted the moment it is
+-- resolved, approved or refused (see that module's docstring) -- so
+-- "currently pending" is simply "a row still here". The durable record of
+-- WHAT was decided lives in `approval_audit_log` (ticket 1) instead, which
+-- this table is never a substitute for: this table is a mutable, short-lived
+-- work queue, not an audit trail, and rows are deleted once resolved.
+--
+-- `loop_state` is the FULL state dict a caller of start_new_design_loop /
+-- advance_design_loop_step already holds (design_loop.py's DesignLoopState.
+-- to_dict(), extended with design_id/design_key/persisted_decision_count) --
+-- stored whole, not reconstructed, because that dict is the ONLY copy of
+-- this loop's history that exists anywhere outside the process that is
+-- currently holding it in memory.
+CREATE TABLE IF NOT EXISTS pending_loop_step_approvals (
+    id BIGSERIAL PRIMARY KEY,
+    design_id BIGINT REFERENCES designs(id) ON DELETE CASCADE,
+    loop_id TEXT NOT NULL,
+    iteration INTEGER NOT NULL,
+    step TEXT NOT NULL,
+    fingerprint_fields JSONB NOT NULL,
+    loop_state JSONB NOT NULL,
+    step_input JSONB NOT NULL,
+    submitted_by TEXT NOT NULL,
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS pending_loop_step_approvals_design_id_idx
+ON pending_loop_step_approvals (design_id);
+
+CREATE INDEX IF NOT EXISTS pending_loop_step_approvals_loop_id_idx
+ON pending_loop_step_approvals (loop_id);
+
+-- The design-release gate's own version of the table above (issue #258
+-- ticket 3): one row per pending "may this design revision move to
+-- RELEASED" decision, holding exactly what
+-- `designs.release_approval.release_fingerprint_fields` needs
+-- (design_id/design_key/revision/target) plus who submitted it. A release
+-- decision has no mid-loop state to snapshot (no loop_state/step_input
+-- columns here, unlike the table above) -- the fingerprint fields ARE the
+-- whole decision. A row is deleted the moment it is resolved (approved or
+-- refused), same convention as `pending_loop_step_approvals`; the durable
+-- record of what was decided lives in `approval_audit_log`
+-- (gate='design_release') instead.
+CREATE TABLE IF NOT EXISTS pending_design_release_approvals (
+    id BIGSERIAL PRIMARY KEY,
+    design_id BIGINT REFERENCES designs(id) ON DELETE CASCADE,
+    design_key TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    target TEXT NOT NULL,
+    fingerprint_fields JSONB NOT NULL,
+    submitted_by TEXT NOT NULL,
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS pending_design_release_approvals_design_id_idx
+ON pending_design_release_approvals (design_id);

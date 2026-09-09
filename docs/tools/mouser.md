@@ -1,0 +1,40 @@
+# Mouser Search API
+
+Mouser Electronics is an electronic-component distributor — a warehouse-and-catalog company — and its Search API is the programmatic version of typing a part number into mouser.com: given a manufacturer's part number (or a keyword), it answers whether Mouser stocks it, at what price and quantity breaks, and where its datasheet PDF lives. This repo calls it as one of three "component-sourcing" tools (alongside DigiKey and Nexar) so a proposed physical part — a substrate, an RF connector, a lumped element — can be checked against a real catalog and have its datasheet pulled in as cited evidence, instead of trusting the model's memory that a part number exists.
+
+## What it is
+
+A REST API suite ("Mouser APIs") published by Mouser Electronics, Inc. at `api.mouser.com`, covering Search, Cart, Order and Order History. Its interactive docs live at `https://api.mouser.com/api/docs/ui/index`, a Swagger-Net UI shell that loads its real OpenAPI (Swagger 2.0) definitions from two JSON endpoints, `https://api.mouser.com/api/docs/V1` and `.../V2` — fetched directly for this report (see Sources) and the ground truth below. V2 replaces three V1 search operations (`keywordandmanufacturer`, `partnumberandmanufacturer`, `manufacturerlist`) with cleaner-schema equivalents, which V1 marks deprecated. No changelog or semver was found beyond that V1→V2 migration, so overall maturity is UNKNOWN.
+
+## Full capabilities
+
+Five Search endpoints: `search/keyword` and `search/partnumber` (POST, no manufacturer filter), plus V2's `search/keywordandmanufacturer`, `search/partnumberandmanufacturer`, and `search/manufacturerlist` (GET). Each call returns at most 50 parts (`records`/`startingRecord` page further); part-number search accepts up to 10 pipe-separated numbers per call. Every returned `MouserPart` carries ~25 fields: `Availability`, `LeadTime`, `AvailabilityOnOrder[]` (incoming-stock quantity/date), `PriceBreaks[]` (quantity/price/currency tiers), `LifecycleStatus`/`IsDiscontinued`/`SuggestedReplacement`, `ROHSStatus`, `REACH-SVHC[]` (substances of concern), `ProductCompliance[]`/`TradeCompliance[]`, `ProductAttributes[]` (free-text parametric name/value pairs — output-only, not a searchable filter), `DataSheetUrl`, `ProductDetailUrl`, and a `MultiSimBlue` integer flag that appears to mark parts with a ready model for Mouser's NI-powered MultiSIM BLUE simulator [businesswire.com/news/home/20141002005741/en] — UNCONFIRMED whether the model itself is retrievable via this API. The same API family also includes a Cart API (build/edit a cart, schedule deliveries) and an Order + Order History API (submit/preview orders, reorder, currencies/countries, order lookup) — full quote-to-order automation, not just search.
+
+## Integrations & interfaces
+
+Plain HTTPS REST; output negotiable as JSON, XML, text-JSON, text-XML, or form-url-encoded, JSON recommended for speed [search summary of mouser.com/en/api-search, page itself unreachable — see Sources]. Auth is a flat `apiKey` query-string parameter — no OAuth — issued from a free My Mouser account; Search, Cart and Order each need their own key [github.com/sparkmicro/mouser-api]. Simpler than DigiKey's OAuth2 `client_credentials` flow or Nexar's OAuth2 + GraphQL.
+
+## Licensing & cost
+
+A proprietary vendor API, not open source. Every direct attempt to fetch Mouser's own pricing/terms pages (`mouser.com/api-hub`, `/en/api-search`, `/en/api-solutions`, `/pdfDocs/api-guide.pdf`) returned an Akamai "Access Denied" bot-protection page — confirmed by grepping the response bodies — so cost is corroborated, not confirmed firsthand: a search-engine summary of Mouser's own (blocked-to-us) pages, the `openhoo/mouserhoo` README (which quotes Mouser's docs directly), and the `PatrickWalther/go-mouser` client's rate-limiter all agree the Search API is free with a My Mouser account, capped at 50 results/call, 30 calls/minute, 1,000 calls/day — not a paid tier.
+
+## How this repo uses it today
+
+`knowledge/mouser.py`'s `lookup_mouser_datasheet()` calls exactly one endpoint, `/api/v1/search/partnumber`, POSTing `{"SearchByPartRequest": {"mouserPartNumber": part_number, "partSearchOptions": "None"}}` with `apiKey` as a query parameter (`_search_by_part_number`). `_parse_matches` reads only `SearchResults.Parts[].ManufacturerPartNumber` / `.Manufacturer` / `.DataSheetUrl` off the first match into a `ComponentMatch`, downloads that datasheet, and hands it to the unchanged `ingest_document(source_type="datasheet")` pipeline. The module's own docstring had flagged its response-envelope guess and `partSearchOptions`'s valid values as unverified; both are now confirmed exactly right against Mouser's own V1 Swagger spec fetched for this report (`SearchResponseRoot.SearchResults.Parts[]`, and `partSearchOptions` accepting `"None"`/`"Exact"`). It gates on `ALLOW_EXTERNAL_NETWORK_TOOLS=true` and is fully dependency-injected for testing; no `MOUSER_API_KEY` is registered here, so it remains unrun against the live API end-to-end.
+
+## Capabilities not yet used here
+
+The adapter discards roughly 20 of the ~25 fields every match already returns — `PriceBreaks`, `Availability`, `LeadTime`, `LifecycleStatus`/`IsDiscontinued`/`SuggestedReplacement`, `ROHSStatus`/`REACH-SVHC`/compliance — all free in the same response and directly useful for the manufacture-cost and compliance trade-offs CLAUDE.md treats as first-class. `search/keyword` and `search/keywordandmanufacturer` are unused, so the model cannot discover candidate parts from a free-text RF spec ("2.4 GHz SMA edge connector") the way it can from an exact MPN — though that ceiling is Mouser's own, not just the adapter's: `ProductAttributes` are returned but never filterable, so no distributor here supports true parametric search via Mouser. Batch part-number search (10 parts, pipe-separated) and pagination are unused — the adapter always searches one part and keeps only `matches[0]`. The Cart/Order/Order-History half of the API family is untouched, consistent with CLAUDE.md's "nothing that spends money without a human yes" — wiring it up would need explicit approval gating first. `mouserPaysCustomsAndDuties` (landed-cost pricing) is unused and would matter for cross-border sourcing. The `MultiSimBlue` flag is unused and its practical value unconfirmed — worth a follow-up only if Mouser's own site exposes an actual downloadable SPICE model behind it.
+
+## Sources
+
+- https://api.mouser.com/api/docs/V1 (official Swagger 2.0/OpenAPI JSON spec, fetched directly — primary source)
+- https://api.mouser.com/api/docs/V2 (official Swagger 2.0/OpenAPI JSON spec, fetched directly — primary source)
+- https://api.mouser.com/api/docs/ui/index (official Swagger-Net UI shell; reachable, but its JS-rendered body carries no schema — the two JSON URLs above were recovered from its embedded `swaggerNetConfig.discoveryPaths` config)
+- https://www.mouser.com/api-hub/, https://www.mouser.com/en/api-search/, https://www.mouser.com/en/api-solutions/, https://www.mouser.com/pdfDocs/api-guide.pdf — all attempted directly; every one returned an Akamai "Access Denied" bot-protection page, confirmed unreachable for this report
+- https://github.com/sparkmicro/mouser-api (community Python client — key registration/endpoint corroboration)
+- https://github.com/AlexSartori/pymouser (community Python client — response field corroboration)
+- https://github.com/openhoo/mouserhoo (community TypeScript SDK — quotes Mouser's own rate-limit documentation directly)
+- https://pkg.go.dev/github.com/PatrickWalther/go-mouser (community Go client — independent rate-limit and endpoint corroboration)
+- https://www.businesswire.com/news/home/20141002005741/en (Mouser press release on MultiSIM BLUE, for the `MultiSimBlue` field's likely meaning)
+- `knowledge/mouser.py` (this repo's adapter, read in full)

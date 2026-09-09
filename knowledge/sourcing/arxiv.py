@@ -59,6 +59,20 @@ call to a third party the instant they run. arXiv, like this package's
 3GPP/ETSI/FCC siblings, needs no account or credential
 (info.arxiv.org/help/api/user-manual.html, quoted above) -- same
 ungated posture as those.
+
+Discovery search (issue #257): `search_arxiv_papers` below is a second,
+separate entry point alongside `ingest_arxiv_paper` -- "find candidates
+about a topic" rather than "fetch document #Y". It hits the same
+credential-free query API named above, but with its `search_query`
+parameter (a keyword/topic search over titles, abstracts, authors and
+categories) instead of `id_list` (fetch by known identifier, what
+`ingest_arxiv_paper` uses, indirectly, via arxiv-doc-builder). It returns
+a ranked list of *candidate* dicts (id/title/published/abstract) for a
+caller to review -- it never writes to the database and never calls
+`ingest_document`, directly or indirectly. Bringing a candidate in as
+evidence is a separate, deliberate call to `ingest_arxiv_paper`, with its
+own required `license`/`classification` per ADR-0001; search finding a
+paper is not the same as this program trusting it.
 """
 
 from __future__ import annotations
@@ -66,14 +80,17 @@ from __future__ import annotations
 import re
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode, urlparse
 
 import yaml
 
 from knowledge.ingest import ingest_document
 from knowledge.provenance import arxiv_preprint_authority_rank
+from knowledge.sourcing._http import download_bytes
 
 # arXiv ids are either the modern "YYMM.NNNNN" form or the pre-2007
 # "archive/YYMMNNN" form (e.g. "cond-mat/0207270") -- both documented in
@@ -249,3 +266,155 @@ def ingest_arxiv_paper(
         revision=frontmatter.get("version"),
         extra_metadata=extra_metadata,
     )
+
+
+# --- search_arxiv_papers: topic/keyword discovery search (issue #257) -----
+#
+# Everything below is a second, separate entry point from ingest_arxiv_paper
+# above: it queries the same credential-free arXiv query API, but with the
+# `search_query` parameter (topic/keyword search) instead of `id_list`
+# (fetch by known identifier). It returns candidate dicts for review, never
+# writes to the database, and never calls ingest_document -- see this
+# module's docstring ("Discovery search (issue #257)") for the full
+# rationale.
+
+# arXiv's query API base -- the same no-auth endpoint this module's
+# docstring already cites (arXiv API User Manual), used here with
+# `search_query` rather than `id_list`. https (not http) matches arXiv's
+# own current documentation and arxiv_doc_builder/arxiv_metadata.py's
+# `_API_URL`.
+_ARXIV_QUERY_API_URL = "https://export.arxiv.org/api/query"
+
+# Only the plain Atom namespace is needed to pull id/title/published/summary
+# out of a search response -- the arxiv: extension namespace (primary
+# category, DOI, journal ref) that arxiv_doc_builder/arxiv_metadata.py's
+# fetch_metadata also reads is not part of the minimal candidate shape this
+# function returns (id/title/published/abstract -- see search_arxiv_papers'
+# docstring).
+_ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
+
+
+def _search_query_url(query: str, max_results: int) -> str:
+    """Build the `search_query`-form query API URL: `query` verbatim (a
+    caller may pass a bare keyword string or arXiv's own field-prefixed
+    syntax, e.g. "all:metamaterial AND cat:physics.app-ph" -- this function
+    does not interpret or validate it, only URL-encodes it), `start=0`
+    (always the first page -- this function does not paginate), and
+    `max_results` capping how many candidates come back."""
+    params = {"search_query": query, "start": 0, "max_results": max_results}
+    return f"{_ARXIV_QUERY_API_URL}?{urlencode(params)}"
+
+
+def _entry_text(entry: ET.Element, path: str) -> str | None:
+    """Return the text of `entry`'s first child matching `path` (an
+    `atom:`-prefixed tag name), or None if absent."""
+    el = entry.find(path, _ATOM_NS)
+    return el.text if el is not None else None
+
+
+def _clean_text(text: str | None) -> str | None:
+    """Collapse the indentation/newlines arXiv's pretty-printed Atom XML
+    puts inside <title>/<summary> text nodes down to single-line,
+    single-spaced text. Mirrors the whitespace-collapsing half of
+    arxiv_doc_builder/arxiv_metadata.py's `_normalize` (reimplemented
+    minimally here rather than imported -- see this module's docstring on
+    why arxiv_doc_builder, a separate independently-versioned package, is
+    only ever shelled out to, never imported as a library). Returns None
+    for None or whitespace-only input."""
+    if text is None:
+        return None
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    return collapsed or None
+
+
+def _candidate_id_from_entry(entry: ET.Element) -> str | None:
+    """Extract the versioned arXiv id (e.g. "2401.01234v2", or the legacy
+    "cond-mat/0207270v1") from an Atom <entry>'s <id> URL
+    (e.g. "http://arxiv.org/abs/2401.01234v2") -- the same tail
+    arxiv_doc_builder/arxiv_metadata.py's `parse_version_from_id` pulls out
+    of the by-id form of this same feed. This is exactly the id form
+    `_ARXIV_ID_RE` accepts and `ingest_arxiv_paper` expects, so a candidate
+    from this function can be handed straight to `ingest_arxiv_paper`
+    unchanged."""
+    id_url = _entry_text(entry, "atom:id")
+    if not id_url:
+        return None
+    path = urlparse(id_url).path
+    if path.startswith("/abs/"):
+        return path[len("/abs/") :] or None
+    return id_url.rsplit("/", 1)[-1] or None
+
+
+def _parse_search_candidates(atom_bytes: bytes) -> list[dict[str, Any]]:
+    """Parse a `search_query` Atom response into an ordered list of
+    candidate dicts, one per <entry>, in the order arXiv's own relevance
+    ranking returned them (feed order is preserved, nothing here re-sorts).
+    A response with no <entry> elements -- a real "no matches" search, not
+    a fetch failure -- parses cleanly to []."""
+    root = ET.fromstring(atom_bytes)
+    candidates: list[dict[str, Any]] = []
+    for entry in root.findall("atom:entry", _ATOM_NS):
+        candidates.append(
+            {
+                "id": _candidate_id_from_entry(entry),
+                "title": _clean_text(_entry_text(entry, "atom:title")),
+                # arXiv's <published> is a full ISO timestamp; a candidate
+                # only needs the paper's calendar date.
+                "published": (_entry_text(entry, "atom:published") or "")[:10] or None,
+                "abstract": _clean_text(_entry_text(entry, "atom:summary")),
+            }
+        )
+    return candidates
+
+
+def search_arxiv_papers(
+    query: str,
+    *,
+    max_results: int = 10,
+    fetch_fn: Callable[[str], bytes] = download_bytes,
+) -> list[dict[str, Any]]:
+    """Search arXiv by topic/keyword and return a ranked list of
+    **candidates for review** -- not documents in the corpus, and nothing
+    this function does writes to the database or calls `ingest_document`
+    (directly or indirectly), under any input. Finding a paper and
+    trusting it as evidence are two separate, deliberate steps: hand a
+    chosen candidate's `id` straight to `ingest_arxiv_paper` (unchanged --
+    same id form, see `_candidate_id_from_entry`) along with the
+    `license`/`classification` ADR-0001 requires for that specific paper.
+
+    `query` is arXiv's `search_query` parameter -- a keyword/topic search
+    over titles, abstracts, authors and categories (as opposed to
+    `ingest_arxiv_paper`'s `id_list`-style fetch by already-known
+    identifier). Accepts a bare keyword string or arXiv's own
+    field-prefixed syntax (e.g. "all:conformal metamaterial absorber" or
+    "abs:magnetic mirror AND cat:physics.app-ph"); this function passes it
+    through verbatim (URL-encoded), it does not interpret or validate it --
+    see the arXiv API User Manual (cited in this module's docstring) for
+    the full query grammar.
+
+    Each candidate dict carries `id` (the same versioned arXiv id form
+    `ingest_arxiv_paper` accepts, e.g. "2401.01234v2"), `title`,
+    `published` (the paper's date, "YYYY-MM-DD"), and `abstract` -- enough
+    to judge relevance before spending an ingestion pass on it. Results
+    come back in the order arXiv's own relevance ranking returned them.
+
+    A topic with no matches returns `[]` -- a real "nobody has published
+    this" result, not an error. A `fetch_fn` failure (the API unreachable,
+    a network error) is deliberately *not* caught here and propagates as
+    a raised exception instead, so "nobody has published this" and "the
+    search itself failed" can never be confused with each other (user
+    stories 8-9, issue #257).
+
+    `max_results` caps how many candidates come back in one call (arXiv's
+    own `max_results` query parameter, default 10) -- small enough that a
+    caller, human or model, can actually triage the list rather than
+    getting back an unbounded page to sort through by hand.
+
+    `fetch_fn` defaults to a real HTTP GET (`knowledge.sourcing._http.
+    download_bytes`) against the same credential-free query API this
+    module's docstring already confirms needs no authentication, and
+    exists so tests can inject a stub instead of hitting the network --
+    the same seam every other sourcing client in this package uses.
+    """
+    atom_bytes = fetch_fn(_search_query_url(query, max_results))
+    return _parse_search_candidates(atom_bytes)

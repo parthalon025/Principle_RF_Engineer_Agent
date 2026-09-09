@@ -47,7 +47,7 @@ from typing import Any
 
 from designs import db
 from designs.lifecycle import IllegalStatusTransitionError, legal_transitions_from
-from designs.release_approval import DesignReleaseApprovalError
+from designs.release_approval import DesignReleaseApprovalError, DesignReleaseApprovalReceipt
 from designs.validation import InvalidRequirementsError, InvalidVerificationStatusError
 
 
@@ -222,6 +222,42 @@ def record_engineering_result(
         conn.close()
 
     return {"engineering_result_id": row["id"]}
+
+
+def coerce_release_approval(approval: Any) -> Any:
+    """dict -> `DesignReleaseApprovalReceipt` coercion for a release-approval
+    receipt that already crossed an agent/MCP JSON tool boundary and back
+    (issue #258 ticket 4).
+
+    Mirrors `orchestration.design_loop`'s own `_coerce_receipt` -- same
+    shape, but for `DesignReleaseApprovalReceipt` instead of
+    `LoopStepApprovalReceipt`: a dict is rebuilt via
+    `DesignReleaseApprovalReceipt(**approval)` (exactly what that class's
+    own docstring in `designs/release_approval.py` says a `to_dict()`
+    output reconstructs through); anything else -- `None`, or an
+    already-constructed receipt -- passes through unchanged.
+
+    A dict that doesn't even match the receipt's fields (missing/extra
+    keys) also passes through unchanged rather than raising `TypeError`
+    here: `designs.release_approval.check_design_release_approval_gate`
+    already refuses anything that isn't a real `DesignReleaseApprovalReceipt`
+    instance with a clear message, so a malformed dict is left for that
+    existing check to reject cleanly instead of crashing this coercion
+    step. This function never fabricates a valid receipt -- it only
+    reconstructs one that `request_design_release_approval` (via the
+    ticket-3 `approval_cli`) already minted elsewhere.
+
+    Shared by `agent/main.py`'s and `mcp_server/server.py`'s
+    `advance_design_status` tool wrappers, which both import it the same
+    way they already import `update_design_status` below, so the coercion
+    logic lives in exactly one place instead of two hand-duplicated
+    copies."""
+    if isinstance(approval, dict):
+        try:
+            return DesignReleaseApprovalReceipt(**approval)
+        except TypeError:
+            return approval
+    return approval
 
 
 def update_design_status(

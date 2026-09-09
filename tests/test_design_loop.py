@@ -57,6 +57,7 @@ from orchestration.design_loop import (
     DesignLoopValidationError,
     DesignStep,
     LoopDecision,
+    _optimizer_class_for,
     _simulation_adapter_for,
     advance_loop_step,
     start_design_loop,
@@ -1003,6 +1004,106 @@ def test_correlation_consumes_external_measurement_result_with_no_changes(tmp_pa
     assert "s11" in decision.result["comparison"]
 
 
+def test_correlation_passes_known_tolerance_db_through_to_the_recorded_decision(
+    tmp_path: Path,
+):
+    """issue #254: known_tolerance_db in step_input reaches
+    rf_tools.correlation.correlate_simulation_measurement the same
+    pass-through way fixture_path/output_fixture_path/
+    temperature_tolerance_c already do, and its mechanical, three-value
+    tolerance_comparison result (never a model-vs-design verdict -- see
+    docs/adr/0009) shows up in the recorded decision's result."""
+    touchstone_path = _write_measured_touchstone(tmp_path, name="for_tolerance")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, step_input_override={"touchstone_file": str(touchstone_path)}
+    )
+
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_loop_step(
+        state,
+        {"simulated": simulated_override, "known_tolerance_db": 0.01},
+    )
+
+    decision = state.decisions[-1]
+    assert decision.kind == "correlation"
+    comparison = decision.result["comparison"]
+    assert comparison["s11"]["tolerance_comparison"] == "EXCEEDS_KNOWN_TOLERANCE"
+    assert "tolerance_comparison_note" in decision.result
+    allowed = {"WITHIN_KNOWN_TOLERANCE", "EXCEEDS_KNOWN_TOLERANCE", "NO_TOLERANCE_ON_RECORD"}
+    assert comparison["s11"]["tolerance_comparison"] in allowed
+
+
+def test_correlation_omits_known_tolerance_db_still_records_no_data_by_default(tmp_path: Path):
+    """User story 15: a run that never supplies known_tolerance_db behaves
+    exactly like it did before this feature -- no new required field, no
+    new gate -- and each S-parameter honestly reads NO_TOLERANCE_ON_RECORD
+    rather than a fabricated pass/fail."""
+    touchstone_path = _write_measured_touchstone(tmp_path, name="no_tolerance_supplied")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, step_input_override={"touchstone_file": str(touchstone_path)}
+    )
+
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_loop_step(state, {"simulated": simulated_override})
+
+    decision = state.decisions[-1]
+    assert decision.result["comparison"]["s11"]["tolerance_comparison"] == "NO_TOLERANCE_ON_RECORD"
+
+
+def test_redesign_decision_step_input_shape_is_unchanged_by_tolerance_comparison():
+    """Regression guard for issue #254's own scope boundary: this feature
+    lives entirely in the ungated CORRELATION step (rf_tools/correlation.py)
+    and orchestration/design_loop.py's _handle_correlation pass-through --
+    it must leave REDESIGN_DECISION's required step_input fields,
+    DesignLoopValidationError behavior, and the legal next_action values
+    completely untouched (docs/adr/0009; issue #254 user story 16)."""
+    assert REDESIGN_ACTIONS == frozenset({"iterate", "accept_design"})
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _run_full_cycle_up_to_redesign(state)
+
+    for missing_field in ("decision", "rationale", "next_action"):
+        step_input = {
+            "decision": "x",
+            "rationale": "y",
+            "next_action": "iterate",
+        }
+        del step_input[missing_field]
+        fields = _fingerprint(state, DesignStep.REDESIGN_DECISION, step_input)
+        receipt = request_loop_step_approval(
+            fields, approved_by="jane", approval_callback=lambda f: True
+        )
+        with pytest.raises(DesignLoopValidationError, match="missing required field"):
+            advance_loop_step(state, step_input, approval=receipt)
+
+    # A known_tolerance_db-shaped extra field is not part of this step's
+    # schema and must not be silently accepted as a substitute for the
+    # real required fields, nor smuggle a fourth next_action value in.
+    step_input = {
+        "decision": "x",
+        "rationale": "y",
+        "next_action": "known_tolerance_db",
+    }
+    fields = _fingerprint(state, DesignStep.REDESIGN_DECISION, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
+    with pytest.raises(DesignLoopValidationError, match="next_action"):
+        advance_loop_step(state, step_input, approval=receipt)
+
+
 def test_advance_loop_step_rejects_external_measurement_with_no_approval(tmp_path: Path):
     touchstone_path = _write_measured_touchstone(tmp_path, name="no_approval")
     state = start_design_loop(REQUIREMENTS)
@@ -1625,6 +1726,18 @@ def test_patch_declares_nec2_and_absorber_declares_meep():
     assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
 
 
+def test_reflection_phase_and_diffusive_declare_palace_floquet():
+    """#252 ticket 3: both Tier B unit-cell families now route to Palace,
+    not to whichever handler used to answer for an unsettled adapter."""
+    state = start_design_loop(REQUIREMENTS)
+    reflection_phase = _grant_and_advance(
+        state, DesignStep.ARCHITECTURE, _architecture_input("REFLECTION_PHASE")
+    )
+    diffusive = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("DIFFUSIVE"))
+    assert _simulation_adapter_for(reflection_phase) == "PALACE_FLOQUET"
+    assert _simulation_adapter_for(diffusive) == "PALACE_FLOQUET"
+
+
 # --- #241: an undeclared simulation adapter is a loud failure, not NEC2 -----
 #
 # NEC2 is a thin-wire method-of-moments solver: its whole geometry vocabulary
@@ -1638,9 +1751,9 @@ def test_patch_declares_nec2_and_absorber_declares_meep():
 # designs/design_families.py rather than being left silently unset.
 _FAMILIES_WITH_NO_SETTLED_ADAPTER = [
     # ABSORBER_TRANSMISSIVE was here until #243 settled it on MEEP_FLOQUET.
-    "DIFFUSIVE",
+    # DIFFUSIVE and REFLECTION_PHASE were here until #252 ticket 3 settled
+    # both on PALACE_FLOQUET -- see the PALACE_FLOQUET dispatch tests below.
     "POLARIZATION_CONVERTER",
-    "REFLECTION_PHASE",
 ]
 
 
@@ -1693,21 +1806,27 @@ def test_the_transmissive_absorber_now_routes_to_meep_and_never_to_nec2(monkeypa
 def test_a_declared_adapter_this_loop_cannot_drive_is_reported_not_routed_to_nec2(monkeypatch):
     """The other half of the same defect: a family may declare a solver this
     loop has no handler wired for. That must be said, not silently answered
-    by whichever handler happens to be last."""
-    palace = _dc_replace(
+    by whichever handler happens to be last.
+
+    "HFSS_DRIVEN" is used here (rather than PALACE_FLOQUET, this test's
+    original example) because #252 ticket 3 wired PALACE_FLOQUET into
+    `_SIMULATION_ADAPTERS` -- see test_reflection_phase_and_diffusive_route_
+    to_palace_not_nec2 below for that adapter's own dispatch coverage. This
+    test needs a name that stays genuinely unwired."""
+    unwired = _dc_replace(
         design_families_module.ABSORBER,
         simulation_adapter=design_families_module.SimulationAdapter(
-            name="PALACE_FLOQUET", reason="a solver this loop has no handler for yet"
+            name="HFSS_DRIVEN", reason="a solver this loop has no handler for"
         ),
     )
-    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: palace)
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: unwired)
 
     def exploding_nec2(*args, **kwargs):
         raise AssertionError("NEC2 must never stand in for an unwired adapter")
 
     monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
     state = _at_simulation("ABSORBER")
-    with pytest.raises(_SimulatorError, match="PALACE_FLOQUET"):
+    with pytest.raises(_SimulatorError, match="HFSS_DRIVEN"):
         advance_loop_step(
             state,
             {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
@@ -1797,6 +1916,171 @@ def test_the_absorbers_closed_form_analysis_is_kept_alongside_the_full_wave_run(
     kinds = [(d.step, d.result.get("function")) for d in state.decisions]
     assert ("analysis", "absorber_band_response") in kinds
     assert ("simulation", "run_meep_simulation") in kinds
+
+
+# ---------------------------------------------------------------------------
+# #252 ticket 3: SIMULATION dispatches REFLECTION_PHASE/DIFFUSIVE to
+# PALACE_FLOQUET, mirroring the ABSORBER/MEEP_FLOQUET dispatch tests above.
+# ---------------------------------------------------------------------------
+
+# The physically-correct shape for a REFLECTION_PHASE/DIFFUSIVE candidate:
+# ground_backed=True (the family's own requires_ground_plane=True/
+# port_count=1 physics) plus at least one embedded conductor patch (the
+# printed metasurface element these families are designed by).
+_GROUND_BACKED_METASURFACE_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "ground_backed": True,
+    "pec_patches": [
+        {"name": "patch", "p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+}
+
+
+def _fake_palace_result(**_kwargs):
+    return {
+        "provenance": "SIMULATED",
+        "simulator": "Palace",
+        "status": "COMPLETED",
+        "s_parameters": {
+            "computed": True,
+            "frequency_hz": [10e9],
+            "modes": {},
+            "specular": {"S11_TE": [complex(-1.0, 0.0)]},
+        },
+        "conservation_check": {
+            "all_ok": True,
+            "power_balance": [],
+            "passivity": [],
+            "reciprocity": [],
+        },
+    }
+
+
+@pytest.mark.parametrize("family", ["REFLECTION_PHASE", "DIFFUSIVE"])
+def test_reflection_phase_and_diffusive_route_to_palace_not_nec2(family, monkeypatch):
+    """#252 ticket 3: a candidate whose geometry sets ground_backed=True and
+    carries a pec_patches entry reaches Palace, never NEC2, and records a
+    SIMULATED result carrying Palace's own s_parameters/specular/
+    conservation_check output -- the per-diffraction-order reflectance and
+    phase this family actually needs (issue #252's user stories 6/7), not a
+    quantity borrowed from another family's physics."""
+    captured = {}
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError(f"NEC2 must never be reached for {family}")
+
+    def fake_run(**kwargs):
+        captured["kwargs"] = kwargs
+        return _fake_palace_result()
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", fake_run)
+
+    state = _at_simulation(family)
+    state = advance_loop_step(
+        state, {"geometry": dict(_GROUND_BACKED_METASURFACE_GEOMETRY), "frequency_hz": 10e9}
+    )
+
+    assert captured["kwargs"]["geometry"]["ground_backed"] is True
+    assert captured["kwargs"]["geometry"]["pec_patches"]
+    assert captured["kwargs"]["frequency_hz"] == 10e9
+
+    result = state.decisions[-1].result
+    assert result["function"] == "run_palace_simulation"
+    assert result["simulator"] == "Palace"
+    assert result["s_parameters"]["specular"] == {"S11_TE": [complex(-1.0, 0.0)]}
+    assert result["specular"] == {"S11_TE": [complex(-1.0, 0.0)]}
+    assert result["conservation_check"]["all_ok"] is True
+    assert state.decisions[-1].provenance == "SIMULATED"
+
+
+@pytest.mark.parametrize("family", ["REFLECTION_PHASE", "DIFFUSIVE"])
+def test_reflection_phase_and_diffusive_never_silently_fall_back_to_nec2(family, monkeypatch):
+    """The failure this dispatch exists to remove: quietly running the wire
+    solver -- or Palace on this module's OTHER (transmissive, all-
+    dielectric) shape -- on a metasurface cell and reporting success. An
+    unsupported geometry (missing ground_backed/pec_patches) must raise,
+    naming the gap, and must never reach a solver run at all."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError(f"NEC2 must never be reached for {family}")
+
+    def exploding_palace_run(*args, **kwargs):
+        raise AssertionError(
+            f"run_palace_simulation must never run on an unsupported {family} geometry"
+        )
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", exploding_palace_run)
+
+    state = _at_simulation(family)
+    with pytest.raises(_SimulatorError) as exc:
+        advance_loop_step(
+            state,
+            {
+                "geometry": {"unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01}},
+                "frequency_hz": 10e9,
+            },
+        )
+    message = str(exc.value)
+    assert "ground_backed=True" in message
+    assert "pec_patches" in message
+    assert state.current_step == DesignStep.SIMULATION.value
+    assert all(d.step != DesignStep.SIMULATION.value for d in state.decisions)
+
+
+def test_reflection_phase_missing_only_pec_patches_names_only_that_gap(monkeypatch):
+    """A geometry that already sets ground_backed=True but has no
+    pec_patches must name only the missing patch, not the (already-
+    satisfied) ground_backed gap too."""
+
+    def exploding_palace_run(*args, **kwargs):
+        raise AssertionError("run_palace_simulation must never run on an unsupported geometry")
+
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", exploding_palace_run)
+    state = _at_simulation("REFLECTION_PHASE")
+    with pytest.raises(_SimulatorError) as exc:
+        advance_loop_step(
+            state,
+            {
+                "geometry": {
+                    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+                    "ground_backed": True,
+                },
+                "frequency_hz": 10e9,
+            },
+        )
+    message = str(exc.value)
+    assert "ground_backed=True" not in message
+    assert "pec_patches" in message
+
+
+def test_patch_and_absorber_routing_is_unaffected_by_the_palace_dispatch(monkeypatch):
+    """Regression: wiring PALACE_FLOQUET must not move PATCH off NEC2 or
+    ABSORBER off MEEP_FLOQUET, and DEFAULT_SIMULATION_ADAPTER (removed at
+    #241) stays gone -- nothing here reintroduces a default."""
+    assert not hasattr(design_loop_module, "DEFAULT_SIMULATION_ADAPTER")
+
+    def exploding_palace_run(*args, **kwargs):
+        raise AssertionError("Palace must never be reached for PATCH or ABSORBER")
+
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", exploding_palace_run)
+    monkeypatch.setattr(
+        design_loop_module, "_run_nec2_simulation", lambda **kw: _fake_nec2_result()
+    )
+
+    state = start_design_loop(REQUIREMENTS)
+    patch = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("PATCH"))
+    absorber = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    assert _simulation_adapter_for(patch) == "NEC2"
+    assert _simulation_adapter_for(absorber) == "MEEP_FLOQUET"
+
+    patch_state = advance_loop_step(
+        _advance_to(patch, DesignStep.SIMULATION),
+        {"geometry": {}, "frequency_hz": 10e9, "reference_impedance_ohms": 50.0},
+    )
+    assert patch_state.decisions[-1].result["simulator"] == "NEC2++"
+    assert "s_parameters" not in patch_state.decisions[-1].result
 
 
 def test_no_capability_gaps_remain_and_the_survivors_are_honest_caveats():
@@ -2056,3 +2340,186 @@ def test_the_ground_backed_family_pays_nothing_for_the_two_port_machinery(monkey
     assert result["absorption"] == pytest.approx([0.8, 0.99])
     assert result["transmittance"] is None
     assert result["energy_balance_violations"] == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #255 ticket 1: OPTIMIZATION dispatches on the family's declared
+# optimizer_class (designs/design_families.py), mirroring the
+# _registry_family_of_record seam ANALYSIS (#239) and SIMULATION (#229)
+# already use -- rather than the single, unconditional patch-length search
+# this step ran before. A pure prefactor: no family in this tree today
+# declares anything other than None, so every one of them must keep routing
+# to exactly the search it always ran. The one new capability this ticket
+# adds is a safety net: a family that DOES declare something this loop has
+# no path for (COMBINATORIAL today; a hypothetical third value later) must
+# fail loudly rather than silently receive the continuous patch-length
+# search -- the same "wrong tool applied silently" defect issues #239/#241
+# already removed for ANALYSIS/SIMULATION, one step over. The real
+# COMBINATORIAL symbol-placement search itself is separate, later work
+# (issue #255's own scope) -- not built here.
+# ---------------------------------------------------------------------------
+
+
+def _at_optimization(family: str) -> DesignLoopState:
+    """An iteration whose ARCHITECTURE named `family`, positioned at
+    OPTIMIZATION without running ANALYSIS/SIMULATION for real -- these tests
+    are about the optimizer_class dispatch, not about those steps' own
+    behaviour (mirrors `_at_simulation` above)."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+    return _advance_to(state, DesignStep.OPTIMIZATION)
+
+
+_OPTIMIZATION_PATCH_INPUT = {
+    "eps_r": 4.4,
+    "w_m": 0.03,
+    "h_m": 0.0016,
+    "target_frequency_hz": 2.45e9,
+    "length_lower_m": 0.02,
+    "length_upper_m": 0.04,
+    "method": "sweep",
+    "n_evaluations": 5,
+}
+
+
+def test_optimizer_class_for_reads_none_for_a_family_that_declares_nothing():
+    """PATCH declares no optimizer_class at all in designs/design_families.py
+    today. Unlike an unsettled simulation_adapter, that is a legitimate,
+    un-raising answer here -- not a missing-declaration error (ADR-0018:
+    the field is open, unset until a family opts in)."""
+    state = _at_optimization("PATCH")
+    assert _optimizer_class_for(state) is None
+
+
+def test_optimizer_class_for_reads_an_explicitly_declared_value(monkeypatch):
+    """The helper reads whatever the registry entry declares -- proven with
+    a fake family so this test does not depend on any real family having
+    opted into COMBINATORIAL yet (none has)."""
+    combinatorial = _dc_replace(design_families_module.PATCH, optimizer_class="COMBINATORIAL")
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: combinatorial)
+    state = _at_optimization("PATCH")
+    assert _optimizer_class_for(state) == "COMBINATORIAL"
+
+
+def test_no_architecture_decision_means_there_is_no_optimizer_class_to_read():
+    """Mirrors test_no_architecture_decision_means_there_is_no_adapter_to_
+    read: with no ARCHITECTURE decision, no family has been named, so there
+    is nothing to read optimizer_class off -- reported, not guessed past."""
+    state = start_design_loop(REQUIREMENTS)
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        _optimizer_class_for(state)
+
+
+def test_optimization_routes_patch_to_the_unchanged_patch_length_search(monkeypatch):
+    """The core "byte-for-byte unchanged" claim: PATCH's optimizer_class is
+    unset (None) in the real registry, and OPTIMIZATION must still call
+    optimize_patch_length_for_target_frequency with EXACTLY the same
+    keyword arguments -- and hand its result straight through -- as it did
+    before this ticket's dispatch existed."""
+    captured = {}
+
+    def fake_optimize(**kwargs):
+        captured.update(kwargs)
+        return {"achieved_frequency_hz": 2.451e9, "provenance": "CALCULATED"}
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", fake_optimize
+    )
+    state = _at_optimization("PATCH")
+    new_state = advance_loop_step(state, dict(_OPTIMIZATION_PATCH_INPUT))
+
+    assert captured == {
+        "eps_r": 4.4,
+        "w_m": 0.03,
+        "h_m": 0.0016,
+        "target_frequency_hz": 2.45e9,
+        "length_lower_m": 0.02,
+        "length_upper_m": 0.04,
+        "method": "sweep",
+        "n_evaluations": 5,
+    }
+    decision = new_state.decisions[-1]
+    assert decision.step == DesignStep.OPTIMIZATION.value
+    assert decision.kind == "optimization"
+    assert decision.result == {"achieved_frequency_hz": 2.451e9, "provenance": "CALCULATED"}
+    assert decision.provenance == "CALCULATED"
+
+
+def test_optimization_routes_an_explicitly_continuous_family_the_same_way(monkeypatch):
+    """optimizer_class == "CONTINUOUS" (stated explicitly, not merely
+    unset) must route to the identical patch-length search -- proving the
+    dispatch reads the DECLARED value, never the family's name, the same
+    "read the declaration, not the label" rule #239/#229 already applied to
+    ANALYSIS/SIMULATION."""
+    continuous = _dc_replace(design_families_module.PATCH, optimizer_class="CONTINUOUS")
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: continuous)
+
+    def fake_optimize(**kwargs):
+        return {"achieved_frequency_hz": 2.451e9, "provenance": "CALCULATED"}
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", fake_optimize
+    )
+    state = _at_optimization("PATCH")
+    new_state = advance_loop_step(state, dict(_OPTIMIZATION_PATCH_INPUT))
+    assert new_state.decisions[-1].result["achieved_frequency_hz"] == pytest.approx(2.451e9)
+
+
+def test_optimization_refuses_a_combinatorial_family_instead_of_guessing(monkeypatch):
+    """This ticket does NOT implement the combinatorial symbol-placement
+    search (issue #255's own scope: separate, later work, blocked on the
+    Element/Coding-Alphabet library). What it must never do is silently run
+    the continuous patch-length search against a family whose whole design
+    method is "which pre-characterised tile goes in which grid square" --
+    the exact "wrong tool applied silently" defect issues #239/#241 already
+    removed for ANALYSIS/SIMULATION. This is the chosen safety net: raise,
+    naming the family and the missing search, rather than pass a Tier B
+    family through to a search that does not apply to it."""
+    combinatorial = _dc_replace(
+        design_families_module.REFLECTION_PHASE, optimizer_class="COMBINATORIAL"
+    )
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: combinatorial)
+
+    def exploding_patch_search(**kwargs):
+        raise AssertionError("the patch-length search must never run for a COMBINATORIAL family")
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", exploding_patch_search
+    )
+    state = _at_optimization("REFLECTION_PHASE")
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(state, {})
+    message = str(exc.value)
+    assert "REFLECTION_PHASE" in message
+    assert "COMBINATORIAL" in message
+    assert state.current_step == DesignStep.OPTIMIZATION.value
+    assert all(d.step != DesignStep.OPTIMIZATION.value for d in state.decisions)
+
+
+def test_optimization_refuses_an_unrecognised_optimizer_class(monkeypatch):
+    """ADR-0018 leaves optimizer_class open for a THIRD value (e.g.
+    ML-direct inverse design) to arrive later. Issue #255 user story 4:
+    that must fail loudly at OPTIMIZATION, naming the family and the
+    unhandled value, rather than falling through to the patch-length
+    search."""
+    ml_direct = _dc_replace(
+        design_families_module.PATCH, optimizer_class="ML_DIRECT_INVERSE_DESIGN"
+    )
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: ml_direct)
+
+    def exploding_patch_search(**kwargs):
+        raise AssertionError(
+            "the patch-length search must never run for an unhandled optimizer_class"
+        )
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", exploding_patch_search
+    )
+    state = _at_optimization("PATCH")
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(state, {})
+    message = str(exc.value)
+    assert "PATCH" in message
+    assert "ML_DIRECT_INVERSE_DESIGN" in message
+    assert state.current_step == DesignStep.OPTIMIZATION.value
+    assert all(d.step != DesignStep.OPTIMIZATION.value for d in state.decisions)

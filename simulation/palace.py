@@ -219,11 +219,13 @@ passes through, this adapter now returns the same answer the tool's own
 authors publish, to well within a percent.
 
 STILL NOT PROVEN: only this one all-dielectric geometry, at one incidence
-angle, has been run. Embedded PEC conductors are still unimplemented (see
-SCOPE below), no measured (as opposed to simulated) result has ever been
-compared against, and every result this module returns remains SIMULATED
-provenance -- a solver agreeing with another run of the same solver is not
-a bench measurement.
+angle, has been run. Embedded PEC conductor patches can now be meshed (see
+SCOPE below) but that geometry has never itself been run through a real
+Palace binary, so its config["Boundaries"]["PEC"] key name is still an
+inferred assumption, not a confirmed one; no measured (as opposed to
+simulated) result has ever been compared against, and every result this
+module returns remains SIMULATED provenance -- a solver agreeing with
+another run of the same solver is not a bench measurement.
 
 SCOPE OF THIS IMPLEMENTATION: a single rectangular periodic unit cell,
 periodic (via config["Boundaries"]["Periodic"]) on its four x/y-normal
@@ -238,34 +240,61 @@ subdivided by the caller's geometry["mesh"]["nx"/"ny"/"nz"] (default 2
 elements per feature-interval -- deliberately coarse; this is a caller-
 controlled modeling parameter, not a converged default, matching this
 codebase's convention of never fabricating a falsely-authoritative mesh
-density).
+density). geometry["pec_patches"] (issue #252 ticket 1) adds zero or more
+embedded conductor (PEC) patches -- the metallic-metasurface case, as
+opposed to an all-dielectric grating/photonic-crystal unit cell -- each
+meshed as its own INTERIOR boundary-attribute assignment (a flat 2D face
+dropped into the hex grid at a caller-chosen, strictly-interior coordinate,
+never a domain material box) with its own config["Boundaries"]["PEC"]
+attribute, distinct from the six cell-face attributes and from every
+domain/material attribute. See generate_palace_mesh()'s and
+generate_palace_config()'s docstrings for the schema and the honest caveat
+on the "PEC" config key name (inferred from Palace's documented
+Boundaries-section pattern, not yet independently confirmed the way
+FloquetPort was by issue #210's real binary run). A "pec_patches" entry may
+sit on any of the three axes (see _pec_patch_axis()) and is an IDEALIZED,
+zero-loss conductor -- exactly Palace's own "PEC" boundary condition, and
+exactly the same idealization simulation/openems.py's own "conductors" list
+already uses ("PEC layers (patch, ground, etc.)", that module's docstring).
+Issue #252 ticket 2 also added a ground-backed, one-port cell
+(geometry["ground_backed"], a PEC termination on the z=Lz face in place of
+the second, non-excited Floquet port).
 
-EMBEDDED CONDUCTIVITY SHEET (issue #289). geometry["materials"] may also
-contain zero or more real (finite-conductivity) conductor sheets -- a
-printed metasurface/FSS element, not an idealized zero-loss PEC patch --
-identified by carrying a "kappa_s_m" field (electric conductivity in S/m,
-the same field name and physical quantity simulation/openems.py's own lossy
-"materials" entries already use -- deliberately NOT the same meaning as
-that module's separate "conductors" list, which IS idealized PEC; see that
-module's own docstring, "PEC layers (patch, ground, etc.)"). A conductivity
-sheet must be zero-thickness along z (p1_m[2] == p2_m[2], strictly between
-the unit cell's own z=0/z=Lz Floquet-port faces) and have non-zero extent
-in x and y -- i.e. flat, lying in an x/y plane, matching a printed layer
-sitting on a substrate rather than a side wall; any other orientation is
-rejected, not silently reinterpreted (see _validate_conductivity_sheet). It
-must also carry a REQUIRED "thickness_m" -- see below for why this is
-required rather than left to Palace's own default.
+EMBEDDED CONDUCTIVITY SHEET (issue #289) is the complementary, REAL
+(finite-conductivity, not idealized) case: a printed metasurface/FSS
+element whose conductivity is a real, measured/cited number -- e.g. a
+printed conductive ink, which commonly runs well below bulk-metal
+conductivity, not a solid copper trace "pec_patches" is the right model
+for. It lives in geometry["materials"] rather than alongside
+"pec_patches", identified by carrying a "kappa_s_m" field (electric
+conductivity in S/m, the same field name and physical quantity
+simulation/openems.py's own lossy "materials" entries already use --
+deliberately NOT the same meaning as that module's separate "conductors"
+list, or as this module's own "pec_patches", both of which ARE idealized
+PEC). A conductivity sheet must be zero-thickness along z (p1_m[2] ==
+p2_m[2], strictly between the unit cell's own z=0/z=Lz Floquet-port faces)
+and have non-zero extent in x and y -- i.e. flat, lying in an x/y plane,
+matching a printed layer sitting on a substrate rather than a side wall;
+any other orientation is rejected, not silently reinterpreted (see
+_validate_conductivity_sheet) -- unlike "pec_patches", which (per issue
+#252) already supports any of the three axes; z-only is this pass's own,
+narrower scope, not a limitation inherited from "pec_patches". It must
+also carry a REQUIRED "thickness_m" -- see below for why this is required
+rather than left to Palace's own default.
 
 generate_palace_mesh() below adds the sheet's own footprint edges and
-z-plane to the same feature-line grid the dielectric materials already
-contribute to, then emits it as an INTERNAL boundary -- a new boundary
-attribute (BOUND_CONDUCTIVITY_BASE + index) on the mesh faces exactly
-coincident with its footprint, at its own z-plane -- the same kind of
-boundary-attribute assignment already used for the unit cell's six outer
-faces, not a new mesh-writing technique. generate_palace_config() below
-references that attribute from a new config["Boundaries"]["Conductivity"]
-entry (exact key/shape verified against Palace's own schema and source,
-not guessed):
+z-plane to the same feature-line grid the dielectric materials and
+pec_patches already contribute to, then emits it as an INTERNAL boundary --
+a new boundary attribute (BOUND_CONDUCTIVITY_BASE + index, computed as
+BOUND_PEC_START plus however many pec_patches entries precede it, so the
+two features' boundary-attribute ranges never collide) on the mesh faces
+exactly coincident with its footprint, at its own z-plane -- the same kind
+of boundary-attribute assignment already used for the unit cell's six
+outer faces and for pec_patches, not a new mesh-writing technique.
+generate_palace_config() below references that attribute from a new
+config["Boundaries"]["Conductivity"] entry, a DIFFERENT Palace boundary
+type from "pec_patches"' "PEC" (exact key/shape verified against Palace's
+own schema and source, not guessed):
   - config["Boundaries"]["Conductivity"][i]: {"Attributes": [int, ...],
     "Conductivity": float (S/m, required), "Permeability": float (relative
     permeability, default 1.0), "Thickness": float (mesh length units,
@@ -413,17 +442,130 @@ BOUND_Y_MAX = 4
 BOUND_Z_MIN = 5  # Floquet port 1 (excited)
 BOUND_Z_MAX = 6  # Floquet port 2
 
-# First embedded-conductivity-sheet boundary attribute (issue #289); sheet i
-# (0-based, input order) gets BOUND_CONDUCTIVITY_BASE + i. A distinct
-# namespace from the domain (material) attributes _material_attribute()
-# assigns below -- MFEM's mesh format keeps "elements" (domain) and
-# "boundary" attributes in separate sections, so this deliberately does not
-# need to avoid colliding with a dielectric material's own domain-attribute
-# number (see module docstring's EMBEDDED CONDUCTIVITY SHEET section).
-BOUND_CONDUCTIVITY_BASE = 7
+# First boundary attribute for an embedded conductor (PEC) patch (issue #252
+# ticket 1). Each entry in geometry["pec_patches"] gets BOUND_PEC_START + its
+# index in that list -- a plain, deterministic offset past the six cell-face
+# attributes above, mirroring how _material_attribute() below assigns each
+# geometry["materials"] entry idx+2 in the *domain* attribute space. Boundary
+# attributes (this module's "boundary" mesh section) and domain attributes
+# (the "elements" section) are independent MFEM numbering spaces, so a PEC
+# patch's boundary attribute never collides with a material's domain
+# attribute even though both start counting near 1-2 -- see
+# generate_palace_mesh()'s docstring.
+BOUND_PEC_START = 7
 
 _CUBE_GEOM_TYPE = 5  # MFEM Geometry::CUBE, see module docstring citation
 _SQUARE_GEOM_TYPE = 3  # MFEM Geometry::SQUARE, same citation
+_AXIS_NAMES = ("x", "y", "z")
+
+
+# ---------------------------------------------------------------------------
+# Capability-gap probe for REFLECTION_PHASE/DIFFUSIVE (issue #252 ticket 3),
+# mirroring simulation/meep.py's periodic_absorber_capability_gaps().
+#
+# THE DIFFERENCE FROM MEEP'S VERSION, AND WHY. Meep's probe takes no
+# geometry: it reports gaps in what THAT ADAPTER can build at all, and the
+# same three gaps applied to every periodic cell handed to it. Both
+# capabilities this probe checks -- an embedded PEC conductor patch, a
+# ground-backed one-port cell -- now EXIST in this module (#252 tickets 1
+# and 2; see generate_palace_mesh()'s and generate_palace_config()'s
+# docstrings). So there is no adapter-wide gap left to report here. What
+# remains is a per-CANDIDATE question: does THIS geometry dict actually ask
+# for the ground-backed, printed-metal shape REFLECTION_PHASE and DIFFUSIVE
+# are declared to be (designs/design_families.py:
+# requires_ground_plane=True, port_count=1), or does it describe this
+# module's OTHER shape -- an all-dielectric, two-port transmissive grating
+# -- instead?
+#
+# In plain terms: the adapter can now build the right kind of cell, but
+# nothing stops a caller from handing it the wrong kind by omission (leaving
+# "ground_backed" at its False default, or leaving "pec_patches" empty).
+# Running Palace on that geometry anyway would not fail loudly -- it would
+# return a perfectly valid answer to a DIFFERENT question (a bare dielectric
+# grating's transmission, not a metal-backed metasurface's reflection
+# phase), which is precisely the "confidently wrong number" the charter's
+# provenance discipline exists to prevent. This probe catches it before any
+# solver time is spent, the same way meep.py's version does.
+# ---------------------------------------------------------------------------
+
+
+def metasurface_capability_gaps(geometry: dict[str, Any]) -> list[dict[str, str]]:
+    """The reasons THIS geometry cannot yet be simulated as a
+    REFLECTION_PHASE/DIFFUSIVE candidate, each naming what is assumed, what
+    it costs if that assumption is wrong, and the cheapest way to close it
+    -- same {"gap", "assumed", "costs", "cheapest_test"} shape as
+    simulation/meep.py's periodic_absorber_capability_gaps(). Empty list
+    means this geometry dict is ready to hand to run_palace_simulation() as
+    a ground-backed metasurface cell.
+
+    Both features checked here (an embedded PEC patch, a ground-backed
+    one-port cell) are already implemented in this module (issue #252
+    tickets 1/2) -- what is being validated is whether THIS geometry dict
+    actually uses them, not whether the adapter can deliver them. A
+    geometry with neither gap can still fail generate_palace_mesh's/
+    generate_palace_config's own field-level validation (e.g. a malformed
+    pec_patches entry); this probe only checks the two family-level physics
+    facts orchestration/design_loop.py's dispatch needs before it is worth
+    spending a solver run at all.
+    """
+    gaps: list[dict[str, str]] = []
+    if not geometry.get("ground_backed"):
+        gaps.append(
+            {
+                "gap": "geometry does not set ground_backed=True for a ground-backed family",
+                "assumed": (
+                    "REFLECTION_PHASE and DIFFUSIVE both declare "
+                    "requires_ground_plane=True, port_count=1 in "
+                    "designs/design_families.py -- a metal-backed cell with zero "
+                    "transmission by construction -- but this geometry dict's "
+                    "'ground_backed' key is missing or False, which "
+                    "generate_palace_config() reads as the module's OTHER shape: "
+                    "a two-port transmissive cell with a second, non-excited "
+                    "Floquet port at z=Lz instead of a PEC backing"
+                ),
+                "costs": (
+                    "running this geometry as-is would simulate a transmissive "
+                    "two-port grating and report the result as if it answered the "
+                    "one-port, ground-backed question this family's physics "
+                    "requires -- a confidently wrong structure standing in for "
+                    "the right one, not an uncertain answer"
+                ),
+                "cheapest_test": (
+                    "set geometry['ground_backed'] = True and re-check; no solver "
+                    "run is needed to catch this, it is visible in the geometry "
+                    "dict alone"
+                ),
+            }
+        )
+    if not geometry.get("pec_patches"):
+        gaps.append(
+            {
+                "gap": (
+                    "geometry has no pec_patches -- a bare dielectric grating is "
+                    "not a metasurface element"
+                ),
+                "assumed": (
+                    "a reflection-phase or coding/diffusive cell IS a printed "
+                    "metal pattern over its host -- that printed pattern is what "
+                    "sets the per-cell reflection phase this family is designed "
+                    "by -- but this geometry dict's 'pec_patches' list is empty "
+                    "or absent"
+                ),
+                "costs": (
+                    "an all-dielectric cell with no embedded conductor has no "
+                    "printed element to give it a controllable reflection phase; "
+                    "Palace would still return a number for it, but that number "
+                    "would describe a bare dielectric slab or grating, not the "
+                    "metasurface element the candidate is meant to represent"
+                ),
+                "cheapest_test": (
+                    "add at least one entry to geometry['pec_patches'] describing "
+                    "the printed conductor patch (see generate_palace_mesh()'s "
+                    "docstring for the p1_m/p2_m flat-face schema) and re-check"
+                ),
+            }
+        )
+    return gaps
 
 
 def _fmt(value: float) -> str:
@@ -462,6 +604,18 @@ def _material_attribute(
         if all(lo[a] - 1e-9 <= centroid[a] <= hi[a] + 1e-9 for a in range(3)):
             return idx + 2
     return 1
+
+
+def _conductivity_boundary_base(pec_patches: list[dict[str, Any]]) -> int:
+    """First embedded-conductivity-sheet boundary attribute (issue #289):
+    sheet i (0-based, input order) gets this value + i. Placed after every
+    geometry["pec_patches"] entry's own BOUND_PEC_START-based attribute
+    (issue #252 ticket 1) -- computed from geometry alone, the same
+    deterministic way generate_palace_mesh and generate_palace_config each
+    compute pec_patches' own attributes independently -- so the two
+    separately-added embedded-conductor mechanisms (idealized PEC patches,
+    real conductivity sheets) never claim the same boundary attribute."""
+    return BOUND_PEC_START + len(pec_patches)
 
 
 def _split_materials(
@@ -547,6 +701,53 @@ def _grid_index(grid: list[float], value: float, *, what: str) -> int:
     raise ValueError(f"{what}={value} does not fall on a mesh grid line (internal error)")
 
 
+def _pec_patch_axis(
+    patch: dict[str, Any], idx: int, cell_lengths: tuple[float, float, float]
+) -> tuple[int, float, tuple[float, float], tuple[float, float]]:
+    """Validate one geometry["pec_patches"] entry and return
+    (normal_axis, coordinate, span_a, span_b): which of x/y/z (0/1/2) the
+    patch is perpendicular to, the coordinate along that axis, and its
+    [lo, hi] extent along each of the other two axes (in axis order).
+
+    A PEC patch is expressed the same way an embedded dielectric material
+    box is -- p1_m/p2_m corners -- but a patch is a flat 2D face (meshed as
+    an interior boundary, not a domain material), so exactly ONE of the
+    three p1_m/p2_m coordinates must match: that shared coordinate names the
+    face's plane. Zero matching coordinates is a real 3D box, not a face;
+    two or three is a degenerate line/point. Either is rejected as
+    malformed, and so is a patch sitting on the unit cell's own outer face
+    (coordinate 0 or the cell's full length along that axis), which would
+    collide with the periodic/Floquet-port boundary attributes already
+    assigned to that face -- a PEC patch is required to be strictly
+    interior, matching the "interior boundary-attribute assignment" this
+    feature is scoped to (see generate_palace_mesh()'s docstring).
+    """
+    p1, p2 = patch["p1_m"], patch["p2_m"]
+    equal_axes = [a for a in range(3) if abs(p1[a] - p2[a]) < 1e-9]
+    if len(equal_axes) != 1:
+        raise ValueError(
+            f"pec_patches[{idx}] must be a flat, axis-aligned rectangle -- exactly one of "
+            f"p1_m/p2_m's three coordinates must match (that shared coordinate names which "
+            f"face the patch lies on), got {len(equal_axes)} matching coordinate(s) "
+            f"(p1_m={p1!r}, p2_m={p2!r})"
+        )
+    normal_axis = equal_axes[0]
+    coordinate = float(p1[normal_axis])
+    length = cell_lengths[normal_axis]
+    if not (1e-9 < coordinate < length - 1e-9):
+        raise ValueError(
+            f"pec_patches[{idx}] must be strictly interior to the unit cell along its "
+            f"normal axis ({_AXIS_NAMES[normal_axis]}={coordinate!r}, cell "
+            f"{_AXIS_NAMES[normal_axis]} range is (0, {length!r})) -- a patch on the cell's "
+            "own boundary face would collide with the existing periodic/Floquet-port "
+            "boundary attributes there"
+        )
+    other_axes = [a for a in range(3) if a != normal_axis]
+    span_a = tuple(sorted((p1[other_axes[0]], p2[other_axes[0]])))
+    span_b = tuple(sorted((p1[other_axes[1]], p2[other_axes[1]])))
+    return normal_axis, coordinate, span_a, span_b
+
+
 def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     """Generate a structured hexahedral mesh of a rectangular periodic unit
     cell as MFEM ".mesh" v1.0 text (see module docstring citation).
@@ -567,6 +768,9 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
                     # module docstring's EMBEDDED CONDUCTIVITY SHEET section;
                     # p1_m[2] must equal p2_m[2] (zero-thickness along z)
           ],
+          "pec_patches": [                # optional embedded conductor patches
+              {"name": str (optional), "p1_m": [x,y,z], "p2_m": [x,y,z]}, ...
+          ],
           "mesh": {"nx": int, "ny": int, "nz": int},  # optional, each
               default 2 -- elements per feature-interval along that axis;
               see module docstring's SCOPE note on why this is coarse by
@@ -577,6 +781,26 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     z=0/z=lz are the two Floquet port faces -- see BOUND_* constants above
     and generate_palace_config() for how config["Boundaries"] references
     these same six boundary attributes.
+
+    Each "pec_patches" entry (issue #252 ticket 1) is a flat, axis-aligned
+    conductor patch -- a real metasurface element, as opposed to a
+    "materials" entry's dielectric volume -- expressed the same p1_m/p2_m
+    corner way, EXCEPT that exactly one of the three coordinates must match
+    between p1_m and p2_m: that shared coordinate is the plane the patch
+    lies in, and the patch is meshed as an INTERIOR boundary-attribute
+    assignment (a 2D face dropped into the middle of the existing hex grid,
+    reusing whichever grid line already passes through that coordinate or
+    adding one via the same feature-line mechanism materials use) rather
+    than a domain material box. It must be strictly interior to the unit
+    cell along its normal axis (not on x=0/lx, y=0/ly or z=0/lz, which
+    already carry the six BOUND_* attributes above) -- see
+    _pec_patch_axis()'s docstring for the exact validation. Each patch gets
+    its own boundary attribute, BOUND_PEC_START + its index in this list
+    (module-level constant above), independent of the domain attributes
+    "materials" entries occupy -- so a PEC patch never disturbs dielectric
+    material numbering, and generate_palace_config() below computes the same
+    attribute numbers independently (same deterministic idx-based rule) to
+    stay in sync without any data passed between the two calls.
 
     Returns {"mesh_text": str, "num_elements": int, "num_boundary_faces":
     int, "num_vertices": int}.
@@ -599,14 +823,32 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     for idx, sheet in enumerate(conductivity_sheets):
         _validate_conductivity_sheet(sheet, idx, lx, ly, lz)
 
+    pec_patches = geometry.get("pec_patches", [])
+    for idx, patch in enumerate(pec_patches):
+        missing = [f for f in ("p1_m", "p2_m") if f not in patch]
+        if missing:
+            raise ValueError(f"pec_patches[{idx}] missing required field(s): {missing}")
+    # Validated up front (axis, flatness, strict-interior -- see
+    # _pec_patch_axis()) so every patch's boundary faces can be generated
+    # below from geometry alone, the same way materials' domain attributes
+    # are computed from geometry alone via _material_attribute().
+    patch_axes = [
+        _pec_patch_axis(patch, idx, (lx, ly, lz)) for idx, patch in enumerate(pec_patches)
+    ]
+
     mesh_cfg = geometry.get("mesh", {})
     nx = int(mesh_cfg.get("nx", 2))
     ny = int(mesh_cfg.get("ny", 2))
     nz = int(mesh_cfg.get("nz", 2))
 
-    x_feats = [c for m in materials for c in (m["p1_m"][0], m["p2_m"][0])]
-    y_feats = [c for m in materials for c in (m["p1_m"][1], m["p2_m"][1])]
-    z_feats = [c for m in materials for c in (m["p1_m"][2], m["p2_m"][2])]
+    # PEC patches contribute feature points the same way material boxes do
+    # (both carry p1_m/p2_m corners) -- a patch's own coordinates become
+    # grid lines too, so its face lands exactly on the hex grid with no
+    # extra subdivision logic.
+    feature_sources = materials + pec_patches
+    x_feats = [c for m in feature_sources for c in (m["p1_m"][0], m["p2_m"][0])]
+    y_feats = [c for m in feature_sources for c in (m["p1_m"][1], m["p2_m"][1])]
+    z_feats = [c for m in feature_sources for c in (m["p1_m"][2], m["p2_m"][2])]
     x_grid = _feature_lines(0.0, lx, x_feats, nx)
     y_grid = _feature_lines(0.0, ly, y_feats, ny)
     z_grid = _feature_lines(0.0, lz, z_feats, nz)
@@ -712,6 +954,53 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
                 )
             )
 
+    # Embedded conductor (PEC) patches (issue #252 ticket 1): an INTERIOR
+    # boundary face at a fixed grid index along the patch's normal axis --
+    # not one of the six outer cell faces above -- covering whichever
+    # (other-axis-a, other-axis-b) grid cells fall inside the patch's
+    # rectangle. `grids`/`counts` let the same quad-building logic below run
+    # for any of the three normal-axis orientations (x, y or z) rather than
+    # duplicating the BOUND_Z_MIN-style loop three times.
+    grids = (x_grid, y_grid, z_grid)
+    for patch_idx, (normal_axis, coordinate, span_a, span_b) in enumerate(patch_axes):
+        attr = BOUND_PEC_START + patch_idx
+        axis_grid = grids[normal_axis]
+        # Exact match is guaranteed: `coordinate` was fed into
+        # _feature_lines() as an interior feature point for this axis above,
+        # so it reproduces verbatim as one of that axis's grid lines.
+        k0 = axis_grid.index(coordinate)
+        other_axes = [a for a in range(3) if a != normal_axis]
+        grid_a, grid_b = grids[other_axes[0]], grids[other_axes[1]]
+        lo_a, hi_a = span_a
+        lo_b, hi_b = span_b
+
+        def corner(a_idx: int, b_idx: int, _na=normal_axis, _oa=other_axes, _k0=k0) -> int:
+            idx3 = [0, 0, 0]
+            idx3[_na] = _k0
+            idx3[_oa[0]] = a_idx
+            idx3[_oa[1]] = b_idx
+            return vidx(idx3[0], idx3[1], idx3[2])
+
+        for ia in range(len(grid_a) - 1):
+            a_mid = (grid_a[ia] + grid_a[ia + 1]) / 2
+            if not (lo_a - 1e-9 <= a_mid <= hi_a + 1e-9):
+                continue
+            for ib in range(len(grid_b) - 1):
+                b_mid = (grid_b[ib] + grid_b[ib + 1]) / 2
+                if not (lo_b - 1e-9 <= b_mid <= hi_b + 1e-9):
+                    continue
+                boundary.append(
+                    (
+                        attr,
+                        [
+                            corner(ia, ib),
+                            corner(ia + 1, ib),
+                            corner(ia + 1, ib + 1),
+                            corner(ia, ib + 1),
+                        ],
+                    )
+                )
+
     # Embedded conductivity sheets (issue #289): an INTERNAL boundary face
     # per grid cell in the sheet's own footprint, at its own z-plane -- not
     # an exterior unit-cell face, but listed in the "boundary" section the
@@ -720,6 +1009,10 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
     # citation). Vertex order matches BOUND_Z_MIN's own convention above --
     # arbitrary but consistent, same caveat as that convention (module
     # docstring: MFEM's winding requirement was never independently read).
+    # Attribute numbering starts after every pec_patches entry's own
+    # BOUND_PEC_START-based attribute above, so the two mechanisms never
+    # collide (see _conductivity_boundary_base()).
+    conductivity_base = _conductivity_boundary_base(pec_patches)
     for sheet_idx, sheet in enumerate(conductivity_sheets):
         p1, p2 = sheet["p1_m"], sheet["p2_m"]
         k = _grid_index(z_grid, p1[2], what=f"conductivity sheet {sheet_idx}'s z")
@@ -729,7 +1022,7 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
         i_hi = _grid_index(x_grid, x_hi, what=f"conductivity sheet {sheet_idx}'s x_hi")
         j_lo = _grid_index(y_grid, y_lo, what=f"conductivity sheet {sheet_idx}'s y_lo")
         j_hi = _grid_index(y_grid, y_hi, what=f"conductivity sheet {sheet_idx}'s y_hi")
-        attr = BOUND_CONDUCTIVITY_BASE + sheet_idx
+        attr = conductivity_base + sheet_idx
         for i in range(i_lo, i_hi):
             for j in range(j_lo, j_hi):
                 boundary.append(
@@ -783,7 +1076,8 @@ def generate_palace_config(
     simulation. `geometry` is the same dict passed to generate_palace_mesh
     (see its docstring, including "materials"' conductivity-sheet entries,
     which this function emits as config["Boundaries"]["Conductivity"]
-    rather than a domain material), plus two more optional keys:
+    rather than a domain material, and "pec_patches", emitted into
+    config["Boundaries"]["PEC"]), plus three more optional keys:
         "background": {"epsilon_r": float, "mue_r": float, "loss_tan": float},
         "floquet": {
             "wave_vector_1_per_m": [kx, ky, kz] (default [0,0,0], normal
@@ -795,6 +1089,50 @@ def generate_palace_config(
             "polarization": "TE" (default) | "TM" | "RHC" | "LHC",
             "max_order": int (default 0 -- specular diffraction order only),
         }
+        "ground_backed": bool (default False) -- see below.
+
+    `ground_backed` (default False) selects between this module's two
+    unit-cell shapes, matching `designs/design_families.py`'s own
+    `requires_ground_plane`/`port_count` distinction (see that module's
+    `DesignFamily.__post_init__` docstring for the physics reasoning: a
+    ground-backed structure has zero transmission by construction, so its
+    reflection alone -- one port -- tells the whole story, while a
+    structure with no ground plane needs a second port to see power that
+    left out the back):
+
+      - False (default -- UNCHANGED from before this option existed): the
+        original two-port transmissive cell (this module's SCOPE, an
+        all-dielectric grating/photonic-crystal shape) -- port 1 at z=0
+        (excited) and port 2 at z=Lz (not excited), both in
+        config["Boundaries"]["FloquetPort"]. Every geometry dict this
+        module accepted before this option existed omits "ground_backed",
+        so this default reproduces that config byte-for-byte.
+      - True: a ground-backed, one-port cell (`REFLECTION_PHASE`/
+        `DIFFUSIVE`'s declared physics, issue #252) -- only port 1 (z=0,
+        excited) is emitted into config["Boundaries"]["FloquetPort"]
+        (exactly one entry), and the cell's opposite face (z=Lz, the same
+        mesh boundary attribute BOUND_Z_MAX that would otherwise carry
+        port 2) is instead added to a Perfect Electric Conductor
+        boundary -- config["Boundaries"]["PEC"]["Attributes"] includes
+        BOUND_Z_MAX -- so the wave meets a metal backing instead of a
+        second port. generate_palace_mesh needs no change for this: it
+        already writes a boundary face at BOUND_Z_MAX regardless of which
+        Palace boundary condition references that attribute number, so
+        the same mesh serves both shapes.
+
+    geometry["pec_patches"], if present, adds each patch's boundary
+    attribute (BOUND_PEC_START + its index) into the SAME
+    config["Boundaries"]["PEC"]["Attributes"] list -- see
+    generate_palace_mesh()'s docstring for the "pec_patches" schema itself,
+    shared between the two functions. A ground-backed cell with embedded
+    patches gets one "PEC" boundary condition covering both the back face
+    and every patch, since Palace's PEC boundary is one condition applied
+    to however many mesh attributes are given it, not one condition per
+    attribute -- confirmed against Palace's own Configuration File
+    Reference page (awslabs.github.io/palace/dev/config/reference/, "PEC"
+    section -- "Integer array of mesh boundary attributes this object
+    applies to"), the same per-boundary "Attributes" convention this
+    module already uses for FloquetPort and Periodic.
 
     `sweep` (optional): {"start_hz": float, "stop_hz": float, "points":
     int}, same shape as run_hfss_simulation's own sweep dict -- defaults to
@@ -832,6 +1170,8 @@ def generate_palace_config(
         )
     max_order = int(floquet.get("max_order", 0))
 
+    ground_backed = bool(geometry.get("ground_backed", False))
+
     solver_order = int(solver_order)
     if solver_order < 1:
         raise ValueError(f"solver_order must be >= 1 (finite-element order), got {solver_order}")
@@ -859,6 +1199,34 @@ def generate_palace_config(
             }
         )
 
+    # PEC boundary attributes: BOUND_PEC_START + each pec_patches[] entry's
+    # index, computed here from geometry alone (never from
+    # generate_palace_mesh's return value) so mesh and config independently
+    # agree the same way materials' domain Attributes already do above --
+    # see generate_palace_mesh()'s docstring. A ground-backed cell's back
+    # face (BOUND_Z_MAX) joins the SAME list, since Palace's PEC boundary
+    # is one condition applied to however many attributes it's given, not
+    # one condition per attribute -- see this function's own docstring.
+    pec_patches = geometry.get("pec_patches", [])
+    pec_attributes = [BOUND_PEC_START + idx for idx in range(len(pec_patches))]
+
+    # Port 1 (z=0) is ALWAYS excited and ALWAYS present -- the only
+    # difference ground_backed makes is what sits at the opposite face
+    # (z=Lz, mesh boundary attribute BOUND_Z_MAX): a second, non-excited
+    # Floquet port (the original two-port transmissive shape) when False,
+    # or that attribute joining the PEC boundary above (a ground-backed,
+    # one-port cell) when True. See this function's own docstring for the
+    # "ground_backed" key and the Palace config-reference citation for the
+    # "PEC" boundary shape.
+    floquet_ports = [
+        {
+            "Index": 1,
+            "Attributes": [BOUND_Z_MIN],
+            "Excitation": True,
+            "IncidentPolarization": polarization,
+            "MaxOrder": max_order,
+        }
+    ]
     boundaries: dict[str, Any] = {
         "Periodic": {
             "FloquetWaveVector": [float(v) for v in wave_vector],
@@ -876,24 +1244,26 @@ def generate_palace_config(
                 },
             ],
         },
-        "FloquetPort": [
-            {
-                "Index": 1,
-                "Attributes": [BOUND_Z_MIN],
-                "Excitation": True,
-                "IncidentPolarization": polarization,
-                "MaxOrder": max_order,
-            },
+    }
+    pec_boundary_attributes = list(pec_attributes)
+    if ground_backed:
+        pec_boundary_attributes.append(BOUND_Z_MAX)
+    else:
+        floquet_ports.append(
             {
                 "Index": 2,
                 "Attributes": [BOUND_Z_MAX],
                 "Excitation": False,
                 "IncidentPolarization": polarization,
                 "MaxOrder": max_order,
-            },
-        ],
-    }
+            }
+        )
+    if pec_boundary_attributes:
+        boundaries["PEC"] = {"Attributes": pec_boundary_attributes}
+    boundaries["FloquetPort"] = floquet_ports
+
     if conductivity_sheets:
+        conductivity_base = _conductivity_boundary_base(pec_patches)
         conductivity_json = []
         for idx, sheet in enumerate(conductivity_sheets):
             missing = [f for f in ("kappa_s_m", "thickness_m") if f not in sheet]
@@ -901,7 +1271,7 @@ def generate_palace_config(
                 raise ValueError(f"conductivity sheet {idx} missing required field(s): {missing}")
             conductivity_json.append(
                 {
-                    "Attributes": [BOUND_CONDUCTIVITY_BASE + idx],
+                    "Attributes": [conductivity_base + idx],
                     "Conductivity": float(sheet["kappa_s_m"]),
                     "Permeability": sheet.get("mue_r", 1.0),
                     "Thickness": float(sheet["thickness_m"]),

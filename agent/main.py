@@ -28,6 +28,7 @@ from designs.requirement_targets import (
 from designs.requirement_targets import (
     propose_requirement_target as _propose_requirement_target,
 )
+from designs.service import coerce_release_approval as _coerce_release_approval
 from designs.service import create_design as _create_design
 from designs.service import read_design as _read_design
 from designs.service import record_decision as _record_decision
@@ -48,6 +49,7 @@ from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
+from knowledge.sourcing.arxiv import search_arxiv_papers as _search_arxiv_papers
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
@@ -1475,6 +1477,25 @@ def ingest_arxiv_paper(
 
 
 @function_tool
+def search_arxiv_papers(query: str, max_results: int = 10) -> list:
+    """Search arXiv by topic/keyword (issue #257) and return a ranked list of
+    candidates for review -- NOT documents in the corpus. Each candidate carries
+    id/title/published/abstract; use "search precedent before inventing" (CLAUDE.md)
+    to judge relevance before spending an ingestion pass on it. Pass a chosen
+    candidate's id straight to ingest_arxiv_paper unchanged, along with the license/
+    classification ADR-0001 requires for that specific paper -- this tool never calls
+    ingest_document itself, so finding a paper here never counts as trusting it.
+    query is arXiv's search_query syntax (a bare keyword string, e.g. "conformal
+    metamaterial absorber", or field-prefixed, e.g. "abs:magnetic mirror AND
+    cat:physics.app-ph") searched over titles/abstracts/authors/categories -- not
+    ingest_arxiv_paper's id_list-style fetch by already-known identifier. A topic
+    with no matches returns [] (a real "nobody has published this" result); an
+    unreachable arXiv API raises instead of returning an empty list, so the two
+    cases are never confused."""
+    return _search_arxiv_papers(query, max_results=max_results)
+
+
+@function_tool
 def ingest_3gpp_spec(
     spec_number: str,
     version: str,
@@ -1831,8 +1852,11 @@ def record_decision(
     )
 
 
-@function_tool
-def advance_design_status(design_id: int, status: str) -> dict:
+# strict_mode=False: `approval` is a free-form dict (a
+# DesignReleaseApprovalReceipt.to_dict() output) -- same rationale as
+# advance_design_loop_step's own `approval` parameter above.
+@function_tool(strict_mode=False)
+def advance_design_status(design_id: int, status: str, approval: dict | None = None) -> dict:
     """Advance a design through docs/OPERATIONS.md's lifecycle (issue #145):
     DRAFT -> ANALYSIS -> SIMULATION -> OPTIMIZATION -> VERIFICATION ->
     CONDITIONAL-PASS/PASS/FAIL/BLOCKED -> RELEASED.
@@ -1844,16 +1868,25 @@ def advance_design_status(design_id: int, status: str) -> dict:
     A refusal comes back tagged illegal_transition with a legal_next list
     naming what IS reachable from here.
 
-    RELEASED additionally requires a signed human-approval receipt, which this
-    tool cannot supply: no human-facing approval workflow is wired up in this
-    codebase, so a release attempt returns release_not_approved. That is the
-    intended behaviour -- a design must never reach RELEASED autonomously
-    (docs/adr/0007; docs/BUILD_PLAN.md's Phase 12).
+    RELEASED additionally requires a signed human-approval receipt (issue
+    #258): pass it as `approval`, a `DesignReleaseApprovalReceipt.to_dict()`
+    output minted by a human through this codebase's separate, human-only
+    release-approval CLI (its `approve-release` subcommand) -- NOT
+    something this tool, or the agent calling it, can fabricate itself;
+    nothing here calls `request_design_release_approval`, and that CLI
+    module is not reachable from this tool surface at all. A release
+    attempt with no `approval` (or an invalid, forged, or wrong-design/
+    wrong-revision one) still returns release_not_approved, exactly as
+    before this tool accepted the parameter at all -- a design must never
+    reach RELEASED autonomously (docs/adr/0007; docs/BUILD_PLAN.md's
+    Phase 12).
 
     This is the explicit path, for design work tracked outside the opt-in
     design loop (ADR-0010). The loop persists its own status at each iteration
     boundary (ADR-0011) and does not go through here."""
-    return _update_design_status(design_id=design_id, status=status)
+    return _update_design_status(
+        design_id=design_id, status=status, approval=_coerce_release_approval(approval)
+    )
 
 
 # strict_mode=False: `expected`/`actual` are free-form JSON evidence values
@@ -2259,7 +2292,14 @@ def run_candidate_search(
 #                   straight from a distributor and reconciling it into one
 #                   components row is the same authoring concern as manually
 #                   ingesting one -- and ingest_arxiv_paper, the arxiv-doc-
-#                   builder-backed arXiv preprint fetcher, plus (issue #219)
+#                   builder-backed arXiv preprint fetcher, alongside (issue
+#                   #257) search_arxiv_papers, its sibling discovery step:
+#                   topic/keyword search over the same public arXiv API,
+#                   returning candidates only, never itself calling
+#                   ingest_document -- the same authoring bucket, since
+#                   deciding what to bring in is part of standing up the
+#                   knowledge base, even though this one tool never writes
+#                   anything -- plus (issue #219)
 #                   ingest_patent, the USPTO patent/published-application
 #                   fetcher that reuses the same skill's PDF converters; both
 #                   sit in the same authoring
@@ -2441,6 +2481,7 @@ _ALL_TOOLS = [
     generate_freecad_curved_geometry,
     ingest_document,
     ingest_arxiv_paper,
+    search_arxiv_papers,
     ingest_3gpp_spec,
     ingest_etsi_standard,
     ingest_fcc_rule,
@@ -2539,11 +2580,13 @@ ROLE_SPECS: list[RoleSpec] = [
             "and standing up the knowledge base (ingesting and indexing "
             "documents, sourcing component datasheets directly from Digi-Key/"
             "Mouser/Nexar, fetching/converting arXiv preprints via "
-            "ingest_arxiv_paper, fetching 3GPP specs/ETSI standards/FCC "
-            "eCFR rule text via ingest_3gpp_spec/ingest_etsi_standard/"
-            "ingest_fcc_rule, and fetching US patents and published patent "
-            "applications from the USPTO via ingest_patent) other roles rely "
-            "on. Defer network-level "
+            "ingest_arxiv_paper, searching arXiv by topic/keyword via "
+            "search_arxiv_papers before proposing a new element or mechanism "
+            "-- 'search precedent before inventing' -- fetching 3GPP specs/"
+            "ETSI standards/FCC eCFR rule text via ingest_3gpp_spec/"
+            "ingest_etsi_standard/ingest_fcc_rule, and fetching US patents "
+            "and published patent applications from the USPTO via "
+            "ingest_patent) other roles rely on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -2564,6 +2607,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_third_order_intermod_dbc,
             ingest_document,
             ingest_arxiv_paper,
+            search_arxiv_papers,
             ingest_3gpp_spec,
             ingest_etsi_standard,
             ingest_fcc_rule,

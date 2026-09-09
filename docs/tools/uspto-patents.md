@@ -1,0 +1,39 @@
+# USPTO patent PDFs
+
+A patent is a government-granted monopoly on an invention, published in exchange for a full public disclosure of how it works -- so a patent document is both a legal claim and, often, the only detailed write-up of a piece of engineering that never made it into a journal. This repo cites patents like US12089385B2 as primary sources for metasurface physics (CLAUDE.md's "reflective with 0-degree phase shift makes a flat-mounted antenna loud instead of deaf" argument traces straight to one). The tool researched here is not a search engine: it is the US Patent and Trademark Office's (USPTO) free, no-login, no-API-key endpoint for downloading one already-known patent or published application as a PDF, used here purely to pull a cited document into the knowledge base once its number is already in hand.
+
+## What it is
+
+`image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/<number>` is a documented, official feature of **Patent Public Search (PPUBS)**, USPTO's public patent-search web application [1][2]. PPUBS launched September 30, 2022, replacing four legacy tools at once -- PubEAST, PubWEST, PatFT (Patent Full-Text and Image Database) and AppFT (Patent Application Full-Text and Image Database) -- consolidating them into one modern, cloud-based search platform [1]. USPTO's own "PDF Links to Publications Images" Quick Reference Guide (2024) documents this exact URL pattern as a copyable "permanent web link" surfaced by PPUBS's Basic Search interface (Advanced Search does not expose it) [2]. USPTO is a federal agency; PPUBS and the endpoint it exposes are operated by USPTO itself, at no cost, requiring no account [1][2].
+
+## Full capabilities
+
+The QRG documents five URL shapes off the same base path: `#######` (7-digit utility patents, zero-padded), `########` (8-digit, patents above 10,000,000), `D######` (design), `PP#####` (plant), and `yyyy#######` (11-digit pre-grant publications) -- with one caveat: "direct links only work for documents that are less than 1000 pages" [2]. Beyond the raw PDF, PPUBS's web interface (not this endpoint) offers keyword/field/Boolean search across USPTO's granted-patent and pre-grant-publication corpora, a "Preview" front-page pop-up, an HTML "Text" rendering, and, as of February 2025, CSV export of Advanced Search results [3]. Every PDF this repo has sampled (5 documents, grants and publications alike) came back as a **scanned page image with a zero-character text layer** -- a photograph of the page, not machine-readable text -- a property of how USPTO builds these PDFs, not of this one endpoint (`knowledge/sourcing/patent.py`, module docstring).
+
+## Integrations & interfaces
+
+Plain HTTPS GET, no auth, returning `application/pdf` directly -- confirmed live by this repo against five real documents (`knowledge/sourcing/patent.py`). The number must be bare digits; the endpoint answers HTTP 400 to a written form like "US12089385B2" [2] (repo docstring). No SDK, no rate-limit documentation was found for this specific endpoint.
+
+## Licensing & cost
+
+Free, no account, no API key [1][2]. US patent documents carry no USPTO copyright claim -- as works of the US government they fall outside copyright under 17 U.S.C. Section 105 [4] -- though a specific document may still embed third-party copyrighted material (a quoted standard, a licensed figure) with its own notice, which is why `ingest_patent()` requires the caller to state `license` explicitly rather than assuming one (`knowledge/sourcing/patent.py`).
+
+## How this repo uses it today
+
+`knowledge/sourcing/patent.py`'s `ingest_patent(patent_number, ...)` is the only entry point. `normalize_patent_number()` parses the written forms people paste ("US12089385B2", "US 2022/0192066 A1", bare digits), validates digit-count and kind-code consistency, and refuses reissue/design/plant numbers outright because only 7-8 digit grants and 11-digit publications were verified against the endpoint. It builds the URL, downloads the PDF, then **routes on what the file actually contains** (`choose_conversion_route`, threshold 100 mean characters/page): a real text layer goes through the vendored `arxiv-doc-builder` skill's two-column extractor into Markdown with parsed bibliographic frontmatter (`parse_front_page_metadata`, reading WIPO ST.9 INID codes off the front sheet); a scanned PDF goes straight to `ingest_document`'s docling OCR pipeline, plus every page and column crop rendered to PNG (needs poppler) so figures stay legible. Ingested documents get `source_type='patent'`, defaulting to `PATENT_AUTHORITY_RANK` (50) in `knowledge/provenance.py` -- below peer review deliberately, since an examiner checks novelty and candor, not reproducibility. Not gated behind `ALLOW_EXTERNAL_NETWORK_TOOLS` (no credential needed).
+
+## Capabilities not yet used here
+
+The clearest gap is exactly what the module docstring names: **patent search is out of scope.** This endpoint only fetches a number already known; nothing here can ask "find patents about conformal metamaterial skins." USPTO's own tools could fill that gap but none is wired up: PPUBS's own web search, and the **USPTO Open Data Portal (ODP)** at `data.uspto.gov`, which absorbed the **PatentsView PatentSearch API** on March 20, 2026 [5][6]. PatentsView, while it stood alone, offered a real full-text query surface -- separate endpoints for claims, brief-summary text, detailed-description text and drawing-description text, not just bibliographic fields [7] -- exactly the "search precedent before inventing" step CLAUDE.md's iteration method names. ODP now requires a free USPTO.gov account as of June 18, 2026 (previously open with no registration since its February 2025 launch), still at no cost [8]. Also unused: the D###### (design) and PP##### (plant) direct-link forms USPTO documents but this client declines to build, and ODP's Patent File Wrapper and bulk-data/download APIs for prosecution history and full-corpus dumps.
+
+## Sources
+
+- [1] https://www.uspto.gov/about-us/news-updates/convenient-patent-public-search-tool-replacing-four-legacy-systems-fall -- PPUBS launch announcement (date, four legacy tools replaced)
+- [2] https://www.uspto.gov/sites/default/files/documents/PDF-links-QRG-Patent-Public-Search.pdf -- "Patent Public Search - PDF Links to Publications Images" Quick Reference Guide 2024 (direct-link URL forms, 1000-page limit, Basic-Search-only)
+- [3] https://www.uspto.gov/patents/search/patent-public-search/release-notes -- PPUBS release notes (CSV export added, per search-indexed content)
+- [4] https://uscode.house.gov/view.xhtml?req=%28title%3A17+section%3A105+edition%3Aprelim%29 -- 17 U.S.C. Section 105, no copyright for US government works
+- [5] https://www.uspto.gov/subscription-center/2026/patentsview-migrating-uspto-open-data-portal-march-20 -- PatentsView-to-ODP migration announcement (March 20, 2026 date, reason)
+- [6] https://data.uspto.gov/support/transition-guide/patentsview -- ODP's PatentsView transition guide
+- [7] https://search.patentsview.org/docs/ -- PatentsView PatentSearch API documentation (full-text endpoints: claims, brf_sum_text, detail_desc_text, draw_desc_text); reached only via search-engine index -- the domain itself no longer resolves (`getaddrinfo ENOTFOUND search.patentsview.org`; a direct `curl` also failed), consistent with its March 2026 retirement in favor of ODP
+- [8] https://www.uspto.gov/about-us/news-updates/uspto-open-data-portal-require-registration-access-beginning-june-18-2026 -- ODP registration requirement starting June 18, 2026 (free USPTO.gov account, launched Feb 2025 without one)
+- `knowledge/sourcing/patent.py` (this repo) -- adapter implementation, read in full, and its own primary-source citations (five documents fetched live: grants 12089385, 11000000; pre-grant publications 20220192066, 20240001234)
