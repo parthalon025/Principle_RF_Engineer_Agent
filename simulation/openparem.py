@@ -223,6 +223,19 @@ implementation -- accessed 2026-09-02. Per-fact citations below):
         manual's OWN worked "air" example, a pure dielectric, sets `Rz=0` rather than
         omitting it) -- this module follows the code (and the worked example) over the
         comment's looser wording, defaulting `Rz=0.0` rather than treating it as optional.
+      * Linear interpolation between declared Frequency points, with extrapolation
+        outside the declared range explicitly NOT supported -- confirmed from an
+        inline C++ comment repeated identically in THREE places,
+        `Temperature::get_eps()`/`get_mu()`/`get_Rs()` (all three, OpenParEMmaterials.cpp):
+        "// for linear interpolation - extrapolation is not supported". This is a CODE
+        comment, NOT a manual claim: OpenParEM3D_Users_Manual.tex,
+        OpenParEM3D_Theory_Methodology_Accuracy.tex, and OpenParEM2D_Users_Manual.tex
+        were each searched directly for "interpolat"/"extrapolat" and none describes
+        materials-frequency behavior at all (the one Users-Manual hit is an unrelated
+        ParaView-rendering setting). `generate_openparem_materials_file`'s own handling
+        of a cited validity BAND (`frequency_low_hz`/`frequency_high_hz`) as two
+        identical-valued Frequency points bracketing that band, rather than one, rests
+        on this code-level fact -- see that function's own docstring.
       * Real worked examples, transcribed verbatim from the manual's "Materials Files"
         section (not reconstructed from the grammar alone): the "air" Material
         (`er=1.0006, mur=1, tand=0, Rz=0`, cited to Balanis's "Advanced Engineering
@@ -329,6 +342,7 @@ from typing import Any
 
 from .base import SimulationResult, Simulator, SimulatorError
 from .elmer import generate_gmsh_geo_script
+from .elmer import run_gmsh_meshing as _elmer_run_gmsh_meshing
 
 # ---------------------------------------------------------------------------
 # OpenParemSimulator: the Simulator contract (simulation/base.py, unchanged) --
@@ -731,31 +745,24 @@ def run_openparem_gmsh_meshing(
     format OpenParEM3D's own parser requires ("OpenParEM only works with the
     msh22 format of gmsh due to library limitations" -- Installation Manual
     Sec. 4.2, quoted in this module's docstring) -- unlike
-    `simulation.elmer.run_gmsh_meshing`, which forces the OLDER msh2 format
-    ElmerGrid's own reader expects. Mirrors that function's contract exactly
-    (same `GMSH_BIN` env-var/executable-override convention -- both adapters
-    invoke the SAME external `gmsh` binary, so a second, OpenParEM-specific
-    env var was deliberately not introduced; `SimulatorError` on a missing
-    `.geo` file, nonzero exit, or timeout)."""
-    if not geo_file.exists():
-        raise SimulatorError(f"gmsh .geo file not found: {geo_file}")
-    exe = executable or os.getenv("GMSH_BIN") or "gmsh"
-    try:
-        completed = subprocess.run(
-            [exe, str(geo_file), "-3", "-format", "msh22", "-o", str(msh_file)],
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise SimulatorError(f"gmsh meshing timed out after {timeout_s}s: {exc}") from exc
-    if completed.returncode != 0:
-        raise SimulatorError(
-            f"gmsh meshing failed ({completed.returncode}): "
-            f"{(completed.stderr or completed.stdout)[-4000:]}"
-        )
+    `simulation.elmer.run_gmsh_meshing`'s own default, which forces the OLDER
+    msh2 format ElmerGrid's own reader expects.
+
+    A thin, format-pinned wrapper around `simulation.elmer.run_gmsh_meshing`
+    itself (rather than a second copy of its subprocess-invocation/error-
+    handling body) -- both adapters invoke the SAME external `gmsh` binary
+    under the SAME `GMSH_BIN` env-var/executable-override convention, so this
+    only supplies the one thing that differs: `mesh_format="msh22"`.
+    `SimulatorError` on a missing `.geo` file, nonzero exit, or timeout is
+    `run_gmsh_meshing`'s own behavior, inherited unchanged."""
+    _elmer_run_gmsh_meshing(
+        geo_file,
+        msh_file,
+        workdir,
+        executable=executable,
+        timeout_s=timeout_s,
+        mesh_format="msh22",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -917,12 +924,15 @@ def generate_openparem_materials_file(materials: list[dict[str, Any]]) -> str:
           "frequency_low_hz": float, "frequency_high_hz": float,  # a cited validity
               BAND -- emitted as ONE Frequency point if they're equal, or TWO
               identical-valued points bracketing the band if not (see
-              _frequency_point_tokens's docstring for why: OpenParEM's own manual
-              documents linear interpolation between declared points and explicitly
-              "extrapolation is not supported", so two points at the citation's own
-              validated range edges is the most literal, honest translation of "flat
-              across this exact band, unclaimed outside it"). Neither this pair nor
-              `frequency_hz` given -> "any".
+              _frequency_point_tokens's docstring for why: OpenParEM3D's own C++
+              source -- an inline comment repeated identically in
+              Temperature::get_eps()/get_mu()/get_Rs(), OpenParEMmaterials.cpp,
+              NOT either manual PDF, see module docstring's Materials-file citation
+              -- documents linear interpolation between declared points and
+              explicitly "extrapolation is not supported", so two points at the
+              citation's own validated range edges is the most literal, honest
+              translation of "flat across this exact band, unclaimed outside it").
+              Neither this pair nor `frequency_hz` given -> "any".
           "citations": list[str] | "citation": str,  # required, non-empty
         }
     OR a Debye-model material (mutually exclusive with the frequency-list keys above,
@@ -1284,10 +1294,9 @@ def parse_openparem_output(workdir: str | Path, project_name: str) -> dict[str, 
 
 
 def run_openparem_simulation(
-    *,
+    ports: dict[str, Any],
     mesh_file: str | None = None,
     geometry: dict[str, Any] | None = None,
-    ports: dict[str, Any],
     project: dict[str, Any] | None = None,
     project_name: str = "openparem_project",
     materials: list[dict[str, Any]] | None = None,
@@ -1358,6 +1367,27 @@ def run_openparem_simulation(
 
     project_settings = dict(project or {})
 
+    # This function's own docstring documents `project` as `generate_openparem_
+    # project_config`'s input shape MINUS mesh_file/port_definition_file/materials
+    # -- all three are filled in here, below, from the `mesh_file`/`geometry`,
+    # `ports`, and `materials` arguments respectively. Guard all three the same
+    # way (a named ValueError, not a silent overwrite) so a caller who puts one
+    # of these keys in `project` by mistake is told, rather than having it
+    # quietly discarded -- this codebase's "warn, never silently fall through to
+    # the wrong tool" discipline (see module docstring).
+    if "mesh_file" in project_settings:
+        raise ValueError(
+            "run_openparem_simulation got project['mesh_file'] set explicitly -- "
+            "this key is always filled in here from the 'mesh_file' argument (or "
+            "the mesh generated from 'geometry') -- pass the mesh via 'mesh_file'/"
+            "'geometry' instead of inside 'project'"
+        )
+    if "port_definition_file" in project_settings:
+        raise ValueError(
+            "run_openparem_simulation got project['port_definition_file'] set "
+            "explicitly -- this key is always filled in here from the 'ports' "
+            "argument -- do not set it inside 'project'"
+        )
     if materials is not None:
         if "materials" in project_settings:
             raise ValueError(

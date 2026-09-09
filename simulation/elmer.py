@@ -580,17 +580,24 @@ def run_gmsh_meshing(
     workdir: Path,
     executable: str | None = None,
     timeout_s: int = 600,
+    mesh_format: str = "msh2",
 ) -> None:
-    """Invoke gmsh to mesh `geo_file` into `msh_file`, forcing the legacy
-    MSH2 ASCII format ElmerGrid's own Gmsh-format reader understands (see
-    module docstring's "MSH2, NOT MSH4" citation) -- gmsh's own current
-    default output format is newer MSH4, which ElmerGrid cannot read."""
+    """Invoke gmsh to mesh `geo_file` into `msh_file`, forcing an explicit
+    ASCII mesh format rather than gmsh's own current default (newer MSH4).
+
+    `mesh_format` defaults to the legacy MSH2 format ElmerGrid's own
+    Gmsh-format reader understands (see module docstring's "MSH2, NOT MSH4"
+    citation). `simulation.openparem.run_openparem_gmsh_meshing` reuses this
+    same subprocess-invocation/error-handling logic with `mesh_format="msh22"`
+    instead -- OpenParEM3D's own required format (see that module's docstring
+    citation) -- rather than duplicating this function for one changed string
+    literal."""
     if not geo_file.exists():
         raise SimulatorError(f"gmsh .geo file not found: {geo_file}")
     exe = executable or os.getenv("GMSH_BIN") or "gmsh"
     try:
         completed = subprocess.run(
-            [exe, str(geo_file), "-3", "-format", "msh2", "-o", str(msh_file)],
+            [exe, str(geo_file), "-3", "-format", mesh_format, "-o", str(msh_file)],
             cwd=workdir,
             capture_output=True,
             text=True,

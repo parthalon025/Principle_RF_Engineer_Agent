@@ -972,6 +972,27 @@ def test_run_openparem_simulation_end_to_end_with_fake_executable(tmp_path: Path
     assert ports_text.startswith("#OpenParEMports 1.0")
 
 
+def test_run_openparem_simulation_accepts_ports_positionally(tmp_path: Path):
+    """run_openparem_simulation's required argument ('ports') must be
+    callable positionally, matching every sibling `run_*_simulation` adapter
+    in this package (run_elmer_simulation(geometry, frequency_hz, ...), etc.)
+    -- required-before-optional, not keyword-only."""
+    script = _make_fake_openparem3d_py(tmp_path, "monopole")
+
+    result = run_openparem_simulation(
+        MONOPOLE_PORTS,
+        mesh_file="monopole_antenna.msh",
+        project={"frequency_plan": {"point": [{"frequency_hz": 2.45e9}]}},
+        project_name="monopole",
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_positional"),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["status"] == "COMPLETED"
+
+
 def test_run_openparem_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
     script = _make_fake_openparem(
         tmp_path, 'import sys\nsys.stderr.write("ERROR3999: fake failure\\n")\nsys.exit(1)\n'
@@ -1130,4 +1151,41 @@ def test_run_openparem_simulation_materials_conflicts_with_project_materials_rai
             materials=[FR4_MATERIAL],
             project_name="monopole",
             workdir=str(tmp_path / "run_conflict"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# run_openparem_simulation must refuse (not silently overwrite) a caller-
+# supplied project['mesh_file']/project['port_definition_file'] -- both are
+# always filled in by this function itself (from 'mesh_file'/'geometry' and
+# 'ports' respectively, per this function's own docstring), the same
+# caller-forbidden-key discipline already applied to project['materials'].
+# ---------------------------------------------------------------------------
+
+
+def test_run_openparem_simulation_project_mesh_file_conflict_raises(tmp_path: Path):
+    with pytest.raises(ValueError, match="mesh_file"):
+        run_openparem_simulation(
+            mesh_file="m.msh",
+            ports=MONOPOLE_PORTS,
+            project={
+                "frequency_plan": {"point": [{"frequency_hz": 2.45e9}]},
+                "mesh_file": "already_set.msh",
+            },
+            project_name="monopole",
+            workdir=str(tmp_path / "run_mesh_file_conflict"),
+        )
+
+
+def test_run_openparem_simulation_project_port_definition_file_conflict_raises(tmp_path: Path):
+    with pytest.raises(ValueError, match="port_definition_file"):
+        run_openparem_simulation(
+            mesh_file="m.msh",
+            ports=MONOPOLE_PORTS,
+            project={
+                "frequency_plan": {"point": [{"frequency_hz": 2.45e9}]},
+                "port_definition_file": "already_set.txt",
+            },
+            project_name="monopole",
+            workdir=str(tmp_path / "run_port_definition_file_conflict"),
         )
