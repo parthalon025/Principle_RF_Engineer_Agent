@@ -114,6 +114,7 @@ console binary is named "ngspice_con.exe".
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -453,6 +454,55 @@ def parse_ngspice_wrdata(text: str, outputs: list[str], analysis_type: str) -> d
     }
 
 
+# Matches one "<name> = <real>[,<imag>]" line from `print all`'s output --
+# see parse_ngspice_print_values()'s docstring for the citation and caveat.
+_PRINT_VALUE_LINE_RE = re.compile(
+    r"^\s*(?P<name>\S+)\s*=\s*(?P<real>[-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)"
+    r"(?:\s*,\s*(?P<imag>[-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?))?\s*$"
+)
+
+
+def parse_ngspice_print_values(text: str) -> dict[str, Any]:
+    """Parse the interactive `print all` command's text output for an
+    analysis whose result is a small, unswept set of values -- `.PZ`
+    (poles/zeros) and `.SENS` (per-parameter sensitivities) -- rather than
+    a frequency/time-swept vector `wrdata` can emit (see
+    generate_ngspice_netlist()'s SCOPE note on why these two analyses end
+    their `.control` block with `print all` instead of a `wrdata` line).
+
+    ngspice's own `print` command documentation states that when every
+    named vector has length 1 -- true for both `.PZ`'s poles/zeros and
+    `.SENS`'s DC-operating-point sensitivities, since neither analysis
+    sweeps anything -- "line" is the default display layout rather than
+    the columnar SPICE2-style table `print col all` uses for a swept
+    result. Independent ngspice-forum worked examples of real `.PZ` output
+    (see this module's docstring citation) show that "line" layout as one
+    `<name> = <value>` line per vector, a complex value written as
+    `<real>,<imag>` -- confirmed against real `.PZ` output; NOT
+    independently re-fetched against a literal official-manual worked
+    example for `.SENS`'s own line shape, since none could be found in this
+    pass -- an honest gap, the same not-yet-independently-confirmed
+    discipline this module's other citations already use. This parser is
+    intentionally generic (any `name = value[,value]` line, not specific to
+    "pole"/"zero" names) so the same function serves both analyses.
+
+    Returns `{name: [real, imag]}` for a `<name> = <real>,<imag>` line, or
+    `{name: real}` for a `<name> = <real>` line with no imaginary part.
+    Lines that don't match this shape (log/diagnostic text, circuit-summary
+    lines, blank lines) are skipped rather than assumed absent -- the same
+    tolerant-parsing approach parse_ngspice_wrdata() uses for its own text.
+    """
+    values: dict[str, Any] = {}
+    for line in text.splitlines():
+        match = _PRINT_VALUE_LINE_RE.match(line)
+        if not match:
+            continue
+        real = float(match.group("real"))
+        imag = match.group("imag")
+        values[match.group("name")] = [real, float(imag)] if imag is not None else real
+    return values
+
+
 def run_ngspice_simulation(
     job: dict[str, Any],
     timeout_s: int = 600,
@@ -462,16 +512,29 @@ def run_ngspice_simulation(
     """Generate an ngspice netlist from a structured job dict (matching
     network / filter / amplifier-bias sub-circuit -- see
     generate_ngspice_netlist() for the full job shape), run it via
-    NgspiceSimulator, and parse the requested outputs' AC/TRAN/OP data back
-    out. Returns "SIMULATED" provenance.
+    NgspiceSimulator, and parse the requested outputs' data back out.
+    Returns "SIMULATED" provenance.
+
+    For every analysis type except `.PZ`/`.SENS` (see
+    _PRINT_VALUE_ANALYSIS_TYPES), the result's data comes from `wrdata`'s
+    output file via parse_ngspice_wrdata(): `scale`/`scale_name` are the
+    swept frequency or time axis, and `values` is `{output_name:
+    [float, ...] | [[real, imag], ...]}`. For `.PZ`/`.SENS`, there is no
+    swept axis to report at all (`scale`/`scale_name` are `None`) --
+    `values` instead comes from parse_ngspice_print_values() reading the
+    `print all` text out of ngspice's own batch-mode log file (the same
+    file NgspiceSimulator.run() already reads back for its diagnostics; see
+    that method's own citation for why the log file, not stdout, is
+    trusted for ngspice's batch-mode text output).
 
     See this module's header comment for the format-verification citations
-    and the honest caveats: netlist generation and `wrdata` parsing are
+    and the honest caveats: netlist generation and result parsing are
     built to the documented ngspice format, not verified against a real
-    ngspice binary run in this environment; and S-parameters are not
-    computed at all in this pass (use simulation/xyce.py's `.LIN` support,
-    or correlate_simulated_and_measured against a "values"-shaped AC
-    result directly, for that need).
+    ngspice binary run in this environment (`.AC` is the one exception --
+    see the VERIFIED END TO END note); and S-parameters are not computed at
+    all in this pass (use simulation/xyce.py's `.LIN` support, or
+    correlate_simulated_and_measured against a "values"-shaped AC result
+    directly, for that need).
     """
     work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="ngspice_"))
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -489,6 +552,20 @@ def run_ngspice_simulation(
             "timeout_s": timeout_s,
         }
     )
+
+    if analysis_type in _PRINT_VALUE_ANALYSIS_TYPES:
+        values = parse_ngspice_print_values(result.outputs.get("log", ""))
+        return {
+            "provenance": "SIMULATED",
+            "scale_name": None,
+            "scale": None,
+            "values": values,
+            "simulator": result.simulator,
+            "status": result.status,
+            "workdir": str(result.workdir),
+            "netlist_file": str(netlist_file),
+            "output_file": None,
+        }
 
     output_text = output_file.read_text() if output_file.exists() else ""
     parsed = parse_ngspice_wrdata(output_text, outputs, analysis_type)

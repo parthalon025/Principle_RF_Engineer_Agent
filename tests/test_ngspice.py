@@ -31,6 +31,7 @@ from simulation.base import SimulatorError
 from simulation.ngspice import (
     NgspiceSimulator,
     generate_ngspice_netlist,
+    parse_ngspice_print_values,
     parse_ngspice_wrdata,
     run_ngspice_simulation,
 )
@@ -229,6 +230,182 @@ def test_generate_ngspice_netlist_noise_invalid_sweep_type_raises():
         generate_ngspice_netlist(job, "noise_out.dat")
 
 
+# ---------------------------------------------------------------------------
+# .DISTO (issue #283) -- harmonic-distortion analysis. Its fundamental-
+# frequency sweep is documented as running "exactly as in the .ac command"
+# (see simulation/ngspice.py's docstring citation), so it reuses ac's
+# sweep_type/points/start_freq_hz/stop_freq_hz fields. Running "disto ..."
+# makes ngspice's own "disto1" plot current (confirmed via a real worked
+# ngspice-forum ".control"-block example, cited in simulation/ngspice.py),
+# so a plain node-voltage expression like "v(out)" in job["outputs"] reads
+# the 2nd-harmonic distortion value directly off that current plot, same as
+# ac/tran's outputs -- no analysis-specific vector names needed here (unlike
+# .NOISE). Distortion values are themselves complex AC quantities, same
+# (real, imag)-pair wrdata shape as .AC.
+# ---------------------------------------------------------------------------
+
+DISTO_JOB = {
+    "components": MATCHING_NETWORK_JOB["components"],
+    "analysis": {
+        "type": "disto",
+        "sweep_type": "dec",
+        "points": 10,
+        "start_freq_hz": 1e3,
+        "stop_freq_hz": 1e6,
+    },
+    "outputs": ["v(out)"],
+}
+
+
+def test_generate_ngspice_netlist_disto_control_block():
+    netlist = generate_ngspice_netlist(DISTO_JOB, "disto_out.dat")
+    lines = netlist.strip("\n").split("\n")
+    assert "disto dec 10 1000 1e+06" in lines
+    assert "wrdata disto_out.dat v(out)" in lines
+
+
+def test_generate_ngspice_netlist_disto_f2overf1_optional():
+    job = {
+        "components": DISTO_JOB["components"],
+        "analysis": {**DISTO_JOB["analysis"], "f2overf1": 0.9},
+        "outputs": DISTO_JOB["outputs"],
+    }
+    netlist = generate_ngspice_netlist(job, "disto_out.dat")
+    assert "disto dec 10 1000 1e+06 0.9" in netlist
+
+
+def test_generate_ngspice_netlist_disto_missing_field_raises():
+    job = {
+        "components": DISTO_JOB["components"],
+        "analysis": {"type": "disto", "sweep_type": "dec"},
+        "outputs": DISTO_JOB["outputs"],
+    }
+    with pytest.raises(ValueError, match="points"):
+        generate_ngspice_netlist(job, "disto_out.dat")
+
+
+def test_parse_ngspice_wrdata_disto_real_imag_pairs():
+    text = "1e+03 0.02 0.0\n1e+04 0.015 -0.005\n"
+    result = parse_ngspice_wrdata(text, ["v(out)"], "disto")
+    assert result["scale_name"] == "frequency_hz"
+    assert np.allclose(result["values"]["v(out)"], [[0.02, 0.0], [0.015, -0.005]])
+
+
+# ---------------------------------------------------------------------------
+# .PZ (issue #283) -- pole-zero analysis. ngspice's own manual page states
+# plainly "to print the results, one should use the command `print all`"
+# (see simulation/ngspice.py's docstring citation) -- there is no documented
+# wrdata-compatible form, so this analysis type does not require
+# job["outputs"] and its `.control` block ends in "print all" instead of a
+# `wrdata` line.
+# ---------------------------------------------------------------------------
+
+PZ_JOB = {
+    "components": MATCHING_NETWORK_JOB["components"],
+    "analysis": {
+        "type": "pz",
+        "node1": "in",
+        "node2": "0",
+        "node3": "out",
+        "node4": "0",
+        "tf_type": "vol",
+        "analysis_mode": "pz",
+    },
+}
+
+
+def test_generate_ngspice_netlist_pz_control_block():
+    netlist = generate_ngspice_netlist(PZ_JOB, "unused.dat")
+    lines = netlist.strip("\n").split("\n")
+    assert "pz in 0 out 0 vol pz" in lines
+    assert "print all" in lines
+    assert not any(line.startswith("wrdata") for line in lines)
+
+
+def test_generate_ngspice_netlist_pz_does_not_require_outputs():
+    job = {"components": PZ_JOB["components"], "analysis": PZ_JOB["analysis"]}
+    netlist = generate_ngspice_netlist(job, "unused.dat")
+    assert "pz in 0 out 0 vol pz" in netlist
+
+
+def test_generate_ngspice_netlist_pz_missing_field_raises():
+    job = {
+        "components": PZ_JOB["components"],
+        "analysis": {"type": "pz", "node1": "in", "node2": "0", "node3": "out", "node4": "0"},
+    }
+    with pytest.raises(ValueError, match="tf_type"):
+        generate_ngspice_netlist(job, "unused.dat")
+
+
+def test_generate_ngspice_netlist_pz_invalid_tf_type_raises():
+    job = {
+        "components": PZ_JOB["components"],
+        "analysis": {**PZ_JOB["analysis"], "tf_type": "bogus"},
+    }
+    with pytest.raises(ValueError, match="tf_type"):
+        generate_ngspice_netlist(job, "unused.dat")
+
+
+def test_generate_ngspice_netlist_pz_invalid_analysis_mode_raises():
+    job = {
+        "components": PZ_JOB["components"],
+        "analysis": {**PZ_JOB["analysis"], "analysis_mode": "bogus"},
+    }
+    with pytest.raises(ValueError, match="analysis_mode"):
+        generate_ngspice_netlist(job, "unused.dat")
+
+
+# ---------------------------------------------------------------------------
+# .SENS (issue #283) -- DC operating-point or AC small-signal sensitivity.
+# Same "print all", no-wrdata shape as .PZ (see above); the DC form needs
+# only "outvar", the AC form additionally needs the same 4 ac-style sweep
+# fields as .AC/.DISTO.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_ngspice_netlist_sens_dc_control_block():
+    job = {
+        "components": MATCHING_NETWORK_JOB["components"],
+        "analysis": {"type": "sens", "outvar": "v(out)"},
+    }
+    netlist = generate_ngspice_netlist(job, "unused.dat")
+    lines = netlist.strip("\n").split("\n")
+    assert "sens v(out)" in lines
+    assert "print all" in lines
+    assert not any(line.startswith("wrdata") for line in lines)
+
+
+def test_generate_ngspice_netlist_sens_ac_control_block():
+    job = {
+        "components": MATCHING_NETWORK_JOB["components"],
+        "analysis": {
+            "type": "sens",
+            "outvar": "v(out)",
+            "sweep_type": "dec",
+            "points": 10,
+            "start_freq_hz": 1e3,
+            "stop_freq_hz": 1e6,
+        },
+    }
+    netlist = generate_ngspice_netlist(job, "unused.dat")
+    assert "sens v(out) ac dec 10 1000 1e+06" in netlist
+
+
+def test_generate_ngspice_netlist_sens_missing_outvar_raises():
+    job = {"components": MATCHING_NETWORK_JOB["components"], "analysis": {"type": "sens"}}
+    with pytest.raises(ValueError, match="outvar"):
+        generate_ngspice_netlist(job, "unused.dat")
+
+
+def test_generate_ngspice_netlist_sens_partial_ac_fields_raises():
+    job = {
+        "components": MATCHING_NETWORK_JOB["components"],
+        "analysis": {"type": "sens", "outvar": "v(out)", "sweep_type": "dec"},
+    }
+    with pytest.raises(ValueError, match="points"):
+        generate_ngspice_netlist(job, "unused.dat")
+
+
 def test_parse_ngspice_wrdata_noise_real_values():
     # onoise_spectrum/inoise_spectrum are real-valued spectral densities
     # (V/sqrt(Hz)), not complex -- one shared scale column, one real value
@@ -284,6 +461,48 @@ def test_parse_ngspice_wrdata_empty_text_returns_empty():
     result = parse_ngspice_wrdata("", ["v(out)"], "tran")
     assert result["scale"] == []
     assert result["values"]["v(out)"] == []
+
+
+# ---------------------------------------------------------------------------
+# `print all` output parsing (.PZ / .SENS -- issue #283). Sample text below
+# is hand-constructed to match the "<name> = <real>,<imag>" / "<name> =
+# <real>" line shape real ngspice-forum .PZ output uses (see
+# simulation/ngspice.py's parse_ngspice_print_values() docstring for the
+# citation and honest caveat that this was corroborated from community
+# example output, not a literal official-manual worked example), not
+# transcribed from a real ngspice run -- same caveat parse_ngspice_wrdata's
+# own hand-constructed samples carry.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_ngspice_print_values_pz_complex_pairs():
+    text = (
+        "Circuit: * test\n"
+        "pole(1) = -2.618033988749895e+00,0.000000000000000e+00\n"
+        "pole(2) = -3.819660112501052e-01,0.000000000000000e+00\n"
+        "zero(1) = -3.333333333333333e-01,0.000000000000000e+00\n"
+    )
+    values = parse_ngspice_print_values(text)
+    assert values["pole(1)"] == pytest.approx([-2.618033988749895, 0.0])
+    assert values["pole(2)"] == pytest.approx([-0.3819660112501052, 0.0])
+    assert values["zero(1)"] == pytest.approx([-0.3333333333333333, 0.0])
+
+
+def test_parse_ngspice_print_values_sens_real_only():
+    text = "v(out) = 1.234500e-02\nsome unrelated log line\n\n"
+    values = parse_ngspice_print_values(text)
+    assert values["v(out)"] == pytest.approx(0.012345)
+    assert len(values) == 1
+
+
+def test_parse_ngspice_print_values_skips_unmatched_lines():
+    text = "Note: no convergence issues found\n---\npole(1) = 1.0,0.0\n"
+    values = parse_ngspice_print_values(text)
+    assert list(values.keys()) == ["pole(1)"]
+
+
+def test_parse_ngspice_print_values_empty_text_returns_empty_dict():
+    assert parse_ngspice_print_values("") == {}
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +619,63 @@ def test_run_ngspice_simulation_end_to_end_ac(tmp_path: Path):
     deck_text = Path(result["netlist_file"]).read_text()
     assert deck_text.startswith("* ")
     assert ".end" in deck_text
+
+
+def test_run_ngspice_simulation_end_to_end_noise(tmp_path: Path):
+    wrdata_text = "1e+03 2.0e-08 1.0e-08\n1e+04 1.8e-08 0.9e-08\n"
+    script = _make_fake_ngspice_py(tmp_path, "ngspice_output.dat", wrdata_text)
+
+    result = run_ngspice_simulation(
+        job=NOISE_JOB, timeout_s=10, executable=str(script), workdir=str(tmp_path / "noise_run")
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["scale_name"] == "frequency_hz"
+    assert result["scale"] == pytest.approx([1e3, 1e4])
+    assert result["values"]["onoise_spectrum"] == pytest.approx([2.0e-08, 1.8e-08])
+    assert result["values"]["inoise_spectrum"] == pytest.approx([1.0e-08, 0.9e-08])
+    deck_text = Path(result["netlist_file"]).read_text()
+    assert "noise v(out) Vin dec 10 1000 1e+08" in deck_text
+
+
+def test_run_ngspice_simulation_end_to_end_disto(tmp_path: Path):
+    wrdata_text = "1e+03 0.02 0.0\n1e+04 0.015 -0.005\n"
+    script = _make_fake_ngspice_py(tmp_path, "ngspice_output.dat", wrdata_text)
+
+    result = run_ngspice_simulation(
+        job=DISTO_JOB, timeout_s=10, executable=str(script), workdir=str(tmp_path / "disto_run")
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["scale_name"] == "frequency_hz"
+    assert np.allclose(result["values"]["v(out)"], [[0.02, 0.0], [0.015, -0.005]])
+    deck_text = Path(result["netlist_file"]).read_text()
+    assert "disto dec 10 1000 1e+06" in deck_text
+
+
+def test_run_ngspice_simulation_end_to_end_pz(tmp_path: Path):
+    # .PZ has no wrdata output file at all -- its "print all" results land
+    # in the batch-mode log ngspice writes via "-o" (see
+    # NgspiceSimulator.run()'s own citation for why this module trusts the
+    # log file, not stdout, for ngspice's batch-mode text output).
+    log_text = (
+        "pole(1) = -2.618033988749895e+00,0.000000000000000e+00\n"
+        "zero(1) = -3.333333333333333e-01,0.000000000000000e+00\n"
+    )
+    script = _make_fake_ngspice(
+        tmp_path, f'import sys\nwith open(sys.argv[3], "w") as f:\n    f.write({log_text!r})\n'
+    )
+
+    result = run_ngspice_simulation(
+        job=PZ_JOB, timeout_s=10, executable=str(script), workdir=str(tmp_path / "pz_run")
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["status"] == "COMPLETED"
+    assert result["values"]["pole(1)"] == pytest.approx([-2.618033988749895, 0.0])
+    assert result["values"]["zero(1)"] == pytest.approx([-0.3333333333333333, 0.0])
+    assert result["scale"] is None
+    assert result["scale_name"] is None
 
 
 def test_run_ngspice_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
