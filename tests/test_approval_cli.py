@@ -51,6 +51,11 @@ from designs.release_approval import (
     release_fingerprint_fields,
     request_design_release_approval,
 )
+from designs.requirement_targets import propose_target
+from designs.requirements_document import (
+    create_requirements_document,
+    transition_requirements_document,
+)
 from designs.service import read_design
 from orchestration.approval import OrchestrationError, request_loop_step_approval
 from orchestration.approval_audit import (
@@ -85,6 +90,32 @@ ARCHITECTURE_STEP_INPUT = {
     "rationale": "meets band/gain target with a simple, low-cost fabrication",
     "design_family": "PATCH",
 }
+
+
+def _confirm_requirements_document_for(design_id: int) -> None:
+    """Create and confirm a minimal Requirements document for `design_id`
+    (issue #325, docs/adr/0031). `decide_pending_approval` now reads this
+    design's Requirements-document status directly off Postgres before
+    advancing a pending ARCHITECTURE request (orchestration/approval_cli.py's
+    own docstring on `decide_pending_approval`), so every test in this file
+    that approves one needs a CONFIRMED document in place first -- the same
+    real-Postgres convention this whole file already follows for
+    `cleanup_designs`."""
+    target = propose_target(value=5.0, comparator="AT_LEAST", unit="dBi")
+    created = create_requirements_document(
+        design_id,
+        narrative="Customer needs >= 5 dBi gain over 2.4-2.5 GHz.",
+        requirement_targets={"R1": target},
+    )
+    assert created["status"] == "created"
+    for status in ("UNDER_REVIEW", "REFINED", "CONFIRMED"):
+        transitioned = transition_requirements_document(
+            design_id,
+            status,
+            narrative="Customer needs >= 5 dBi gain over 2.4-2.5 GHz.",
+            requirement_targets={"R1": target},
+        )
+        assert transitioned["status"] == "transitioned"
 
 
 @pytest.fixture
@@ -325,7 +356,12 @@ def test_submit_rejects_an_ungated_step(cleanup_designs):
     receipt = request_loop_step_approval(
         fields, approved_by="alice", approval_callback=lambda f: True
     )
-    state = advance_design_loop_step(state, ARCHITECTURE_STEP_INPUT, approval=receipt.to_dict())
+    state = advance_design_loop_step(
+        state,
+        ARCHITECTURE_STEP_INPUT,
+        approval=receipt.to_dict(),
+        requirements_document_status="CONFIRMED",
+    )
     assert state["current_step"] == DesignStep.ANALYSIS.value
 
     with pytest.raises(ApprovalCliError, match="not a gated step"):
@@ -348,6 +384,7 @@ def test_show_surfaces_full_fingerprint_and_warnings(cleanup_designs):
 def test_approve_mints_a_real_receipt_and_advances_the_loop(cleanup_designs):
     state = start_new_design_loop("CLI-4", "CLI Test Design", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])
+    _confirm_requirements_document_for(state["design_id"])
     row = submit_pending_approval(state, ARCHITECTURE_STEP_INPUT, submitted_by="alice")
 
     result = decide_pending_approval(row["id"], "approve", approved_by="alice")
@@ -365,6 +402,7 @@ def test_approve_mints_a_real_receipt_and_advances_the_loop(cleanup_designs):
 def test_approved_request_is_excluded_from_the_pending_listing(cleanup_designs):
     state = start_new_design_loop("CLI-5", "CLI Test Design", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])
+    _confirm_requirements_document_for(state["design_id"])
     row = submit_pending_approval(state, ARCHITECTURE_STEP_INPUT, submitted_by="alice")
 
     assert row["id"] in {r["id"] for r in list_pending_approvals(design_id=state["design_id"])}
@@ -379,6 +417,7 @@ def test_approved_request_is_excluded_from_the_pending_listing(cleanup_designs):
 def test_approve_writes_an_approved_audit_record(cleanup_designs, db_conn):
     state = start_new_design_loop("CLI-6", "CLI Test Design", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])
+    _confirm_requirements_document_for(state["design_id"])
     row = submit_pending_approval(state, ARCHITECTURE_STEP_INPUT, submitted_by="alice")
 
     decide_pending_approval(row["id"], "approve", approved_by="alice")
@@ -477,6 +516,7 @@ def test_listing_finds_a_loop_sitting_at_a_gated_step(cleanup_designs):
 def test_listing_excludes_a_loop_that_has_already_advanced_past_its_gate(cleanup_designs):
     state = start_new_design_loop("CLI-12", "CLI Test Design", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])
+    _confirm_requirements_document_for(state["design_id"])
     row = submit_pending_approval(state, ARCHITECTURE_STEP_INPUT, submitted_by="alice")
 
     decide_pending_approval(row["id"], "approve", approved_by="alice")

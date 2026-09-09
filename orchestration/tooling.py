@@ -18,6 +18,21 @@ no longer exactly DesignLoopState.to_dict(): it also carries `design_id`
 extending the dict this way doesn't require design_loop.py to know
 anything about either field.
 
+REQUIREMENTS-DOCUMENT GATE (issue #325, docs/adr/0031). `advance_design_
+loop_step`'s `requirements_document_status` parameter is a straight pass-
+through to `design_loop.advance_loop_step`'s own parameter of the same
+name -- this module adds no database read for it (design_loop.py's own
+docstring already explains why ARCHITECTURE gates on it: the design's
+Requirements document, issue #321, must be `CONFIRMED`). A caller
+obtains the value the same way it obtains `approval` -- from a prior,
+separate call, here `designs.requirements_document.
+read_requirements_document(design_id)`'s `document_status` -- and passes
+it straight through; this module does not fetch it automatically, the
+same "no other change needed" property `approval` already has: nothing
+about this function's OWN inputs changes between a refused and a
+succeeding ARCHITECTURE call, only the ground truth the caller reads and
+forwards.
+
 PERSISTENCE (docs/adr/0011). design_loop.py's own module docstring
 deferred this to "a FUTURE ticket" -- this is that ticket. Two flush
 points, both `REDESIGN_DECISION` outcomes:
@@ -472,6 +487,7 @@ def advance_design_loop_step(
     state: dict[str, Any],
     step_input: dict[str, Any],
     approval: dict[str, Any] | None = None,
+    requirements_document_status: str | None = None,
 ) -> dict[str, Any]:
     """Advance a design-iteration loop from its current step to the next
     one. `state` is a prior call's returned state dict (from
@@ -488,6 +504,17 @@ def advance_design_loop_step(
     step_input combination. Without a valid one, this raises
     OrchestrationError and the loop does not advance -- there is no way to
     skip a gated step from this tool surface.
+
+    `requirements_document_status` is REQUIRED (equal to `"CONFIRMED"`)
+    whenever the loop's current step is ARCHITECTURE (issue #325, docs/
+    adr/0031) -- the caller's own freshest read of `designs.
+    requirements_document.read_requirements_document(design_id)`'s
+    `document_status`. Passed straight through to `design_loop.
+    advance_loop_step` unchanged; this module does not read that row
+    itself (it stays exactly as DB-aware as design_loop.py's own docstring
+    already says design_loop.py is not -- see that function's own
+    docstring's "REQUIREMENTS-DOCUMENT GATE" section). Ignored for every
+    other step.
 
     A `REDESIGN_DECISION` transition (docs/adr/0011) additionally flushes
     every decision recorded since the last flush to the database and
@@ -517,7 +544,12 @@ def advance_design_loop_step(
     current_step_before = loop_state.current_step
     iteration_before = loop_state.iteration
 
-    new_loop_state = advance_loop_step(loop_state, step_input=step_input, approval=approval)
+    new_loop_state = advance_loop_step(
+        loop_state,
+        step_input=step_input,
+        approval=approval,
+        requirements_document_status=requirements_document_status,
+    )
 
     # issue #100: substitute the persisted designs.requirements column
     # fresh, rather than handing back new_loop_state's own carried copy --

@@ -2059,6 +2059,14 @@ def optimize_patch_length_for_target_frequency(
 # manufacturing-release action -- see tests/test_design_loop.py's
 # test_no_manufacturing_release_step_exists and its sibling tests.
 #
+# advance_design_loop_step's `requirements_document_status` is ALSO
+# required (equal to "CONFIRMED") whenever the current step is ARCHITECTURE
+# (issue #325, docs/adr/0031) -- one more precondition on that SAME gate,
+# not a second one. designs.requirements_document.read_requirements_document
+# (issue #321) is not wired up as a tool here either, for the same "no
+# real workflow to call it from" reason as request_loop_step_approval
+# above; a separate ticket owns that wiring.
+#
 # start_design_loop now creates a real `designs` row backing the loop
 # (docs/adr/0011), and advance_design_loop_step's REDESIGN_DECISION
 # transition flushes that iteration's decisions to the database -- see
@@ -2100,7 +2108,12 @@ def start_design_loop(design_key: str, name: str, revision: str, requirements: d
 # free-form dicts whose shape depends on which of the loop's nine steps is
 # current -- same rationale as run_nec2_simulation's geometry parameter
 # above.
-def advance_design_loop_step(state: dict, step_input: dict, approval: dict | None = None) -> dict:
+def advance_design_loop_step(
+    state: dict,
+    step_input: dict,
+    approval: dict | None = None,
+    requirements_document_status: str | None = None,
+) -> dict:
     """Advance a design-iteration loop from its current step to the next
     one: requirements -> architecture -> analysis -> simulation ->
     optimization -> verification -> measurement -> correlation -> redesign
@@ -2124,13 +2137,28 @@ def advance_design_loop_step(state: dict, step_input: dict, approval: dict | Non
     inspect_design_loop_state) to see, at any point, whether the loop is
     currently blocked on an approval and which step it's blocked at.
 
+    `requirements_document_status` is ALSO REQUIRED (equal to `"CONFIRMED"`)
+    whenever the loop is currently at ARCHITECTURE (issue #325, docs/adr/
+    0031): the design's Requirements document must be confirmed before a
+    physical approach may be chosen -- you don't pick a mechanism before
+    the customer's actual ask is locked in. Nothing in this tool surface
+    can read that status yet (issue #321's `read_requirements_document` is
+    not wired as a tool here); until that lands, whoever drives this loop
+    must already know the design's Requirements-document status by some
+    other means.
+
     A REDESIGN_DECISION transition additionally flushes that iteration's
     decisions to the database and advances the backing design's status
     (docs/adr/0011). If that flush fails, this raises
     DesignLoopPersistenceError instead of returning: the `state` the
     caller already holds remains the only valid state, exactly as if the
     step had never advanced."""
-    return _advance_design_loop_step(state, step_input, approval=approval)
+    return _advance_design_loop_step(
+        state,
+        step_input,
+        approval=approval,
+        requirements_document_status=requirements_document_status,
+    )
 
 
 @function_tool(strict_mode=False)  # `state` is a free-form dict (the loop's
