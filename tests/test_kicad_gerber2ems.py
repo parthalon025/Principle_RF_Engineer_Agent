@@ -10,10 +10,11 @@ here" premise). This file therefore splits into:
 
   1. Pure-Python unit tests (generate_gerber2ems_config, extract_kicad_
      stackup, export_kicad_fab_assets, parse_gerber2ems_port_csv,
-     parse_gerber2ems_results) -- exercised directly, no subprocess, no
-     kicad-python import, via hand-written fakes matching the subset of
-     kicad-python's real, primary-source-verified API these functions call
-     (see simulation/kicad_gerber2ems.py's module docstring for the exact
+     parse_gerber2ems_results, parse_kicad_drc_report) -- exercised
+     directly, no subprocess, no kicad-python import, via hand-written
+     fakes matching the subset of kicad-python's real,
+     primary-source-verified API these functions call (see
+     simulation/kicad_gerber2ems.py's module docstring for the exact
      citations each fake mirrors) -- injected through the same
      constructor-injection seam (`api=`) simulation/hfss.py's tests use
      for pyaedt.
@@ -24,6 +25,15 @@ here" premise). This file therefore splits into:
      executable is built via conftest.make_fake_executable, so it launches
      correctly on native Windows as well as POSIX (issue #159) -- not a
      platform limitation of this module.
+  3. run_kicad_drc() subprocess-plumbing tests (issue #272) against a
+     small fake "kicad-cli" script, built the same way via
+     conftest.make_fake_executable -- exit-code handling (0/5 = success,
+     anything else -> SimulatorError), timeout, missing executable, a
+     missing --output report file, and (per issue #272's own acceptance
+     criteria) the end-to-end violations-found/no-violations shapes. The
+     underlying exclusion-filtering/field-selection logic these last two
+     exercise is also covered directly, without a subprocess, by category
+     1's parse_kicad_drc_report tests.
 """
 
 import json
@@ -43,6 +53,7 @@ from simulation.kicad_gerber2ems import (
     generate_gerber2ems_config,
     parse_gerber2ems_port_csv,
     parse_gerber2ems_results,
+    parse_kicad_drc_report,
     run_kicad_drc,
     run_kicad_gerber2ems_simulation,
 )
@@ -421,9 +432,84 @@ def test_parse_gerber2ems_results_aggregates_all_ports(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# run_kicad_drc -- subprocess-plumbing tests against a fake "kicad-cli"
-# script, following the same make_fake_executable pattern as
-# KicadGerber2emsSimulator.run()'s tests below. The fake script mimics
+# parse_kicad_drc_report -- pure, no subprocess (see
+# simulation/kicad_gerber2ems.py's module docstring for the primary-source
+# citations to kicad-cli's CLI reference and to KiCad's own DRC JSON report
+# schema, https://schemas.kicad.org/drc.v1.json). This is the "interpret the
+# tool's output" half of run_kicad_drc's own run/parse split -- exercised
+# directly on a plain dict here, exactly the way parse_gerber2ems_port_csv/
+# parse_gerber2ems_results above are exercised directly on a CSV/dir with no
+# fake executable involved. run_kicad_drc's OWN subprocess-plumbing tests
+# (exit codes, timeout, missing executable/report file) live in the next
+# section below and reuse these same report fixtures end-to-end.
+# ---------------------------------------------------------------------------
+
+_NO_VIOLATIONS_REPORT = {
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "source": "board.kicad_pcb",
+    "date": "2026-09-09T00:00:00",
+    "kicad_version": "10.0.0",
+    "coordinate_units": "mm",
+    "violations": [],
+    "unconnected_items": [],
+    "schematic_parity": [],
+}
+
+_TWO_VIOLATIONS_ONE_EXCLUDED_REPORT = {
+    **_NO_VIOLATIONS_REPORT,
+    "violations": [
+        {
+            "type": "clearance",
+            "severity": "error",
+            "description": "Clearance violation between F.Cu tracks",
+            "excluded": False,
+            "items": [{"description": "Track", "pos": {"x": 1.0, "y": 2.0}, "uuid": "abc"}],
+        },
+        {
+            "type": "silk_edge_clearance",
+            "severity": "warning",
+            "description": "Silkscreen clipped by board edge",
+            "excluded": True,
+            "comment": "reviewed, acceptable",
+            "items": [{"description": "Segment", "pos": {"x": 0.0, "y": 0.0}, "uuid": "def"}],
+        },
+    ],
+}
+
+
+def test_parse_kicad_drc_report_filters_excluded_violations():
+    parsed = parse_kicad_drc_report(_TWO_VIOLATIONS_ONE_EXCLUDED_REPORT)
+
+    # The excluded (already human-reviewed) violation must be filtered out --
+    # see parse_kicad_drc_report's own docstring for why.
+    assert parsed["violation_count"] == 1
+    assert parsed["violations"] == [
+        {
+            "severity": "error",
+            "type": "clearance",
+            "description": "Clearance violation between F.Cu tracks",
+        }
+    ]
+
+
+def test_parse_kicad_drc_report_no_violations_returns_empty_list():
+    parsed = parse_kicad_drc_report(_NO_VIOLATIONS_REPORT)
+
+    assert parsed["violation_count"] == 0
+    assert parsed["violations"] == []
+
+
+def test_parse_kicad_drc_report_missing_violations_key_treated_as_empty():
+    assert parse_kicad_drc_report({}) == {"violation_count": 0, "violations": []}
+
+
+# ---------------------------------------------------------------------------
+# run_kicad_drc -- subprocess-plumbing tests (I/O: invoke kicad-cli, read its
+# JSON report from disk) against a fake "kicad-cli" script, following the
+# same make_fake_executable pattern as KicadGerber2emsSimulator.run()'s tests
+# below. The exclusion-filtering/field-selection logic itself is exercised
+# directly, without a subprocess, by parse_kicad_drc_report's own tests
+# above; these tests cover only what's left -- the fake script mimics
 # `kicad-cli pcb drc --format json --output <path> --exit-code-violations
 # <board_file>` (see simulation/kicad_gerber2ems.py's module docstring for
 # the primary-source citations to kicad-cli's CLI reference and to KiCad's
@@ -459,39 +545,6 @@ def _make_fake_kicad_cli_drc(
         report_json=json.dumps(report), exit_code=exit_code, stderr=stderr
     )
     return make_fake_executable(tmp_path, body, name=name)
-
-
-_NO_VIOLATIONS_REPORT = {
-    "$schema": "https://schemas.kicad.org/drc.v1.json",
-    "source": "board.kicad_pcb",
-    "date": "2026-09-09T00:00:00",
-    "kicad_version": "10.0.0",
-    "coordinate_units": "mm",
-    "violations": [],
-    "unconnected_items": [],
-    "schematic_parity": [],
-}
-
-_TWO_VIOLATIONS_ONE_EXCLUDED_REPORT = {
-    **_NO_VIOLATIONS_REPORT,
-    "violations": [
-        {
-            "type": "clearance",
-            "severity": "error",
-            "description": "Clearance violation between F.Cu tracks",
-            "excluded": False,
-            "items": [{"description": "Track", "pos": {"x": 1.0, "y": 2.0}, "uuid": "abc"}],
-        },
-        {
-            "type": "silk_edge_clearance",
-            "severity": "warning",
-            "description": "Silkscreen clipped by board edge",
-            "excluded": True,
-            "comment": "reviewed, acceptable",
-            "items": [{"description": "Segment", "pos": {"x": 0.0, "y": 0.0}, "uuid": "def"}],
-        },
-    ],
-}
 
 
 def test_run_kicad_drc_reports_violations_and_filters_excluded(tmp_path: Path):
