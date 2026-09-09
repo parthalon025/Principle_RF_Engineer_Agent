@@ -120,7 +120,10 @@ parsed trace dict, added to the result under `network_parameters`. Per the
 primary source now cited below, `.net` has no `LINTYPE=`-style selector the
 way Xyce's `.LIN` does: one run computes admittance/impedance/Y-/Z-/H-/
 S-parameters together, so this generator's job dict has no parameter-type
-field to select one.
+field to select one. The job dict's `analysis` key must set `"type": "ac"` —
+`.net`'s own help page requires it be paired with a `.AC` sweep, and the
+generator's `_net_ac_line()` reproduces that statement's exact `lin`/`oct`/
+`dec` syntax from ADI's own help content [10].
 
 ## Capabilities not yet used here
 
@@ -137,7 +140,7 @@ field to select one.
   jobs are not specifically validated (the generator only checks for an
   input/output pair), and `.net`'s `list`-frequency `.AC` variant
   (`.ac list <freq> [<freq> ...]`) is not exposed — only `lin`/`oct`/`dec`
-  sweeps, matching `simulation/xyce.py`'s own `.AC` support.
+  sweeps [10], matching `simulation/xyce.py`'s own `.AC` support.
 - **spicelib's `SimRunner` parallel batch sweeps and Monte Carlo/worst-case
   toolkits** [6] — useful for a tolerance-sensitivity study of a matching
   network's component values feeding an FSS/absorber unit cell, but
@@ -165,9 +168,9 @@ LTspice.
 - [3] https://ltspice.analog.com/download/updates.txt — ADI's own version/release-notes feed, fetched directly
 - [4] https://ltwiki.org/LTspiceHelpXVII/LTspiceHelp/html/Running_Under_Linux.htm and community reports (WineHQ forum, groups.io LTspice list) on Wine/Linux status, via search-engine summary
 - [5] `.net` two-port network-parameter statement — UPDATED (issue #287, 2026-09-09): exact syntax (`.net [V(out[,ref])|I(Rout)] <Vin|Iin> [Rin=<val>] [Rout=<val>]`) and the "computes Y/Z/H/S-parameters together, no selector switch" fact now fetched directly from https://ltwiki.org/LTspiceHelp/LTspiceHelp/_NET_Compute_Network_Parameters_in_a_AC_Analysis.htm (LTwiki's direct HTML mirror of ADI's own bundled LTspiceHelp.chm content — the same "ltwiki.org counts as fetched-directly-primary" precedent source [8] below already relies on). The exact output *trace-name* strings (S11/S21/S12/S22, Zin/Zout/Yin/Yout) are NOT stated on that page; those are corroborated only by several independent LTspice-user community threads (ADI's own EngineerZone forum among them, plus edaboard.com and a sci.electronics.design/Google Groups thread, both via search-engine summary — direct fetch returned HTTP 403 and 429 respectively in this session) describing exactly those names in LTspice's waveform-viewer "Add Traces" dialog after a `.net` run — see `simulation/ltspice.py`'s module docstring and `extract_ltspice_network_parameters()`'s own docstring for the full citation and honest caveat. Superseded the prior citation here, which was a search-engine summary of tutorials/forum material never fetched directly.
-- [5b] `.ac <oct, dec, lin> <Nsteps> <StartFreq> <EndFreq>` — fetched directly from https://ltwiki.org/LTspiceHelpXVII/LTspiceHelp/html/AC_Analysis.htm (same LTwiki-mirrors-ADI's-help-content basis as [5]).
 - [6] https://github.com/nunobrum/spicelib — fetched directly
 - [7] PyLTSpice's own README/docs statement that it is "mostly based on the spicelib package" — as cited in `simulation/ltspice.py`'s module docstring, not independently re-fetched in this pass
 - [8] https://ltwiki.org/LTspiceHelpXVII/LTspiceHelp/html/License_Agreement_Disclaimer.htm — fetched directly
 - [9] https://ltwiki.org/files/LTspiceHelp.chm/html/License.pdf (doc ID `20191031-LTS-CTSLA`) — via search-engine summary (PDF, not directly fetchable by this session's tools); corroborated by `docs/LICENSE_MATRIX.md`'s own prior citation of the same document
+- [10] `.ac <oct, dec, lin> <Nsteps> <StartFreq> <EndFreq>` — fetched directly from https://ltwiki.org/LTspiceHelpXVII/LTspiceHelp/html/AC_Analysis.htm (same LTwiki-mirrors-ADI's-help-content basis as [5]).
 - `simulation/ltspice.py` and `simulation/base.py` — read directly from this repo

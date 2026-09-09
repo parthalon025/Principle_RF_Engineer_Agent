@@ -956,30 +956,42 @@ def generate_freecad_curved_geometry(
 def run_ltspice_simulation(
     netlist: str | None = None,
     netlist_file: str | None = None,
+    job: dict | None = None,
     timeout_s: int = 600,
 ) -> dict:
     """Simulate a circuit with LTspice (ADS alternative, part 3 of 3 -- issue
-    #59): run an existing SPICE netlist (either `netlist`, raw netlist text,
-    or `netlist_file`, a path to an existing .net/.cir/.asc file already on
-    disk; exactly one is required) through LTspice's real batch-mode CLI
-    (driven via the spicelib package -- see simulation/ltspice.py's module
-    docstring for the primary-source citation), and parse the resulting
-    .raw output into structured trace data (plot type, axis, and every
-    named trace, complex for an AC analysis or real for a transient/DC
-    sweep) via spicelib's own RawRead. Returns "SIMULATED" provenance.
-    LOWEST PRIORITY / LOWEST INVESTMENT of this batch's "ADS alternative"
-    simulators: LTspice is the one non-open-source item here (free-of-
-    charge proprietary Analog Devices freeware, NOT OSI-approved -- see
-    docs/LICENSE_MATRIX.md) and is capability-redundant with any ngspice/
-    Xyce/Qucs-S adapter this repo may also have. Unlike run_nec2_
-    simulation/run_openems_simulation, this tool does NOT generate a
-    netlist from a structured component dict -- bring your own. spicelib
+    #59): run a SPICE netlist through LTspice's real batch-mode CLI (driven
+    via the spicelib package -- see simulation/ltspice.py's module docstring
+    for the primary-source citation), and parse the resulting .raw output
+    into structured trace data (plot type, axis, and every named trace,
+    complex for an AC analysis or real for a transient/DC sweep) via
+    spicelib's own RawRead. Takes EXACTLY ONE of `netlist` (raw netlist
+    text), `netlist_file` (a path to an existing .net/.cir/.asc file already
+    on disk), or `job` (a structured two-port job dict -- components, a
+    driven-port/loaded-port pair under "ports", and an "ac"-type "analysis"
+    -- templated into LTspice's native `.net` two-port S-/Y-/Z-/H-parameter
+    extraction statement by generate_ltspice_net_netlist(), issue #287; see
+    that function's docstring for the exact shape). When `job` is given, the
+    parsed result also carries "network_parameters" (whichever S11/S21/S12/
+    S22/Zin/Zout/etc. traces `.net` produced, via extract_ltspice_network_
+    parameters()). Returns "SIMULATED" provenance. LOWEST PRIORITY / LOWEST
+    INVESTMENT of this batch's "ADS alternative" simulators: LTspice is the
+    one non-open-source item here (free-of-charge proprietary Analog Devices
+    freeware, NOT OSI-approved -- see docs/LICENSE_MATRIX.md) and is
+    capability-redundant with any ngspice/Xyce/Qucs-S adapter this repo may
+    also have -- `job`'s S/Y/Z/H-parameter extraction duplicates what
+    run_xyce_simulation's native `.LIN` path already provides; it matters
+    only when a design specifically needs LTspice's own bundled device-model
+    library. Outside the `job` case, this tool does NOT generate a netlist
+    from an arbitrary structured component dict -- bring your own. spicelib
     is an OPTIONAL install (`pip install '.[ltspice]'` / `uv sync --extra
     ltspice`); this tool raises a clear SimulatorError, not a bare
     ImportError, if it isn't installed. Format/invocation verified against
     spicelib's own primary GitHub source but NOT against a real LTspice
     binary -- none is installed in this environment."""
-    return _run_ltspice_simulation(netlist=netlist, netlist_file=netlist_file, timeout_s=timeout_s)
+    return _run_ltspice_simulation(
+        netlist=netlist, netlist_file=netlist_file, job=job, timeout_s=timeout_s
+    )
 
 
 @mcp.tool()

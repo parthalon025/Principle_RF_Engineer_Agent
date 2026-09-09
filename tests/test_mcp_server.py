@@ -448,6 +448,44 @@ def test_run_ltspice_simulation_is_registered():
     assert "run_ltspice_simulation" in registered_names
 
 
+def test_run_ltspice_simulation_forwards_job(monkeypatch):
+    # Code review on issue #287: the MCP tool wrapper originally still only
+    # declared netlist/netlist_file/timeout_s, so a `job` dict (the new
+    # structured .net two-port templating path) could never reach
+    # simulation.ltspice.run_ltspice_simulation through this, the actual
+    # agent-facing call path -- FastMCP builds the tool's JSON schema from
+    # this wrapper's own signature, not the wrapped function's. This proves
+    # `job` is now accepted and passed through untouched, alongside
+    # netlist/netlist_file/timeout_s (mirrors run_xyce_simulation's/
+    # run_ngspice_simulation's own job-forwarding wrappers above).
+    captured = {}
+
+    def fake_run(netlist=None, netlist_file=None, job=None, timeout_s=600):
+        captured.update(netlist=netlist, netlist_file=netlist_file, job=job, timeout_s=timeout_s)
+        return {"provenance": "SIMULATED"}
+
+    monkeypatch.setattr(server, "_run_ltspice_simulation", fake_run)
+
+    job = {
+        "components": [{"type": "V", "name": "V1", "n1": "in", "n2": "0", "ac_mag": 1.0}],
+        "ports": [
+            {"role": "input", "name": "V1"},
+            {"role": "output", "kind": "V", "node": "in"},
+        ],
+        "analysis": {
+            "type": "ac",
+            "sweep_type": "dec",
+            "points": 10,
+            "start_freq_hz": 1e6,
+            "stop_freq_hz": 1e8,
+        },
+    }
+    result = server.run_ltspice_simulation(job=job, timeout_s=15)
+
+    assert captured == {"netlist": None, "netlist_file": None, "job": job, "timeout_s": 15}
+    assert result == {"provenance": "SIMULATED"}
+
+
 def test_run_palace_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_palace_simulation" in registered_names

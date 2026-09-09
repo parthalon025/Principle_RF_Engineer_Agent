@@ -581,6 +581,11 @@ def test_extract_ltspice_network_parameters_uncomputed_when_absent():
     assert result["computed"] is False
     assert "note" in result
     assert "parameters" not in result
+    # The note must name every real cause of a false negative -- including a
+    # caller-narrowed traces_to_read on run_ltspice_simulation() excluding the
+    # parameter traces from parsing in the first place, not just a genuinely
+    # failed .net run or an unexpected trace name (code review on issue #287).
+    assert "traces_to_read" in result["note"]
 
 
 # ---------------------------------------------------------------------------

@@ -622,8 +622,10 @@ def extract_ltspice_network_parameters(parsed: dict[str, Any]) -> dict[str, Any]
             "note": (
                 "No S/Y/Z/H-parameter or Zin/Zout/Yin/Yout trace names were found "
                 "in the LTspice .raw output -- either the .net statement did not "
-                "run (check the log) or LTspice named the traces differently than "
-                "this function expects (see its docstring HONEST CAVEAT)."
+                "run (check the log), LTspice named the traces differently than "
+                "this function expects (see its docstring HONEST CAVEAT), or "
+                "run_ltspice_simulation()'s traces_to_read was narrowed to exclude "
+                "them (its default '*' reads every trace; check what was passed)."
             ),
         }
     return {"computed": True, "parameters": found}
