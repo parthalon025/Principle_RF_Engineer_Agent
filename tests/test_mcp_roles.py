@@ -161,6 +161,27 @@ def test_build_role_mcp_server_passes_the_parent_process_environment_through(mon
     assert server.params.env.get("DATABASE_URL") == os.environ["DATABASE_URL"]
 
 
+def test_build_role_mcp_server_disables_the_default_five_second_client_session_timeout():
+    """Issue #319's headline finding: `MCPServerStdio.__init__`'s own
+    default (`client_session_timeout_seconds: float | None = 5`, read
+    directly off the installed SDK) means an un-overridden role server
+    aborts ANY tool call still running after 5 seconds with a client-side
+    "Timed out while waiting for response to ClientRequest" error --
+    regardless of the tool's OWN `timeout_s` parameter (600-3600s defaults
+    for this repo's real EM/circuit solvers). Reproduced live in
+    tests/test_mcp_tool_call_parity.py: a fake solver that legitimately
+    takes 6s and then succeeds returns its normal SIMULATED result on the
+    OLD direct-call path (no external timeout at all -- only the tool's own
+    subprocess timeout applies) but was aborted at exactly 5.0s on the NEW
+    path before this fix. `client_session_timeout_seconds=None` (a
+    documented, supported way to disable the ClientSession read timeout
+    entirely -- see MCPServerStdio's own docstring) restores parity: the
+    tool's own internal timeout_s becomes the only bound again, same as the
+    OLD path."""
+    server = build_role_mcp_server("verification")
+    assert server.client_session_timeout_seconds is None
+
+
 # ---------------------------------------------------------------------------
 # build_role_agent: the construction is callable independently of ROLES,
 # and SPECIALIST_HANDOFFS is untouched by this ticket.
