@@ -420,6 +420,26 @@ contents/search APIs, same method as the rest of this module):
   end-to-end verified," matching this module's own evidentiary standard
   throughout.
 
+  ALSO DELIBERATELY NOT WIRED AS AN AGENT/MCP TOOL, AND WORTH EXPLAINING
+  RATHER THAN LEAVING AS A SILENT ASYMMETRY: `run_freecad_curved_geometry()`
+  (this function's STEP-export sibling) IS registered in agent/main.py,
+  mcp_server/server.py, and policies/tool_policy.yaml. The reason is NOT
+  that the sibling was somehow more verified -- it carries the identical
+  "unverified end-to-end, no FreeCADCmd install in this environment"
+  caveat this module's own "HONEST CAVEAT" section states below, and was
+  wired anyway. The real reason is that the sibling's return value is
+  immediately useful even without any FreeCAD install: its geometry-dict
+  "primitives" drop straight into run_openems_simulation's/
+  run_palace_simulation's own geometry["conductors"]/["materials"] lists
+  (see that function's own docstring). `run_freecad_fem_mesh_geometry()`'s
+  mesh file has no such downstream consumer anywhere in this repo TODAY --
+  the paragraph just above traces exactly why (`run_elmergrid_conversion()`
+  still hardcodes Gmsh-format 14, not the UNV format 8 a FreeCAD-Gmsh mesh
+  actually produces). Registering an agent-callable tool whose result
+  nothing else in the pipeline can consume yet would only expose a dead
+  end; wiring it is a natural follow-up once `run_elmergrid_conversion()`
+  gains that format-8 path, not before.
+
   UNIT CONVENTION THIS PATH INHERITS, NOT INTRODUCES: `generate_freecad_
   macro()`'s existing `App.Vector(*p)` calls already feed this module's own
   meters-scaled numbers into FreeCAD's Part-workbench geometry kernel as
@@ -815,6 +835,33 @@ def _macro_object_build_lines(objects: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _macro_status_epilogue(
+    status_filename: str, extra_key: str, extra_value_var: str, total_input: int
+) -> list[str]:
+    """The macro's closing status-write/document-close lines -- extracted so
+    BOTH `generate_freecad_macro()` (whose status dict's one extra key is
+    `"step_file"`) and `generate_freecad_fem_mesh_macro()` (whose extra key
+    is `"mesh"`) build the exact same `objects_built`/`errors`/`total_input`
+    JSON-write-and-close boilerplate and can never silently drift apart (same
+    rationale as `_macro_object_build_lines()` above). `extra_value_var` is
+    the caller's own macro-local variable NAME (e.g. `"step_file"` or
+    `"mesh_status"`) referenced bare (unquoted) in the generated status-dict
+    literal -- not a value to embed by `repr()`."""
+    return [
+        "",
+        "status = {",
+        '    "objects_built": objects_built,',
+        '    "errors": errors,',
+        f'    "{extra_key}": {extra_value_var},',
+        f'    "total_input": {total_input},',
+        "}",
+        f"with open({status_filename!r}, 'w') as _status_fh:",
+        "    json.dump(status, _status_fh)",
+        "",
+        "App.closeDocument(doc.Name)",
+    ]
+
+
 def generate_freecad_macro(
     primitives: list[dict[str, Any]],
     curvature: dict[str, Any],
@@ -873,18 +920,8 @@ def generate_freecad_macro(
         "    compound.exportStep(step_file)",
         "else:",
         "    step_file = None",
-        "",
-        "status = {",
-        '    "objects_built": objects_built,',
-        '    "errors": errors,',
-        '    "step_file": step_file,',
-        f'    "total_input": {len(objects)},',
-        "}",
-        f"with open({status_filename!r}, 'w') as _status_fh:",
-        "    json.dump(status, _status_fh)",
-        "",
-        "App.closeDocument(doc.Name)",
     ]
+    lines += _macro_status_epilogue(status_filename, "step_file", "step_file", len(objects))
     return "\n".join(lines) + "\n"
 
 
@@ -1037,18 +1074,8 @@ def generate_freecad_fem_mesh_macro(
         "        mesh_status['note'] = 'unexpected FEM meshing failure: ' + str(exc)",
         "else:",
         "    mesh_status['note'] = 'no unit-cell object built successfully -- see errors'",
-        "",
-        "status = {",
-        '    "objects_built": objects_built,',
-        '    "errors": errors,',
-        '    "mesh": mesh_status,',
-        f'    "total_input": {len(objects)},',
-        "}",
-        f"with open({status_filename!r}, 'w') as _status_fh:",
-        "    json.dump(status, _status_fh)",
-        "",
-        "App.closeDocument(doc.Name)",
     ]
+    lines += _macro_status_epilogue(status_filename, "mesh", "mesh_status", len(objects))
     return "\n".join(lines) + "\n"
 
 
@@ -1058,6 +1085,20 @@ def generate_freecad_fem_mesh_macro(
 # external tool, raise a local error type on failure, parse whatever
 # structured output the tool actually wrote).
 # ---------------------------------------------------------------------------
+
+
+def _missing_status_note(status_filename: str) -> str:
+    """The shared "status file missing after a clean exit" diagnostic --
+    extracted so BOTH `run_freecad_curved_geometry()` and `run_freecad_fem_
+    mesh_geometry()` report the exact same wording for the exact same
+    situation and can never silently drift apart (same rationale as
+    `_macro_object_build_lines()` above)."""
+    return (
+        f"{status_filename!r} was not found in the run's workdir after "
+        "FreeCADCmd exited 0 -- either the macro's own final JSON-write step "
+        "didn't execute (check stdout below), or (for a fake test executable "
+        "standing in for FreeCADCmd) the fake script doesn't emit this file."
+    )
 
 
 def _run_freecadcmd(
@@ -1173,12 +1214,7 @@ def run_freecad_curved_geometry(
             "objects_built": [],
             "errors": [],
             "step_file": None,
-            "note": (
-                f"{status_filename!r} was not found in the run's workdir after "
-                "FreeCADCmd exited 0 -- either the macro's own final JSON-write step "
-                "didn't execute (check stdout below), or (for a fake test executable "
-                "standing in for FreeCADCmd) the fake script doesn't emit this file."
-            ),
+            "note": _missing_status_note(status_filename),
         }
 
     return {
@@ -1227,14 +1263,28 @@ def run_freecad_fem_mesh_geometry(
           "freecad": {
               "objects_built": [...names...],
               "errors": [...],
-              "total_input": int | None,
+              "total_input": int,
               "mesh": {"mesh_ok": bool, "mesh_file": <absolute path> | None,
                   "node_count": int, "element_counts": {...},
                   "gmsh_exit_code": int | None, "gmsh_stderr": str,
                   "note": str | None},
-          },
+          } | {"objects_built": [], "errors": [],
+               "mesh": {"mesh_ok": False, "mesh_file": None,
+                   "node_count": 0, "element_counts": {},
+                   "gmsh_exit_code": None, "gmsh_stderr": "",
+                   "note": "<status file missing after a clean exit>"},
+               "note": "<same text as freecad['mesh']['note'] above>"},
           "stdout": str,
         }
+
+    NOTE the second `freecad` shape above (status file missing after a
+    clean FreeCADCmd exit -- see `_missing_status_note()`): unlike the
+    happy-path shape, it has NO `"total_input"` key at all, and carries a
+    `"note"` key of its own that sits at the TOP LEVEL of `freecad`
+    (sibling to `"mesh"`, not inside it) in addition to the same text
+    already duplicated into `freecad["mesh"]["note"]` -- a caller checking
+    only `freecad["mesh"]["note"]` would still see it, but `freecad
+    ["total_input"]` must never be assumed present without checking first.
 
     Raises FreecadGeometryError only for a subprocess-level FreeCADCmd
     failure (nonzero exit, timeout, executable not found) -- matching
@@ -1285,12 +1335,7 @@ def run_freecad_fem_mesh_geometry(
             "mesh": status.get("mesh", {**_no_mesh, "note": "status file has no 'mesh' key"}),
         }
     else:
-        missing_status_note = (
-            f"{status_filename!r} was not found in the run's workdir after "
-            "FreeCADCmd exited 0 -- either the macro's own final JSON-write step "
-            "didn't execute (check stdout below), or (for a fake test executable "
-            "standing in for FreeCADCmd) the fake script doesn't emit this file."
-        )
+        missing_status_note = _missing_status_note(status_filename)
         freecad_result = {
             "objects_built": [],
             "errors": [],

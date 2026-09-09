@@ -165,6 +165,19 @@ FreeCAD-produced `.unv` file's element/group tagging against `
 LoadUniversalMesh()`'s expectations end-to-end (both read from source, not
 exercised against each other with a real file).
 
+**Not registered as an agent/MCP tool (deliberately, same reason as the
+paragraph above)**: unlike `run_freecad_curved_geometry()` (wired as
+`generate_freecad_curved_geometry` in `agent/main.py`, `mcp_server/
+server.py`, and `policies/tool_policy.yaml` — its geometry-dict output
+drops straight into `run_openems_simulation`'s/`run_palace_simulation`'s
+own geometry conductor/material lists even without FreeCAD installed),
+`run_freecad_fem_mesh_geometry()`'s mesh file has no downstream consumer
+anywhere in this repo yet: `run_elmergrid_conversion()` still hardcodes
+Gmsh-format 14, not the UNV format 8 a FreeCAD-Gmsh mesh actually produces.
+Wiring an agent-callable tool whose result nothing else can consume yet
+would just expose a dead end — this is a natural follow-up once
+`run_elmergrid_conversion()` gains that format-8 path, not before.
+
 **Blocked on, honestly**: this prototype is exercised only against a fake
 `FreeCADCmd` stand-in (`tests/test_freecad_curved.py`), same as every other
 claim in this module — neither a real FreeCAD+Gmsh install nor a real
