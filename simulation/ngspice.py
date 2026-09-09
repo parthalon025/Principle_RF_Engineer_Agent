@@ -122,7 +122,32 @@ from typing import Any
 from .base import SimulationResult, Simulator, SimulatorError
 from .spice_netlist import format_components, format_number
 
-_ANALYSIS_TYPES = ("op", "ac", "tran")
+_ANALYSIS_TYPES = ("op", "ac", "tran", "noise", "disto", "pz", "sens")
+
+# Analyses whose ".control"-block interactive command still leaves a
+# frequency- or time-swept vector readable by `wrdata` (see
+# generate_ngspice_netlist()'s per-type branches below and
+# parse_ngspice_wrdata()'s docstring for the exact column shape each one
+# produces). ".pz"/".sens" do NOT belong here -- see _PRINT_VALUE_ANALYSIS_TYPES.
+_WRDATA_ANALYSIS_TYPES = ("op", "ac", "tran", "noise", "disto")
+
+# Analyses that report a small, unswept set of complex values (poles/zeros,
+# per-parameter sensitivities) via the interactive `print all` command
+# instead of a swept vector `wrdata` can write -- see parse_ngspice_print_values()
+# and this module's SCOPE docstring section for the citation and honest
+# caveat on this text format.
+_PRINT_VALUE_ANALYSIS_TYPES = ("pz", "sens")
+
+# `wrdata` writes a (real, imag) pair per requested output for an analysis
+# whose vectors are complex (AC small-signal quantities); every other
+# wrdata-shaped analysis writes one real value per output. `.DISTO`'s
+# harmonic-distortion vectors are themselves AC (small-signal) quantities at
+# the swept fundamental frequency, so they are complex too -- see this
+# module's docstring for the citation.
+_COMPLEX_WRDATA_ANALYSIS_TYPES = ("ac", "disto")
+
+# `wrdata`-shaped analyses whose scale column is frequency rather than time.
+_FREQUENCY_SCALE_ANALYSIS_TYPES = ("ac", "noise", "disto")
 
 
 class NgspiceSimulator(Simulator):
@@ -169,6 +194,28 @@ class NgspiceSimulator(Simulator):
         )
 
 
+# Shared by "ac", "disto" (whose fundamental-frequency sweep is documented
+# as "exactly as in the .ac command"), and "sens"'s optional AC form.
+_AC_SWEEP_FIELDS = ("sweep_type", "points", "start_freq_hz", "stop_freq_hz")
+
+
+def _require_fields(analysis: dict[str, Any], type_label: str, required: tuple[str, ...]) -> None:
+    """Raise the same 'analysis (type=...) missing required field(s): [...]'
+    ValueError every analysis-type branch below uses, naming exactly what is
+    absent rather than failing generically (see this repo's CLAUDE.md:
+    'warn, never block; never silently apply the wrong tool')."""
+    missing = [f for f in required if f not in analysis]
+    if missing:
+        raise ValueError(f"analysis (type={type_label!r}) missing required field(s): {missing}")
+
+
+def _validate_sweep_type(sweep_type: str) -> None:
+    if sweep_type not in ("dec", "oct", "lin"):
+        raise ValueError(
+            f"analysis['sweep_type'] must be 'dec', 'oct', or 'lin', got {sweep_type!r}"
+        )
+
+
 def generate_ngspice_netlist(
     job: dict[str, Any],
     output_file: str,
@@ -189,21 +236,59 @@ def generate_ngspice_netlist(
                                           # inserted verbatim -- see
                                           # simulation/spice_netlist.py's SCOPE note.
           "analysis": {
-              "type": "op" | "ac" | "tran",
+              "type": "op" | "ac" | "tran" | "noise" | "disto" | "pz" | "sens",
               # ac:
               "sweep_type": "dec"|"oct"|"lin", "points": int,
               "start_freq_hz": float, "stop_freq_hz": float,
               # tran:
               "step_s": float, "stop_s": float,
               "start_s": float (optional), "max_step_s": float (optional),
+              # noise -- OUTVAR/SRC per ngspice's ".noise" dot-command form;
+              # "sweep_type"/"points"/"start_freq_hz"/"stop_freq_hz" as ac:
+              "output_node": str,   # e.g. "v(5)" or "v(5,3)" -- node the
+                                     # total output noise is measured at
+              "src": str,            # independent source used as input ref
+              "pts_per_summary": int (optional),
+              # disto -- fundamental-frequency sweep "exactly as in the .ac
+              # command" per ngspice's own docs, so it reuses ac's
+              # "sweep_type"/"points"/"start_freq_hz"/"stop_freq_hz" fields:
+              "f2overf1": float (optional, 0 < value < 1 -- two-tone/
+                                  spectral mode instead of single-tone/
+                                  harmonic mode),
+              # pz:
+              "node1": node, "node2": node,   # input node pair
+              "node3": node, "node4": node,   # output node pair
+              "tf_type": "cur" | "vol",       # input current or voltage
+              "analysis_mode": "pol" | "zer" | "pz",
+              # sens -- DC form needs only "outvar"; AC form additionally
+              # needs the same 4 ac-style sweep fields as "ac"/"disto":
+              "outvar": str,   # node voltage or V-source branch current
           },
-          "outputs": [str, ...],   # node-voltage/branch-current expressions,
-                                    # e.g. "v(out)", "v(in)", "i(vin)" -- passed
-                                    # verbatim to ngspice's `wrdata`.
+          "outputs": [str, ...],   # meaning is analysis-type-specific, passed
+                                    # verbatim to ngspice's `wrdata` (ignored
+                                    # for pz/sens, which report their results
+                                    # via `print all` instead -- see below):
+                                    #   op/ac/tran: node-voltage/branch-current
+                                    #     expressions, e.g. "v(out)", "i(vin)".
+                                    #   noise: the fixed vector names ngspice's
+                                    #     own noise analysis creates, i.e. some
+                                    #     of "onoise_spectrum"/"inoise_spectrum"
+                                    #     (real-valued spectral density) -- NOT
+                                    #     arbitrary node expressions.
+                                    #   disto: node-voltage/branch-current
+                                    #     expressions read from the harmonic-
+                                    #     distortion analysis's current plot
+                                    #     (2nd-harmonic values; the 3rd-harmonic
+                                    #     plot needs the qualified form, e.g.
+                                    #     "disto2.v(out)" -- see this module's
+                                    #     docstring for the citation).
         }
 
     `output_file` is the path `wrdata` writes its plain-ASCII results to
-    (read back by parse_ngspice_wrdata()). Node/frequency/time values are in
+    (read back by parse_ngspice_wrdata()) for every analysis type except
+    `.PZ`/`.SENS`, which report a small set of poles/zeros or per-parameter
+    sensitivities via the interactive `print all` command instead -- see
+    parse_ngspice_print_values(). Node/frequency/time values are in
     ohms/farads/henries/volts/amps/Hz/seconds throughout -- no unit-suffix
     shorthand is generated (see simulation/spice_netlist.py's
     format_number citation).
@@ -211,8 +296,6 @@ def generate_ngspice_netlist(
     components = job.get("components", [])
     raw_cards = job.get("raw_cards", [])
     outputs = job.get("outputs")
-    if not outputs:
-        raise ValueError("job['outputs'] must be a non-empty list of node/branch expressions")
     analysis = job.get("analysis")
     if not analysis or "type" not in analysis:
         raise ValueError("job['analysis'] must be a dict with a 'type' key")
@@ -221,6 +304,8 @@ def generate_ngspice_netlist(
         raise ValueError(
             f"analysis['type'] must be one of {_ANALYSIS_TYPES}, got {analysis_type!r}"
         )
+    if analysis_type in _WRDATA_ANALYSIS_TYPES and not outputs:
+        raise ValueError("job['outputs'] must be a non-empty list of node/branch expressions")
 
     lines: list[str] = [f"* {comment}"]
     lines.extend(format_components(components))
@@ -229,20 +314,13 @@ def generate_ngspice_netlist(
     if analysis_type == "op":
         run_command = "op"
     elif analysis_type == "ac":
-        required = ("sweep_type", "points", "start_freq_hz", "stop_freq_hz")
-        missing = [f for f in required if f not in analysis]
-        if missing:
-            raise ValueError(f"analysis (type='ac') missing required field(s): {missing}")
-        sweep_type = analysis["sweep_type"]
-        if sweep_type not in ("dec", "oct", "lin"):
-            raise ValueError(
-                f"analysis['sweep_type'] must be 'dec', 'oct', or 'lin', got {sweep_type!r}"
-            )
+        _require_fields(analysis, "ac", _AC_SWEEP_FIELDS)
+        _validate_sweep_type(analysis["sweep_type"])
         run_command = (
-            f"ac {sweep_type} {int(analysis['points'])} "
+            f"ac {analysis['sweep_type']} {int(analysis['points'])} "
             f"{format_number(analysis['start_freq_hz'])} {format_number(analysis['stop_freq_hz'])}"
         )
-    else:  # tran
+    elif analysis_type == "tran":
         required = ("step_s", "stop_s")
         missing = [f for f in required if f not in analysis]
         if missing:
@@ -253,16 +331,74 @@ def generate_ngspice_netlist(
             if "max_step_s" in analysis:
                 tran_fields.append(format_number(analysis["max_step_s"]))
         run_command = "tran " + " ".join(tran_fields)
+    elif analysis_type == "noise":
+        _require_fields(analysis, "noise", ("output_node", "src", *_AC_SWEEP_FIELDS))
+        _validate_sweep_type(analysis["sweep_type"])
+        run_command = (
+            f"noise {analysis['output_node']} {analysis['src']} {analysis['sweep_type']} "
+            f"{int(analysis['points'])} {format_number(analysis['start_freq_hz'])} "
+            f"{format_number(analysis['stop_freq_hz'])}"
+        )
+        if "pts_per_summary" in analysis:
+            run_command += f" {int(analysis['pts_per_summary'])}"
+    elif analysis_type == "disto":
+        _require_fields(analysis, "disto", _AC_SWEEP_FIELDS)
+        _validate_sweep_type(analysis["sweep_type"])
+        run_command = (
+            f"disto {analysis['sweep_type']} {int(analysis['points'])} "
+            f"{format_number(analysis['start_freq_hz'])} {format_number(analysis['stop_freq_hz'])}"
+        )
+        if "f2overf1" in analysis:
+            run_command += f" {format_number(analysis['f2overf1'])}"
+    elif analysis_type == "pz":
+        _require_fields(
+            analysis, "pz", ("node1", "node2", "node3", "node4", "tf_type", "analysis_mode")
+        )
+        tf_type = analysis["tf_type"]
+        if tf_type not in ("cur", "vol"):
+            raise ValueError(f"analysis['tf_type'] must be 'cur' or 'vol', got {tf_type!r}")
+        analysis_mode = analysis["analysis_mode"]
+        if analysis_mode not in ("pol", "zer", "pz"):
+            raise ValueError(
+                f"analysis['analysis_mode'] must be 'pol', 'zer', or 'pz', got {analysis_mode!r}"
+            )
+        run_command = (
+            f"pz {analysis['node1']} {analysis['node2']} {analysis['node3']} "
+            f"{analysis['node4']} {tf_type} {analysis_mode}"
+        )
+    else:  # sens
+        _require_fields(analysis, "sens", ("outvar",))
+        run_command = f"sens {analysis['outvar']}"
+        present = [f for f in _AC_SWEEP_FIELDS if f in analysis]
+        if present:
+            if len(present) != len(_AC_SWEEP_FIELDS):
+                missing = [f for f in _AC_SWEEP_FIELDS if f not in analysis]
+                raise ValueError(f"analysis (type='sens') missing required field(s): {missing}")
+            _validate_sweep_type(analysis["sweep_type"])
+            run_command += (
+                f" ac {analysis['sweep_type']} {int(analysis['points'])} "
+                f"{format_number(analysis['start_freq_hz'])} "
+                f"{format_number(analysis['stop_freq_hz'])}"
+            )
 
     lines.append(".control")
-    # One shared scale column across every requested output vector (see
-    # this module's docstring wrdata citation) -- otherwise each output
-    # gets its own repeated scale column, complicating column-count-based
-    # parsing in parse_ngspice_wrdata() below for no benefit (the scale
-    # values are identical across vectors from the same analysis run).
-    lines.append("set wr_singlescale")
-    lines.append(run_command)
-    lines.append(f"wrdata {output_file} " + " ".join(outputs))
+    if analysis_type in _WRDATA_ANALYSIS_TYPES:
+        # One shared scale column across every requested output vector (see
+        # this module's docstring wrdata citation) -- otherwise each output
+        # gets its own repeated scale column, complicating column-count-based
+        # parsing in parse_ngspice_wrdata() below for no benefit (the scale
+        # values are identical across vectors from the same analysis run).
+        lines.append("set wr_singlescale")
+        lines.append(run_command)
+        lines.append(f"wrdata {output_file} " + " ".join(outputs))
+    else:  # pz, sens -- a handful of unswept complex values, not a vector
+        # `wrdata` can write; ngspice's own `.PZ` manual page states plainly
+        # "to print the results, one should use the command `print all`"
+        # (see this module's docstring citation) -- `.SENS` has no
+        # documented `wrdata`-compatible form either, so the same mechanism
+        # is reused for it. Read back by parse_ngspice_print_values().
+        lines.append(run_command)
+        lines.append("print all")
     lines.append(".endc")
     lines.append(".end")
     return "\n".join(lines) + "\n"
@@ -275,7 +411,10 @@ def parse_ngspice_wrdata(text: str, outputs: list[str], analysis_type: str) -> d
 
     With `set wr_singlescale` always set by generate_ngspice_netlist(),
     each data row is: <scale> then, per requested output in order, either
-    one real value (TRAN/OP) or a (real, imag) pair (AC) -- see this
+    one real value (TRAN/OP/NOISE -- noise's onoise_spectrum/inoise_spectrum
+    are real-valued spectral densities, not complex) or a (real, imag) pair
+    (AC, and DISTO -- whose harmonic-distortion vectors are themselves AC
+    small-signal quantities at the swept fundamental frequency) -- see this
     module's docstring wrdata citation. Lines that don't tokenize entirely
     as floats (e.g. a header ngspice may or may not emit) are skipped
     rather than assumed absent, the same tolerant-parsing approach
@@ -285,7 +424,7 @@ def parse_ngspice_wrdata(text: str, outputs: list[str], analysis_type: str) -> d
     Returns `{"scale": [...], "scale_name": "frequency_hz"|"time_s",
     "values": {output_name: [[real, imag], ...] | [float, ...]}}`.
     """
-    width_per_output = 2 if analysis_type == "ac" else 1
+    width_per_output = 2 if analysis_type in _COMPLEX_WRDATA_ANALYSIS_TYPES else 1
     expected_columns = 1 + width_per_output * len(outputs)
 
     rows: list[list[float]] = []
@@ -302,14 +441,14 @@ def parse_ngspice_wrdata(text: str, outputs: list[str], analysis_type: str) -> d
     values: dict[str, Any] = {}
     for i, name in enumerate(outputs):
         col = 1 + i * width_per_output
-        if analysis_type == "ac":
+        if analysis_type in _COMPLEX_WRDATA_ANALYSIS_TYPES:
             values[name] = [[row[col], row[col + 1]] for row in rows]
         else:
             values[name] = [row[col] for row in rows]
 
     return {
         "scale": scale,
-        "scale_name": "frequency_hz" if analysis_type == "ac" else "time_s",
+        "scale_name": "frequency_hz" if analysis_type in _FREQUENCY_SCALE_ANALYSIS_TYPES else "time_s",
         "values": values,
     }
 

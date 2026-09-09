@@ -164,6 +164,84 @@ def test_generate_ngspice_netlist_unknown_component_type_raises():
 
 
 # ---------------------------------------------------------------------------
+# .NOISE (issue #283) -- noise-figure analysis. Interactive command mirrors
+# the ".noise OUTVAR SRC dec|oct|lin ND FSTART FSTOP <pts_per_summary>"
+# dot-command form (see simulation/ngspice.py's docstring for the manual
+# citation). Its meaningful output vectors are the fixed names
+# `onoise_spectrum`/`inoise_spectrum` that ngspice itself creates on the
+# `noise1` plot (confirmed via a real ngspice tutorial's worked
+# ".control"/"wrdata" example, cited in simulation/ngspice.py) -- NOT
+# arbitrary node expressions -- so the job's "outputs" list is passed
+# through to `wrdata` verbatim, same as every other analysis type; it is
+# the caller's job to name the real vectors for the analysis it chose.
+# ---------------------------------------------------------------------------
+
+NOISE_JOB = {
+    "components": MATCHING_NETWORK_JOB["components"],
+    "analysis": {
+        "type": "noise",
+        "output_node": "v(out)",
+        "src": "Vin",
+        "sweep_type": "dec",
+        "points": 10,
+        "start_freq_hz": 1e3,
+        "stop_freq_hz": 1e8,
+    },
+    "outputs": ["onoise_spectrum", "inoise_spectrum"],
+}
+
+
+def test_generate_ngspice_netlist_noise_control_block():
+    netlist = generate_ngspice_netlist(NOISE_JOB, "noise_out.dat")
+    lines = netlist.strip("\n").split("\n")
+    assert "noise v(out) Vin dec 10 1000 1e+08" in lines
+    assert "wrdata noise_out.dat onoise_spectrum inoise_spectrum" in lines
+    assert ".endc" in lines
+
+
+def test_generate_ngspice_netlist_noise_pts_per_summary_optional():
+    job = {
+        "components": NOISE_JOB["components"],
+        "analysis": {**NOISE_JOB["analysis"], "pts_per_summary": 5},
+        "outputs": NOISE_JOB["outputs"],
+    }
+    netlist = generate_ngspice_netlist(job, "noise_out.dat")
+    assert "noise v(out) Vin dec 10 1000 1e+08 5" in netlist
+
+
+def test_generate_ngspice_netlist_noise_missing_field_raises():
+    job = {
+        "components": NOISE_JOB["components"],
+        "analysis": {"type": "noise", "output_node": "v(out)", "src": "Vin"},
+        "outputs": NOISE_JOB["outputs"],
+    }
+    with pytest.raises(ValueError, match="sweep_type"):
+        generate_ngspice_netlist(job, "noise_out.dat")
+
+
+def test_generate_ngspice_netlist_noise_invalid_sweep_type_raises():
+    job = {
+        "components": NOISE_JOB["components"],
+        "analysis": {**NOISE_JOB["analysis"], "sweep_type": "bogus"},
+        "outputs": NOISE_JOB["outputs"],
+    }
+    with pytest.raises(ValueError, match="sweep_type"):
+        generate_ngspice_netlist(job, "noise_out.dat")
+
+
+def test_parse_ngspice_wrdata_noise_real_values():
+    # onoise_spectrum/inoise_spectrum are real-valued spectral densities
+    # (V/sqrt(Hz)), not complex -- one shared scale column, one real value
+    # column per requested output, same shape as tran/op.
+    text = "1e+03 2.0e-08 1.0e-08\n1e+04 1.8e-08 0.9e-08\n"
+    result = parse_ngspice_wrdata(text, ["onoise_spectrum", "inoise_spectrum"], "noise")
+    assert result["scale_name"] == "frequency_hz"
+    assert result["scale"] == pytest.approx([1e3, 1e4])
+    assert result["values"]["onoise_spectrum"] == pytest.approx([2.0e-08, 1.8e-08])
+    assert result["values"]["inoise_spectrum"] == pytest.approx([1.0e-08, 0.9e-08])
+
+
+# ---------------------------------------------------------------------------
 # wrdata output parsing
 # ---------------------------------------------------------------------------
 
