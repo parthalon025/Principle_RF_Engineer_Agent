@@ -196,6 +196,108 @@ CREATE TABLE IF NOT EXISTS material_family_brackets (
     UNIQUE(family, property)
 );
 
+-- Issue #256 (ADR-0027, "the alphabet admits only printed letters, and a
+-- letter's identity includes the process that made it"). A Process record
+-- is the "stated box" ADR-0027 point 4 requires before an
+-- Element/Coding-Alphabet library entry (a "letter") can be admitted as a
+-- measurement rather than an assumption: machine, ink and grade, substrate
+-- stack, pass count, achieved film thickness, and cure schedule -- ADR-0027's
+-- own field list, transcribed exactly, not re-derived.
+--
+-- `ink`/`ink_grade` are two columns, not one, because ADR-0027 lists them as
+-- two facts ("ink and grade") and issue #256's own field list glosses that
+-- as "ink (name/grade)" -- the ink material and its grade are independently
+-- meaningful and independently queryable (e.g. "every record on ACI SC1502
+-- carbon, any grade").
+--
+-- No UNIQUE constraint across these fields, deliberately, mirroring
+-- `material_properties` above rather than `material_family_brackets`: two
+-- runs on nominally identical settings are still two distinct,
+-- independently-referenceable Process records, since "achieved" film
+-- thickness in particular can vary run to run (issue #256's own Solution
+-- section).
+--
+-- This table is referenced by, but does not itself reference,
+-- `symbol_alphabet_entries` -- that table, and the NOT NULL foreign key
+-- enforcing ADR-0027's "no entry without a process reference" rule (user
+-- story 4), is separate, dependent work (issue #256's ticket 2).
+CREATE TABLE IF NOT EXISTS process_records (
+    id BIGSERIAL PRIMARY KEY,
+    machine TEXT NOT NULL,
+    ink TEXT NOT NULL,
+    ink_grade TEXT NOT NULL,
+    substrate_stack TEXT NOT NULL,
+    pass_count DOUBLE PRECISION NOT NULL,
+    achieved_film_thickness_m DOUBLE PRECISION NOT NULL,
+    cure_schedule TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Issue #256 ticket 2 (ADR-0027). A symbol-alphabet entry is a "letter":
+-- one printed-and-measured Symbol, keyed by the five-part key ADR-0027
+-- point 4 settled -- `(element family, symbol, band, incidence-angle
+-- range, process)`. `process_id` is `NOT NULL REFERENCES
+-- process_records(id)` because ADR-0027 is explicit that "an entry
+-- carrying no process reference is an assumption, not a measurement"
+-- (issue #256 user story 4) -- enforced here at the schema level as well
+-- as by `designs.element_alphabet.add_symbol_entry`'s own pure-function
+-- check, so an insert against a process id that doesn't exist fails
+-- loudly (FK violation) rather than creating a dangling reference (user
+-- story 16).
+--
+-- `frequency_low_hz`/`frequency_high_hz` and `incidence_angle_low_deg`/
+-- `incidence_angle_high_deg` are both stored as ranges, never a single
+-- point -- the same "a band, not a point" discipline `material_properties`
+-- already applies to frequency (issue #256 user story 14).
+--
+-- `geometry` (JSONB) holds the same primitive-dict shape
+-- `geometry/unit_cell.py` already produces/consumes -- a single "box"/
+-- "polygon" primitive dict, or a list of them -- so a fetched entry can be
+-- handed straight into `generate_unit_cell_array`/
+-- `generate_coded_unit_cell_array`'s `unit_cell`/`symbol_library` argument
+-- with no reshaping (user story 10). `response` (JSONB) holds the
+-- characterised `|Gamma|`/`angle Gamma` vs. frequency curve as an array of
+-- `{frequency_hz, magnitude, phase_deg}` points (user story 13) -- not a
+-- single test point.
+--
+-- No UNIQUE constraint on the five key fields, deliberately, the same
+-- reasoning as `process_records` above: two entries that agree on
+-- family/symbol/band/incidence-angle range but differ only in
+-- `process_id` (e.g. the same outline printed in carbon ink vs. MXene) are
+-- two separate letters, never merged (ADR-0027 point 4's own worked
+-- example; issue #256 user story 17). Nothing here expires or
+-- invalidates a row on a process change either (ADR-0027 point 3): a
+-- lookup against a process id that no longer matches simply returns
+-- nothing, which is a query-time behaviour (`designs/element_alphabet.py`),
+-- not a schema-level status column -- ADR-0027 explicitly rejected a
+-- library with a status field.
+--
+-- `provenance` is stored on the row (for consistency with how every other
+-- provenance-carrying table in this codebase names its own evidence class
+-- explicitly -- issue #256's Implementation Decisions) even though its
+-- value is never a caller choice: every row this program writes here is
+-- `MEASURED` (`knowledge.provenance.MEASURED`), enforced at the pure
+-- function layer, not by a CHECK constraint -- mirroring how
+-- `material_properties.provenance` is TEXT NOT NULL with the closed vocabulary
+-- enforced in Python, not SQL.
+CREATE TABLE IF NOT EXISTS symbol_alphabet_entries (
+    id BIGSERIAL PRIMARY KEY,
+    element_family TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    frequency_low_hz DOUBLE PRECISION NOT NULL,
+    frequency_high_hz DOUBLE PRECISION NOT NULL,
+    incidence_angle_low_deg DOUBLE PRECISION NOT NULL,
+    incidence_angle_high_deg DOUBLE PRECISION NOT NULL,
+    process_id BIGINT NOT NULL REFERENCES process_records(id),
+    geometry JSONB NOT NULL,
+    response JSONB NOT NULL,
+    provenance TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS symbol_alphabet_entries_family_symbol_idx
+ON symbol_alphabet_entries (element_family, symbol);
+
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw
 ON document_chunks USING hnsw (embedding vector_cosine_ops);
 

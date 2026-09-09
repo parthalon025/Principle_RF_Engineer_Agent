@@ -40,6 +40,18 @@ INTERNAL_HISTORY = "INTERNAL-HISTORY"
 INFERRED = "INFERRED"
 UNKNOWN = "UNKNOWN"
 
+# Issue #256 (ADR-0027): the fixed provenance value every
+# Element/Coding-Alphabet library entry carries. Unlike the Material-property
+# library's three caller-chosen tiers (`designs/material_properties.py`'s
+# `ENTRY_PROVENANCE_VALUES`), an alphabet entry is this program's own bench
+# measurement by construction -- printed and characterised here, never cited
+# from elsewhere -- so `provenance` is never a choice, always `MEASURED`, the
+# top of CONTEXT.md's evidence hierarchy. Standalone here rather than a local
+# constant in `designs/element_alphabet.py`, the same way
+# `designs/requirement_targets.py`'s `ASSUMED` lives standalone next to the
+# tier constants it complements rather than duplicating one of them.
+MEASURED = "MEASURED"
+
 _SOURCE_TYPE_TIER: dict[SourceType, str] = {
     SourceType.DATASHEET: MANUFACTURER_SPECIFIED,
     SourceType.APPLICATION_NOTE: MANUFACTURER_SPECIFIED,
