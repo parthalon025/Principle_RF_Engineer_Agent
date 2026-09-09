@@ -31,6 +31,7 @@ from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
+from knowledge.sourcing.arxiv import search_arxiv_papers as _search_arxiv_papers
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
@@ -1408,6 +1409,25 @@ def ingest_arxiv_paper(
         classification=classification,
         supersedes_document_id=supersedes_document_id,
     )
+
+
+@mcp.tool()
+def search_arxiv_papers(query: str, max_results: int = 10) -> list:
+    """Search arXiv by topic/keyword (issue #257) and return a ranked list of
+    candidates for review -- NOT documents in the corpus. Each candidate carries
+    id/title/published/abstract; use "search precedent before inventing" (CLAUDE.md)
+    to judge relevance before spending an ingestion pass on it. Pass a chosen
+    candidate's id straight to ingest_arxiv_paper unchanged, along with the license/
+    classification ADR-0001 requires for that specific paper -- this tool never calls
+    ingest_document itself, so finding a paper here never counts as trusting it.
+    query is arXiv's search_query syntax (a bare keyword string, e.g. "conformal
+    metamaterial absorber", or field-prefixed, e.g. "abs:magnetic mirror AND
+    cat:physics.app-ph") searched over titles/abstracts/authors/categories -- not
+    ingest_arxiv_paper's id_list-style fetch by already-known identifier. A topic
+    with no matches returns [] (a real "nobody has published this" result); an
+    unreachable arXiv API raises instead of returning an empty list, so the two
+    cases are never confused."""
+    return _search_arxiv_papers(query, max_results=max_results)
 
 
 @mcp.tool()
