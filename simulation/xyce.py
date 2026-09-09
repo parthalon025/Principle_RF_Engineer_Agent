@@ -238,31 +238,31 @@ def _analysis_run_lines(analysis: dict[str, Any]) -> list[str]:
             f".AC {sweep_type.upper()} {int(analysis['points'])} "
             f"{format_number(analysis['start_freq_hz'])} {format_number(analysis['stop_freq_hz'])}"
         ]
-    if analysis_type == "hb":
-        required = ("fundamental_freqs_hz",)
+    if analysis_type == "tran":
+        required = ("step_s", "stop_s")
         missing = [f for f in required if f not in analysis]
         if missing:
-            raise ValueError(f"analysis (type='hb') missing required field(s): {missing}")
-        freqs = analysis["fundamental_freqs_hz"]
-        if not freqs:
-            raise ValueError(
-                "analysis['fundamental_freqs_hz'] must be a non-empty list of one or "
-                "more fundamental frequency values (Hz) -- Xyce's `.HB <fundamental "
-                "frequencies>` general form (Reference Guide section 2.1.13, p.45) "
-                "takes one value for single-tone HB or several for multi-tone HB"
-            )
-        return [".HB " + " ".join(format_number(freq) for freq in freqs)]
-    # tran
-    required = ("step_s", "stop_s")
+            raise ValueError(f"analysis (type='tran') missing required field(s): {missing}")
+        fields = [format_number(analysis["step_s"]), format_number(analysis["stop_s"])]
+        if "start_s" in analysis:
+            fields.append(format_number(analysis["start_s"]))
+            if "max_step_s" in analysis:
+                fields.append(format_number(analysis["max_step_s"]))
+        return [".TRAN " + " ".join(fields)]
+    # hb
+    required = ("fundamental_freqs_hz",)
     missing = [f for f in required if f not in analysis]
     if missing:
-        raise ValueError(f"analysis (type='tran') missing required field(s): {missing}")
-    fields = [format_number(analysis["step_s"]), format_number(analysis["stop_s"])]
-    if "start_s" in analysis:
-        fields.append(format_number(analysis["start_s"]))
-        if "max_step_s" in analysis:
-            fields.append(format_number(analysis["max_step_s"]))
-    return [".TRAN " + " ".join(fields)]
+        raise ValueError(f"analysis (type='hb') missing required field(s): {missing}")
+    freqs = analysis["fundamental_freqs_hz"]
+    if not freqs:
+        raise ValueError(
+            "analysis['fundamental_freqs_hz'] must be a non-empty list of one or "
+            "more fundamental frequency values (Hz) -- Xyce's `.HB <fundamental "
+            "frequencies>` general form (Reference Guide section 2.1.13, p.45) "
+            "takes one value for single-tone HB or several for multi-tone HB"
+        )
+    return [".HB " + " ".join(format_number(freq) for freq in freqs)]
 
 
 def _port_card(port: dict[str, Any]) -> str:

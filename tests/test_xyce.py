@@ -136,6 +136,14 @@ def test_generate_xyce_netlist_op_line():
     assert ".OP" in netlist.split("\n")
 
 
+# ---------------------------------------------------------------------------
+# .HB (Harmonic Balance) netlist generation (issue #282) -- see
+# simulation/xyce.py's module docstring for the Reference Guide `.HB`
+# citation (section 2.1.13, p.45) and the `.PRINT HB` two-output-file
+# honest scope note.
+# ---------------------------------------------------------------------------
+
+
 def test_generate_xyce_netlist_hb_line():
     job = {
         "components": FILTER_COMPONENTS,
@@ -384,8 +392,8 @@ def test_run_xyce_simulation_end_to_end_lin_touchstone(tmp_path: Path):
 
 
 def test_run_xyce_simulation_end_to_end_hb_print(tmp_path: Path):
-    # `.PRINT HB FORMAT=CSV` round-trips through the same parse_xyce_csv()
-    # path as `.AC`/`.TRAN` -- `_ANALYSIS_TYPES` accepting "hb" is the only
+    # (issue #282) `.PRINT HB FORMAT=CSV` round-trips through the same
+    # parse_xyce_csv() path as `.AC`/`.TRAN` -- `_ANALYSIS_TYPES` accepting "hb" is the only
     # thing this needed; `want_print` and the generic
     # `.PRINT {type} FORMAT=CSV FILE=...` line-generation already handled
     # any accepted analysis type unmodified (see simulation/xyce.py's
