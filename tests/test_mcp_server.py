@@ -609,6 +609,19 @@ def test_correlate_simulated_and_measured_is_registered():
     assert "correlate_simulated_and_measured" in registered_names
 
 
+def test_correlate_simulated_and_measured_docstring_states_openems_is_sometimes_accepted():
+    """Issue #317 (ADR-0032 prefactor audit): this docstring previously claimed
+    openEMS's S-parameters are "both honestly rejected, not fabricated from" --
+    flatly contradicting agent/main.py's sibling wrapper (and the actual
+    behavior in rf_tools/correlation.py/simulation/openems.py: an openEMS
+    result with computed=True carries a real "touchstone_file" and IS
+    accepted). Regression guard against that specific drift reappearing."""
+    doc = server.correlate_simulated_and_measured.__doc__
+    assert "computed=True" in doc
+    assert "computed=False" in doc
+    assert "both honestly rejected" not in doc
+
+
 def test_run_nec2_simulation_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "run_nec2_simulation" in registered_names

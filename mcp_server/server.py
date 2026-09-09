@@ -746,8 +746,10 @@ def correlate_simulated_and_measured(
     (frequency_hz/s_parameters/z0), or one carrying a "touchstone_file" path -- see
     rf_tools/correlation.py's module docstring for exactly which of run_nec2_simulation's/
     run_openems_simulation's current outputs this can and cannot use yet (NEC2++'s
-    single-frequency impedance and openEMS's stubbed S-parameters are both honestly
-    rejected, not fabricated from). Temperature normalization is a documented no-op
+    single-frequency impedance is always honestly rejected, not fabricated from;
+    openEMS's S-parameters are accepted via its "touchstone_file" output when
+    computed=True -- real port probe data was available -- and honestly rejected
+    when computed=False). Temperature normalization is a documented no-op
     unless both inputs happen to carry a "temperature_c" field, since no current
     simulator/external-measurement source populates one --
     see the returned temperature_note. Returns "CALCULATED" provenance for the
