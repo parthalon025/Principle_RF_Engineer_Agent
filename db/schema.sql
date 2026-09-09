@@ -196,6 +196,43 @@ CREATE TABLE IF NOT EXISTS material_family_brackets (
     UNIQUE(family, property)
 );
 
+-- Issue #256 (ADR-0027, "the alphabet admits only printed letters, and a
+-- letter's identity includes the process that made it"). A Process record
+-- is the "stated box" ADR-0027 point 4 requires before an
+-- Element/Coding-Alphabet library entry (a "letter") can be admitted as a
+-- measurement rather than an assumption: machine, ink and grade, substrate
+-- stack, pass count, achieved film thickness, and cure schedule -- ADR-0027's
+-- own field list, transcribed exactly, not re-derived.
+--
+-- `ink`/`ink_grade` are two columns, not one, because ADR-0027 lists them as
+-- two facts ("ink and grade") and issue #256's own field list glosses that
+-- as "ink (name/grade)" -- the ink material and its grade are independently
+-- meaningful and independently queryable (e.g. "every record on ACI SC1502
+-- carbon, any grade").
+--
+-- No UNIQUE constraint across these fields, deliberately, mirroring
+-- `material_properties` above rather than `material_family_brackets`: two
+-- runs on nominally identical settings are still two distinct,
+-- independently-referenceable Process records, since "achieved" film
+-- thickness in particular can vary run to run (issue #256's own Solution
+-- section).
+--
+-- This table is referenced by, but does not itself reference,
+-- `symbol_alphabet_entries` -- that table, and the NOT NULL foreign key
+-- enforcing ADR-0027's "no entry without a process reference" rule (user
+-- story 4), is separate, dependent work (issue #256's ticket 2).
+CREATE TABLE IF NOT EXISTS process_records (
+    id BIGSERIAL PRIMARY KEY,
+    machine TEXT NOT NULL,
+    ink TEXT NOT NULL,
+    ink_grade TEXT NOT NULL,
+    substrate_stack TEXT NOT NULL,
+    pass_count DOUBLE PRECISION NOT NULL,
+    achieved_film_thickness_m DOUBLE PRECISION NOT NULL,
+    cure_schedule TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw
 ON document_chunks USING hnsw (embedding vector_cosine_ops);
 
