@@ -115,9 +115,11 @@ MODULE SHAPE. The same pure/I-O seam `designs/material_properties.py`
 already establishes:
 
   - Pure, DB-free functions (`add_process_record`, `add_symbol_entry`,
-    `lookup_symbol_entries`, `resolve_symbol_entry`) -- all of both
-    tickets' actual validation/lookup logic, exhaustively unit-tested in
-    `tests/test_element_alphabet.py` with no database needed.
+    `lookup_symbol_entries`, `resolve_symbol_entry`,
+    `reduce_response_at_frequency`) -- all of both tickets' (plus issue
+    #267's response-curve-to-scalar reduction) actual validation/lookup
+    logic, exhaustively unit-tested in `tests/test_element_alphabet.py`
+    with no database needed.
   - Thin I/O wrappers (`insert_process_record`, `fetch_process_record`,
     `insert_symbol_entry`, `fetch_symbol_entries`,
     `resolve_symbol_entry_from_db`) -- read/write the `process_records`/
@@ -458,14 +460,19 @@ def reduce_response_at_frequency(
     its reflection phase there (design_families.py's own comment on both
     families) -- not because this function assumes it.
 
-    Raises `ValueError` if `response` is empty -- there is no measured
-    point here to reduce, and returning a made-up number would misrepresent
-    an assumption as a measurement (this module's own "provenance is never
-    a caller choice" discipline, applied to a derived value instead of a
-    stored one).
+    Raises `InvalidSymbolAlphabetEntryError` if `response` is empty -- there
+    is no measured point here to reduce, and returning a made-up number
+    would misrepresent an assumption as a measurement (this module's own
+    "provenance is never a caller choice" discipline, applied to a derived
+    value instead of a stored one) -- the same named-exception discipline
+    every other input-validation failure in this module already uses,
+    rather than a bare `ValueError` this one function would otherwise be
+    the sole exception to.
     """
     if not response:
-        raise ValueError("response is empty -- there is no measured point to reduce a scalar from")
+        raise InvalidSymbolAlphabetEntryError(
+            "response is empty -- there is no measured point to reduce a scalar from"
+        )
     points = sorted(response, key=lambda point: point["frequency_hz"])
     if frequency_hz <= points[0]["frequency_hz"]:
         return float(points[0][field_name])

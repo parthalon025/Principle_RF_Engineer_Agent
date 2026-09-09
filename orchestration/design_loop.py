@@ -1624,7 +1624,17 @@ def _combinatorial_result_to_dict(result: Any) -> dict[str, Any]:
                 for option in options
             ],
         }
-        for (i, j), options in sorted(result.candidate_snapshot.items())
+        # Row-major, j-outer/i-inner -- the SAME grid-walk order
+        # optimization.combinatorial's own `positions = [(i, j) for j in
+        # range(n_rows) for i in range(n_cols)]` and `_layout_from_choices`'s
+        # `layout[j][i]` already use, so this debug/audit snapshot's order
+        # agrees with every other grid walk this feature touches (each
+        # entry is still self-describing via its own "i"/"j" fields either
+        # way, but there is no reason for this one list to be the odd one
+        # out).
+        for (i, j), options in sorted(
+            result.candidate_snapshot.items(), key=lambda kv: (kv[0][1], kv[0][0])
+        )
     ]
     return {
         "method": result.method,
@@ -1720,6 +1730,21 @@ def _optimize_combinatorial_symbol_placement(
     (str(exc)) from exc` convention `_handle_architecture`/`_handle_analysis`/
     `_declared_adapter_name` already use for every other adapter-level
     exception in this file.
+
+    THE TARGET-SHAPE GUARD BELOW ALSO CHECKS RAGGEDNESS (design decision
+    4c), duplicating part of `optimization.combinatorial._validate_target`'s
+    own non-empty/rectangular check. That duplication is only partly
+    avoidable -- this handler needs `n_rows`/`n_cols` before it can build
+    `candidates` at all, a real constraint of `combinatorial_symbol_
+    placement`'s signature (the caller supplies candidates, so the caller
+    must already know the grid shape) -- but the two checks must agree on
+    what they reject: a ragged `target` that only `_validate_target` caught
+    would raise a bare, un-wrapped `ValueError` from inside
+    `combinatorial_symbol_placement`, past this handler's `except
+    _EmptyCandidateShelfError` clause, with none of this dispatch layer's
+    naming/wrapping discipline. Checking row-length consistency here too
+    closes that gap up front, the same place the non-empty/2D check already
+    lives.
     """
     _require_fields(
         step_input,
@@ -1769,6 +1794,12 @@ def _optimize_combinatorial_symbol_placement(
         )
     n_rows = len(target)
     n_cols = len(target[0])
+    if any(not isinstance(row, list) or len(row) != n_cols for row in target):
+        raise DesignLoopValidationError(
+            "optimization step_input['target'] must be rectangular (every row "
+            f"the same length): row lengths were "
+            f"{[len(row) if isinstance(row, list) else type(row).__name__ for row in target]}"
+        )
     candidates = {(i, j): candidate_options for j in range(n_rows) for i in range(n_cols)}
 
     try:

@@ -491,7 +491,10 @@ def test_reduce_response_at_frequency_clamps_above_the_highest_point():
 
 
 def test_reduce_response_at_frequency_rejects_an_empty_response():
-    with pytest.raises(ValueError, match="response"):
+    # InvalidSymbolAlphabetEntryError, not a bare ValueError -- the same
+    # named-exception discipline every other validation failure in this
+    # module already uses (see this function's own docstring).
+    with pytest.raises(InvalidSymbolAlphabetEntryError, match="response"):
         reduce_response_at_frequency([], frequency_hz=10.0e9, field_name="phase_deg")
 
 
