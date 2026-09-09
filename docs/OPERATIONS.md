@@ -35,4 +35,8 @@ States:
 DRAFT → ANALYSIS → SIMULATION → OPTIMIZATION → VERIFICATION →
 CONDITIONAL-PASS/PASS/FAIL/BLOCKED → RELEASED
 
-RELEASED requires human approval.
+RELEASED requires human approval. No agent/MCP tool can grant it: a human with local
+access to the machine running the live session runs `uv run python -m
+orchestration.approval_cli submit-release / list-release / show-release /
+approve-release / refuse-release` (see README.md's "How it works" section). Without
+that, a design simply stays short of RELEASED.
