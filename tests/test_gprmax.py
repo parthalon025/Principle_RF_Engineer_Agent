@@ -184,6 +184,208 @@ def test_generate_gprmax_input_materials_and_conductors_after_half_space():
     assert lines[substrate_material_idx] == "#material: 3.5 0 1 0 substrate"
 
 
+def test_generate_gprmax_input_material_dispersion_debye_line_follows_material(
+    tmp_path: Path,
+):
+    # Reproduces gprMax's own documented worked example verbatim (docs/
+    # source/input.rst, "#add_dispersion_debye:" section): a single-pole
+    # Debye water model with eps_r_infinity=4.9 in #material and
+    # delta_eps_r=75.2, tau=9.231e-12s in #add_dispersion_debye -- the
+    # exact numbers gprMax's own docs use for
+    # "#material: 4.9 0 1 0 my_water" / "#add_dispersion_debye: 1 75.2
+    # 9.231e-12 my_water" (material named "water" here, not "my_water", to
+    # keep this test's material distinct from the doc's own identifier).
+    geometry = {
+        **BASIC_GEOMETRY,
+        "materials": [
+            {
+                "name": "water",
+                "shape": "box",
+                "p1_m": [0.0, 0.0, 0.0],
+                "p2_m": [0.01, 0.01, 0.01],
+                "epsilon_r": 4.9,
+                "conductivity_s_m": 0.0,
+                "dispersion": {
+                    "model": "debye",
+                    "poles": [{"delta_epsilon_r": 75.2, "tau_s": 9.231e-12}],
+                },
+            }
+        ],
+    }
+    deck = generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+    lines = deck.split("\n")
+
+    material_idx = next(
+        i for i, line in enumerate(lines) if line.startswith("#material:") and "water" in line
+    )
+    assert lines[material_idx] == "#material: 4.9 0 1 0 water"
+    assert lines[material_idx + 1] == "#add_dispersion_debye: 1 75.2 9.231e-12 water"
+
+
+def test_generate_gprmax_input_material_dispersion_lorentz_line_follows_material():
+    geometry = {
+        **BASIC_GEOMETRY,
+        "materials": [
+            {
+                "name": "fss_resonator",
+                "shape": "box",
+                "p1_m": [0.0, 0.0, 0.0],
+                "p2_m": [0.01, 0.01, 0.01],
+                "epsilon_r": 2.0,
+                "conductivity_s_m": 0.0,
+                "dispersion": {
+                    "model": "lorentz",
+                    "poles": [{"delta_epsilon_r": 2.0, "omega_hz": 5e9, "delta_hz": 1e8}],
+                },
+            }
+        ],
+    }
+    deck = generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+    lines = deck.split("\n")
+
+    material_idx = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("#material:") and "fss_resonator" in line
+    )
+    assert lines[material_idx + 1] == "#add_dispersion_lorentz: 1 2 5e+09 1e+08 fss_resonator"
+
+
+def test_generate_gprmax_input_half_space_dispersion_drude_line_follows_material():
+    geometry = {
+        **BASIC_GEOMETRY,
+        "half_space": {
+            "z_m": 0.04,
+            "epsilon_r": 1.0,
+            "conductivity_s_m": 0.0,
+            "dispersion": {
+                "model": "drude",
+                "poles": [{"omega_hz": 1.37e16, "gamma_hz": 4.06e13}],
+            },
+        },
+    }
+    deck = generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+    lines = deck.split("\n")
+
+    material_idx = next(
+        i for i, line in enumerate(lines) if line.startswith("#material:") and "ground" in line
+    )
+    assert lines[material_idx + 1] == "#add_dispersion_drude: 1 1.37e+16 4.06e+13 ground"
+    # The dispersion line must precede the ground's #box (and everything
+    # else downstream) exactly like the #material line it modifies.
+    box_idx = next(i for i, line in enumerate(lines) if line.startswith("#box:"))
+    assert material_idx + 1 < box_idx
+
+
+def test_generate_gprmax_input_dispersion_multi_pole():
+    # #add_dispersion_lorentz's own syntax ("i1 f1 f2 f3 f4 f5 f6 ... str1")
+    # repeats a (delta_epsilon_r, omega_hz, delta_hz) triplet per pole, with
+    # i1 counting how many -- verify two poles round-trip correctly.
+    geometry = {
+        **BASIC_GEOMETRY,
+        "materials": [
+            {
+                "name": "two_pole",
+                "shape": "box",
+                "p1_m": [0.0, 0.0, 0.0],
+                "p2_m": [0.01, 0.01, 0.01],
+                "epsilon_r": 2.0,
+                "conductivity_s_m": 0.0,
+                "dispersion": {
+                    "model": "lorentz",
+                    "poles": [
+                        {"delta_epsilon_r": 1.0, "omega_hz": 3e9, "delta_hz": 5e7},
+                        {"delta_epsilon_r": 0.5, "omega_hz": 8e9, "delta_hz": 2e8},
+                    ],
+                },
+            }
+        ],
+    }
+    deck = generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+    assert "#add_dispersion_lorentz: 2 1 3e+09 5e+07 0.5 8e+09 2e+08 two_pole" in deck.split("\n")
+
+
+def test_generate_gprmax_input_dispersion_unrecognized_model_raises():
+    geometry = {
+        **BASIC_GEOMETRY,
+        "materials": [
+            {
+                "name": "bad",
+                "shape": "box",
+                "p1_m": [0.0, 0.0, 0.0],
+                "p2_m": [0.01, 0.01, 0.01],
+                "epsilon_r": 2.0,
+                "conductivity_s_m": 0.0,
+                "dispersion": {"model": "cole_cole", "poles": [{"delta_epsilon_r": 1.0}]},
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="debye.*lorentz.*drude"):
+        generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+
+
+def test_generate_gprmax_input_dispersion_missing_field_raises():
+    geometry = {
+        **BASIC_GEOMETRY,
+        "materials": [
+            {
+                "name": "bad",
+                "shape": "box",
+                "p1_m": [0.0, 0.0, 0.0],
+                "p2_m": [0.01, 0.01, 0.01],
+                "epsilon_r": 2.0,
+                "conductivity_s_m": 0.0,
+                "dispersion": {"model": "debye"},
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="poles"):
+        generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+
+
+def test_generate_gprmax_input_dispersion_pole_missing_field_raises():
+    geometry = {
+        **BASIC_GEOMETRY,
+        "materials": [
+            {
+                "name": "bad",
+                "shape": "box",
+                "p1_m": [0.0, 0.0, 0.0],
+                "p2_m": [0.01, 0.01, 0.01],
+                "epsilon_r": 2.0,
+                "conductivity_s_m": 0.0,
+                "dispersion": {"model": "debye", "poles": [{"delta_epsilon_r": 75.2}]},
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="tau_s"):
+        generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+
+
+def test_generate_gprmax_input_no_dispersion_key_unchanged():
+    # Acceptance criterion (issue #277): omitting `dispersion` -- the call
+    # shape every OTHER test in this file already uses -- must produce
+    # output identical to before this field existed, i.e. no
+    # #add_dispersion_* line appears anywhere, for either a `materials`
+    # entry or `half_space`.
+    geometry = {
+        **BASIC_GEOMETRY,
+        "half_space": {"z_m": 0.04, "epsilon_r": 6.0, "conductivity_s_m": 0.02},
+        "materials": [
+            {
+                "name": "substrate",
+                "shape": "box",
+                "p1_m": [0.03, 0.03, 0.04],
+                "p2_m": [0.07, 0.07, 0.042],
+                "epsilon_r": 3.5,
+                "conductivity_s_m": 0.0,
+            }
+        ],
+    }
+    deck = generate_gprmax_input(geometry, fdtd={"time_window_s": 1e-8})
+    assert not any(line.startswith("#add_dispersion") for line in deck.split("\n"))
+
+
 def test_generate_gprmax_input_material_missing_field_raises():
     geometry = {
         **BASIC_GEOMETRY,
