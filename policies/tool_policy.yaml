@@ -187,8 +187,24 @@ ingestion_auto:
   # It also spends no material, machine time or money, so it is nowhere near
   # the one hard stop this project keeps (nothing prints, orders or releases
   # without a human saying yes).
+  # issue #257-T2: search_arxiv_papers (knowledge/sourcing/arxiv.py's
+  # topic/keyword discovery search, issue #257-T1) sits here too, right
+  # beside ingest_arxiv_paper -- same credential-free arXiv query API, same
+  # ungated posture (it needs no account or credential, so there is no
+  # self-gate to categorize it under approval_self_gated), same knowledge/
+  # sourcing/ module. The one real difference from every other entry in
+  # this category: it never itself writes a document -- it returns
+  # candidates for review and never calls ingest_document (see its own
+  # docstring and tests/test_sourcing_arxiv.py's
+  # test_search_arxiv_papers_never_calls_ingest_document). It is not a
+  # `calculation` (it derives nothing) and not `read_only` in that
+  # category's own sense (it reaches an external network endpoint, not
+  # just this project's own knowledge base) -- ingestion_auto, grouped by
+  # "external, credential-free knowledge/sourcing operation," is still the
+  # closest fit.
   - ingest_document
   - ingest_arxiv_paper
+  - search_arxiv_papers
   - ingest_3gpp_spec
   - ingest_etsi_standard
   - ingest_fcc_rule

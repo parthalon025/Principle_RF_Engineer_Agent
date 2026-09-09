@@ -48,6 +48,7 @@ from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
+from knowledge.sourcing.arxiv import search_arxiv_papers as _search_arxiv_papers
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
@@ -1475,6 +1476,25 @@ def ingest_arxiv_paper(
 
 
 @function_tool
+def search_arxiv_papers(query: str, max_results: int = 10) -> list:
+    """Search arXiv by topic/keyword (issue #257) and return a ranked list of
+    candidates for review -- NOT documents in the corpus. Each candidate carries
+    id/title/published/abstract; use "search precedent before inventing" (CLAUDE.md)
+    to judge relevance before spending an ingestion pass on it. Pass a chosen
+    candidate's id straight to ingest_arxiv_paper unchanged, along with the license/
+    classification ADR-0001 requires for that specific paper -- this tool never calls
+    ingest_document itself, so finding a paper here never counts as trusting it.
+    query is arXiv's search_query syntax (a bare keyword string, e.g. "conformal
+    metamaterial absorber", or field-prefixed, e.g. "abs:magnetic mirror AND
+    cat:physics.app-ph") searched over titles/abstracts/authors/categories -- not
+    ingest_arxiv_paper's id_list-style fetch by already-known identifier. A topic
+    with no matches returns [] (a real "nobody has published this" result); an
+    unreachable arXiv API raises instead of returning an empty list, so the two
+    cases are never confused."""
+    return _search_arxiv_papers(query, max_results=max_results)
+
+
+@function_tool
 def ingest_3gpp_spec(
     spec_number: str,
     version: str,
@@ -2259,7 +2279,14 @@ def run_candidate_search(
 #                   straight from a distributor and reconciling it into one
 #                   components row is the same authoring concern as manually
 #                   ingesting one -- and ingest_arxiv_paper, the arxiv-doc-
-#                   builder-backed arXiv preprint fetcher, plus (issue #219)
+#                   builder-backed arXiv preprint fetcher, alongside (issue
+#                   #257) search_arxiv_papers, its sibling discovery step:
+#                   topic/keyword search over the same public arXiv API,
+#                   returning candidates only, never itself calling
+#                   ingest_document -- the same authoring bucket, since
+#                   deciding what to bring in is part of standing up the
+#                   knowledge base, even though this one tool never writes
+#                   anything -- plus (issue #219)
 #                   ingest_patent, the USPTO patent/published-application
 #                   fetcher that reuses the same skill's PDF converters; both
 #                   sit in the same authoring
@@ -2441,6 +2468,7 @@ _ALL_TOOLS = [
     generate_freecad_curved_geometry,
     ingest_document,
     ingest_arxiv_paper,
+    search_arxiv_papers,
     ingest_3gpp_spec,
     ingest_etsi_standard,
     ingest_fcc_rule,
@@ -2539,11 +2567,13 @@ ROLE_SPECS: list[RoleSpec] = [
             "and standing up the knowledge base (ingesting and indexing "
             "documents, sourcing component datasheets directly from Digi-Key/"
             "Mouser/Nexar, fetching/converting arXiv preprints via "
-            "ingest_arxiv_paper, fetching 3GPP specs/ETSI standards/FCC "
-            "eCFR rule text via ingest_3gpp_spec/ingest_etsi_standard/"
-            "ingest_fcc_rule, and fetching US patents and published patent "
-            "applications from the USPTO via ingest_patent) other roles rely "
-            "on. Defer network-level "
+            "ingest_arxiv_paper, searching arXiv by topic/keyword via "
+            "search_arxiv_papers before proposing a new element or mechanism "
+            "-- 'search precedent before inventing' -- fetching 3GPP specs/"
+            "ETSI standards/FCC eCFR rule text via ingest_3gpp_spec/"
+            "ingest_etsi_standard/ingest_fcc_rule, and fetching US patents "
+            "and published patent applications from the USPTO via "
+            "ingest_patent) other roles rely on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -2564,6 +2594,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_third_order_intermod_dbc,
             ingest_document,
             ingest_arxiv_paper,
+            search_arxiv_papers,
             ingest_3gpp_spec,
             ingest_etsi_standard,
             ingest_fcc_rule,

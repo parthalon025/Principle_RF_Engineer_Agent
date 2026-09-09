@@ -50,7 +50,7 @@ from agent.main import (
     _assert_calculated_provenance_is_tool_backed,
     principal,
 )
-from orchestration.policy import assert_all_tools_categorized
+from orchestration.policy import assert_all_tools_categorized, category_for
 
 
 def _tool_names(agent) -> set[str]:
@@ -184,6 +184,32 @@ def test_systems_role_gets_patent_sourcing_tool():
     for key in ("microwave", "antenna", "test", "verification"):
         role_names = _tool_names(ROLES[key])
         assert "ingest_patent" not in role_names
+
+
+def test_systems_role_gets_arxiv_discovery_search_tool():
+    # issue #257-T2: search_arxiv_papers (topic/keyword discovery, issue
+    # #257-T1's knowledge/sourcing/arxiv.py addition) is wired onto the same
+    # role as its sibling ingest_arxiv_paper -- both are the same "bring
+    # arXiv into reach of the design loop" knowledge-sourcing concern,
+    # discovery finding candidates ahead of the deliberate ingest step.
+    names = _tool_names(ROLES["systems"])
+    assert "search_arxiv_papers" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "search_arxiv_papers" not in role_names
+    # Not principal-direct either -- reachable via the systems handoff only,
+    # same as ingest_arxiv_paper (see test_principal_role_is_scoped_not_broad).
+    assert "search_arxiv_papers" not in _tool_names(ROLES["principal"])
+
+
+def test_search_arxiv_papers_is_categorized_ingestion_auto():
+    # Matches ingest_arxiv_paper's category: a knowledge/sourcing operation,
+    # not a calculation -- see policies/tool_policy.yaml's ingestion_auto
+    # comment on why a credential-free arXiv sourcing call belongs here even
+    # though this particular tool, unlike its ingest_arxiv_paper sibling,
+    # never itself writes a document.
+    assert category_for("search_arxiv_papers") == category_for("ingest_arxiv_paper")
+    assert category_for("search_arxiv_papers") == "ingestion_auto"
 
 
 def test_systems_role_gets_component_sourcing_tools():

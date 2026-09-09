@@ -162,6 +162,9 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # issue #219 adds 1 more (ingest_patent, the USPTO patent/published-
     # application fetcher): 85 + 1 = 86.
+    #
+    # issue #257-T2 adds 1 more (search_arxiv_papers, arXiv topic/keyword
+    # discovery search wired onto the tool surface): 86 + 1 = 87.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -192,6 +195,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # arxiv-doc-builder integration: ingest_arxiv_paper
         + 3  # issue #215: ingest_3gpp_spec, ingest_etsi_standard, ingest_fcc_rule
         + 1  # issue #219: ingest_patent
+        + 1  # issue #257-T2: search_arxiv_papers
     )
     assert len(registered_names) == expected
 
@@ -207,6 +211,57 @@ def test_component_sourcing_tools_are_registered():
 def test_ingest_arxiv_paper_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "ingest_arxiv_paper" in registered_names
+
+
+def test_search_arxiv_papers_is_registered():
+    # issue #257-T2: knowledge/sourcing/arxiv.py's search_arxiv_papers
+    # (issue #257-T1), wired onto the MCP tool surface alongside its
+    # ingest_arxiv_paper sibling.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_arxiv_papers" in registered_names
+
+
+def test_search_arxiv_papers_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real query/parse logic is
+    # exercised in tests/test_sourcing_arxiv.py; this only confirms the MCP
+    # wrapper forwards its arguments to knowledge.sourcing.arxiv and returns
+    # its candidate list unchanged.
+    captured = {}
+    candidates = [
+        {
+            "id": "2401.01234v2",
+            "title": "Adaptive Metamaterial Skins for Conformal Antennas",
+            "published": "2024-01-15",
+            "abstract": "We present a design for adaptive metamaterial skins.",
+        }
+    ]
+
+    def fake_search(query, *, max_results):
+        captured.update(query=query, max_results=max_results)
+        return candidates
+
+    monkeypatch.setattr(server, "_search_arxiv_papers", fake_search)
+
+    result = server.search_arxiv_papers("conformal metamaterial absorber X-band")
+
+    assert result == candidates
+    assert captured == {
+        "query": "conformal metamaterial absorber X-band",
+        "max_results": 10,
+    }
+
+
+def test_search_arxiv_papers_never_calls_ingest_document(monkeypatch):
+    # User story 19: search and ingest stay two separate calls. Mirrors
+    # tests/test_sourcing_arxiv.py's own version of this guard, one layer
+    # up at the MCP wrapper.
+    def fail_if_called(**kwargs):
+        raise AssertionError("search_arxiv_papers must never call ingest_document")
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(server, "_search_arxiv_papers", lambda query, *, max_results: [])
+
+    server.search_arxiv_papers("metamaterial")
 
 
 def test_standards_body_sourcing_tools_are_registered():
