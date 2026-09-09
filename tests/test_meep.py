@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import make_fake_executable
 
 from simulation.base import SimulationResult, SimulatorError
 from simulation.meep import (
@@ -1266,15 +1267,22 @@ def test_the_runner_reads_its_job_and_writes_its_result(tmp_path):
     """Exercise the subprocess mechanics against a fake interpreter, the way
     tests/test_gprmax.py does for GPRMAX_PYTHON. The physics is not run here
     -- the point is that the job crosses the boundary and the result comes
-    back."""
-    fake_interpreter = tmp_path / "fake_python"
-    fake_interpreter.write_text(
-        "#!/bin/sh\n"
-        'python3 -c "import json,sys; '
-        "json.dump({'reflectance':[0.25],'frequency_hz':[1e10]}, open(sys.argv[2],'w'))\" "
-        '"$2" "$3"\n'
+    back.
+
+    The fake interpreter is invoked as
+    ``[fake_interpreter, runner, payload_path, result_path]``
+    (see `_run_in_meep_interpreter`'s `subprocess.run` call), so inside the
+    fake's own body -- run directly, with no `-c` wrapper -- `sys.argv[0]`
+    is the fake interpreter's own script path, `sys.argv[1]` is the runner,
+    `sys.argv[2]` is the payload, and `sys.argv[3]` is the result path this
+    fake must write to.
+    """
+    fake_interpreter = make_fake_executable(
+        tmp_path,
+        "import json, sys\n"
+        "json.dump({'reflectance': [0.25], 'frequency_hz': [1e10]}, open(sys.argv[3], 'w'))\n",
+        name="fake_python",
     )
-    fake_interpreter.chmod(0o755)
 
     result = _run_in_meep_interpreter(
         str(fake_interpreter), {"cell_size_m": [1, 1, 1]}, 1e-3, 1, {}, tmp_path
@@ -1286,16 +1294,16 @@ def test_the_runner_reads_its_job_and_writes_its_result(tmp_path):
 
 
 def test_a_runner_that_exits_nonzero_surfaces_its_stderr(tmp_path):
-    failing = tmp_path / "failing_python"
-    failing.write_text("#!/bin/sh\necho 'meep exploded' >&2\nexit 3\n")
-    failing.chmod(0o755)
+    failing = make_fake_executable(
+        tmp_path,
+        "import sys\nsys.stderr.write('meep exploded')\nsys.exit(3)\n",
+        name="failing_python",
+    )
     with pytest.raises(SimulatorError, match="meep exploded"):
         _run_in_meep_interpreter(str(failing), {}, 1e-3, 1, {}, tmp_path)
 
 
 def test_a_runner_that_exits_clean_but_writes_nothing_is_an_error(tmp_path):
-    silent = tmp_path / "silent_python"
-    silent.write_text("#!/bin/sh\nexit 0\n")
-    silent.chmod(0o755)
+    silent = make_fake_executable(tmp_path, "import sys\nsys.exit(0)\n", name="silent_python")
     with pytest.raises(SimulatorError, match="wrote no result"):
         _run_in_meep_interpreter(str(silent), {}, 1e-3, 1, {}, tmp_path)
