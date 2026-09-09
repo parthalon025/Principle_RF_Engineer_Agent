@@ -42,6 +42,7 @@ from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.palace import (
+    BOUND_CONDUCTIVITY_BASE,
     BOUND_X_MAX,
     BOUND_X_MIN,
     BOUND_Y_MAX,
@@ -54,6 +55,24 @@ from simulation.palace import (
     parse_palace_output,
     run_palace_simulation,
 )
+
+# A conductivity sheet (issue #289): a flat, zero-thickness, z-normal
+# rectangle at z=0.02m (strictly between the unit cell's own z=0/z=0.08
+# Floquet-port faces), representing a real printed-ink conductor, not an
+# idealized PEC patch.
+CONDUCTIVITY_SHEET_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.04, "ly_m": 0.02, "lz_m": 0.08},
+    "materials": [
+        {
+            "name": "ink_patch",
+            "p1_m": [0.01, 0.005, 0.02],
+            "p2_m": [0.03, 0.015, 0.02],
+            "kappa_s_m": 2.0e5,
+            "thickness_m": 5e-6,
+        }
+    ],
+    "mesh": {"nx": 1, "ny": 1, "nz": 1},
+}
 
 # A unit cell matching the shape of Palace's own "Floquet Ports for a
 # Dielectric Grating" example cited in simulation/palace.py's module
@@ -172,6 +191,103 @@ def test_generate_palace_mesh_missing_material_field_raises():
         "materials": [{"p1_m": [0, 0, 0]}],  # p2_m missing
     }
     with pytest.raises(ValueError, match="p2_m"):
+        generate_palace_mesh(geometry)
+
+
+# ---------------------------------------------------------------------------
+# Embedded conductivity sheet (issue #289) -- mesh generation
+# ---------------------------------------------------------------------------
+
+
+def _sheet_boundary_faces(mesh_text: str, num_boundary_faces: int) -> list[list[str]]:
+    lines = mesh_text.split("\n")
+    start = lines.index("boundary") + 2
+    return [
+        line.split()
+        for line in lines[start : start + num_boundary_faces]
+        if int(line.split()[0]) == BOUND_CONDUCTIVITY_BASE
+    ]
+
+
+def test_generate_palace_mesh_conductivity_sheet_gets_interior_boundary_attribute():
+    result = generate_palace_mesh(CONDUCTIVITY_SHEET_GEOMETRY)
+    faces = _sheet_boundary_faces(result["mesh_text"], result["num_boundary_faces"])
+    # A single grid cell's worth of footprint (nx=ny=1, one x-interval and
+    # one y-interval span the patch exactly) -- one interior quad.
+    assert len(faces) == 1
+    assert len(faces[0]) == 2 + 4  # attribute, geom_type, 4 vertex indices
+    assert faces[0][1] == "3"  # SQUARE, same as every other boundary face
+
+
+def test_generate_palace_mesh_conductivity_sheet_vertices_sit_on_its_own_z_plane():
+    result = generate_palace_mesh(CONDUCTIVITY_SHEET_GEOMETRY)
+    lines = result["mesh_text"].split("\n")
+    v_start = lines.index("vertices") + 3
+    vertices = [tuple(float(c) for c in line.split()) for line in lines[v_start:]]
+    faces = _sheet_boundary_faces(result["mesh_text"], result["num_boundary_faces"])
+    for _, _, *verts in faces:
+        for v in verts:
+            assert vertices[int(v)][2] == pytest.approx(0.02)
+
+
+def test_generate_palace_mesh_conductivity_sheet_excluded_from_domain_attributes():
+    """A zero-thickness sheet has no volume, so no hex element's centroid
+    can ever land inside it -- it must never consume a domain (material)
+    attribute the way a real dielectric box does."""
+    result = generate_palace_mesh(CONDUCTIVITY_SHEET_GEOMETRY)
+    lines = result["mesh_text"].split("\n")
+    start = lines.index("elements") + 2
+    attrs = {int(line.split()[0]) for line in lines[start : start + result["num_elements"]]}
+    assert attrs == {1}  # background only -- the sheet contributes no domain material
+
+
+def test_generate_palace_mesh_conductivity_sheet_and_dielectric_material_coexist():
+    substrate = {
+        "name": "substrate",
+        "p1_m": [0.0, 0.0, 0.0],
+        "p2_m": [0.04, 0.02, 0.02],
+        "epsilon_r": 3.5,
+    }
+    geometry = {
+        **CONDUCTIVITY_SHEET_GEOMETRY,
+        "materials": [*CONDUCTIVITY_SHEET_GEOMETRY["materials"], substrate],
+    }
+    result = generate_palace_mesh(geometry)
+    lines = result["mesh_text"].split("\n")
+    start = lines.index("elements") + 2
+    attrs = {int(line.split()[0]) for line in lines[start : start + result["num_elements"]]}
+    assert attrs == {1, 2}  # background + the one dielectric material
+    faces = _sheet_boundary_faces(result["mesh_text"], result["num_boundary_faces"])
+    assert len(faces) == 1  # the sheet still gets its own interior boundary face
+
+
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        ({"p2_m": [0.03, 0.015, 0.03]}, "zero-thickness"),  # z mismatch
+        ({"p2_m": [0.01, 0.015, 0.02]}, "non-zero extent"),  # degenerate x
+        ({"p1_m": [0.01, 0.005, 0.0], "p2_m": [0.03, 0.015, 0.0]}, "z=0.0"),  # z=0 port face
+        ({"p1_m": [0.01, 0.005, 0.08], "p2_m": [0.03, 0.015, 0.08]}, "z=0.08"),  # z=lz port face
+        ({"p2_m": [0.05, 0.015, 0.02]}, "must lie within"),  # x extends past lx=0.04
+        ({"kappa_s_m": 0.0}, "kappa_s_m must be > 0"),
+        ({"kappa_s_m": -1.0}, "kappa_s_m must be > 0"),
+        ({"thickness_m": 0.0}, "thickness_m must be > 0"),
+        ({"thickness_m": -1e-6}, "thickness_m must be > 0"),
+    ],
+)
+def test_generate_palace_mesh_conductivity_sheet_validation_errors(override, match):
+    sheet = {**CONDUCTIVITY_SHEET_GEOMETRY["materials"][0], **override}
+    geometry = {**CONDUCTIVITY_SHEET_GEOMETRY, "materials": [sheet]}
+    with pytest.raises(ValueError, match=match):
+        generate_palace_mesh(geometry)
+
+
+def test_generate_palace_mesh_conductivity_sheet_missing_field_raises():
+    geometry = {
+        **CONDUCTIVITY_SHEET_GEOMETRY,
+        "materials": [{"p1_m": [0.01, 0.005, 0.02], "p2_m": [0.03, 0.015, 0.02], "kappa_s_m": 2e5}],
+    }
+    with pytest.raises(ValueError, match="thickness_m"):
         generate_palace_mesh(geometry)
 
 
@@ -334,6 +450,102 @@ def test_generate_palace_config_rejects_finite_element_order_below_one():
 def test_generate_palace_config_is_json_serializable():
     config = generate_palace_config(
         GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    json.dumps(config)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Embedded conductivity sheet (issue #289) -- config generation
+# ---------------------------------------------------------------------------
+
+
+def test_generate_palace_config_emits_conductivity_boundary():
+    config = generate_palace_config(
+        CONDUCTIVITY_SHEET_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    conductivity = config["Boundaries"]["Conductivity"]
+    assert conductivity == [
+        {
+            "Attributes": [BOUND_CONDUCTIVITY_BASE],
+            "Conductivity": 2.0e5,
+            "Permeability": 1.0,
+            "Thickness": 5e-6,
+        }
+    ]
+
+
+def test_generate_palace_config_conductivity_boundary_key_absent_without_a_sheet():
+    """Backward compatible: a geometry with no conductivity sheet must not
+    grow a new, always-empty "Conductivity" key."""
+    config = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert "Conductivity" not in config["Boundaries"]
+
+
+def test_generate_palace_config_conductivity_sheet_excluded_from_domain_materials():
+    config = generate_palace_config(
+        CONDUCTIVITY_SHEET_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    materials = config["Domains"]["Materials"]
+    assert len(materials) == 1  # background only -- the sheet is a boundary, not a domain material
+    assert materials[0]["Attributes"] == [1]
+
+
+def test_generate_palace_config_conductivity_sheet_custom_permeability():
+    geometry = {
+        **CONDUCTIVITY_SHEET_GEOMETRY,
+        "materials": [{**CONDUCTIVITY_SHEET_GEOMETRY["materials"][0], "mue_r": 2.5}],
+    }
+    config = generate_palace_config(
+        geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert config["Boundaries"]["Conductivity"][0]["Permeability"] == 2.5
+
+
+def test_generate_palace_config_multiple_conductivity_sheets_get_distinct_attributes():
+    geometry = {
+        **CONDUCTIVITY_SHEET_GEOMETRY,
+        "materials": [
+            CONDUCTIVITY_SHEET_GEOMETRY["materials"][0],
+            {
+                "name": "second_patch",
+                "p1_m": [0.01, 0.005, 0.04],
+                "p2_m": [0.03, 0.015, 0.04],
+                "kappa_s_m": 1.0e6,
+                "thickness_m": 1e-5,
+            },
+        ],
+    }
+    config = generate_palace_config(
+        geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    conductivity = config["Boundaries"]["Conductivity"]
+    assert [c["Attributes"] for c in conductivity] == [
+        [BOUND_CONDUCTIVITY_BASE],
+        [BOUND_CONDUCTIVITY_BASE + 1],
+    ]
+    assert conductivity[1]["Conductivity"] == 1.0e6
+
+
+def test_generate_palace_config_conductivity_sheet_missing_field_raises():
+    """generate_palace_config validates independently of generate_palace_mesh
+    -- a caller building a config directly (skipping mesh generation, e.g.
+    reusing a previously-written mesh file) must not silently get a null
+    Conductivity/Thickness value in the emitted JSON."""
+    geometry = {
+        **CONDUCTIVITY_SHEET_GEOMETRY,
+        "materials": [{"p1_m": [0.01, 0.005, 0.02], "p2_m": [0.03, 0.015, 0.02], "kappa_s_m": 2e5}],
+    }
+    with pytest.raises(ValueError, match="thickness_m"):
+        generate_palace_config(
+            geometry, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+        )
+
+
+def test_generate_palace_config_conductivity_sheet_is_json_serializable():
+    config = generate_palace_config(
+        CONDUCTIVITY_SHEET_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
     )
     json.dumps(config)  # must not raise
 
@@ -686,6 +898,43 @@ def test_run_palace_simulation_passes_solver_order_into_the_config(tmp_path: Pat
     )
     config = json.loads(Path(result["config_file"]).read_text())
     assert config["Solver"]["Order"] == 2
+
+
+def test_run_palace_simulation_lossless_declared_false_with_conductivity_sheet(tmp_path: Path):
+    """Issue #289: a geometry with an embedded conductivity sheet is a real,
+    absorbing structure by construction (kappa_s_m > 0 is required), so
+    check_palace_result's own `lossless` assumption must flip to False even
+    though every material's loss_tan is still 0 -- otherwise a real power
+    deficit would be flagged as a violation instead of the loss it is."""
+    script = _make_fake_palace_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    result = run_palace_simulation(
+        geometry=CONDUCTIVITY_SHEET_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_lossy"),
+    )
+    power_balance = result["conservation_check"]["power_balance"]
+    assert all(pb["lossless_declared"] is False for pb in power_balance)
+
+
+def test_run_palace_simulation_lossless_declared_true_without_a_conductivity_sheet(
+    tmp_path: Path,
+):
+    """The pre-existing, all-dielectric-and-lossless case must be unaffected
+    by issue #289's addition."""
+    script = _make_fake_palace_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    result = run_palace_simulation(
+        geometry=GRATING_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_lossless"),
+    )
+    power_balance = result["conservation_check"]["power_balance"]
+    assert all(pb["lossless_declared"] is True for pb in power_balance)
 
 
 # ---------------------------------------------------------------------------
