@@ -38,9 +38,11 @@ from designs.requirement_targets import (
     TargetComparator,
     TargetStatus,
     UnknownRequirementError,
+    attach_intent,
     attach_target,
     confirm_target,
     mark_unscoreable,
+    propose_intended_effect,
     propose_target,
 )
 
@@ -268,6 +270,73 @@ def test_attach_target_can_attach_an_unscoreable_result():
     updated = attach_target(requirements, "req-1", target)
     assert updated["req-1"]["target"]["target_status"] == "UNSCOREABLE"
     assert updated["req-1"]["target"]["reason"] == "no numeric bound in the prose"
+
+
+# ---------------------------------------------------------------------------
+# propose_intended_effect / attach_intent -- attach_target's direct sibling
+# (docs/adr/0030, issue #323)
+# ---------------------------------------------------------------------------
+
+
+def test_propose_intended_effect_is_tagged_assumed():
+    intended_effect = propose_intended_effect("behave as a magnetic mirror")
+    assert intended_effect["effect"] == "behave as a magnetic mirror"
+    assert intended_effect["provenance"] == "ASSUMED"
+
+
+def test_propose_intended_effect_rejects_empty_effect():
+    with pytest.raises(InvalidRequirementTargetError, match="effect"):
+        propose_intended_effect("")
+
+
+def test_propose_intended_effect_rejects_whitespace_only_effect():
+    with pytest.raises(InvalidRequirementTargetError, match="effect"):
+        propose_intended_effect("   ")
+
+
+def test_attach_intent_preserves_the_original_prose_and_any_target():
+    requirements = {
+        "req-1": {
+            "requirement": "needs to behave as a magnetic mirror when mounted on the fuselage",
+            "target": propose_target(value=2.4e9, comparator="EQUALS", unit="Hz"),
+        },
+    }
+    intended_effect = propose_intended_effect("behave as a magnetic mirror")
+    updated = attach_intent(requirements, "req-1", intended_effect)
+    assert updated["req-1"]["requirement"].startswith("needs to behave")
+    assert updated["req-1"]["target"]["value"] == 2.4e9
+    assert updated["req-1"]["intended_effect"] == intended_effect
+
+
+def test_attach_intent_does_not_mutate_its_input():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    intended_effect = propose_intended_effect("absorb the wave")
+    attach_intent(requirements, "req-1", intended_effect)
+    assert "intended_effect" not in requirements["req-1"]
+
+
+def test_attach_intent_replaces_a_prior_intent_on_correction():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    first = propose_intended_effect("absorb the wave")
+    with_first = attach_intent(requirements, "req-1", first)
+    second = propose_intended_effect("reflect in phase")
+    with_second = attach_intent(with_first, "req-1", second)
+    assert with_second["req-1"]["intended_effect"]["effect"] == "reflect in phase"
+    assert with_second["req-1"]["requirement"] == "some prose"
+
+
+def test_attach_intent_preserves_other_keys_on_the_requirement_entry():
+    requirements = {"req-1": {"requirement": "some prose", "priority": "high"}}
+    intended_effect = propose_intended_effect("steer the beam")
+    updated = attach_intent(requirements, "req-1", intended_effect)
+    assert updated["req-1"]["priority"] == "high"
+
+
+def test_attach_intent_rejects_unknown_requirement_id():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    intended_effect = propose_intended_effect("absorb the wave")
+    with pytest.raises(UnknownRequirementError, match="req-does-not-exist"):
+        attach_intent(requirements, "req-does-not-exist", intended_effect)
 
 
 # ---------------------------------------------------------------------------

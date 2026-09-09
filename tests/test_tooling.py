@@ -352,11 +352,22 @@ def _fingerprint(state: dict[str, Any], step: DesignStep, step_input: dict) -> d
 
 
 def _grant_and_advance(state: dict[str, Any], step: DesignStep, step_input: dict) -> dict:
+    """`requirements_document_status="CONFIRMED"` (issue #325, docs/adr/0031)
+    is passed unconditionally, the same way `approval` already is -- a
+    no-op for every step but ARCHITECTURE, the only one
+    advance_design_loop_step reads it for, and keeps every ARCHITECTURE-
+    advancing call in this file that goes through this helper working now
+    that ARCHITECTURE also gates on it."""
     fields = _fingerprint(state, step, step_input)
     receipt = request_loop_step_approval(
         fields, approved_by="jane.engineer", approval_callback=lambda f: True
     )
-    return advance_design_loop_step(state, step_input, approval=receipt.to_dict())
+    return advance_design_loop_step(
+        state,
+        step_input,
+        approval=receipt.to_dict(),
+        requirements_document_status="CONFIRMED",
+    )
 
 
 def _drive_to_redesign_decision(

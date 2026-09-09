@@ -141,6 +141,23 @@ recorded evidence into a verification-matrix entry rather than exercising
 new judgment. REQUIREMENTS is the loop's human-supplied starting input, not
 a step the loop "advances past" via advance_loop_step.
 
+REQUIREMENTS-DOCUMENT GATE (issue #325, docs/adr/0031): ARCHITECTURE carries
+ONE MORE precondition beyond the approval receipt every GATED_STEPS member
+already requires -- the design's Requirements document (designs/
+requirements_document.py, issue #321) must have reached `CONFIRMED` (ADR-0031:
+"you don't pick a physical approach before the customer's actual ask is
+locked in"). This is checked as part of the SAME `if current_step in
+GATED_STEPS:` block in advance_loop_step, immediately after
+check_loop_step_approval_gate, scoped to DesignStep.ARCHITECTURE only -- not
+a second, independent gate bolted on elsewhere. This module stays DB-free
+(see "STATE DESIGN" below): `advance_loop_step`'s `requirements_document_status`
+parameter is the caller's own freshest read of `designs.requirements_document.
+read_requirements_document`'s `document_status`, supplied exactly like
+`approval` already is, never fetched by this module itself. `None` (the
+default) covers both "the caller didn't say" and "no Requirements document
+exists yet for this design" -- both mean the customer's actual ask is not
+locked in, so ARCHITECTURE may not proceed on either.
+
 NO MANUFACTURING-RELEASE PATH: DesignStep has no RELEASE/MANUFACTURING
 member, REDESIGN_DECISION's only two valid `next_action` values are
 "iterate" (loop back to ARCHITECTURE for another cycle) and "accept_design"
@@ -169,7 +186,19 @@ from designs.design_families import (
     UnsettledSimulationAdapterError as _UnsettledSimulationAdapterError,
 )
 from designs.design_families import get_design_family as _get_design_family
+from designs.element_alphabet import lookup_symbol_entries as _lookup_symbol_entries
+from designs.element_alphabet import (
+    reduce_response_at_frequency as _reduce_response_at_frequency,
+)
+from designs.requirements_document import DocumentStatus as _RequirementsDocumentStatus
 from measurement.external import record_external_measurement as _record_external_measurement
+from optimization.combinatorial import (
+    EmptyCandidateShelfError as _EmptyCandidateShelfError,
+)
+from optimization.combinatorial import SymbolOption as _SymbolOption
+from optimization.combinatorial import (
+    combinatorial_symbol_placement as _combinatorial_symbol_placement,
+)
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -392,6 +421,40 @@ def _pending_approval_for(step: DesignStep, completed: bool) -> dict[str, Any] |
             "decision's content before advance_loop_step will proceed."
         ),
     }
+
+
+def _require_requirements_document_confirmed(status: str | None) -> None:
+    """Raise OrchestrationError naming exactly what's missing unless
+    `status` is the design's Requirements document CONFIRMED status
+    (issue #325, docs/adr/0031: "ARCHITECTURE gates on the document
+    reaching CONFIRMED"). Called by advance_loop_step for ARCHITECTURE
+    only, as one more condition inside the SAME `if current_step in
+    GATED_STEPS:` block that already checks the approval receipt -- see
+    this module's own docstring's "REQUIREMENTS-DOCUMENT GATE" section --
+    never a second, independent gate.
+
+    `status` is the caller's own freshest read of `designs.
+    requirements_document.read_requirements_document`'s `document_status`
+    (this module stays DB-free, per "STATE DESIGN" below, so it never reads
+    that row itself). `None` covers both "no Requirements document exists
+    yet for this design" and "the caller supplied nothing" -- both mean the
+    customer's actual ask has not been locked in, and ARCHITECTURE may not
+    proceed on either.
+    """
+    if status == _RequirementsDocumentStatus.CONFIRMED.value:
+        return
+    detail = (
+        "no Requirements document exists yet for this design"
+        if status is None
+        else f"its Requirements document is currently {status!r}, not CONFIRMED"
+    )
+    raise OrchestrationError(
+        "Design-loop step advancement refused: the ARCHITECTURE decision may "
+        "not run until this design's Requirements document reaches CONFIRMED "
+        f"(docs/adr/0031) -- {detail}. Confirm it "
+        "(designs.requirements_document.transition_requirements_document) "
+        "before retrying this exact ARCHITECTURE decision."
+    )
 
 
 @dataclass(frozen=True)
@@ -1655,39 +1718,32 @@ def _handle_optimization(
     state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
     """Dispatch OPTIMIZATION to the search this design family's declared
-    `optimizer_class` calls for (issue #255 ticket 1).
-
-    This ticket is a pure prefactor: it adds the dispatch SEAM a later
-    ticket will hang the real `COMBINATORIAL` symbol-placement search off
-    of (issue #255's Implementation Decisions), and changes no behaviour
-    for any family in this tree today -- every one of them still runs
-    exactly the search it always ran.
+    `optimizer_class` calls for (issue #255 ticket 1; wired up to a real
+    `COMBINATORIAL` search at issue #267).
 
     `optimizer_class == "CONTINUOUS"`, and a family that declares no
-    optimizer_class at all (`None` -- every family currently in
-    `designs/design_families.py`; ADR-0018 leaves the field open until a
-    family opts in), both route to the SAME patch-length search this step
-    has always run, byte-for-byte unchanged: same required fields, same
-    call, same result shape.
+    optimizer_class at all (`None` -- every family in `designs/
+    design_families.py` except REFLECTION_PHASE/DIFFUSIVE; ADR-0018 leaves
+    the field open until a family opts in), both route to the SAME
+    patch-length search this step has always run, byte-for-byte unchanged:
+    same required fields, same call, same result shape (issue #255 ticket
+    1's own acceptance criterion, re-confirmed unchanged by issue #267).
 
     `optimizer_class == "COMBINATORIAL"` -- the shape issue #109/CONTEXT.md
     give REFLECTION_PHASE and DIFFUSIVE's Tier B optimizer, a genetic-
-    algorithm search over a pre-characterized symbol alphabet -- has no
-    search wired here. That search is separate, later work (issue #255's
-    own scope: it needs a resolved candidate-symbol set the not-yet-built
-    Element/Coding-Alphabet library would supply). Rather than silently
-    running the continuous patch-length search against a family whose
-    whole design method is "which already-measured tile goes in which grid
-    square" -- exactly the "wrong tool applied silently" defect issues
-    #239/#241 already removed for ANALYSIS/SIMULATION, one step over --
-    this raises, naming the family and what's missing, so a Tier B run
-    fails loudly at the step that needs a tool that does not exist yet,
-    rather than a number the programme cannot stand behind.
+    algorithm search over a pre-characterized symbol alphabet -- routes to
+    `_optimize_combinatorial_symbol_placement` (issue #267), which resolves
+    real candidate symbols from the Element/Coding-Alphabet library (issue
+    #256) and hands them to `optimization.combinatorial.
+    combinatorial_symbol_placement` (issue #255 ticket 2). See that
+    function's own docstring for the full shape of this branch, including
+    why a family with nothing characterised yet still fails loudly here
+    rather than falling through to the continuous search.
 
     Any OTHER declared value (a hypothetical third `optimizer_class`, e.g.
     ML-direct inverse design -- ADR-0018 names this as a credible future
-    value) raises the same way, per issue #255's user story 4: reported by
-    name, never guessed past.
+    value) raises, naming the family and the unhandled value, per issue
+    #255's user story 4: reported by name, never guessed past.
     """
     optimizer_class = _optimizer_class_for(state)
     if optimizer_class is None or optimizer_class == "CONTINUOUS":
@@ -1710,20 +1766,7 @@ def _handle_optimization(
 
     family = _registry_family_of_record(state, "optimization")
     if optimizer_class == "COMBINATORIAL":
-        raise DesignLoopValidationError(
-            f"Design family {family.name!r} declares optimizer_class "
-            "'COMBINATORIAL' (CONTEXT.md: a genetic-algorithm search over a "
-            "pre-characterized symbol alphabet), and this loop has no "
-            "combinatorial symbol-placement search wired for OPTIMIZATION "
-            "yet. That search is separate, later work (issue #255), blocked "
-            "on the Element/Coding-Alphabet library it would search "
-            "candidate symbols from. Running the continuous patch-length "
-            "search here instead would silently apply the wrong tool to a "
-            "placement/selection problem -- the same defect issues #239/#241 "
-            "already removed for ANALYSIS/SIMULATION. Wire the combinatorial "
-            "search (issue #255) before advancing OPTIMIZATION for this "
-            "family."
-        )
+        return _optimize_combinatorial_symbol_placement(family, step_input)
     raise DesignLoopValidationError(
         f"Design family {family.name!r} declares optimizer_class "
         f"{optimizer_class!r}, and this loop has no OPTIMIZATION path wired "
@@ -1734,6 +1777,285 @@ def _handle_optimization(
         "through to the patch-length search is exactly what issues #239/#241 "
         "already removed for ANALYSIS/SIMULATION."
     )
+
+
+def _combinatorial_candidate_options(
+    symbol_entries: list[dict[str, Any]],
+    element_family: str,
+    frequency_hz: float,
+    incidence_angle_deg: float,
+    process_id: int,
+    response_field: str,
+) -> list[_SymbolOption]:
+    """Resolve the ONE shared set of candidate symbols a COMBINATORIAL
+    OPTIMIZATION step searches over, from an already-fetched
+    `designs.element_alphabet.fetch_symbol_entries` result (issue #267
+    design decision 2).
+
+    `symbol_entries` is whatever the caller already fetched for
+    `element_family` -- this function, like `designs.element_alphabet.
+    lookup_symbol_entries` it calls, never touches a database itself (see
+    `_optimize_combinatorial_symbol_placement`'s own docstring for why).
+
+    HOW CANDIDATES ARE FOUND: every DISTINCT `symbol` name present in
+    `symbol_entries` is checked, via `lookup_symbol_entries`, against the
+    single shared `(frequency_hz, incidence_angle_deg, process_id)` point
+    query -- reusing that function's own public match logic rather than
+    reaching into its private `_symbol_entry_matches` helper (a module
+    should not depend on another module's underscore-prefixed internals;
+    `lookup_symbol_entries` is the supported seam for exactly this "does a
+    stored entry match this point" question). ALL matching entries for a
+    symbol are kept, not just the first: `resolve_symbol_entry`'s own
+    docstring is explicit that "picking the best of several [simultaneously
+    matching] candidates is the combinatorial optimizer's job" -- this is
+    that job, so an ambiguous symbol (e.g. two runs whose declared bands
+    happen to overlap the query point) contributes one `SymbolOption` per
+    matching entry, and the search decides which one, if any, belongs in
+    the winning layout.
+
+    Returns a plain list, empty if nothing matches -- the caller checks for
+    that and raises a named error before ever reaching
+    `combinatorial_symbol_placement` (design decision 4a).
+    """
+    distinct_symbols = sorted({entry["symbol"] for entry in symbol_entries})
+    options: list[_SymbolOption] = []
+    for symbol in distinct_symbols:
+        matches = _lookup_symbol_entries(
+            symbol_entries,
+            element_family,
+            symbol,
+            frequency_hz,
+            incidence_angle_deg,
+            process_id,
+        )
+        for entry in matches:
+            achieved_value = _reduce_response_at_frequency(
+                entry["response"], frequency_hz, response_field
+            )
+            options.append(_SymbolOption(symbol_id=symbol, achieved_value=achieved_value))
+    return options
+
+
+def _combinatorial_result_to_dict(result: Any) -> dict[str, Any]:
+    """`optimization.combinatorial.CombinatorialPlacementResult` -> a flat,
+    JSON-friendly dict -- the same "flat dict, JSON-friendly for the
+    MCP/agent tool boundary" convention `optimization.rf_objectives.
+    optimize_patch_length_for_target_frequency`'s own docstring states for
+    the continuous path's result, applied here so `LoopDecision.result`
+    (this module's docstring's "STATE DESIGN" section: `DesignLoopState`
+    is a plain, JSON-serializable dataclass) can hold this step's result
+    exactly the way it holds every other step's.
+
+    `combinatorial_symbol_placement`'s own return value is deliberately
+    NOT already this shape -- it stays generic/reusable there (a `Position`
+    `(i, j)` TUPLE key and `SymbolOption` dataclass values in
+    `candidate_snapshot`, neither of which is valid JSON), and this
+    dispatch site is what owns converting it, the same "generic function,
+    JSON conversion at the tool boundary" split `rf_objectives` already
+    draws for its own result.
+    """
+    candidate_snapshot = [
+        {
+            "i": i,
+            "j": j,
+            "candidates": [
+                {"symbol_id": option.symbol_id, "achieved_value": option.achieved_value}
+                for option in options
+            ],
+        }
+        # Row-major, j-outer/i-inner -- the SAME grid-walk order
+        # optimization.combinatorial's own `positions = [(i, j) for j in
+        # range(n_rows) for i in range(n_cols)]` and `_layout_from_choices`'s
+        # `layout[j][i]` already use, so this debug/audit snapshot's order
+        # agrees with every other grid walk this feature touches (each
+        # entry is still self-describing via its own "i"/"j" fields either
+        # way, but there is no reason for this one list to be the odd one
+        # out).
+        for (i, j), options in sorted(
+            result.candidate_snapshot.items(), key=lambda kv: (kv[0][1], kv[0][0])
+        )
+    ]
+    return {
+        "method": result.method,
+        "layout": result.layout,
+        "achieved_error": result.achieved_error,
+        "evaluations": result.evaluations,
+        "target": result.target,
+        "candidate_snapshot": candidate_snapshot,
+        "delta_phi_max_deg": result.delta_phi_max_deg,
+        "random_seed": result.random_seed,
+        "warnings": result.warnings,
+        "objective_name": result.objective_name,
+        "provenance": result.provenance,
+    }
+
+
+def _optimize_combinatorial_symbol_placement(
+    family: Any,
+    step_input: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None]:
+    """The COMBINATORIAL OPTIMIZATION path for REFLECTION_PHASE/DIFFUSIVE
+    (issue #267): resolve real candidate symbols from the Element/
+    Coding-Alphabet library (issue #256) and hand them to `optimization.
+    combinatorial.combinatorial_symbol_placement` (issue #255 ticket 2) --
+    replacing `_handle_optimization`'s former "not wired yet" raise (ticket
+    1's interim safety net).
+
+    step_input FIELDS, AND WHY (design decision 1). Required:
+    `element_family`, `symbol_entries` (a list already fetched via
+    `designs.element_alphabet.fetch_symbol_entries` -- this module never
+    opens a database connection itself; `_resolve_eps_r_bounds`'s own "the
+    design loop stays the DB-free, pure state machine" rule applies here
+    identically -- the caller resolves the library lookup, this handler
+    only filters/reduces the plain list it was handed), `frequency_hz`,
+    `incidence_angle_deg`, `process_id` (the SAME three names
+    `designs.element_alphabet.lookup_symbol_entries` itself uses -- the
+    path of least translation for a caller who already has that function's
+    signature in front of it), `target` (matching
+    `combinatorial_symbol_placement`'s own parameter name and
+    `target[j][i]` shape), and `delta_phi_max_deg` (ditto). Optional,
+    forwarded unchanged when given: `random_seed`, `max_generations`,
+    `population_size`, `objective_name` --
+    `combinatorial_symbol_placement`'s own defaults apply when omitted.
+
+    `frequency_hz`, NOT `target_frequency_hz`: the CONTINUOUS branch just
+    above this one in `_handle_optimization` uses `target_frequency_hz`,
+    but this handler's SIMULATION-step sibling for these same two families,
+    `_simulate_palace_floquet`, already uses a bare `frequency_hz` for the
+    identical "one point on the band this run is evaluated at" idea, and
+    `lookup_symbol_entries`'s own parameter is spelled `frequency_hz` too.
+    Both spellings are established precedent in this codebase;
+    `frequency_hz` is chosen here because it agrees with BOTH of this
+    handler's direct neighbours (the sibling SIMULATION handler for these
+    families, and the library function this handler calls), where
+    `target_frequency_hz` would only agree with the unrelated continuous
+    patch-length search.
+
+    ONE SHARED CANDIDATE SET, NOT ONE PER GRID POSITION (design decision
+    2): nothing in this codebase varies incidence angle or process across a
+    single design's grid, so "the current design's target band,
+    incidence-angle range, and process" (issue #267's own wording) is ONE
+    point query, resolved once by `_combinatorial_candidate_options` and
+    reused identically at every `(i, j)` position
+    `combinatorial_symbol_placement` asks about.
+
+    THE RESPONSE-TO-SCALAR FIELD IS NAMED "phase_deg" HERE, NOT DEFAULTED
+    INSIDE THE REDUCTION FUNCTION (design decision 3): REFLECTION_PHASE and
+    DIFFUSIVE are both designed by their per-cell reflection PHASE
+    (designs/design_families.py's own comments on both families -- "a
+    coding cell IS its reflection phase"). That fact belongs at THIS call
+    site, not baked into `designs.element_alphabet.
+    reduce_response_at_frequency`, which stays generic on purpose,
+    mirroring `SymbolOption.achieved_value`'s own "generic on purpose"
+    docstring.
+
+    ZERO MATCHING ENTRIES FAILS LOUDLY, NAMING THE KEY, BEFORE THE
+    COMBINATORIAL SEARCH EVER RUNS (design decision 4a): every grid
+    position shares the one candidate list `_combinatorial_candidate_
+    options` resolves, so an empty result means EVERY position has nothing
+    to place -- checked and reported here, naming exactly which
+    family/band/incidence-angle/process came up empty, rather than letting
+    `combinatorial_symbol_placement` discover it position-by-position via
+    `EmptyCandidateShelfError`. In production today the alphabet holds
+    nothing (issue #132's print-and-measure work has not happened) -- this
+    is the path a real run actually takes, and it must never fall through
+    to the continuous patch-length search (the same discipline issues
+    #239/#241 already apply to ANALYSIS/SIMULATION).
+
+    `EmptyCandidateShelfError` (design decision 4b) -- raised by
+    `combinatorial_symbol_placement` itself, reachable if some narrower gap
+    slips past the check above -- is re-raised as `DesignLoopValidationError`
+    with its own message intact, the same `raise DesignLoopValidationError
+    (str(exc)) from exc` convention `_handle_architecture`/`_handle_analysis`/
+    `_declared_adapter_name` already use for every other adapter-level
+    exception in this file.
+
+    THE TARGET-SHAPE GUARD BELOW ALSO CHECKS RAGGEDNESS (design decision
+    4c), duplicating part of `optimization.combinatorial._validate_target`'s
+    own non-empty/rectangular check. That duplication is only partly
+    avoidable -- this handler needs `n_rows`/`n_cols` before it can build
+    `candidates` at all, a real constraint of `combinatorial_symbol_
+    placement`'s signature (the caller supplies candidates, so the caller
+    must already know the grid shape) -- but the two checks must agree on
+    what they reject: a ragged `target` that only `_validate_target` caught
+    would raise a bare, un-wrapped `ValueError` from inside
+    `combinatorial_symbol_placement`, past this handler's `except
+    _EmptyCandidateShelfError` clause, with none of this dispatch layer's
+    naming/wrapping discipline. Checking row-length consistency here too
+    closes that gap up front, the same place the non-empty/2D check already
+    lives.
+    """
+    _require_fields(
+        step_input,
+        {
+            "element_family",
+            "symbol_entries",
+            "frequency_hz",
+            "incidence_angle_deg",
+            "process_id",
+            "target",
+            "delta_phi_max_deg",
+        },
+        "optimization",
+    )
+    element_family = step_input["element_family"]
+    frequency_hz = step_input["frequency_hz"]
+    incidence_angle_deg = step_input["incidence_angle_deg"]
+    process_id = step_input["process_id"]
+    target = step_input["target"]
+
+    candidate_options = _combinatorial_candidate_options(
+        symbol_entries=step_input["symbol_entries"],
+        element_family=element_family,
+        frequency_hz=frequency_hz,
+        incidence_angle_deg=incidence_angle_deg,
+        process_id=process_id,
+        response_field="phase_deg",
+    )
+    if not candidate_options:
+        raise DesignLoopValidationError(
+            f"Design family {family.name!r} needs at least one candidate symbol "
+            f"for element_family={element_family!r} at frequency_hz={frequency_hz!r}, "
+            f"incidence_angle_deg={incidence_angle_deg!r}, process_id={process_id!r}, "
+            "and none of the supplied symbol_entries match that key. Every grid "
+            "position in this design shares this same lookup, so none of them can "
+            "be placed until at least one symbol is characterised for this "
+            "family/band/incidence-angle/process (issue #132's print-and-measure "
+            "work) -- this never falls through to the continuous patch-length "
+            "search (the same discipline issues #239/#241 already apply to "
+            "ANALYSIS/SIMULATION, per issue #267)."
+        )
+
+    if not isinstance(target, list) or not target or not isinstance(target[0], list):
+        raise DesignLoopValidationError(
+            "optimization step_input['target'] must be a non-empty 2D grid "
+            f"(target[j][i]), got {target!r}"
+        )
+    n_rows = len(target)
+    n_cols = len(target[0])
+    if any(not isinstance(row, list) or len(row) != n_cols for row in target):
+        raise DesignLoopValidationError(
+            "optimization step_input['target'] must be rectangular (every row "
+            f"the same length): row lengths were "
+            f"{[len(row) if isinstance(row, list) else type(row).__name__ for row in target]}"
+        )
+    candidates = {(i, j): candidate_options for j in range(n_rows) for i in range(n_cols)}
+
+    try:
+        result = _combinatorial_symbol_placement(
+            target=target,
+            candidates=candidates,
+            delta_phi_max_deg=step_input["delta_phi_max_deg"],
+            random_seed=step_input.get("random_seed"),
+            max_generations=step_input.get("max_generations", 100),
+            population_size=step_input.get("population_size", 15),
+            objective_name=step_input.get("objective_name"),
+        )
+    except _EmptyCandidateShelfError as exc:
+        raise DesignLoopValidationError(str(exc)) from exc
+
+    recorded = _combinatorial_result_to_dict(result)
+    return "optimization", recorded, recorded["provenance"]
 
 
 def _handle_verification(
@@ -1882,6 +2204,7 @@ def advance_loop_step(
     state: DesignLoopState,
     step_input: dict[str, Any],
     approval: LoopStepApprovalReceipt | dict[str, Any] | None = None,
+    requirements_document_status: str | None = None,
 ) -> DesignLoopState:
     """Advance the loop from its current step to the next one, per
     STEP_ORDER. Returns a NEW DesignLoopState (never mutates `state`).
@@ -1896,6 +2219,17 @@ def advance_loop_step(
     or invalid approval raises OrchestrationError and `state` is left
     completely untouched (the caller's existing `state` reference is still
     valid and still shows the loop parked at the gated step).
+
+    For ARCHITECTURE specifically, `requirements_document_status` is ALSO
+    checked (issue #325, docs/adr/0031; see this module's own docstring's
+    "REQUIREMENTS-DOCUMENT GATE" section) -- it must equal `"CONFIRMED"`
+    (`designs.requirements_document.DocumentStatus.CONFIRMED.value`) or the
+    same OrchestrationError is raised, naming what's missing, with `state`
+    equally untouched. Pass the design's current Requirements-document
+    status here (from `designs.requirements_document.
+    read_requirements_document`'s `document_status`); the default `None`
+    covers both "the caller didn't say" and "no Requirements document
+    exists yet". Ignored for every other step.
     """
     if state.completed:
         raise OrchestrationError(
@@ -1914,6 +2248,9 @@ def advance_loop_step(
         receipt = _coerce_receipt(approval)
         check_loop_step_approval_gate(receipt, fingerprint_fields)
         approved_by = receipt.approved_by
+
+        if current_step is DesignStep.ARCHITECTURE:
+            _require_requirements_document_confirmed(requirements_document_status)
 
     if current_step is DesignStep.MEASUREMENT:
         kind, result, provenance = _handle_measurement(state, step_input)

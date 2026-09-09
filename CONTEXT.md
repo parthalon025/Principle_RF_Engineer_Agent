@@ -195,7 +195,7 @@ and a glossary that churns with it stops being trustworthy (see
   document is what a human actually reads and argues with, and those
   fields are the small, structured, machine-read summary the design loop
   operates on. The ARCHITECTURE decision may not run until a design's
-  Requirements document reaches `CONFIRMED` (ADR-0031) — you don't pick a
+  Requirements document reaches `CONFIRMED` (ADR-0034) — you don't pick a
   physical approach before the customer's actual ask is locked in.
   _Avoid_: treating this as a replacement for `requirements[requirement_id]`
   — it produces the values that dict already carries; it doesn't hold them
@@ -550,7 +550,7 @@ and a glossary that churns with it stops being trustworthy (see
   existing free-form `decision`/`rationale` prose, not left implicit in
   which hardwired function the loop happened to call (`_handle_architecture`,
   #161). ARCHITECTURE itself may not run until the design's **Requirements
-  document** reaches `CONFIRMED` (ADR-0031). The name is validated against the Design family registry
+  document** reaches `CONFIRMED` (ADR-0034). The name is validated against the Design family registry
   (`designs/design_families.py`, #109/ADR-0018): an unrecognised family is
   rejected at the ARCHITECTURE step rather than persisted as a grouping key
   nothing downstream recognises. The caller's own spelling is kept verbatim
@@ -691,8 +691,14 @@ and a glossary that churns with it stops being trustworthy (see
   generate, the solver, and the parser are checked together. Distinct from the
   adapter's own tests, which use hand-built fakes and can only show that we
   talk to the solver correctly, not that the solver told us the truth. Passing
-  one is what would let `SIMULATED` mean *validated* simulation in the
-  **Evidence hierarchy** above.
+  one is what lets `SIMULATED` mean *validated* simulation in the **Evidence
+  hierarchy** above — but only for the specific problem family and solver
+  path that case exercises. Validation does not generalise past what a case
+  actually poses: a case built on a uniform, unpatterned sheet at normal
+  incidence says nothing about a patterned unit cell, an oblique angle, or a
+  different solver, and each of those needs its own case before `SIMULATED`
+  means the same thing there. Current scope, case by case:
+  `verification/README.md`.
   _Avoid_: benchmark — that measures speed, not correctness.
 
 - **Run report**: what an unattended run hands the morning reviewer
