@@ -111,19 +111,48 @@ construction, the docx/largest-file preference, the legacy-`.doc` fallback
 and the no-document-member error, all against a stubbed `fetch_fn` — no
 real network access.
 
+`lookup_3gpp_spec_status(spec_number, *, fetch_fn=download_bytes)` (ticket
+#285) answers half of "what is the current version of spec X, and has it
+been withdrawn?": it fetches 3GPP's own DynaReport per-series table
+(`https://www.3gpp.org/dynareport?code={series}-series.htm`, series
+derived the same way `_spec_url` does), parses it with a small stdlib
+`html.parser.HTMLParser` subclass (no new dependency), and reports each
+spec's title and withdrawn/current status — e.g. TS 38.101 comes back
+withdrawn while 38.101-1..5 do not. It raises `SpecNotFoundError` rather
+than guessing if `spec_number` isn't a row in the fetched table. **It
+cannot report a version number**: fetching the live per-series page during
+this ticket's implementation showed its own `<thead>` declares only three
+columns — spec number, title, notes — and every one of its 272 data rows'
+notes cell is either blank or "SPECIFICATION WITHDRAWN", never a version.
+The paragraph below (written before this function existed) assumed
+otherwise; that assumption was wrong, corrected here rather than left to
+rot per this repo's own CLAUDE.md. A real current-version number does live
+on 3GPP's site, on the much heavier, ASP.NET/RadGrid-rendered per-*spec*
+detail page (`/dynareport/{spec-no-dot}.htm`, one fetch per spec, not per
+series) — closing that half of the gap is unstarted work, not done here.
+Six tests in `tests/test_sourcing_threegpp.py` cover withdrawn/current
+detection, series-URL derivation from a multi-part spec number, the
+not-found error, the always-`None` version field (with the reasoning
+above), and the pure HTML-parsing function on its own, no `fetch_fn`
+involved.
+
 ## Capabilities not yet used here
 
-The adapter cannot answer "what is the current version of spec X" — the
-caller must already know 3GPP's version string, and it never consults
-DynaReport's withdrawal flag, so a spec like TS 38.101 (see above) can be
-ingested as if current — the same shape of gap this repo's ETSI adapter
-has. Closing either means parsing DynaReport's HTML (the Portal's filters
-would do it better, but sit behind a member-login wall this adapter has no
-credentials for). Forge's YANG/OpenAPI models were not pursued: they
-describe network-management and core-network signalling interfaces, not
-RF/antenna parameters — a real gap, but low priority here. Unlike arXiv's
-OAI-PMH harvesting (`arxiv.py`), there is no bulk/corpus pull — each call
-fetches one spec at a time.
+DynaReport's per-*spec* detail page (`/dynareport/{spec-no-dot}.htm`) is
+the one place on 3GPP's own site that publishes a spec's actual current
+version string (confirmed live during ticket #285's implementation — its
+"Versions" grid lists each Release's version, e.g. "20.0.0" for
+38.101-1's latest, matching the "k00" filename encoding
+`version-numbering-scheme` describes) — but it is a heavy,
+ASP.NET/RadGrid-rendered page, one fetch per spec rather than per series,
+and parsing it is unstarted work here. The Portal's filters
+(`portal.3gpp.org/Specifications`) would do both halves of this lookup
+better, but sit behind a member-login wall this adapter has no credentials
+for. Forge's YANG/OpenAPI models were not pursued: they describe
+network-management and core-network signalling interfaces, not RF/antenna
+parameters — a real gap, but low priority here. Unlike arXiv's OAI-PMH
+harvesting (`arxiv.py`), there is no bulk/corpus pull — each call fetches
+one spec (or one series) at a time.
 
 ## Sources
 
@@ -134,6 +163,9 @@ fetches one spec at a time.
 - https://www.3gpp.org/specifications-technologies/specifications-by-series/file-name-conventions
 - https://www.3gpp.org/dynareport?code=status-report.htm
 - https://www.3gpp.org/dynareport?code=38-series.htm
+- https://www.3gpp.org/dynareport/38101-1.htm (per-spec detail page,
+  fetched to confirm where a real current-version number does and does not
+  live — ticket #285)
 - https://www.3gpp.org/ftp/Specs/archive/ (plain directory listing, no auth
   headers sent)
 - https://portal.3gpp.org/Specifications/ (structured search filters
