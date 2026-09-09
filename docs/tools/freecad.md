@@ -111,10 +111,16 @@ anything from `simulation/`. It does two things:
    level failure (nonzero exit, timeout, executable not found), not for a
    per-object build failure inside a successful run.
 
-**Explicitly not implemented/exercised here**: only the `Part` workbench's
-lowest-level primitives (polygon wire → face → extrude) and `Placement` are
-used — no Sketcher, PartDesign, Draft, Surface, TechDraw, BIM, CAM, Robot, or
-FEM workbench code path is touched. Only "box" and "polygon" flat input
+**Explicitly not implemented/exercised here**: `run_freecad_curved_geometry()`
+— the default, existing entry point — only uses the `Part` workbench's
+lowest-level primitives (polygon wire → face → extrude) and `Placement`; no
+Sketcher, PartDesign, Draft, Surface, TechDraw, BIM, CAM, or Robot workbench
+code path is touched by it, and its own STEP-export-only behavior is
+unchanged by the FEM-mesh prototype below. A SEPARATE, additive entry point,
+`run_freecad_fem_mesh_geometry()`, now DOES drive the FEM workbench (see
+"Capabilities not yet used here" below) — an existing caller of
+`run_freecad_curved_geometry()` is unaffected either way. Only "box" and
+"polygon" flat input
 primitives are accepted (not "cylinder"), matching `geometry/unit_cell.py`'s
 own scope. The module's own header states FreeCAD/FreeCADCmd is almost
 certainly not installed in this environment, and that its subprocess path
@@ -127,14 +133,49 @@ credentials).
 
 ## Capabilities not yet used here
 
-The clearest unused capability is FreeCAD's own **FEM workbench** — meshing
-via Netgen or Gmsh, and driving external structural/thermal/electromagnetic
-solvers (CalculiX, Elmer, Mystran, Z88) [5]. This repo already drives Gmsh
-and Elmer directly for meshing/solving (`simulation/elmer.py`); FreeCAD's FEM
-workbench could, in principle, generate a curvature-conforming mesh directly
-from the same exact 3-D solid model this adapter already builds, rather than
-that mesh being built separately downstream — a potential simplification,
-not something this pass implements. Also unused: the **Surface workbench**
+**FEM workbench meshing is now prototyped (issue #288), not implemented.**
+`geometry/freecad_curved.py`'s `generate_freecad_fem_mesh_macro()` /
+`run_freecad_fem_mesh_geometry()` drive the FEM workbench's real, current
+(FreeCAD 1.x) Python API — `ObjectsFem.makeMeshGmsh()` to create a
+`Fem::FemMeshShapeBaseObjectPython` mesh object, linking its `.Shape`
+property directly to the SAME `Part.makeCompound(...)` curved solid
+`generate_freecad_macro()` already builds (kept as a live `Part::Feature`
+instead of only exported to STEP), then `femmesh.gmshtools.GmshTools(mesh_obj
+).create_mesh()` to actually run Gmsh and read the resulting mesh (`.unv` by
+default, `.vtk` if the install was compiled with `BUILD_FEM_VTK`) back into
+`mesh_obj.FemMesh`. Traced directly from FreeCAD's own source (`ObjectsFem
+.py`, `femmesh/gmshtools.py`, the C++ `Fem::FemMeshShapeBaseObject`/
+`Fem::WorkerExtension` property declarations, and FreeCAD's own headless-
+compatible `femtest/app/test_gmsh.py` test, which calls the identical
+`GmshTools(obj).create_mesh()` sequence) — see `geometry/freecad_curved.py`'s
+module docstring "FEM WORKBENCH MESHING" section for the full citation list.
+
+Also traced (not just guessed at) during this pass: whether a FreeCAD-FEM-
+produced mesh of the curved solid can close `simulation/elmer.py`'s own
+stated "no curved/cylindrical geometry" meshing gap. It genuinely can, in
+principle — ElmerGrid's own format-name table (`elmergrid/src/egnative.c`)
+lists format code 8 as `"UNV"`, and its CLI dispatch (`elmergrid/src/
+fempre.c`, `case 8: ... LoadUniversalMesh(...)`) confirms it reads a `.unv`
+file directly, which is exactly the file format `GmshTools` writes by
+default. `simulation/elmer.py`'s `run_elmergrid_conversion()` still
+hardcodes Gmsh-format (code 14) and was NOT modified in this pass (out of
+this ticket's own declared scope) — wiring format 8 through is a small,
+well-scoped follow-up, not yet done, and this pass could not verify a real
+FreeCAD-produced `.unv` file's element/group tagging against `
+LoadUniversalMesh()`'s expectations end-to-end (both read from source, not
+exercised against each other with a real file).
+
+**Blocked on, honestly**: this prototype is exercised only against a fake
+`FreeCADCmd` stand-in (`tests/test_freecad_curved.py`), same as every other
+claim in this module — neither a real FreeCAD+Gmsh install nor a real
+ElmerGrid was available to confirm any of this end-to-end. A second, real
+dependency (`gmsh`) plus a genuine "does PySide's `QProcess` signal/event
+delivery behave correctly inside a GUI-less `FreeCADCmd` process" question
+(reasoned about, not independently confirmed against a real binary — see the
+module docstring) make this strictly less-verified than the existing
+STEP-export path.
+
+Also unused: the **Surface workbench**
 (true NURBS/freeform surfaces, which could represent a doubly-curved,
 non-developable host surface more faithfully than this module's own
 cylinder/sphere-only, cardinal-axis-aligned curvature model); **IGES import**
@@ -154,3 +195,9 @@ a human).
 - [5] https://raw.githubusercontent.com/FreeCAD/FreeCAD-documentation/main/wiki/FEM_Workbench.md — FEM workbench meshing (Netgen/Gmsh) and supported external solvers (CalculiX, Elmer, Mystran, Z88); fetched as a mirror of the live wiki.freecad.org content, which this pass (like `geometry/freecad_curved.py`'s own module docstring) could not fetch directly (Anubis bot-challenge access denial)
 - `geometry/freecad_curved.py` (this repo) — adapter implementation, its own extensive primary-source citations to `github.com/FreeCAD/FreeCAD`'s `src/Main/CMakeLists.txt`, `src/Main/MainCmd.cpp`, `src/App/Application.cpp`, and the `.pyi` API stubs used
 - `policies/tool_policy.yaml` (this repo) — `generate_freecad_curved_geometry` listed under `approval_required`, non-destructive/sandboxed rationale
+- [6] https://raw.githubusercontent.com/FreeCAD/FreeCAD/main/src/Mod/Fem/ObjectsFem.py — `makeMeshGmsh()`'s real object-construction code (issue #288 research)
+- [7] https://raw.githubusercontent.com/FreeCAD/FreeCAD/main/src/Mod/Fem/femmesh/gmshtools.py — `GmshTools` class: `load_properties()`/`get_tmp_file_paths()` (`.unv` default mesh format, `.vtk` under `BUILD_FEM_VTK`)/`get_gmsh_command()` (PATH-resolved `gmsh` binary, no env-var override)/`create_mesh()`→`ObjectTools.run()`
+- [8] https://raw.githubusercontent.com/FreeCAD/FreeCAD/main/src/Mod/Fem/femtools/objecttools.py — `ObjectTools` base class: `run(blocking)`/`prepare()`/`compute()`/`_process_finished()` (a meshing failure is a silent no-op unless the caller checks itself)
+- [9] https://raw.githubusercontent.com/FreeCAD/FreeCAD/main/src/Mod/Fem/App/FemMeshShapeObject.h and .../App/WorkerExtension.h — the C++-declared `Shape` (`App::PropertyLink`) and `WorkingDirectory` (`App::PropertyPath`) properties a Gmsh mesh object actually exposes
+- [10] https://raw.githubusercontent.com/FreeCAD/FreeCAD/main/src/Mod/Fem/femexamples/boxanalysis_base.py and .../femtest/app/test_gmsh.py — a real worked example of the `makeMeshGmsh`/`.Shape =`/`CharacteristicLengthMin` idiom, and FreeCAD's own test suite calling `GmshTools(obj).create_mesh()` directly (the strongest available evidence this works without a GUI)
+- [11] https://raw.githubusercontent.com/ElmerCSC/elmerfem/devel/elmergrid/src/egnative.c, .../src/fempre.c, .../src/egconvert.c — ElmerGrid's format-code table (8 = "UNV"), CLI dispatch (`case 8: ... LoadUniversalMesh(...)`), and the UNV-reading function itself — confirms ElmerGrid can ingest a FreeCAD-FEM-produced `.unv` mesh directly

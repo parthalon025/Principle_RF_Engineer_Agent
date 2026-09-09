@@ -278,6 +278,165 @@ SCOPE AND LIMITATIONS (explicit, not silently glossed over):
     arbitrarily-oriented or doubly-curved-with-an-off-axis host surface is
     out of scope for this pass.
 
+FEM WORKBENCH MESHING (issue #288 -- generate_freecad_fem_mesh_macro() /
+run_freecad_fem_mesh_geometry() below): docs/tools/freecad.md's "Capabilities
+not yet used here" section named FreeCAD's own FEM workbench (meshing via
+Netgen/Gmsh, driving CalculiX/Elmer/Mystran/Z88) as the clearest unused
+capability, and asked whether it can mesh directly off the exact curved
+solid `_exact_curved_geometry()`/`generate_freecad_macro()` already builds,
+instead of that solid being exported to STEP and never touched again while
+simulation/elmer.py separately rebuilds a much cruder flat-box domain from
+scratch. IN PLAIN LANGUAGE: "meshing" means chopping a 3D shape into many
+small tetrahedra a solver can crunch through one at a time -- like tiling an
+oddly-curved garden bed with many small tiles instead of cutting one custom
+slab. This repo already has two disconnected tiling steps (FreeCAD builds
+the exact curved shape but never tiles it; Elmer's pipeline tiles a shape
+but only ever a flat box); this section answers whether FreeCAD can do both
+in one place. All facts below were fetched directly from
+github.com/FreeCAD/FreeCAD's `main` branch during this pass (via GitHub's
+contents/search APIs, same method as the rest of this module):
+
+  THE REAL, MODERN (FreeCAD 1.x) API CALL SEQUENCE (NOT the older
+  "FemGmshTools" name this ticket's own title suggests -- that class was
+  renamed `GmshTools` at some point; reasoned from what the CURRENT source
+  actually contains, not assumed from the ticket text):
+  - `ObjectsFem.makeMeshGmsh(doc, name)` (`src/Mod/Fem/ObjectsFem.py`):
+    `doc.addObject("Fem::FemMeshShapeBaseObjectPython", name)`, then attaches
+    a `femobjects.mesh_gmsh.MeshGmsh(obj)` Python proxy which adds the
+    Gmsh-specific properties (`CharacteristicLengthMax`/`Min`,
+    `ElementDimension`, `ElementOrder`, algorithm choices, ...) and calls
+    `obj.addExtension("Fem::WorkerExtensionPython")`.
+  - `Shape` is an `App::PropertyLink Shape;` declared directly on the C++
+    base class `Fem::FemMeshShapeBaseObject` (`src/Mod/Fem/App/
+    FemMeshShapeObject.h`) -- i.e. `mesh_obj.Shape = <a Part::Feature>`
+    (NOT `.Part`, an older, since-migrated property name --
+    `femobjects/mesh_gmsh.py`'s own `onDocumentRestored()` migrates old
+    documents' `Part` property to `Shape` for exactly this reason) links
+    the mesh object to the geometry it will mesh. This module points it at
+    a NEW `Part::Feature` wrapping `Part.makeCompound(built_shapes)` -- the
+    same compound `generate_freecad_macro()` already builds, just kept as
+    its own live document object here (instead of only exported to STEP)
+    so the mesh object has something to `.Shape`-link to.
+  - `WorkingDirectory` is an `App::PropertyPath WorkingDirectory;` declared
+    on `Fem::WorkerExtension` (`src/Mod/Fem/App/WorkerExtension.h`, added by
+    the `Fem::WorkerExtensionPython` extension above) -- this module sets it
+    explicitly to the run's own (absolute) workdir so the produced mesh file
+    lands somewhere this module's own Python-side code can find afterward,
+    rather than relying on `femtools/objecttools.py`'s own
+    `_create_working_directory()` fallback (a fresh `tempfile.mkdtemp(
+    prefix="fem_")` -- yet another temp directory this run's own caller
+    would not otherwise know about).
+  - `femmesh/gmshtools.py`'s `GmshTools(mesh_obj)` (aliased to `FemGmshTools`
+    in some FreeCAD forum/wiki write-ups, but `GmshTools` is the actual
+    current class name) is the meshing driver: `load_properties()` reads
+    `self.part_obj = self.obj.Shape` (confirming the `.Shape` link above is
+    exactly what gets meshed); `get_tmp_file_paths()` computes
+    `self.temp_file_mesh = <WorkingDirectory>/<ShapeObjName>_Mesh<ext>`
+    where `<ext>` is **`.unv`** (the "Universal" mesh file format) UNLESS
+    the specific FreeCAD build was compiled with the `BUILD_FEM_VTK` CMake
+    option, in which case it is `.vtk` instead -- this module reads back
+    whichever path `GmshTools` itself actually decided on (`tool.
+    temp_file_mesh`) rather than assuming `.unv`, matching this repo's own
+    "read back what actually happened, don't guess" convention; `
+    get_gmsh_command()` resolves the real `gmsh` binary via a FreeCAD
+    Preferences parameter or, if unset, `shutil.which("gmsh")` on `PATH` --
+    NOT a `<TOOL>_BIN`-style environment variable the way every OTHER
+    subprocess this repo drives is made overridable (nothing in this
+    module's own `run_freecad_fem_mesh_geometry()` can change which `gmsh`
+    FreeCAD's own FEM workbench code decides to invoke; only which
+    `FreeCADCmd` is invoked is overridable, same as `generate_freecad_macro
+    ()`'s own `FREECAD_BIN`).
+  - `GmshTools.create_mesh()` ("for backward compatibility only") calls
+    `self.run(True)`, inherited from the abstract base class
+    `femtools/objecttools.py`'s `ObjectTools.run(blocking)`:
+    `self.prepare(); self.compute(); if blocking: return self.process.
+    waitForFinished(-1)` -- `prepare()` writes the shape to a `.brep` file
+    and a Gmsh `.geo` script referencing it (the SAME `SetFactory(
+    "OpenCASCADE")`-style Gmsh scripting simulation/elmer.py's own
+    `generate_gmsh_geo_script()` hand-writes, but generated by FreeCAD's own
+    code instead of this repo's), `compute()` launches the real `gmsh`
+    binary via a `PySide.QtCore.QProcess` (async, not `subprocess.run`).
+  - `Fem.FemMesh().read(self.temp_file_mesh)` (`update_properties()`) is
+    what actually parses the mesh file back into `mesh_obj.FemMesh` (a
+    `Fem::FemMesh` document-object property exposing `.NodeCount`/
+    `.TetraCount`/`.TriangleCount`/etc.) -- but per `ObjectTools.
+    _process_finished(code, status)`, this ONLY runs automatically if the
+    QProcess signals a clean exit (`NormalExit` and code 0); a meshing
+    FAILURE inside FreeCAD is otherwise a silent no-op (no exception, no
+    populated `FemMesh`) unless the caller separately checks for it. This
+    module's own macro therefore does NOT trust `run(True)`'s return value
+    alone: it reads `tool.process.exitCode()`/`readAllStandardError()`
+    itself, checks `os.path.exists(tool.temp_file_mesh)`, and calls `tool.
+    update_properties()` again itself if the file exists but `FemMesh.
+    NodeCount == 0` (idempotent -- it just re-reads the same file) rather
+    than trusting the QProcess-signal callback fired correctly, since this
+    pass could not verify PySide's signal/event-loop behavior inside a
+    real, GUI-less `FreeCADCmd` process (`WorkerExtension`/`ObjectTools`
+    both live in plain QtCore, which FreeCADCmd IS linked against per this
+    module's own FreeCADCmd-linkage citation above -- so this SHOULD work,
+    but "should" is doing real work in that sentence).
+  - PRIMARY-SOURCE CONFIRMATION this exact call sequence already works
+    without a GUI: FreeCAD's OWN test suite,
+    `src/Mod/Fem/femtest/app/test_gmsh.py`, calls `gmshtools.GmshTools(
+    obj).create_mesh()` directly and then reads `obj.FemMesh` back --
+    every GUI-specific step in that same test file is separately guarded by
+    `if FreeCAD.GuiUp:` checks, meaning the meshing call itself is written
+    to not depend on a GUI being present. This pass did NOT independently
+    confirm that FreeCAD's own CI test runner invokes the identical
+    `FreeCADCmd` binary this repo's adapter shells out to (as opposed to
+    the GUI executable's own `--console` mode, or a dedicated internal test
+    driver) -- so this is strong, but not fully conclusive, evidence for
+    THIS module's specific `FreeCADCmd <script>.py` invocation path.
+
+  DOES THIS CLOSE simulation/elmer.py's OWN "no curved/cylindrical
+  geometry" GAP (this ticket's own acceptance-criterion question)? Traced
+  directly rather than guessed: `simulation/elmer.py`'s `
+  run_elmergrid_conversion()` invokes `ElmerGrid 14 2 <stem> -out <name>`
+  (format code 14 = Gmsh `.msh`). ElmerGrid's own format-name table
+  (github.com/ElmerCSC/elmerfem's `devel` branch,
+  `elmergrid/src/egnative.c`) lists format code **8 as `"UNV"`** ("Universal
+  mesh file format"), and its own CLI dispatch switch
+  (`elmergrid/src/fempre.c`, `case 8: ... LoadUniversalMesh(&(data[nofile]),
+  boundaries[nofile], eg.filesin[nofile], TRUE)`) confirms ElmerGrid can
+  read a `.unv` file DIRECTLY as an input mesh -- `LoadUniversalMesh()`
+  itself lives in `elmergrid/src/egconvert.c` and opens the file exactly the
+  way a real `.unv` mesh is shaped. CONCLUSION: since `GmshTools`' own
+  default mesh-file format IS `.unv` (see above -- unless the install was
+  built with `BUILD_FEM_VTK`), a FreeCAD-FEM-produced mesh of the curved
+  solid this module builds could, in principle, be fed to ElmerGrid
+  DIRECTLY by calling it with format code 8 instead of 14 -- genuinely
+  closing simulation/elmer.py's own stated "no curved/cylindrical geometry"
+  meshing gap, not merely reducing duplicated `.geo`-script logic (the
+  weaker of the two outcomes this ticket's own acceptance criteria posed).
+  THIS PASS DELIBERATELY DOES NOT WIRE THAT UP: `simulation/elmer.py`'s `
+  run_elmergrid_conversion()` still hardcodes format 14 -- changing it is a
+  small, well-scoped, real follow-up (add an `input_format` parameter
+  defaulting to today's `"14"`) but is out of THIS ticket's own declared
+  scope (a `geometry/freecad_curved.py` prototype), and this pass could not
+  verify byte-for-byte that a REAL FreeCAD-Gmsh-produced `.unv` file's exact
+  element/group tagging conventions line up with what `LoadUniversalMesh()`
+  expects (both are read from source, not exercised against each other with
+  a real file) -- recorded honestly as "structurally confirmed, not
+  end-to-end verified," matching this module's own evidentiary standard
+  throughout.
+
+  UNIT CONVENTION THIS PATH INHERITS, NOT INTRODUCES: `generate_freecad_
+  macro()`'s existing `App.Vector(*p)` calls already feed this module's own
+  meters-scaled numbers into FreeCAD's Part-workbench geometry kernel as
+  bare (unitless, by FreeCAD's own internal-always-mm convention) floats --
+  whether that makes the resulting STEP file's real-world scale correct is
+  a pre-existing question this ticket does not touch (fixing it would
+  change `generate_freecad_macro()`'s own output, which this ticket's own
+  acceptance criteria forbid). `mesh_max_size_m` below is embedded into
+  `CharacteristicLengthMax` (an `App::PropertyLength`, i.e. millimeters by
+  the same FreeCAD-internal convention) using that SAME bare-number
+  convention -- deliberately, so the mesh-size number stays geometrically
+  consistent with the ALREADY-built shape's own coordinate scale, even
+  though this means neither number is a verified, correctly-scaled
+  real-world quantity. Introducing a real mm-conversion here alone, without
+  also fixing the vertex coordinates, would make the mismatch WORSE (a
+  correctly-scaled mesh size next to a wrongly-scaled shape), not better.
+
 HONEST CAVEAT: FreeCAD/FreeCADCmd is almost certainly NOT installed in this
 environment (matching this repo's other manually-installed simulator tools
 -- NEC2++, openEMS, Elmer, gprMax, etc.), and this pass could not fetch
@@ -296,7 +455,12 @@ of this ticket's own acceptance-criterion geometry-dict-shape tests.
 only against a small fake "FreeCADCmd" script (see
 tests/test_freecad_curved.py), NOT a real FreeCADCmd binary. Treat any
 FreeCAD-built-model result as unverified end-to-end until it has actually
-been run against a real FreeCADCmd install at least once.
+been run against a real FreeCADCmd install at least once. The SAME applies,
+with strictly MORE uncertainty (an additional real dependency -- `gmsh` --
+plus the QProcess/no-GUI question above), to `generate_freecad_fem_mesh_
+macro()`/`run_freecad_fem_mesh_geometry()`: this is a genuine prototype, not
+a verified capability, per this ticket's own "investigate (and, if it holds
+up, prototype)" framing.
 """
 
 from __future__ import annotations
@@ -724,6 +888,170 @@ def generate_freecad_macro(
     return "\n".join(lines) + "\n"
 
 
+def generate_freecad_fem_mesh_macro(
+    primitives: list[dict[str, Any]],
+    curvature: dict[str, Any],
+    working_directory: str,
+    mesh_max_size_m: float | None = None,
+    status_filename: str = "curved_unit_cell_fem_mesh_status.json",
+    comment: str = "Generated by geometry.freecad_curved.generate_freecad_fem_mesh_macro",
+) -> str:
+    """Generate a headless FreeCAD Python macro (issue #288) that builds the
+    exact same tilted-plane curved solid `generate_freecad_macro()` builds
+    (via the SAME `_macro_object_build_lines()` helper -- the two can never
+    silently drift apart), keeps it as a live `Part::Feature` compound
+    (instead of only exporting it to STEP), and drives FreeCAD's own FEM
+    workbench meshing API (`ObjectsFem.makeMeshGmsh` +
+    `femmesh.gmshtools.GmshTools`) against that exact compound -- see module
+    docstring "FEM WORKBENCH MESHING" for the full primary-source citation
+    list, the honest QProcess/no-GUI caveat, and why this does NOT also
+    export STEP (a distinct, additive path from `generate_freecad_macro()`,
+    which this ticket's own acceptance criteria require stay unchanged).
+
+    `working_directory`: absolute path the mesh object's own `WorkingDirectory`
+    property is set to -- this is where FreeCAD's FEM workbench actually
+    writes the `.brep`/`.geo`/mesh files, so the caller (`run_freecad_fem_
+    mesh_geometry()` below) must pass the SAME directory `FreeCADCmd` itself
+    runs in, and must know it up front (unlike `generate_freecad_macro()`'s
+    `step_filename`, which stays a bare relative name FreeCAD resolves
+    against its own subprocess cwd).
+
+    `mesh_max_size_m`: if given, sets `CharacteristicLengthMax` -- see module
+    docstring's "UNIT CONVENTION THIS PATH INHERITS, NOT INTRODUCES" for why
+    this is embedded as the SAME bare (unconverted) number `generate_
+    freecad_macro()`'s own vertex coordinates already use, not a real
+    meters-to-FreeCAD-internal-mm conversion. If omitted, `Characteristic
+    LengthMax` is left at FreeCAD's own default (0.0, meaning "no cap" --
+    Gmsh picks its own default sizing from the geometry alone).
+
+    The written JSON status file's shape:
+        {
+          "objects_built": [...names...],
+          "errors": [{"name", "error"}, ...],
+          "mesh": {
+              "mesh_ok": bool,
+              "mesh_file": <absolute path> | None,
+              "node_count": int,
+              "element_counts": {"edge"/"triangle"/"quadrangle"/"tetra"/
+                  "hexa"/"prism"/"pyramid": int, ...},
+              "gmsh_exit_code": int | None,
+              "gmsh_stderr": str,
+              "note": str | None,   # set on ANY failure (GmshError, a
+                  missing mesh file, or an unexpected exception) --
+                  `mesh_ok=False` is never silent.
+          },
+          "total_input": N,
+        }
+    A per-object solid-build failure (same as `generate_freecad_macro()`) or
+    a meshing failure are BOTH reported honestly in this status rather than
+    raised -- the FreeCADCmd process itself still ran to completion (see
+    module docstring's `ObjectTools._process_finished` citation for why a
+    meshing failure needs this module's own explicit exit-code/file-
+    existence check rather than trusting `FemMesh` being populated).
+    """
+    if not primitives:
+        raise ValueError("primitives must be a non-empty list")
+    objects = [_exact_curved_geometry(prim, curvature, idx) for idx, prim in enumerate(primitives)]
+
+    lines: list[str] = [
+        f"# {comment}",
+        "# Headless FreeCAD FEM-workbench meshing macro -- run via `FreeCADCmd <this file>`.",
+        "# See geometry/freecad_curved.py's module docstring 'FEM WORKBENCH MESHING'",
+        "# section for the FreeCAD FEM API citations (ObjectsFem.makeMeshGmsh /",
+        "# femmesh.gmshtools.GmshTools) this macro drives.",
+        "import json",
+        "import os",
+        "",
+        "import FreeCAD as App",
+        "import Part",
+        "",
+        'doc = App.newDocument("CurvedUnitCellArray")',
+        "objects_built = []",
+        "built_shapes = []",
+        "errors = []",
+    ]
+    lines += _macro_object_build_lines(objects)
+
+    lines += [
+        "",
+        "doc.recompute()",
+        "",
+        "mesh_status = {",
+        "    'mesh_ok': False,",
+        "    'mesh_file': None,",
+        "    'node_count': 0,",
+        "    'element_counts': {},",
+        "    'gmsh_exit_code': None,",
+        "    'gmsh_stderr': '',",
+        "    'note': None,",
+        "}",
+        "if built_shapes:",
+        "    compound = Part.makeCompound(built_shapes)",
+        '    compound_feature = doc.addObject("Part::Feature", "CurvedArrayCompound")',
+        "    compound_feature.Shape = compound",
+        "    doc.recompute()",
+        "    try:",
+        "        import ObjectsFem",
+        "        from femmesh.gmshtools import GmshTools, GmshError",
+        "",
+        '        mesh_obj = ObjectsFem.makeMeshGmsh(doc, "CurvedArrayMesh")',
+        "        mesh_obj.Shape = compound_feature",
+        f"        mesh_obj.WorkingDirectory = {working_directory!r}",
+        '        mesh_obj.ElementDimension = "3D"',
+    ]
+    if mesh_max_size_m is not None:
+        lines.append(f"        mesh_obj.CharacteristicLengthMax = {mesh_max_size_m!r}")
+    lines += [
+        "        doc.recompute()",
+        "        tool = GmshTools(mesh_obj)",
+        "        tool.create_mesh()",
+        "        mesh_status['gmsh_exit_code'] = tool.process.exitCode()",
+        "        mesh_status['gmsh_stderr'] = bytes(",
+        "            tool.process.readAllStandardError()",
+        "        ).decode('utf-8', 'replace')",
+        "        mesh_file = tool.temp_file_mesh",
+        "        if os.path.exists(mesh_file):",
+        "            if mesh_obj.FemMesh.NodeCount == 0:",
+        "                # _process_finished only populates FemMesh on a clean",
+        "                # QProcess exit signal -- re-read defensively (idempotent).",
+        "                tool.update_properties()",
+        "            mesh_status['mesh_ok'] = True",
+        "            mesh_status['mesh_file'] = mesh_file",
+        "            mesh_status['node_count'] = mesh_obj.FemMesh.NodeCount",
+        "            mesh_status['element_counts'] = {",
+        "                'edge': mesh_obj.FemMesh.EdgeCount,",
+        "                'triangle': mesh_obj.FemMesh.TriangleCount,",
+        "                'quadrangle': mesh_obj.FemMesh.QuadrangleCount,",
+        "                'tetra': mesh_obj.FemMesh.TetraCount,",
+        "                'hexa': mesh_obj.FemMesh.HexaCount,",
+        "                'prism': mesh_obj.FemMesh.PrismCount,",
+        "                'pyramid': mesh_obj.FemMesh.PyramidCount,",
+        "            }",
+        "        else:",
+        "            mesh_status['note'] = (",
+        "                'gmsh did not produce a mesh file at ' + mesh_file",
+        "            )",
+        "    except GmshError as exc:",
+        "        mesh_status['note'] = 'GmshError: ' + str(exc)",
+        "    except Exception as exc:",
+        "        mesh_status['note'] = 'unexpected FEM meshing failure: ' + str(exc)",
+        "else:",
+        "    mesh_status['note'] = 'no unit-cell object built successfully -- see errors'",
+        "",
+        "status = {",
+        '    "objects_built": objects_built,',
+        '    "errors": errors,',
+        '    "mesh": mesh_status,',
+        f'    "total_input": {len(objects)},',
+        "}",
+        f"with open({status_filename!r}, 'w') as _status_fh:",
+        "    json.dump(status, _status_fh)",
+        "",
+        "App.closeDocument(doc.Name)",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # Subprocess invocation -- follows simulation/elmer.py's/simulation/
 # gprmax.py's own shell-out pattern (generate a script, subprocess.run the
@@ -845,6 +1173,131 @@ def run_freecad_curved_geometry(
             "objects_built": [],
             "errors": [],
             "step_file": None,
+            "note": (
+                f"{status_filename!r} was not found in the run's workdir after "
+                "FreeCADCmd exited 0 -- either the macro's own final JSON-write step "
+                "didn't execute (check stdout below), or (for a fake test executable "
+                "standing in for FreeCADCmd) the fake script doesn't emit this file."
+            ),
+        }
+
+    return {
+        "provenance": "SIMULATED",
+        "simulator": "FreeCADCmd",
+        "status": "COMPLETED",
+        "workdir": str(work_dir),
+        "macro_file": str(macro_file),
+        "primitives": curved_primitives,
+        "freecad": freecad_result,
+        "stdout": completed.stdout[-4000:],
+    }
+
+
+def run_freecad_fem_mesh_geometry(
+    primitives: list[dict[str, Any]],
+    curvature: dict[str, Any],
+    workdir: str | None = None,
+    executable: str | None = None,
+    timeout_s: int = _DEFAULT_TIMEOUT_S,
+    name_prefix: str = "cell",
+    mesh_max_size_m: float | None = None,
+) -> dict[str, Any]:
+    """End-to-end: map `primitives` onto `curvature` (same pure-Python step
+    `run_freecad_curved_geometry()` does), generate a headless FreeCAD macro
+    that builds the same curved solid AND drives FreeCAD's own FEM workbench
+    meshing API against it (`generate_freecad_fem_mesh_macro()` -- see that
+    function's docstring and this module's docstring "FEM WORKBENCH
+    MESHING" section), run it via FreeCADCmd, and parse whatever status the
+    macro wrote.
+
+    A SEPARATE function from `run_freecad_curved_geometry()` (not a flag on
+    it) precisely so THAT function's existing STEP-export-only default
+    behavior is untouched -- this ticket's own acceptance criteria require
+    it, and this also means an existing caller of `run_freecad_curved_
+    geometry()` is never affected by this function even existing.
+
+    Returns:
+        {
+          "provenance": "SIMULATED",
+          "simulator": "FreeCADCmd",
+          "status": "COMPLETED",
+          "workdir": str,
+          "macro_file": str,
+          "primitives": [...the geometry-dict "polygon" primitives...],
+          "freecad": {
+              "objects_built": [...names...],
+              "errors": [...],
+              "total_input": int | None,
+              "mesh": {"mesh_ok": bool, "mesh_file": <absolute path> | None,
+                  "node_count": int, "element_counts": {...},
+                  "gmsh_exit_code": int | None, "gmsh_stderr": str,
+                  "note": str | None},
+          },
+          "stdout": str,
+        }
+
+    Raises FreecadGeometryError only for a subprocess-level FreeCADCmd
+    failure (nonzero exit, timeout, executable not found) -- matching
+    `run_freecad_curved_geometry()`. A per-object solid-build failure or a
+    FEM-meshing failure INSIDE a successfully-run FreeCADCmd process (e.g.
+    gmsh not installed on the machine FreeCADCmd itself runs on) is NOT such
+    a failure -- both are reported honestly in `freecad["errors"]`/
+    `freecad["mesh"]` instead, never raised and never silently guessed.
+    """
+    curved_primitives = map_unit_cell_layout_to_curved_surface(
+        primitives, curvature, name_prefix=name_prefix
+    )
+
+    work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="freecad_fem_mesh_"))
+    work_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = work_dir.resolve()
+
+    status_filename = "curved_unit_cell_fem_mesh_status.json"
+    macro_file = work_dir / "build_curved_fem_mesh.py"
+    macro_file.write_text(
+        generate_freecad_fem_mesh_macro(
+            primitives,
+            curvature,
+            working_directory=str(work_dir),
+            mesh_max_size_m=mesh_max_size_m,
+            status_filename=status_filename,
+        )
+    )
+
+    completed = _run_freecadcmd(macro_file, work_dir, executable=executable, timeout_s=timeout_s)
+
+    status_path = work_dir / status_filename
+    _no_mesh: dict[str, Any] = {
+        "mesh_ok": False,
+        "mesh_file": None,
+        "node_count": 0,
+        "element_counts": {},
+        "gmsh_exit_code": None,
+        "gmsh_stderr": "",
+        "note": None,
+    }
+    if status_path.exists():
+        status = json.loads(status_path.read_text())
+        freecad_result: dict[str, Any] = {
+            "objects_built": status.get("objects_built", []),
+            "errors": status.get("errors", []),
+            "total_input": status.get("total_input"),
+            "mesh": status.get("mesh", {**_no_mesh, "note": "status file has no 'mesh' key"}),
+        }
+    else:
+        freecad_result = {
+            "objects_built": [],
+            "errors": [],
+            "mesh": {
+                **_no_mesh,
+                "note": (
+                    f"{status_filename!r} was not found in the run's workdir after "
+                    "FreeCADCmd exited 0 -- either the macro's own final JSON-write "
+                    "step didn't execute (check stdout below), or (for a fake test "
+                    "executable standing in for FreeCADCmd) the fake script doesn't "
+                    "emit this file."
+                ),
+            },
             "note": (
                 f"{status_filename!r} was not found in the run's workdir after "
                 "FreeCADCmd exited 0 -- either the macro's own final JSON-write step "
