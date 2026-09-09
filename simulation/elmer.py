@@ -369,6 +369,7 @@ import os
 import re
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -392,6 +393,17 @@ _FACE_TAGS = {
 
 def _fmt(value: float) -> str:
     return f"{float(value):.6g}"
+
+
+def _check_known_faces(label: str, faces: Iterable[str]) -> None:
+    """Raise ValueError naming any face name(s) in `faces` not present in
+    _FACE_TAGS, worded as "`label` contains unknown face name(s): [...]" --
+    the one place this repeated set-difference-and-raise check (pec_faces,
+    geometry['thermal']['fixed_temperature_faces_k'],
+    geometry['thermal']['convective_faces']) is written and tested."""
+    unknown = set(faces) - set(_FACE_TAGS)
+    if unknown:
+        raise ValueError(f"{label} contains unknown face name(s): {sorted(unknown)}")
 
 
 class ElmerSimulator(Simulator):
@@ -657,20 +669,10 @@ def _validate_thermal(thermal: dict[str, Any] | None) -> None:
             raise ValueError(f"geometry['thermal']['{key}'] is required")
 
     fixed_faces = set(thermal.get("fixed_temperature_faces_k", {}))
-    unknown_fixed = fixed_faces - set(_FACE_TAGS)
-    if unknown_fixed:
-        raise ValueError(
-            f"geometry['thermal']['fixed_temperature_faces_k'] contains "
-            f"unknown face name(s): {sorted(unknown_fixed)}"
-        )
+    _check_known_faces("geometry['thermal']['fixed_temperature_faces_k']", fixed_faces)
 
     convective_faces = set(thermal.get("convective_faces", {}))
-    unknown_convective = convective_faces - set(_FACE_TAGS)
-    if unknown_convective:
-        raise ValueError(
-            f"geometry['thermal']['convective_faces'] contains unknown "
-            f"face name(s): {sorted(unknown_convective)}"
-        )
+    _check_known_faces("geometry['thermal']['convective_faces']", convective_faces)
 
     both = fixed_faces & convective_faces
     if both:
@@ -764,15 +766,13 @@ def generate_elmer_sif(
 
     excitation = geometry.get("excitation")
     pec_faces = set(geometry.get("pec_faces", []))
-    unknown_faces = pec_faces - set(_FACE_TAGS)
-    if unknown_faces:
-        raise ValueError(f"pec_faces contains unknown face name(s): {sorted(unknown_faces)}")
+    _check_known_faces("pec_faces", pec_faces)
 
     thermal = geometry.get("thermal")
     _validate_thermal(thermal)
     has_thermal = thermal is not None
-    fixed_temperature_faces = thermal.get("fixed_temperature_faces_k", {}) if thermal else {}
-    convective_faces = thermal.get("convective_faces", {}) if thermal else {}
+    fixed_temperature_faces = thermal.get("fixed_temperature_faces_k", {}) if has_thermal else {}
+    convective_faces = thermal.get("convective_faces", {}) if has_thermal else {}
 
     # Body Force block numbering (see "COUPLED EM+THERMAL" citation): the
     # excitation body's existing "Current Density" Body Force block (index
@@ -842,7 +842,7 @@ def generate_elmer_sif(
         f"  Relative Reluctivity im = Real {_fmt(reluc_im)}",
         f"  Electric Conductivity = Real {_fmt(sigma)}",
     ]
-    if thermal:
+    if has_thermal:
         lines += [
             f"  Heat Conductivity = Real {_fmt(thermal['heat_conductivity_w_mk'])}",
             f"  Density = Real {_fmt(thermal['density_kg_m3'])}",

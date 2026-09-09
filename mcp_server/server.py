@@ -873,29 +873,39 @@ def run_elmer_simulation(
     elmersolver_executable: str | None = None,
 ) -> dict:
     """Simulate a structure with Elmer FEM's VectorHelmholtz module (a general,
-    multiphysics-ready EM cross-check for a FUTURE coupled-physics need, e.g. EM/
-    thermal on a mounted "adaptive EM skin" -- NOT a replacement for run_nec2_
-    simulation/run_openems_simulation/run_hfss_simulation on everyday antenna work):
-    generate a Gmsh OpenCASCADE .geo script from structured geometry (a single
-    rectangular domain with isotropic material, plus an optional rectangular
-    excitation sub-region -- see simulation.elmer.generate_gmsh_geo_script for the
-    full shape), mesh it with gmsh, convert the mesh to ElmerSolver's native format
-    with ElmerGrid, generate a matching VectorHelmholtz .sif (see simulation.elmer.
+    multiphysics-ready EM cross-check -- NOT a replacement for run_nec2_simulation/
+    run_openems_simulation/run_hfss_simulation on everyday antenna work): generate a
+    Gmsh OpenCASCADE .geo script from structured geometry (a single rectangular
+    domain with isotropic material, plus an optional rectangular excitation
+    sub-region -- see simulation.elmer.generate_gmsh_geo_script for the full shape),
+    mesh it with gmsh, convert the mesh to ElmerSolver's native format with
+    ElmerGrid, generate a matching VectorHelmholtz .sif (see simulation.elmer.
     generate_elmer_sif), run it with ElmerSolver, and parse whatever raw output is
-    available. Returns "SIMULATED" provenance. CRITICAL SCOPE LIMIT: Elmer's
-    VectorHelmholtz module has NO native antenna-specific port/S-parameter/far-field/
-    gain post-processing (unlike OpenParEM/Palace) -- this tool's excitation
-    (impressed "Body Force"/"Current Density" current source) and boundary conditions
-    (PEC "E Re"/"E Im"=0, or the solver's own generic "Absorbing BC" flag) are
-    hand-assembled, real FEM techniques but NOT a calibrated port; "s_parameters" and
-    "far_field" are therefore ALWAYS returned computed=False with an explanatory note,
-    never fabricated -- see simulation/elmer.py's module docstring "SCOPE AND
-    LIMITATIONS" for the full detail. .geo/.sif/CLI format verified against Gmsh's own
-    official reference manual and ElmerGrid's/ElmerSolver's own primary GitHub source
-    (see simulation/elmer.py's module docstring for the full citation list, each fact
-    graded by confidence) but NOT against real gmsh/ElmerGrid/ElmerSolver binaries --
-    none is installed in this environment; treat any result as unverified end-to-end
-    until it has been run against the real tools at least once."""
+    available. Returns "SIMULATED" provenance. COUPLED EM+THERMAL (issue #281): pass
+    an optional `geometry["thermal"]` block (`heat_conductivity_w_mk`,
+    `density_kg_m3`, `heat_capacity_j_kgk`, plus optional `fixed_temperature_faces_k`/
+    `convective_faces` boundary conditions -- see simulation.elmer.generate_elmer_sif
+    for the full shape) to add a Heat Equation solve driven by the EM solve's own
+    Joule-heating loss on the same mesh, e.g. "how hot does this metasurface skin get
+    from soaking up radio energy while mounted on a warm surface" in the same run as
+    the EM-only result; the returned dict then also carries a `thermal_result` key
+    (`computed=True` with `max_temperature_k`, or `computed=False` with an
+    explanatory note -- same honest-gap pattern as `s_parameters`/`far_field`).
+    Omitting `geometry["thermal"]` runs EM-only exactly as before. CRITICAL SCOPE
+    LIMIT: Elmer's VectorHelmholtz module has NO native antenna-specific port/
+    S-parameter/far-field/gain post-processing (unlike OpenParEM/Palace) -- this
+    tool's excitation (impressed "Body Force"/"Current Density" current source) and
+    boundary conditions (PEC "E Re"/"E Im"=0, or the solver's own generic "Absorbing
+    BC" flag) are hand-assembled, real FEM techniques but NOT a calibrated port;
+    "s_parameters" and "far_field" are therefore ALWAYS returned computed=False with
+    an explanatory note, never fabricated -- see simulation/elmer.py's module
+    docstring "SCOPE AND LIMITATIONS" for the full detail. .geo/.sif/CLI format
+    verified against Gmsh's own official reference manual and ElmerGrid's/
+    ElmerSolver's own primary GitHub source (see simulation/elmer.py's module
+    docstring for the full citation list, each fact graded by confidence) but NOT
+    against real gmsh/ElmerGrid/ElmerSolver binaries -- none is installed in this
+    environment; treat any result as unverified end-to-end until it has been run
+    against the real tools at least once."""
     return _run_elmer_simulation(
         geometry=geometry,
         frequency_hz=frequency_hz,
