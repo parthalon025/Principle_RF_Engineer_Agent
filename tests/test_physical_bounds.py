@@ -498,20 +498,44 @@ def test_the_settled_families_keep_the_solvers_they_already_routed_to():
     assert ABSORBER_TRANSMISSIVE.declared_simulation_adapter().name == "MEEP_FLOQUET"
 
 
+def test_reflection_phase_and_diffusive_now_declare_palace_floquet():
+    """#252 ticket 3: both Tier B unit-cell families settle on the adapter
+    that returns a phase at all -- simulation/meep.py never did ('NO complex
+    phase', its own scope section), no matter what a candidate's geometry
+    looked like. No other field on either family changes."""
+    assert REFLECTION_PHASE.has_settled_simulation_adapter
+    assert DIFFUSIVE.has_settled_simulation_adapter
+    assert REFLECTION_PHASE.declared_simulation_adapter().name == "PALACE_FLOQUET"
+    assert DIFFUSIVE.declared_simulation_adapter().name == "PALACE_FLOQUET"
+    # Untouched: simulation_tier, requires_ground_plane, physical_bound and
+    # analysis_model are unaffected by settling the solver.
+    assert REFLECTION_PHASE.simulation_tier is SimulationTier.TIER_B
+    assert DIFFUSIVE.simulation_tier is SimulationTier.TIER_B
+    assert REFLECTION_PHASE.requires_ground_plane is True
+    assert DIFFUSIVE.requires_ground_plane is True
+    assert not REFLECTION_PHASE.has_analysis_model
+    assert not DIFFUSIVE.has_analysis_model
+
+
 def test_asking_an_unsettled_family_for_a_solver_raises_with_the_reason_and_the_way_out():
-    for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE):
-        assert not family.has_settled_simulation_adapter
-        with pytest.raises(UnsettledSimulationAdapterError) as exc:
-            family.declared_simulation_adapter()
-        message = str(exc.value)
-        assert family.name in message
-        assert "simulation_adapter" in message
-        assert "designs/design_families.py" in message
-        # The candidates and the cheapest test travel with the refusal: a
-        # reader is told what was considered and how to settle it.
-        for candidate in family.simulation_adapter.candidates:
-            assert candidate in message
-        assert family.simulation_adapter.cheapest_test in message
+    """POLARIZATION_CONVERTER is the only family left with no settled
+    solver: it needs the cross-polarised channel, which simulation/palace.py
+    can already report, but that adapter still cannot mesh an anisotropic
+    printed cell -- a different gap from the one #252 closed for
+    REFLECTION_PHASE/DIFFUSIVE."""
+    family = POLARIZATION_CONVERTER
+    assert not family.has_settled_simulation_adapter
+    with pytest.raises(UnsettledSimulationAdapterError) as exc:
+        family.declared_simulation_adapter()
+    message = str(exc.value)
+    assert family.name in message
+    assert "simulation_adapter" in message
+    assert "designs/design_families.py" in message
+    # The candidates and the cheapest test travel with the refusal: a
+    # reader is told what was considered and how to settle it.
+    for candidate in family.simulation_adapter.candidates:
+        assert candidate in message
+    assert family.simulation_adapter.cheapest_test in message
 
 
 def test_the_transmissive_absorbers_settled_solver_still_records_what_was_missing():
@@ -525,18 +549,30 @@ def test_the_transmissive_absorbers_settled_solver_still_records_what_was_missin
     assert "S21" in reason
 
 
+def test_reflection_phase_and_diffusives_settled_solvers_still_record_what_closed_them():
+    """#252 settled both families on PALACE_FLOQUET. The reason has to keep
+    saying WHICH quantity each one actually needs -- REFLECTION_PHASE's own
+    words about phase, DIFFUSIVE's about the 180-degree '0'/'1' cells -- and
+    both must name the issue and stay distinct from each other, or the next
+    reader cannot tell a considered choice from a copied one."""
+    reflection_reason = REFLECTION_PHASE.simulation_adapter.reason
+    diffusive_reason = DIFFUSIVE.simulation_adapter.reason
+    assert reflection_reason != diffusive_reason
+    assert "252" in reflection_reason
+    assert "252" in diffusive_reason
+    assert "phase" in reflection_reason
+    assert "180 degrees" in diffusive_reason
+
+
 def test_the_unsettled_families_do_not_all_share_one_copy_pasted_reason():
     """Writing the same plausible name (or the same excuse) on every open
     family would reintroduce #241's defect one layer up. Each family's
     reason has to be about that family's own missing quantity."""
     reasons = {
-        family.name: family.simulation_adapter.reason
-        for family in (DIFFUSIVE, POLARIZATION_CONVERTER, REFLECTION_PHASE)
+        family.name: family.simulation_adapter.reason for family in (POLARIZATION_CONVERTER,)
     }
     assert len(set(reasons.values())) == len(reasons)
-    # The quantity each one actually needs, named in its own words.
-    assert "phase" in reasons["REFLECTION_PHASE"]
-    assert "180 degrees" in reasons["DIFFUSIVE"]
+    # The quantity it actually needs, named in its own words.
     assert "CROSS-polarised" in reasons["POLARIZATION_CONVERTER"]
 
 

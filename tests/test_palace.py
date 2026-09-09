@@ -53,6 +53,7 @@ from simulation.palace import (
     PalaceSimulator,
     generate_palace_config,
     generate_palace_mesh,
+    metasurface_capability_gaps,
     parse_palace_output,
     run_palace_simulation,
 )
@@ -1019,3 +1020,127 @@ def test_specular_view_keeps_both_polarizations_apart():
 def test_specular_view_keys_are_polarization_qualified():
     result = parse_palace_output(PALACE_REFERENCE_BOTH_POLARIZATIONS_CSV)
     assert set(result["specular"]) == {"S11_TE", "S11_TM", "S21_TE", "S21_TM"}
+
+
+# ---------------------------------------------------------------------------
+# metasurface_capability_gaps() -- issue #252 ticket 3. Both features it
+# checks (pec_patches, ground_backed) are already implemented (tickets 1/2);
+# this probe validates that a CANDIDATE's geometry actually uses them, the
+# way a REFLECTION_PHASE/DIFFUSIVE candidate's physics requires.
+# ---------------------------------------------------------------------------
+
+# A geometry with neither feature set: the module's original all-dielectric,
+# two-port transmissive shape -- the WRONG shape for a ground-backed
+# metasurface family.
+_NEITHER_FEATURE_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+}
+
+# ground_backed=True but no printed conductor: a bare, metal-BACKED
+# dielectric slab -- has the right port physics but no metasurface element.
+_GROUND_BACKED_ONLY_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "ground_backed": True,
+}
+
+# pec_patches present but ground_backed left at its False default: a
+# transmissive two-port cell with an embedded patch, not the family's
+# declared one-port physics.
+_PEC_PATCH_ONLY_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "pec_patches": [
+        {"p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+}
+
+# Both set: the physically-correct shape for REFLECTION_PHASE/DIFFUSIVE.
+_BOTH_FEATURES_GEOMETRY = {
+    "unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01},
+    "ground_backed": True,
+    "pec_patches": [
+        {"p1_m": [0.002, 0.002, 0.005], "p2_m": [0.008, 0.008, 0.005]},
+    ],
+}
+
+
+def _gap_names(gaps: list[dict[str, str]]) -> set[str]:
+    return {gap["gap"] for gap in gaps}
+
+
+def test_metasurface_capability_gaps_neither_feature_reports_both_gaps():
+    gaps = metasurface_capability_gaps(_NEITHER_FEATURE_GEOMETRY)
+    names = _gap_names(gaps)
+    assert len(gaps) == 2
+    assert any("ground_backed=True" in name for name in names)
+    assert any("pec_patches" in name for name in names)
+
+
+def test_metasurface_capability_gaps_ground_backed_only_still_flags_missing_pec_patches():
+    gaps = metasurface_capability_gaps(_GROUND_BACKED_ONLY_GEOMETRY)
+    names = _gap_names(gaps)
+    assert len(gaps) == 1
+    assert any("pec_patches" in name for name in names)
+    assert not any("ground_backed=True" in name for name in names)
+
+
+def test_metasurface_capability_gaps_pec_patches_only_still_flags_missing_ground_backed():
+    gaps = metasurface_capability_gaps(_PEC_PATCH_ONLY_GEOMETRY)
+    names = _gap_names(gaps)
+    assert len(gaps) == 1
+    assert any("ground_backed=True" in name for name in names)
+    assert not any("pec_patches" in name for name in names)
+
+
+def test_metasurface_capability_gaps_both_features_present_is_empty():
+    assert metasurface_capability_gaps(_BOTH_FEATURES_GEOMETRY) == []
+
+
+def test_metasurface_capability_gaps_empty_pec_patches_list_still_counts_as_missing():
+    """An explicit empty list is the same as omitting the key entirely --
+    zero patches is zero patches either way."""
+    geometry = {**_GROUND_BACKED_ONLY_GEOMETRY, "pec_patches": []}
+    names = _gap_names(metasurface_capability_gaps(geometry))
+    assert any("pec_patches" in name for name in names)
+
+
+def test_metasurface_capability_gaps_explicit_ground_backed_false_still_counts_as_missing():
+    geometry = {**_PEC_PATCH_ONLY_GEOMETRY, "ground_backed": False}
+    names = _gap_names(metasurface_capability_gaps(geometry))
+    assert any("ground_backed=True" in name for name in names)
+
+
+def test_metasurface_capability_gaps_shape_matches_meep_probes_dict_keys():
+    """Same {"gap", "assumed", "costs", "cheapest_test"} shape as
+    simulation/meep.py's periodic_absorber_capability_gaps() -- so
+    orchestration/design_loop.py's dispatch can join `gap['gap']:
+    gap['costs']` the same way for either adapter."""
+    for gap in metasurface_capability_gaps(_NEITHER_FEATURE_GEOMETRY):
+        assert set(gap) == {"gap", "assumed", "costs", "cheapest_test"}
+        for value in gap.values():
+            assert isinstance(value, str) and value.strip()
+
+
+def test_metasurface_capability_gaps_a_real_reflection_phase_run_reaches_run_palace_simulation(
+    tmp_path: Path,
+):
+    """End to end: a geometry with both features set has no gaps, and
+    actually running it through run_palace_simulation() (against a fake
+    executable, the same pattern as
+    test_run_palace_simulation_end_to_end_with_fake_executable) produces a
+    one-port ground-backed result -- proving the probe's "ready" verdict and
+    the adapter's own ground-backed path (issue #252 ticket 2) agree."""
+    assert metasurface_capability_gaps(_BOTH_FEATURES_GEOMETRY) == []
+    script = _make_fake_palace_py(tmp_path, GROUND_BACKED_CSV)
+
+    result = run_palace_simulation(
+        geometry=_BOTH_FEATURES_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 12e9, "points": 2},
+        executable=str(script),
+        workdir=str(tmp_path / "run"),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["s_parameters"]["computed"] is True
+    assert "S11_TE" in result["s_parameters"]["specular"]
+    assert "S21_TE" not in result["s_parameters"]["specular"]

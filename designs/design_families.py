@@ -686,37 +686,30 @@ PATCH = DesignFamily(
 
 REFLECTION_PHASE = DesignFamily(
     name="REFLECTION_PHASE",
-    simulation_adapter=UnsettledSimulationAdapter(
+    simulation_adapter=SimulationAdapter(
+        name="PALACE_FLOQUET",
         reason=(
-            "this family is designed by its per-cell reflection PHASE -- how far "
-            "a bounce off one cell shifts the wave's timing -- and neither "
-            "adapter in this repo can pose that question for the structure this "
-            "family is made of. simulation/meep.py can BUILD the structure (a "
-            "printed conductor over a ground plane, repeating in the plane) but "
-            "returns power reflectance only: its own scope section says 'NO "
-            "complex phase'. simulation/palace.py DOES return phase, validated "
-            "against a real Palace binary to within 0.91 degrees on Palace's own "
+            "settled at issue #252, closing the two gaps that kept this family "
+            "unsettled: this family is designed by its per-cell reflection PHASE "
+            "-- how far a bounce off one cell shifts the wave's timing -- and "
+            "simulation/meep.py still cannot pose that question at all (its own "
+            "scope section says 'NO complex phase'), so it remains the wrong "
+            "adapter no matter what a candidate's geometry looks like. "
+            "simulation/palace.py DOES return phase, validated against a real "
+            "Palace binary to within 0.91 degrees on Palace's own "
             "dielectric-grating example (issue #210, "
-            "docs/palace-floquet-validation.md) -- but its scope section says "
-            "'Embedded PEC conductor patches (the metallic-metasurface case ...) "
-            "are NOT implemented', and a printed metal cell over a ground plane "
-            "is exactly that case. Each candidate is one named, unbuilt "
-            "capability away, and nothing read here establishes which is the "
-            "route; the design loop has no Palace handler wired either. Writing "
-            "a plausible-looking name down today would reintroduce the very "
-            "defect #241 removed, one layer up."
-        ),
-        candidates=(
-            "PALACE_FLOQUET -- has the phase, cannot yet mesh an embedded metal "
-            "patch (simulation/palace.py SCOPE)",
-            "MEEP_FLOQUET -- has the structure, extracts no phase (simulation/meep.py SCOPE)",
-        ),
-        cheapest_test=(
-            "take one cell whose reflection-phase curve is published -- a square "
-            "patch over a grounded spacer, whose phase passes through zero at a "
-            "stated frequency -- and try to reproduce that curve. Whichever "
-            "candidate reproduces it once its missing capability is added is the "
-            "adapter; until one does, neither name is more than a guess."
+            "docs/palace-floquet-validation.md), and #252 ticket 1 taught it to "
+            "mesh an embedded PEC conductor patch -- a real printed metasurface "
+            "element, not just an all-dielectric grating -- and #252 ticket 2 "
+            "taught it to emit a ground-backed, one-port cell (a PEC termination "
+            "in place of the second, non-excited Floquet port) matching this "
+            "family's own requires_ground_plane=True/port_count=1. A settled "
+            "adapter is not a promise every candidate's geometry is ready to "
+            "hand it, though: simulation/palace.py's "
+            "metasurface_capability_gaps() checks, per candidate, that its "
+            "geometry actually sets ground_backed=True and carries at least one "
+            "pec_patches entry, and refuses by name rather than quietly running "
+            "Palace's OTHER (transmissive, all-dielectric) shape instead."
         ),
     ),
     description=(
@@ -761,33 +754,31 @@ REFLECTION_PHASE = DesignFamily(
 
 DIFFUSIVE = DesignFamily(
     name="DIFFUSIVE",
-    simulation_adapter=UnsettledSimulationAdapter(
+    simulation_adapter=SimulationAdapter(
+        name="PALACE_FLOQUET",
         reason=(
-            "a coding/diffusive cell IS its reflection phase -- a '0' and a '1' "
-            "are two cells 180 degrees apart -- so this family needs exactly the "
-            "per-cell phase REFLECTION_PHASE needs, and hits the same wall: "
-            "simulation/meep.py can build a printed cell over a ground plane but "
-            "extracts no phase ('NO complex phase', its own scope section), and "
-            "simulation/palace.py returns phase (validated against a real binary, "
-            "issue #210) but cannot yet mesh an embedded metal patch ('Embedded "
-            "PEC conductor patches ... are NOT implemented'). On top of that, "
-            "what this family is actually scored on -- how much backscatter the "
-            "whole ARRANGEMENT redistributes away from the radar -- lives above "
-            "the unit cell (that is what makes it Tier B), and no module here "
-            "performs that aperture-level step. Two unbuilt capabilities, no "
-            "established route: recorded as unsettled rather than guessed."
-        ),
-        candidates=(
-            "PALACE_FLOQUET -- has the phase, cannot yet mesh an embedded metal "
-            "patch (simulation/palace.py SCOPE)",
-            "MEEP_FLOQUET -- has the structure, extracts no phase (simulation/meep.py SCOPE)",
-        ),
-        cheapest_test=(
-            "the same per-cell reflection-phase reproduction REFLECTION_PHASE "
-            "names -- both families are blocked on the same missing quantity, so "
-            "one experiment settles the unit-cell half for both. The "
-            "aperture-level scattering step is separate work and would still be "
-            "unbuilt afterwards."
+            "settled at issue #252, alongside REFLECTION_PHASE, which this "
+            "family's unit-cell physics matches exactly: a coding/diffusive cell "
+            "IS its reflection phase -- a '0' and a '1' are two cells 180 "
+            "degrees apart -- so it needs the same per-cell phase, and hits the "
+            "same wall with simulation/meep.py, which still returns no phase at "
+            "all ('NO complex phase', its own scope section) no matter what a "
+            "candidate's geometry looks like. #252 ticket 1 taught "
+            "simulation/palace.py to mesh an embedded PEC conductor patch and "
+            "ticket 2 taught it to emit a ground-backed, one-port cell (a PEC "
+            "termination in place of the second, non-excited Floquet port) "
+            "matching this family's own requires_ground_plane=True/port_count=1. "
+            "What this family is actually SCORED on -- how much backscatter the "
+            "whole ARRANGEMENT redistributes away from the radar -- still lives "
+            "above the unit cell and no module here performs that aperture-level "
+            "step (that is what keeps this family Tier B); PALACE_FLOQUET is "
+            "settled here only as the unit-cell phase-lookup solver that feeds "
+            "it, not as an answer to that separate, still-open question. A "
+            "settled adapter is not a promise every candidate's geometry is "
+            "ready to hand it, though: simulation/palace.py's "
+            "metasurface_capability_gaps() checks, per candidate, that its "
+            "geometry actually sets ground_backed=True and carries at least one "
+            "pec_patches entry."
         ),
     ),
     description=(
