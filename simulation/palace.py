@@ -365,6 +365,115 @@ _SQUARE_GEOM_TYPE = 3  # MFEM Geometry::SQUARE, same citation
 _AXIS_NAMES = ("x", "y", "z")
 
 
+# ---------------------------------------------------------------------------
+# Capability-gap probe for REFLECTION_PHASE/DIFFUSIVE (issue #252 ticket 3),
+# mirroring simulation/meep.py's periodic_absorber_capability_gaps().
+#
+# THE DIFFERENCE FROM MEEP'S VERSION, AND WHY. Meep's probe takes no
+# geometry: it reports gaps in what THAT ADAPTER can build at all, and the
+# same three gaps applied to every periodic cell handed to it. Both
+# capabilities this probe checks -- an embedded PEC conductor patch, a
+# ground-backed one-port cell -- now EXIST in this module (#252 tickets 1
+# and 2; see generate_palace_mesh()'s and generate_palace_config()'s
+# docstrings). So there is no adapter-wide gap left to report here. What
+# remains is a per-CANDIDATE question: does THIS geometry dict actually ask
+# for the ground-backed, printed-metal shape REFLECTION_PHASE and DIFFUSIVE
+# are declared to be (designs/design_families.py:
+# requires_ground_plane=True, port_count=1), or does it describe this
+# module's OTHER shape -- an all-dielectric, two-port transmissive grating
+# -- instead?
+#
+# In plain terms: the adapter can now build the right kind of cell, but
+# nothing stops a caller from handing it the wrong kind by omission (leaving
+# "ground_backed" at its False default, or leaving "pec_patches" empty).
+# Running Palace on that geometry anyway would not fail loudly -- it would
+# return a perfectly valid answer to a DIFFERENT question (a bare dielectric
+# grating's transmission, not a metal-backed metasurface's reflection
+# phase), which is precisely the "confidently wrong number" the charter's
+# provenance discipline exists to prevent. This probe catches it before any
+# solver time is spent, the same way meep.py's version does.
+# ---------------------------------------------------------------------------
+
+
+def metasurface_capability_gaps(geometry: dict[str, Any]) -> list[dict[str, str]]:
+    """The reasons THIS geometry cannot yet be simulated as a
+    REFLECTION_PHASE/DIFFUSIVE candidate, each naming what is assumed, what
+    it costs if that assumption is wrong, and the cheapest way to close it
+    -- same {"gap", "assumed", "costs", "cheapest_test"} shape as
+    simulation/meep.py's periodic_absorber_capability_gaps(). Empty list
+    means this geometry dict is ready to hand to run_palace_simulation() as
+    a ground-backed metasurface cell.
+
+    Both features checked here (an embedded PEC patch, a ground-backed
+    one-port cell) are already implemented in this module (issue #252
+    tickets 1/2) -- what is being validated is whether THIS geometry dict
+    actually uses them, not whether the adapter can deliver them. A
+    geometry with neither gap can still fail generate_palace_mesh's/
+    generate_palace_config's own field-level validation (e.g. a malformed
+    pec_patches entry); this probe only checks the two family-level physics
+    facts orchestration/design_loop.py's dispatch needs before it is worth
+    spending a solver run at all.
+    """
+    gaps: list[dict[str, str]] = []
+    if not geometry.get("ground_backed"):
+        gaps.append(
+            {
+                "gap": "geometry does not set ground_backed=True for a ground-backed family",
+                "assumed": (
+                    "REFLECTION_PHASE and DIFFUSIVE both declare "
+                    "requires_ground_plane=True, port_count=1 in "
+                    "designs/design_families.py -- a metal-backed cell with zero "
+                    "transmission by construction -- but this geometry dict's "
+                    "'ground_backed' key is missing or False, which "
+                    "generate_palace_config() reads as the module's OTHER shape: "
+                    "a two-port transmissive cell with a second, non-excited "
+                    "Floquet port at z=Lz instead of a PEC backing"
+                ),
+                "costs": (
+                    "running this geometry as-is would simulate a transmissive "
+                    "two-port grating and report the result as if it answered the "
+                    "one-port, ground-backed question this family's physics "
+                    "requires -- a confidently wrong structure standing in for "
+                    "the right one, not an uncertain answer"
+                ),
+                "cheapest_test": (
+                    "set geometry['ground_backed'] = True and re-check; no solver "
+                    "run is needed to catch this, it is visible in the geometry "
+                    "dict alone"
+                ),
+            }
+        )
+    if not geometry.get("pec_patches"):
+        gaps.append(
+            {
+                "gap": (
+                    "geometry has no pec_patches -- a bare dielectric grating is "
+                    "not a metasurface element"
+                ),
+                "assumed": (
+                    "a reflection-phase or coding/diffusive cell IS a printed "
+                    "metal pattern over its host -- that printed pattern is what "
+                    "sets the per-cell reflection phase this family is designed "
+                    "by -- but this geometry dict's 'pec_patches' list is empty "
+                    "or absent"
+                ),
+                "costs": (
+                    "an all-dielectric cell with no embedded conductor has no "
+                    "printed element to give it a controllable reflection phase; "
+                    "Palace would still return a number for it, but that number "
+                    "would describe a bare dielectric slab or grating, not the "
+                    "metasurface element the candidate is meant to represent"
+                ),
+                "cheapest_test": (
+                    "add at least one entry to geometry['pec_patches'] describing "
+                    "the printed conductor patch (see generate_palace_mesh()'s "
+                    "docstring for the p1_m/p2_m flat-face schema) and re-check"
+                ),
+            }
+        )
+    return gaps
+
+
 def _fmt(value: float) -> str:
     return f"{float(value):.9g}"
 
