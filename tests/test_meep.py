@@ -54,6 +54,7 @@ from simulation.meep import (
     _m_to_meep,
     _meep_freq_to_hz,
     _primitive_to_meep,
+    _region_weight,
     _run_in_meep_interpreter,
     conductivity_from_sheet_resistance,
     run_meep_simulation,
@@ -933,6 +934,49 @@ def test_far_field_enclosing_region_missing_size_m_raises_value_error():
     simulator = MeepSimulator(meep_module=FakeMeepModule(_flux_script()))
     with pytest.raises(ValueError, match="size_m"):
         simulator.run({"geometry": geometry})
+
+
+def test_far_field_direction_at_origin_raises_value_error_before_the_fdtd_run():
+    """The one structural defect a 'directions' entry can have that
+    _validate_far_field_monitor did NOT catch up front used to live inside
+    _compute_far_field instead -- reached only after the full FDTD run had
+    already executed to decay and full_sim.reset_meep() had already been
+    called, so a caller who named an origin point paid for the entire
+    expensive run before finding out the request was malformed. Moved here
+    to match its five siblings above, each of which fails before any
+    Simulation object is built.
+
+    Regression-proves the "before the FDTD run" half of that fix the same
+    way its siblings do: `meep_module=FakeMeepModule(_flux_script())` scripts
+    only the ordinary 3-entry reflectance flux sequence, with no far-field
+    flux entry and no farfield_script at all. If this check still lived
+    inside _compute_far_field (reached only after a full run), the run would
+    instead fail differently -- consuming a flux script entry that does not
+    exist for the far-field monitor's own enclosing-region flux -- rather
+    than raising this ValueError immediately."""
+    geometry = {
+        **PATCH_GEOMETRY,
+        "far_field_monitor": {
+            "enclosing_regions": [{"center_m": [0.0, 0.0, 50e-3], "size_m": [30e-3, 20e-3, 0.0]}],
+            "directions": [{"label": "broadside", "point_m": [0.0, 0.0, 0.0]}],
+        },
+    }
+    simulator = MeepSimulator(meep_module=FakeMeepModule(_flux_script()))
+    with pytest.raises(ValueError, match="coordinate origin"):
+        simulator.run({"geometry": geometry})
+
+
+def test_region_weight_defaults_to_one_when_omitted():
+    """_region_weight is the single place _add_near2far_monitor (building
+    each Near2FarRegion) and _compute_far_field (signing that same region's
+    flux into radiated_power) both get a region's optional 'weight' from --
+    previously duplicated as float(region.get("weight", 1.0)) at both call
+    sites. Pins the shared default (1.0, matching real Meep's own
+    Near2FarRegion default) and the float coercion (an int or str weight
+    from a caller's geometry dict must still come out as a float)."""
+    assert _region_weight({"center_m": [0, 0, 0], "size_m": [1, 1, 0]}) == 1.0
+    assert _region_weight({"weight": -1}) == -1.0
+    assert _region_weight({"weight": "2.5"}) == 2.5
 
 
 # ---------------------------------------------------------------------------

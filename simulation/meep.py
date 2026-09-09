@@ -823,7 +823,11 @@ def _validate_far_field_monitor(far_field_monitor: dict[str, Any]) -> None:
     it needs a CLOSED surface ('enclosing_regions', at least one region) to
     read total radiated power from and at least one 'directions' point to
     project the far field at -- a near-to-far-field transform with nothing
-    enclosed or nowhere to look is not a request for anything."""
+    enclosed or nowhere to look is not a request for anything. Each
+    direction's own 'point_m' also has to be off the coordinate origin (no
+    radius to project the transform out to) -- caught here, up front, same
+    as every other structural defect in this dict, so a malformed request
+    fails before the FDTD run it would otherwise pay for, not after."""
     required = ("enclosing_regions", "directions")
     missing = [f for f in required if f not in far_field_monitor]
     if missing:
@@ -856,6 +860,13 @@ def _validate_far_field_monitor(far_field_monitor: dict[str, Any]) -> None:
             raise ValueError(
                 f"geometry['far_field_monitor']['directions'][{idx}] missing "
                 "required field(s): ['point_m']"
+            )
+        point_m = direction["point_m"]
+        if math.sqrt(sum(c * c for c in point_m)) == 0:
+            raise ValueError(
+                "geometry['far_field_monitor']['directions'] point_m must not be "
+                "the coordinate origin -- a far-field direction needs a radius to "
+                "project the near2far transform out to"
             )
 
 
@@ -1084,6 +1095,15 @@ def _compute_transmittance(
 # ---------------------------------------------------------------------------
 
 
+def _region_weight(region: dict[str, Any]) -> float:
+    """A far_field_monitor['enclosing_regions'] entry's own 'weight' (+-1,
+    default 1.0) -- shared by _add_near2far_monitor (building each
+    Near2FarRegion) and _compute_far_field (signing that same region's flux
+    into radiated_power) so the default and its coercion live in one place,
+    matching real Meep's own Near2FarRegion default."""
+    return float(region.get("weight", 1.0))
+
+
 def _add_near2far_monitor(
     mp_module: Any,
     sim: Any,
@@ -1102,7 +1122,7 @@ def _add_near2far_monitor(
         mp_module.Near2FarRegion(
             center=_vector3(mp_module, region["center_m"], a_m),
             size=_vector3(mp_module, region["size_m"], a_m),
-            weight=float(region.get("weight", 1.0)),
+            weight=_region_weight(region),
         )
         for region in regions
     ]
@@ -1185,7 +1205,7 @@ def _compute_far_field(
     num_freqs = len(frequency_hz_points)
     radiated_power = [0.0] * num_freqs
     for region, flux in zip(enclosing_regions, region_fluxes, strict=True):
-        weight = float(region.get("weight", 1.0))
+        weight = _region_weight(region)
         for i, value in enumerate(flux):
             radiated_power[i] += weight * value
 
@@ -1208,16 +1228,14 @@ def _compute_far_field(
 
     direction_results: list[dict[str, Any]] = []
     for direction, fields in zip(directions, direction_fields, strict=True):
+        # point_m off the coordinate origin is a precondition checked by
+        # _validate_far_field_monitor before this pure function ever runs
+        # (same trust boundary as the other 'directions'/'enclosing_regions'
+        # structural checks it owns) -- not re-checked here.
         point_m = direction["point_m"]
         r_m = math.sqrt(sum(c * c for c in point_m))
-        if r_m == 0:
-            raise ValueError(
-                "geometry['far_field_monitor']['directions'] point_m must not be "
-                "the coordinate origin -- a far-field direction needs a radius to "
-                "project the near2far transform out to"
-            )
         r_hat = [c / r_m for c in point_m]
-        r_meep = r_m / a_m  # see docstring: MUST be meep units, not meters
+        r_meep = _m_to_meep(r_m, a_m)  # see docstring: MUST be meep units, not meters
 
         gains: list[float | None] = []
         for f_idx in range(num_freqs):
@@ -1252,9 +1270,10 @@ def _compute_far_field(
         "directions": direction_results,
         "validity": [dict(flag) for flag in FAR_FIELD_VALIDITY],
         "note": (
-            "gain_dbi at each direction/frequency is the peak-normal-"
-            "incidence-style antenna gain in dBi (decibels relative to a "
-            "hypothetical isotropic radiator) -- a null (None) at some "
+            "gain_dbi at each direction/frequency is the antenna gain in "
+            "dBi AT THAT ONE caller-chosen direction (decibels relative to "
+            "a hypothetical isotropic radiator -- one that spreads its "
+            "power equally in every direction) -- a null (None) at some "
             "direction/frequency means the far field genuinely radiated "
             "nothing measurable that way, not that the measurement failed. "
             "outputs['gain_dbi'] at the top level is the MAXIMUM of every "
