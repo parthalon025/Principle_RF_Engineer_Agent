@@ -123,3 +123,170 @@ def test_raises_when_title_not_found_in_titles_response(tmp_path):
             download_dir=str(tmp_path),
             fetch_fn=fake_fetch,
         )
+
+
+# --- search_fcc_rules (issue #279: discovery search, fetch_fn seam,
+# candidates only -- never ingests) --------------------------------------
+#
+# Fixtures below are shaped like (not copied verbatim from) the real
+# eCFR Search Service response this ticket's own research fetched live from
+# https://www.ecfr.gov/api/search/v1/results?query=EIRP (734 real hits) --
+# see knowledge/sourcing/fcc_ecfr.py's search_fcc_rules docstring for that
+# citation. Two of the three results below carry a Title-47 hierarchy (the
+# only title ingest_fcc_rule's hardcoded XML-fetch path is confirmed to
+# handle); the third is deliberately a non-47 title, to exercise the
+# client-side title filter the eCFR Search Service itself does not offer
+# (passing `title=47` server-side is rejected outright -- confirmed live,
+# "Found unpermitted parameter: :title").
+
+_SEARCH_RESULTS_MULTI = json.dumps(
+    {
+        "results": [
+            {
+                "hierarchy": {"title": "47", "part": "90", "section": "90.391"},
+                "headings": {"section": "Maximum EIRP and antenna height."},
+                "full_text_excerpt": "the <strong>EIRP</strong> shall not exceed...",
+            },
+            {
+                # A non-Title-47 hit -- eCFR's Search Service spans every CFR
+                # title, not just 47; this one must be dropped, not returned.
+                "hierarchy": {"title": "15", "part": "1110", "section": "1110.4"},
+                "headings": {"section": "Definitions."},
+                "full_text_excerpt": "an <strong>EIRP</strong> limit adopted by...",
+            },
+            {
+                "hierarchy": {"title": "47", "part": "15", "section": "15.209"},
+                "headings": {"section": "Radiated emission limits, general requirements."},
+                "full_text_excerpt": "field strength of <strong>emissions</strong>...",
+            },
+        ],
+        "meta": {"total_count": 3},
+    }
+).encode("utf-8")
+
+# A real "no matches" eCFR Search Service response -- not an error.
+_SEARCH_RESULTS_EMPTY = json.dumps({"results": [], "meta": {"total_count": 0}}).encode("utf-8")
+
+
+def test_search_fcc_rules_parses_multi_result_response_in_order():
+    candidates = fcc_ecfr.search_fcc_rules("EIRP", fetch_fn=lambda url: _SEARCH_RESULTS_MULTI)
+
+    # The non-Title-47 middle result is excluded -- only the two Title-47
+    # hits survive, in the order eCFR returned them.
+    assert [c["part"] for c in candidates] == [90, 15]
+
+    first = candidates[0]
+    assert first["title"] == 47
+    assert first["section"] == "90.391"
+    assert first["heading"] == "Maximum EIRP and antenna height."
+    assert first["full_text_excerpt"] == "the <strong>EIRP</strong> shall not exceed..."
+
+    second = candidates[1]
+    assert second["part"] == 15
+    assert second["title"] == 47
+    assert second["section"] == "15.209"
+    assert second["heading"] == "Radiated emission limits, general requirements."
+
+
+def test_search_fcc_rules_excludes_non_title_47_results():
+    candidates = fcc_ecfr.search_fcc_rules("EIRP", fetch_fn=lambda url: _SEARCH_RESULTS_MULTI)
+    assert all(c["title"] == 47 for c in candidates)
+    assert 1110 not in [c["part"] for c in candidates]
+
+
+def test_search_fcc_rules_returns_empty_list_on_zero_matches():
+    candidates = fcc_ecfr.search_fcc_rules(
+        "zzznomatchzzz", fetch_fn=lambda url: _SEARCH_RESULTS_EMPTY
+    )
+    assert candidates == []
+
+
+def test_search_fcc_rules_propagates_fetch_fn_error_instead_of_swallowing_it():
+    def failing_fetch(url):
+        raise OSError("network unreachable")
+
+    with pytest.raises(OSError, match="network unreachable"):
+        fcc_ecfr.search_fcc_rules("EIRP", fetch_fn=failing_fetch)
+
+
+def test_search_fcc_rules_threads_query_into_url():
+    captured_urls: list[str] = []
+
+    def fake_fetch(url):
+        captured_urls.append(url)
+        return _SEARCH_RESULTS_EMPTY
+
+    fcc_ecfr.search_fcc_rules("spurious emissions", fetch_fn=fake_fetch)
+
+    assert len(captured_urls) == 1
+    assert captured_urls[0].startswith("https://www.ecfr.gov/api/search/v1/results?")
+    assert "query=spurious" in captured_urls[0]
+    # No server-side title filter is ever sent -- eCFR rejects it outright
+    # ("Found unpermitted parameter: :title"); filtering happens client-side
+    # on the parsed response instead.
+    assert "title" not in captured_urls[0]
+
+
+def test_search_fcc_rules_respects_max_results_after_title_filtering():
+    candidates = fcc_ecfr.search_fcc_rules(
+        "EIRP", max_results=1, fetch_fn=lambda url: _SEARCH_RESULTS_MULTI
+    )
+    assert len(candidates) == 1
+    assert candidates[0]["part"] == 90
+
+
+_SEARCH_RESULTS_WITH_COARSE_HIT = json.dumps(
+    {
+        "results": [
+            {
+                # A Title-47 hit matched above part level -- e.g. a
+                # chapter- or title-level heading -- carries no "part" key
+                # at all. ingest_fcc_rule(part, ...) has no meaning to call
+                # without one, so this must be dropped like a non-47 title
+                # is, not raise and not appear in the returned candidates.
+                "hierarchy": {"title": "47"},
+                "headings": {"title": "Telecommunication"},
+                "full_text_excerpt": "this chapter governs <strong>EIRP</strong>...",
+            },
+            {
+                "hierarchy": {"title": "47", "part": "15", "section": "15.209"},
+                "headings": {"section": "Radiated emission limits, general requirements."},
+                "full_text_excerpt": "field strength of <strong>emissions</strong>...",
+            },
+        ],
+        "meta": {"total_count": 2},
+    }
+).encode("utf-8")
+
+
+def test_search_fcc_rules_drops_title_47_hit_with_no_parseable_part():
+    """A Title-47 result matched at a coarser level than "part" (no `part`
+    key in its `hierarchy`) is not ingestible via `ingest_fcc_rule(part,
+    ...)` and must be dropped rather than raising or producing a candidate
+    with a garbage `part` value."""
+    candidates = fcc_ecfr.search_fcc_rules(
+        "EIRP", fetch_fn=lambda url: _SEARCH_RESULTS_WITH_COARSE_HIT
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["part"] == 15
+    assert candidates[0]["section"] == "15.209"
+
+
+def test_search_fcc_rules_never_calls_ingest_document(monkeypatch):
+    """Enforces the same "search returns candidates, a separate call
+    ingests one" split as search_arxiv_papers (issue #257) --
+    ingest_document is monkeypatched to raise if it is ever called, so any
+    accidental auto-ingest path fails this test loudly instead of passing
+    silently."""
+
+    def fail_if_called(**kwargs):
+        raise AssertionError("search_fcc_rules must never call ingest_document")
+
+    monkeypatch.setattr(fcc_ecfr, "ingest_document", fail_if_called)
+
+    candidates = fcc_ecfr.search_fcc_rules("EIRP", fetch_fn=lambda url: _SEARCH_RESULTS_MULTI)
+
+    # Sanity: the search itself ran and found results -- this isn't passing
+    # merely because nothing happened.
+    assert len(candidates) == 2

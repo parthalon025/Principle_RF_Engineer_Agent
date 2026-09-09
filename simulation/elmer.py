@@ -1,5 +1,6 @@
 """Elmer FEM (VectorHelmholtz module) simulation adapter -- general
-multiphysics-ready EM cross-check (issue #64).
+multiphysics-ready EM cross-check (issue #64), now with a coupled EM+thermal
+run mode (issue #281).
 
 WHY THIS ADAPTER EXISTS / WHY IT IS THE "LOWEST-FIT" ITEM IN ITS BATCH: Elmer
 (github.com/ElmerCSC/elmerfem) is a general-purpose, multiphysics finite-
@@ -8,11 +9,12 @@ transfer -- NOT electromagnetics. Its `VectorHelmholtz` solver module (a
 curl-conforming edge-element solver for the time-harmonic Maxwell curl-curl
 equation) is a genuine, real EM capability, but it is one physics module
 among dozens, not an antenna/RF-focused tool. This adapter exists so the
-agent has a general FEM cross-check option available for a FUTURE
-multiphysics need (e.g. coupled EM/thermal analysis on a mounted "adaptive EM
-skin"), not because it is expected to replace NEC2++/openEMS/HFSS for
-everyday antenna work -- see "SCOPE AND LIMITATIONS" below for exactly what
-that costs.
+agent has a general FEM cross-check option available for coupled multiphysics
+needs (e.g. how hot a mounted "adaptive EM skin" gets from absorbing radio
+energy while sitting on a warm surface -- now built, see
+`geometry["thermal"]` below and the "COUPLED EM+THERMAL" citation), not
+because it is expected to replace NEC2++/openEMS/HFSS for everyday antenna
+work -- see "SCOPE AND LIMITATIONS" below for exactly what that costs.
 
 SOURCES CONSULTED (primary; all fetched directly from
 github.com/ElmerCSC/elmerfem's `devel` branch -- the repository's default
@@ -184,6 +186,95 @@ front-end. Accessed 2026-09-02):
     -- parse_elmer_output() below parses this exact, source-confirmed
     format to recover named scalar values.
 
+  COUPLED EM+THERMAL (issue #281 -- fetched directly from
+  github.com/ElmerCSC/elmerfem's `devel` branch, 2026-09-09):
+  - `Calculate Div of Poynting Vector = Logical True` on the
+    `VectorHelmholtzCalcFields` solver block (Solver 2) is the flag that
+    makes VectorHelmholtz itself export a "Joule Heating" field -- read
+    directly from `fem/src/modules/VectorHelmholtz.F90`'s
+    `VectorHelmholtzCalcFields_Init0`/`_Init` subroutines, whose
+    `IF (GetLogical(..., 'Calculate Div of Poynting Vector', Found))`
+    branch registers BOTH `"Div Poynting Vector[...]"` and `"Joule
+    Heating[Joule Heating re:1 Joule Heating im:1]"` (nodal) /
+    `"Joule Heating E[...]"` (elemental, paired with the existing
+    `Calculate Elemental Fields = Logical True` this module already sets)
+    as Exported Variables. `VectorHelmholtzCalcFields`'s own local
+    assembly (same file, `CalcFieldsLocalAssembly`) computes this field's
+    value as `0.5*Re/Im(E . conj(J))` at each integration point when
+    either the nodal or elemental "Div Poynting Vector" variable is
+    associated -- i.e. it is a REAL, solver-computed local loss-density
+    field, not a proxy this module invented.
+  - `Joule Heat = Logical True` on a `Body Force N` block is the flag
+    that tells Elmer's heat-equation assembly to add that body's local
+    Joule heating as its RHS source term -- read directly from
+    `fem/src/Differentials.F90`'s `JouleHeat()` function: it early-returns
+    zero unless the active body's Body Force has `'Joule Heat'` set
+    (`ListGetLogical(...,'Joule Heat',...)`), then (its preferred, first-
+    checked mode) looks up a variable literally named `'Joule Heating e'`
+    (`VariableGet(CurrentModel % Variables, 'Joule Heating e')`) and, if
+    found, returns its precomputed value directly as the heat source --
+    confirmed EM-solver-agnostic (matches by field NAME only, not by which
+    module produced it). `JouleHeat()` is called from
+    `fem/src/DiffuseConvectiveGeneralAnisotropic.F90`'s own local-force
+    assembly (`Force = SUM(LoadVector(1:n)*Basis(1:n)) + JouleHeat(...)`),
+    the generic diffusion-convection building block `HeatSolve.F90` itself
+    uses for its RHS -- i.e. this is HeatSolve's own real, general-purpose
+    Joule-heating source path, not something specific to one EM module.
+  - Cross-checked against Elmer's own worked induction-heating tutorials
+    (`fem/tests/InductionHeating2/crucible.sif`, and `InductionHeating3`/
+    `InductionHeating4`, all fetched directly), which use this exact
+    `Joule Heat = Logical True` Body Force flag to feed a
+    `Procedure = "HeatSolve" "HeatSolver"` `Equation = heat equation`
+    solver from a DIFFERENT EM module's (`StatMagSolve`) own `Calculate
+    Joule Heating = Logical True` output -- confirming the Body-Force-side
+    half of this mechanism is Elmer's standard, EM-module-independent
+    coupling idiom, not something guessed by analogy for VectorHelmholtz
+    specifically (the VectorHelmholtz-side citation above is the part that
+    IS specific to this module, and was traced independently in its own
+    source rather than assumed from the tutorial).
+  - Solver ORDER: Elmer runs `Solver N` blocks in ascending index order
+    within one steady-state iteration -- generate_elmer_sif() therefore
+    places the new `Heat Equation` solver at index 3 (after VectorHelmholtz
+    at 1 and VectorHelmholtzCalcFields at 2, so the Joule Heating field
+    exists before the heat solve reads it) and moves `SaveScalars` to
+    index 4 (so it can save the resulting Temperature too). This ordering
+    fact is reasoned from Elmer's well-documented solver-loop behavior and
+    from the InductionHeating2 example's own Solver-1-then-2 ordering
+    (induction before heating), not independently re-traced through
+    ElmerSolver.F90's main iteration loop source line-by-line this pass --
+    graded the same "reasoned-but-not-fully-source-verified" confidence
+    this module's header already uses for the Gmsh-tag-to-Elmer-index
+    mapping above, for the same reason (a very standard, near-universally
+    documented convention, not a source-verified byte-for-byte read).
+  - Case sensitivity: `Differentials.F90` looks up `'Joule Heating e'`
+    (lowercase "e") while VectorHelmholtz exports `"Joule Heating E"`
+    (uppercase "E", from the Exported Variable string's base name before
+    its `[...]` component list). Elmer's own SIF/variable-name convention
+    is documented as case-insensitive throughout its manual and every
+    keyword this module already relies on (e.g. "Relative Reluctivity" is
+    matched regardless of case elsewhere in this codebase's own generated
+    .sif text); `VariableGet`'s own case-folding was NOT independently
+    re-traced through its Fortran source this pass -- recorded honestly as
+    reasoned-from-convention, not source-verified, matching this module's
+    existing discipline for similarly-graded claims.
+  - Thermal Material keywords (`Heat Conductivity`, `Density`, `Heat
+    Capacity`) and boundary-condition keywords (`Temperature` for a fixed/
+    Dirichlet face, `Heat Transfer Coefficient`+`External Temperature` for
+    a convective/Robin face): read directly from `fem/src/modules/
+    HeatSolve.F90`'s own `GetReal(Material, 'Heat Conductivity'/'Density'/
+    'Heat Capacity', ...)` and `GetReal(BC, 'External Temperature'/'Heat
+    Transfer Coefficient', ...)` calls, and `ListCheckPresent(...,
+    'Temperature')` for the Dirichlet case. A face given neither keyword
+    gets no Boundary Condition line for Temperature at all -- Elmer's
+    documented default for a heat-equation boundary with no keyword is a
+    natural (zero-flux/insulated) condition, so this module does not need
+    to (and does not) write an explicit "insulated" flag for it.
+  - `Variable 1 = "Temperature"` / `Operator 1 = "max"` on the
+    `SaveScalars` solver: `fem/src/modules/SaveData/SaveScalars.F90`'s own
+    `SaveName = TRIM(Oper0)//': '//TRIM(VariableName)` (read directly),
+    which for these two keywords produces the exact `"max: Temperature"`
+    column name `_thermal_result_from_raw_scalars()` below reads.
+
   LICENSING (github.com/ElmerCSC/elmerfem, `devel` branch, read directly --
   see docs/LICENSE_MATRIX.md for the recorded rows):
   - A prior research pass found two primary sources disagreeing on LGPL
@@ -278,6 +369,7 @@ import os
 import re
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -301,6 +393,17 @@ _FACE_TAGS = {
 
 def _fmt(value: float) -> str:
     return f"{float(value):.6g}"
+
+
+def _check_known_faces(label: str, faces: Iterable[str]) -> None:
+    """Raise ValueError naming any face name(s) in `faces` not present in
+    _FACE_TAGS, worded as "`label` contains unknown face name(s): [...]" --
+    the one place this repeated set-difference-and-raise check (pec_faces,
+    geometry['thermal']['fixed_temperature_faces_k'],
+    geometry['thermal']['convective_faces']) is written and tested."""
+    unknown = set(faces) - set(_FACE_TAGS)
+    if unknown:
+        raise ValueError(f"{label} contains unknown face name(s): {sorted(unknown)}")
 
 
 class ElmerSimulator(Simulator):
@@ -477,17 +580,24 @@ def run_gmsh_meshing(
     workdir: Path,
     executable: str | None = None,
     timeout_s: int = 600,
+    mesh_format: str = "msh2",
 ) -> None:
-    """Invoke gmsh to mesh `geo_file` into `msh_file`, forcing the legacy
-    MSH2 ASCII format ElmerGrid's own Gmsh-format reader understands (see
-    module docstring's "MSH2, NOT MSH4" citation) -- gmsh's own current
-    default output format is newer MSH4, which ElmerGrid cannot read."""
+    """Invoke gmsh to mesh `geo_file` into `msh_file`, forcing an explicit
+    ASCII mesh format rather than gmsh's own current default (newer MSH4).
+
+    `mesh_format` defaults to the legacy MSH2 format ElmerGrid's own
+    Gmsh-format reader understands (see module docstring's "MSH2, NOT MSH4"
+    citation). `simulation.openparem.run_openparem_gmsh_meshing` reuses this
+    same subprocess-invocation/error-handling logic with `mesh_format="msh22"`
+    instead -- OpenParEM3D's own required format (see that module's docstring
+    citation) -- rather than duplicating this function for one changed string
+    literal."""
     if not geo_file.exists():
         raise SimulatorError(f"gmsh .geo file not found: {geo_file}")
     exe = executable or os.getenv("GMSH_BIN") or "gmsh"
     try:
         completed = subprocess.run(
-            [exe, str(geo_file), "-3", "-format", "msh2", "-o", str(msh_file)],
+            [exe, str(geo_file), "-3", "-format", mesh_format, "-o", str(msh_file)],
             cwd=workdir,
             capture_output=True,
             text=True,
@@ -550,6 +660,44 @@ def run_elmergrid_conversion(
 # ---------------------------------------------------------------------------
 
 
+def _validate_thermal(thermal: dict[str, Any] | None) -> None:
+    """Validate geometry['thermal'] (see generate_elmer_sif's own docstring
+    for the full shape) -- raises ValueError naming exactly what is
+    missing/wrong, matching this module's existing "domain"/"excitation"
+    validation style. No I/O, no defaulting: a genuinely required thermal
+    material property left out is a caller bug, not something to silently
+    default (unlike the EM "material" dict, which models vacuum as a
+    reasonable default -- there is no equally reasonable default bulk
+    thermal material)."""
+    if thermal is None:
+        return
+    for key in ("heat_conductivity_w_mk", "density_kg_m3", "heat_capacity_j_kgk"):
+        if key not in thermal:
+            raise ValueError(f"geometry['thermal']['{key}'] is required")
+
+    fixed_faces = set(thermal.get("fixed_temperature_faces_k", {}))
+    _check_known_faces("geometry['thermal']['fixed_temperature_faces_k']", fixed_faces)
+
+    convective_faces = set(thermal.get("convective_faces", {}))
+    _check_known_faces("geometry['thermal']['convective_faces']", convective_faces)
+
+    both = fixed_faces & convective_faces
+    if both:
+        raise ValueError(
+            "geometry['thermal']: face(s) "
+            f"{sorted(both)} appear in both fixed_temperature_faces_k and "
+            "convective_faces -- a face can only get one thermal boundary "
+            "condition"
+        )
+
+    for face, spec in thermal.get("convective_faces", {}).items():
+        for key in ("heat_transfer_coefficient_w_m2k", "ambient_temperature_k"):
+            if key not in spec:
+                raise ValueError(
+                    f"geometry['thermal']['convective_faces']['{face}']['{key}'] is required"
+                )
+
+
 def generate_elmer_sif(
     geometry: dict[str, Any],
     frequency_hz: float,
@@ -586,6 +734,31 @@ def generate_elmer_sif(
           "pec_faces": ["x_min", "x_max", "y_min", "y_max", "z_min",
               "z_max"],   # optional subset of the domain's outer faces;
               PEC (tangential E=0) instead of the default "Absorbing BC".
+          "thermal": {                   # optional (issue #281); when
+              given, adds a coupled EM+thermal run -- see "COUPLED EM+
+              THERMAL" in this module's header comment for the full
+              keyword citation. No default bulk material -- all three
+              properties below are required if "thermal" is given at all.
+              "heat_conductivity_w_mk": float,   # Material "Heat
+                  Conductivity" (HeatSolve.F90)
+              "density_kg_m3": float,             # Material "Density"
+              "heat_capacity_j_kgk": float,       # Material "Heat
+                  Capacity"
+              "fixed_temperature_faces_k": {      # optional; subset of
+                  "x_min": 320.0,                 # the domain's outer
+                  ...                             # faces, each pinned to
+              },                                  # a Dirichlet "Temperature"
+                  (a face may appear here OR in convective_faces, not both;
+                  a face in neither gets Elmer's default zero-flux/
+                  insulated boundary -- no keyword is written for it).
+              "convective_faces": {                # optional; subset of
+                  "z_max": {                        # the domain's outer
+                      "heat_transfer_coefficient_w_m2k": float,
+                      "ambient_temperature_k": float,
+                  },
+                  ...
+              },
+          },
         }
     """
     if not geometry.get("domain"):
@@ -600,9 +773,33 @@ def generate_elmer_sif(
 
     excitation = geometry.get("excitation")
     pec_faces = set(geometry.get("pec_faces", []))
-    unknown_faces = pec_faces - set(_FACE_TAGS)
-    if unknown_faces:
-        raise ValueError(f"pec_faces contains unknown face name(s): {sorted(unknown_faces)}")
+    _check_known_faces("pec_faces", pec_faces)
+
+    thermal = geometry.get("thermal")
+    _validate_thermal(thermal)
+    has_thermal = thermal is not None
+    fixed_temperature_faces = thermal.get("fixed_temperature_faces_k", {}) if has_thermal else {}
+    convective_faces = thermal.get("convective_faces", {}) if has_thermal else {}
+
+    # Body Force block numbering (see "COUPLED EM+THERMAL" citation): the
+    # excitation body's existing "Current Density" Body Force block (index
+    # 1) also carries "Joule Heat = Logical True" when thermal is requested
+    # -- the impressed source and the loss-to-heat coupling flag are just
+    # two independent keywords in the same bag-of-source-terms block. The
+    # bulk body, which never carries the impressed current, gets its OWN
+    # Body Force block (a fresh index) so the current source stays confined
+    # to the excitation sub-region while the bulk body still gets Joule
+    # heating from its own (possibly lossy) material.
+    bulk_body_force_index = (2 if excitation else 1) if has_thermal else None
+
+    # Solver index numbering: 1=VectorHelmholtz, 2=VectorHelmholtzCalcFields
+    # (unchanged); Heat Equation, when present, takes index 3 so it runs
+    # (Elmer solvers execute in ascending index order within one steady
+    # state iteration -- see citation) AFTER the EM fields/Joule Heating
+    # are computed; SaveScalars is always last so it can see a coupled
+    # run's Temperature result too.
+    heat_solver_index = 3 if has_thermal else None
+    savescalars_index = 4 if has_thermal else 3
 
     lines: list[str] = [
         f"! {comment}",
@@ -628,8 +825,10 @@ def generate_elmer_sif(
         f"Body {_BULK_BODY_TAG}",
         "  Equation = 1",
         "  Material = 1",
-        "End",
     ]
+    if bulk_body_force_index is not None:
+        lines.append(f"  Body Force = {bulk_body_force_index}")
+    lines.append("End")
 
     if excitation:
         lines += [
@@ -649,13 +848,23 @@ def generate_elmer_sif(
         f"  Relative Reluctivity = Real {_fmt(reluc)}",
         f"  Relative Reluctivity im = Real {_fmt(reluc_im)}",
         f"  Electric Conductivity = Real {_fmt(sigma)}",
-        "End",
-        "",
-        "Equation 1",
-        "  Active Solvers(2) = 1 2",
-        "  Angular Frequency = Real $w",
-        "End",
     ]
+    if has_thermal:
+        lines += [
+            f"  Heat Conductivity = Real {_fmt(thermal['heat_conductivity_w_mk'])}",
+            f"  Density = Real {_fmt(thermal['density_kg_m3'])}",
+            f"  Heat Capacity = Real {_fmt(thermal['heat_capacity_j_kgk'])}",
+        ]
+    lines.append("End")
+
+    lines.append("")
+    lines.append("Equation 1")
+    if heat_solver_index is not None:
+        lines.append(f"  Active Solvers(3) = 1 2 {heat_solver_index}")
+    else:
+        lines.append("  Active Solvers(2) = 1 2")
+    lines.append("  Angular Frequency = Real $w")
+    lines.append("End")
 
     if excitation:
         j_re = excitation.get("current_density_a_m2")
@@ -668,7 +877,21 @@ def generate_elmer_sif(
         for i in range(3):
             lines.append(f"  Current Density {i + 1} = Real {_fmt(j_re[i])}")
             lines.append(f"  Current Density {i + 1} im = Real {_fmt(j_im[i])}")
+        if has_thermal:
+            # The excitation region is itself part of the bulk material and
+            # can dissipate EM loss too -- see "COUPLED EM+THERMAL" citation
+            # for why this flag is a bag-of-keywords addition, not a
+            # separate block.
+            lines.append("  Joule Heat = Logical True")
         lines.append("End")
+
+    if bulk_body_force_index is not None:
+        lines += [
+            "",
+            f"Body Force {bulk_body_force_index}",
+            "  Joule Heat = Logical True",
+            "End",
+        ]
 
     lines += [
         "",
@@ -699,6 +922,13 @@ def generate_elmer_sif(
         "  Calculate Poynting vector = Logical True",
         "  Calculate Electric field = Logical True",
         "  Calculate Energy Functional = Logical True",
+    ]
+    if has_thermal:
+        # Exports the "Joule Heating"/"Joule Heating E" field(s) -- the EM
+        # solve's local ohmic+dielectric loss density -- alongside "Div
+        # Poynting Vector"; see "COUPLED EM+THERMAL" citation.
+        lines.append("  Calculate Div of Poynting Vector = Logical True")
+    lines += [
         "  Steady State Convergence Tolerance = 1",
         '  Linear System Solver = "Iterative"',
         "  Linear System Preconditioning = None",
@@ -706,13 +936,43 @@ def generate_elmer_sif(
         "  Linear System Iterative Method = CG",
         "  Linear System Convergence Tolerance = 1.0e-9",
         "End",
+    ]
+
+    if heat_solver_index is not None:
+        lines += [
+            "",
+            f"Solver {heat_solver_index}",
+            '  Equation = "Heat Equation"',
+            '  Variable = "Temperature"',
+            '  Procedure = "HeatSolve" "HeatSolver"',
+            "  Steady State Convergence Tolerance = 1.0e-5",
+            "  Nonlinear System Convergence Tolerance = 1.0e-4",
+            "  Nonlinear System Max Iterations = 20",
+            "  Nonlinear System Relaxation Factor = 1",
+            '  Linear System Solver = "Iterative"',
+            '  Linear System Iterative Method = "BiCGStab"',
+            "  Linear System Max Iterations = 500",
+            "  Linear System Convergence Tolerance = 1.0e-8",
+            '  Linear System Preconditioning = "ILU1"',
+            "  Linear System Abort Not Converged = False",
+            "End",
+        ]
+
+    lines += [
         "",
-        "Solver 3",
+        f"Solver {savescalars_index}",
         '  Equation = "SaveScalars"',
         '  Procedure = "SaveData" "SaveScalars"',
         '  FileName = "scalar_values.dat"',
-        "End",
     ]
+    if has_thermal:
+        # "Variable 1"/"Operator 1" = "max"/"Temperature" -> a
+        # "max: Temperature" column in scalar_values.dat -- see
+        # SaveScalars.F90's own `SaveName = TRIM(Oper0)//': '//
+        # TRIM(VariableName)` citation. parse_elmer_output()'s
+        # _thermal_result_from_raw_scalars() reads this exact column name.
+        lines += ['  Variable 1 = "Temperature"', '  Operator 1 = "max"']
+    lines.append("End")
 
     bc_index = 0
     for face, tag in _FACE_TAGS.items():
@@ -722,6 +982,15 @@ def generate_elmer_sif(
             lines += ["  E Re = Real 0.0", "  E Im = Real 0.0"]
         else:
             lines.append("  Absorbing BC = Logical True")
+        if face in fixed_temperature_faces:
+            lines.append(f"  Temperature = Real {_fmt(fixed_temperature_faces[face])}")
+        elif face in convective_faces:
+            spec = convective_faces[face]
+            lines.append(
+                f"  Heat Transfer Coefficient = Real "
+                f"{_fmt(spec['heat_transfer_coefficient_w_m2k'])}"
+            )
+            lines.append(f"  External Temperature = Real {_fmt(spec['ambient_temperature_k'])}")
         lines.append("End")
 
     return "\n".join(lines) + "\n"
@@ -813,6 +1082,45 @@ def _parse_save_scalars(workdir: Path, filename: str = "scalar_values.dat") -> d
     return {"computed": True, "values": named_values, "source_file": str(data_path)}
 
 
+# The exact SaveScalars column name a coupled run's `Variable 1 = "Temperature"`
+# / `Operator 1 = "max"` keywords (see generate_elmer_sif's "thermal" section)
+# produce -- SaveScalars.F90's own `SaveName = TRIM(Oper0)//': '//
+# TRIM(VariableName)`, fetched directly (see module docstring citation).
+_THERMAL_SCALAR_COLUMN = "max: Temperature"
+
+
+def _thermal_result_from_raw_scalars(raw_scalars: dict[str, Any]) -> dict[str, Any]:
+    """Caller fetches, pure function resolves: given an already-parsed
+    SaveScalars `raw_scalars` dict (see _parse_save_scalars -- the I/O half
+    of this split), decide whether a coupled run's thermal result is
+    present and pull it out -- no file access here, directly unit-testable.
+    Returns {"computed": False, "note": ...} (never a guessed temperature)
+    when the run wasn't a coupled thermal run, or its SaveScalars output
+    wasn't itself computed -- matching parse_elmer_output's existing
+    s_parameters/far_field honest-gap pattern."""
+    if not raw_scalars.get("computed"):
+        return {
+            "computed": False,
+            "note": (
+                "No SaveScalars output was available to look for a "
+                f"{_THERMAL_SCALAR_COLUMN!r} column in -- see raw_scalars's "
+                "own note for why."
+            ),
+        }
+    values = raw_scalars.get("values", {})
+    if _THERMAL_SCALAR_COLUMN not in values:
+        return {
+            "computed": False,
+            "note": (
+                f"SaveScalars output has no {_THERMAL_SCALAR_COLUMN!r} column "
+                "-- either this wasn't a coupled EM+thermal run (no "
+                "geometry['thermal'] given to generate_elmer_sif) or the run "
+                "didn't reach the Heat Equation/SaveScalars solvers."
+            ),
+        }
+    return {"computed": True, "max_temperature_k": values[_THERMAL_SCALAR_COLUMN]}
+
+
 def parse_elmer_output(raw_output: str, workdir: str | Path | None = None) -> dict[str, Any]:
     """Parse ElmerSolver's stdout plus (when `workdir` is given) its
     SaveScalars output into a structured, honestly-gapped result. See
@@ -852,6 +1160,7 @@ def parse_elmer_output(raw_output: str, workdir: str | Path | None = None) -> di
                 "docstring 'SCOPE AND LIMITATIONS')."
             ),
         },
+        "thermal_result": _thermal_result_from_raw_scalars(raw_scalars),
         "gain_dbi": None,
     }
 
@@ -874,11 +1183,14 @@ def run_elmer_simulation(
 ) -> dict[str, Any]:
     """Generate a Gmsh .geo script from structured geometry, mesh it (gmsh),
     convert the mesh to ElmerSolver's native format (ElmerGrid), generate a
-    VectorHelmholtz .sif from the same geometry, run it (ElmerSolver), and
-    parse whatever raw output is available -- tagged with SIMULATED
-    provenance. See this module's header comment for the full citation
-    list and "SCOPE AND LIMITATIONS" for what is and is not computed
-    (no S-parameters, no far-field/gain -- see parse_elmer_output)."""
+    VectorHelmholtz .sif from the same geometry (a coupled EM+thermal .sif
+    when `geometry["thermal"]` is given -- see generate_elmer_sif's own
+    docstring, issue #281), run it (ElmerSolver), and parse whatever raw
+    output is available -- tagged with SIMULATED provenance. See this
+    module's header comment for the full citation list and "SCOPE AND
+    LIMITATIONS" for what is and is not computed (no S-parameters, no
+    far-field/gain -- see parse_elmer_output; a coupled run's
+    `thermal_result` is honestly gapped the same way when absent)."""
     work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="elmer_"))
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -921,5 +1233,6 @@ def run_elmer_simulation(
         "raw_scalars": parsed["raw_scalars"],
         "s_parameters": parsed["s_parameters"],
         "far_field": parsed["far_field"],
+        "thermal_result": parsed["thermal_result"],
         "gain_dbi": parsed["gain_dbi"],
     }
