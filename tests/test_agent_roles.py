@@ -324,6 +324,20 @@ def test_systems_role_gets_digikey_product_details_tool():
         assert "lookup_digikey_product_details" not in _tool_names(ROLES[key])
 
 
+def test_systems_role_gets_nexar_part_data_tool():
+    # ticket #276: lookup_nexar_part_data (Nexar's cross-distributor
+    # pricing/availability + parametric specs query) is grouped with its
+    # sibling lookup_nexar_component -- same distributor-sourcing concern,
+    # same role -- so the design loop can actually reach it; a function
+    # that exists in knowledge/nexar.py but is never wired onto a tool
+    # surface is unreachable to every role, this one included.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_nexar_part_data" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "lookup_nexar_part_data" not in role_names
+
+
 def test_microwave_role_gets_network_and_component_analysis():
     names = _tool_names(ROLES["microwave"])
     assert "analyze_touchstone_file" in names

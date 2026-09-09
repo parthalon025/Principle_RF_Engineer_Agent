@@ -55,9 +55,15 @@ class ExternalNetworkToolsDisabledError(PermissionError):
 
 def require_external_network_tools_enabled(distributor: str) -> None:
     """Refuse to proceed unless ALLOW_EXTERNAL_NETWORK_TOOLS=true. Called
-    as the very first line of each gated function before any credential
-    is read or any request is built: the three `lookup_*_datasheet`
-    functions, and `search_uspto_patents` (issue #280)."""
+    as the very first line of every function here that places a real,
+    credentialed outbound call to a distributor the instant it runs --
+    originally each `lookup_*_datasheet` function, plus `search_uspto_
+    patents` (issue #280), joined since ticket #276 by
+    `knowledge.nexar.lookup_nexar_part_data` (same real Nexar call, just
+    returning structured pricing/specs data instead of a downloaded
+    document, so its name doesn't fit the `*_datasheet` pattern even though
+    it gates the same way) -- before any credential is read or any request
+    is built."""
     if os.environ.get("ALLOW_EXTERNAL_NETWORK_TOOLS", "false").strip().lower() != "true":
         raise ExternalNetworkToolsDisabledError(
             f"ALLOW_EXTERNAL_NETWORK_TOOLS is not 'true' -- refusing to call the real "

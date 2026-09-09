@@ -192,6 +192,9 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # issue #280 adds 1 more (search_uspto_patents, USPTO ODP full-text
     # discovery search wired onto the tool surface): 92 + 1 = 93.
+    #
+    # ticket #276 adds 1 more (lookup_nexar_part_data, Nexar's cross-
+    # distributor pricing/availability + parametric specs query): 93 + 1 = 94.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -229,6 +232,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #279: search_fcc_rules
         + 1  # issue #275: lookup_digikey_product_details
         + 1  # issue #280: search_uspto_patents
+        + 1  # ticket #276: lookup_nexar_part_data
     )
     assert len(registered_names) == expected
 
@@ -240,6 +244,15 @@ def test_component_sourcing_tools_are_registered():
     assert "lookup_mouser_component" in registered_names
     assert "lookup_nexar_component" in registered_names
     assert "reconcile_component_sources" in registered_names
+
+
+def test_lookup_nexar_part_data_is_registered():
+    # ticket #276: Nexar's cross-distributor pricing/availability +
+    # parametric specs query must be reachable from the MCP tool surface,
+    # not just implemented in knowledge/nexar.py -- otherwise nothing that
+    # calls this server can ever invoke it.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "lookup_nexar_part_data" in registered_names
 
 
 def test_ingest_arxiv_paper_is_registered():

@@ -48,7 +48,7 @@ starts from a real answer instead of institutional memory.
 |---|---|---|
 | [Digi-Key Product Information API v4](digikey.md) | OAuth2 REST API to Digi-Key's own distributor catalog. | `Substitutions`/`RecommendedProducts`/`Associations` (alternate-part discovery) is unused — `ProductDetails`/parametric and pricing data was the biggest gap until ticket #275 wired it into a new `lookup_digikey_product_details()`. |
 | [Mouser Search API](mouser.md) | Flat-API-key REST API to Mouser's own distributor catalog. | `search/keyword` free-text discovery is unused — a part must already be known by exact MPN; pricing/availability/lead-time/compliance fields were the biggest gap until ticket #274 wired them into `lookup_mouser_datasheet()`'s result. |
-| [Nexar API (Octopart data)](nexar.md) | OAuth2 GraphQL API aggregating stock/pricing across *many* distributors at once (Mouser and Digi-Key included). | Multi-distributor pricing/availability aggregation — the trait that most distinguishes Nexar from the other two — is never queried; also unused: per-part ECAD footprint data. |
+| [Nexar API (Octopart data)](nexar.md) | OAuth2 GraphQL API aggregating stock/pricing across *many* distributors at once (Mouser and Digi-Key included). | Multi-distributor pricing/availability aggregation and parametric `specs` — the traits that most distinguish Nexar from the other two — were unqueried until ticket #276 wired them into a new `lookup_nexar_part_data()`; still unused: per-part ECAD footprint data. |
 
 ## Knowledge & standards ingestion (5)
 
