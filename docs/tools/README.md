@@ -33,7 +33,7 @@ starts from a real answer instead of institutional memory.
 | [OpenParEM](openparem.md) | A young, free FEM solver that produces antenna far-field gain/directivity/efficiency from the same solve as its S-parameters — a cheaper alternative to HFSS for that one number. | The adapter can't generate its own mesh or materials file; both must be hand-built outside this codebase first. |
 | [Elmer FEM](elmer.md) | A free, general multiphysics FEM suite; this repo uses only its `VectorHelmholtz` EM module. | Coupled EM+thermal multiphysics — solving electromagnetics and heat transfer on the same mesh in one run — is Elmer's actual reason for being here and is not yet built. |
 | [Palace](palace.md) | Free, open-source parallel FEM solver — the first tool here with native Floquet/periodic-port boundaries, i.e. the one built specifically to characterize a metasurface unit cell. | Embedded PEC conductor support inside the periodic unit cell is unimplemented, which blocks the most common real case (patterned metal on dielectric, not an all-dielectric grating). |
-| [MEEP](meep.md) | Free, open-source FDTD solver from MIT, driven as a Python library; used as an independent cross-check against openEMS. | Near-to-far-field transformation — the machinery to predict antenna radiation patterns — is documented in Meep but unused here. |
+| [MEEP](meep.md) | Free, open-source FDTD solver from MIT, driven as a Python library; used as an independent cross-check against openEMS. | Near-to-far-field transformation is now wired up as an opt-in `far_field_monitor` key (#270), but only at caller-named directions (no full-sphere scan) and not yet independently verified against a real pymeep run the way the reflectance/transmittance recipe has been. |
 | [gprMax](gprmax.md) | Free, open-source Python-driven FDTD solver, originally built for ground-penetrating radar. | Dispersive material models (Debye/Lorentz/Drude) exist in gprMax but the adapter only exposes constant, non-dispersive materials — real absorber/ferrite substrates are frequency-dependent by nature. |
 | [ngspice](ngspice.md) | Free, open-source circuit-level SPICE simulator for matching-network/bias/filter sub-circuits. | `.TF` (transfer function) analysis is unused — `.NOISE`/`.DISTO`/`.PZ`/`.SENS` (noise-figure and distortion analysis for an amplifier/LNA behind an EM surface, plus pole-zero/sensitivity analysis) were wired up in issue #283. |
 | [Xyce](xyce.md) | Free, open-source (Sandia) circuit simulator built for large, MPI-parallel circuits. | Harmonic Balance (`.HB`) analysis — periodic nonlinear steady-state — is unexposed; only `.op`/`.ac`/`.tran` are wired up. |
@@ -74,8 +74,9 @@ A few gaps repeat across categories, not just within one tool:
   there embedded metal conductors (the common real case) aren't supported yet. NEC2++,
   openEMS, and Elmer have no periodic-boundary path at all.
 - **Far-field/antenna pattern output** is a real capability in openEMS, HFSS, Meep, and
-  OpenParEM. openEMS's and OpenParEM's adapters now both return it (openEMS via issue
-  #269's NF2FF wiring); HFSS and Meep's adapters still report S-parameters only.
+  OpenParEM. openEMS's and OpenParEM's adapters return it (openEMS via issue #269's NF2FF
+  wiring), and Meep's adapter now does too (issue #270, opt-in with caller-named directions
+  only) — HFSS's adapter still reports S-parameters only.
 - **Data already fetched but discarded**: this was Mouser's pricing/availability/compliance
   fields, arriving in the one response this repo's adapter already makes but dropped before
   reaching scoring — a zero-additional-API-cost gap, unlike everything above it. Ticket #274

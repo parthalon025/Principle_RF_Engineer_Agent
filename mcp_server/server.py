@@ -1136,9 +1136,20 @@ def run_meep_simulation(
     computed too IF you ask for it by putting a "transmission_monitor_center_m" plane
     in `geometry`; without it no transmission monitor is built and the result says
     "not requested" rather than a misleading zero. NO complex phase, so no complex
-    S21 and no multi-port S-matrix, NO Touchstone export, and NO far-field/gain (see
-    simulation/meep.py's module docstring SCOPE section). This tool does NOT compute
-    absorption: 1 - R - T is a reading of two measurements, not a measurement.
+    S21 and no multi-port S-matrix, and NO Touchstone export (see simulation/meep.py's
+    module docstring SCOPE section). Antenna gain/radiation pattern (`gain_dbi`,
+    `far_field`) is ALSO opt-in, via MEEP's own documented near-to-far-field
+    transform (#270): put a "far_field_monitor" dict in `geometry` (an
+    "enclosing_regions" closed box plus "directions" far-field points -- see
+    simulation.meep.run_meep_simulation's own docstring for the full shape) and
+    `gain_dbi` carries a real dBi figure instead of None; leave it out and both stay
+    exactly as they were (far_field computed=False, gain_dbi=None), at no extra
+    solver cost. That gain figure is a peak among only the directions YOU named, not
+    a full-sphere scan, and its absolute scale rests on a reasoned-but-not-yet-
+    pymeep-verified assumption (see simulation/meep.py's FAR_FIELD_VALIDITY) -- newer
+    and less battle-tested than the reflectance/transmittance recipe below. This tool
+    does NOT compute absorption: 1 - R - T is a reading of two measurements, not a
+    measurement.
     `characteristic_length_m` is MEEP's own dimensionless-unit lengthscale "a"
     (default 1mm). Geometry/units translation verified against MEEP's own primary
     documentation (see simulation/meep.py's module docstring for the citation), and
