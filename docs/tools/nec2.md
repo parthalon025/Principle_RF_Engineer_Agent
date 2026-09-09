@@ -73,38 +73,45 @@ discrepancy worth flagging since it does not match the core engine's own
 
 `simulation/nec2pp.py` implements `Nec2ppSimulator(Simulator)` — the shared
 `run(job) -> SimulationResult` interface in `simulation/base.py` — plus three
-free functions. `Nec2ppSimulator.run()` shells out to
-`nec2++ -i <file> -o -`, a CLI contract verified against necpp's own
-`nec2cpp.cpp` (`-i` is mandatory; `-o -` is required to get results on
-stdout instead of a `.out` file) (lines 24-59). `generate_nec2_deck()` emits
-only `GW` wire geometry, `GN`/`GE` ground (free-space, perfect, or
-reflection-coefficient finite — never the Sommerfeld option), a single
-voltage-source `EX` card, one `FR` frequency point, and one `RP` pattern
-request (lines 115-263). `parse_nec2_output()` reads back the "ANTENNA INPUT
-PARAMETERS" (impedance/admittance/power at the fed segment) and "RADIATION
-PATTERNS" tables into structured dicts (lines 279-359). `run_nec2_simulation()`
-orchestrates deck-write, run, and parse, tagging the result `SIMULATED`
-(lines 362-399). The module's own header comment states plainly that no real
-`nec2++` binary was available in the dev environment, so this path is
-verified against the documented output format and a fake test binary, not
-against a real run — "unverified end-to-end until it has been run against
-the real tool at least once" (lines 95-102).
+free functions. `Nec2ppSimulator.run()` shells out to `nec2++ -i <file> -o -`,
+a CLI contract verified against necpp's own `nec2cpp.cpp` (`-i` is mandatory;
+`-o -` is required to get results on stdout instead of a `.out` file) (lines
+24-59). `generate_nec2_deck()` emits only `GW` wire geometry, `GN`/`GE` ground
+(free-space, perfect, or reflection-coefficient finite — never the Sommerfeld
+option), a single `EX` card (voltage-source, the default, or a linear-polarized
+plane wave — see below), one `FR` frequency point, and one `RP` pattern request
+(lines 115-263, `EX` card selection issue #271). `parse_nec2_output()` reads
+back the "ANTENNA INPUT PARAMETERS" (impedance/admittance/power at the fed
+segment) and "RADIATION PATTERNS" tables into structured dicts (lines 279-359).
+`run_nec2_simulation()` orchestrates deck-write, run, and parse, tagging the
+result `SIMULATED` (lines 362-399). The module's own header comment states
+plainly that no real `nec2++` binary was available in the dev environment, so
+this path is verified against the documented output format and a fake test
+binary, not against a real run — "unverified end-to-end until it has been run
+against the real tool at least once" (lines 95-102).
 
 ## Capabilities not yet used here
 
-The most consequential gap for this repo's purpose: **plane-wave excitation
-is implemented in necpp but never emitted by `generate_nec2_deck()`**, which
-hardcodes voltage-source type 0 only. Since the whole program exists to
-predict a surface's *reflection phase*, plane-wave illumination plus
-far-field readback is the direct NEC2 route to that number for a wire-grid
-model — today the adapter can only characterize a wire structure as a driven
-antenna, not as a passive reflector/scatterer. Also unused: the Sommerfeld
-ground option (only the cheap approximation is wired up); arc/helix/patch
-geometry cards (only straight wires); `LD` loading (no lossy/finite-
-conductivity wires or matching networks); `TL`/`NT` networks; true multi-
-point frequency sweeps (the deck generator always emits `NFRQ=1`); and the
-full per-segment current-distribution/near-field outputs, which the parser
-never reads.
+**Plane-wave excitation, linear polarization, is now implemented** (issue
+#271): `generate_nec2_deck()`'s `geometry["excitation"]` dict takes an
+optional `"type"` of `"voltage"` (default, unchanged) or `"plane_wave"`,
+emitting an `EX 1 ...` card (necpp's `EXCITATION_LINEAR`) with theta/phi
+angle counts and first-theta/first-phi/polarization-eta/theta-step/phi-step
+fields, skipping the voltage path's feed-segment defaulting (a plane wave
+has no feed segment). This closes the most consequential prior gap: since
+the whole program exists to predict a surface's *reflection phase*,
+plane-wave illumination plus the far-field phase readback
+`parse_nec2_output()` already extracted is now producible from a single
+`generate_nec2_deck()`/`run_nec2_simulation()` call, for a wire-grid model
+characterized as a passive reflector/scatterer rather than only as a driven
+antenna. Still open: right/left circular plane-wave polarization (`I1=2`/
+`3`, the axial-ratio field) — out of scope for #271. Also unused: the
+Sommerfeld ground option (only the cheap approximation is wired up);
+arc/helix/patch geometry cards (only straight wires); `LD` loading (no
+lossy/finite-conductivity wires or matching networks); `TL`/`NT` networks;
+true multi-point frequency sweeps (the deck generator always emits
+`NFRQ=1`); and the full per-segment current-distribution/near-field
+outputs, which the parser never reads.
 
 ## Sources
 
