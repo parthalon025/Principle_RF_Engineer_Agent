@@ -73,23 +73,22 @@ discrepancy worth flagging since it does not match the core engine's own
 
 `simulation/nec2pp.py` implements `Nec2ppSimulator(Simulator)` — the shared
 `run(job) -> SimulationResult` interface in `simulation/base.py` — plus three
-free functions. `Nec2ppSimulator.run()` shells out to
-`nec2++ -i <file> -o -`, a CLI contract verified against necpp's own
-`nec2cpp.cpp` (`-i` is mandatory; `-o -` is required to get results on
-stdout instead of a `.out` file) (lines 24-59). `generate_nec2_deck()` emits
-only `GW` wire geometry, `GN`/`GE` ground (free-space, perfect, or
-reflection-coefficient finite — never the Sommerfeld option), a single `EX`
-card (voltage-source, the default, or a linear-polarized plane wave — see
-below), one `FR` frequency point, and one `RP` pattern request (lines
-115-263, `EX` card selection issue #271). `parse_nec2_output()` reads back the "ANTENNA INPUT
-PARAMETERS" (impedance/admittance/power at the fed segment) and "RADIATION
-PATTERNS" tables into structured dicts (lines 279-359). `run_nec2_simulation()`
-orchestrates deck-write, run, and parse, tagging the result `SIMULATED`
-(lines 362-399). The module's own header comment states plainly that no real
-`nec2++` binary was available in the dev environment, so this path is
-verified against the documented output format and a fake test binary, not
-against a real run — "unverified end-to-end until it has been run against
-the real tool at least once" (lines 95-102).
+free functions. `Nec2ppSimulator.run()` shells out to `nec2++ -i <file> -o -`,
+a CLI contract verified against necpp's own `nec2cpp.cpp` (`-i` is mandatory;
+`-o -` is required to get results on stdout instead of a `.out` file) (lines
+24-59). `generate_nec2_deck()` emits only `GW` wire geometry, `GN`/`GE` ground
+(free-space, perfect, or reflection-coefficient finite — never the Sommerfeld
+option), a single `EX` card (voltage-source, the default, or a linear-polarized
+plane wave — see below), one `FR` frequency point, and one `RP` pattern request
+(lines 115-263, `EX` card selection issue #271). `parse_nec2_output()` reads
+back the "ANTENNA INPUT PARAMETERS" (impedance/admittance/power at the fed
+segment) and "RADIATION PATTERNS" tables into structured dicts (lines 279-359).
+`run_nec2_simulation()` orchestrates deck-write, run, and parse, tagging the
+result `SIMULATED` (lines 362-399). The module's own header comment states
+plainly that no real `nec2++` binary was available in the dev environment, so
+this path is verified against the documented output format and a fake test
+binary, not against a real run — "unverified end-to-end until it has been run
+against the real tool at least once" (lines 95-102).
 
 ## Capabilities not yet used here
 

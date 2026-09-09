@@ -212,32 +212,43 @@ def test_generate_nec2_deck_plane_wave_default_voltage_type_unchanged():
     assert "EX 0 " in deck_no_type
 
 
-def test_generate_nec2_deck_plane_wave_skips_feed_segment_defaulting():
-    """A plane wave has no feed segment: a wire missing 'segments' would
-    blow up the voltage path's default_segment computation
-    (math.ceil(wire['segments'] / 2)) if it ran, so a plane_wave excitation
-    must not invoke that defaulting logic at all."""
-    geometry = {
-        "wires": [
-            {
-                "tag": 1,
-                "segments": 7,
-                "x1_m": 0.0,
-                "y1_m": 0.0,
-                "z1_m": -0.25,
-                "x2_m": 0.0,
-                "y2_m": 0.0,
-                "z2_m": 0.25,
-                "radius_m": 0.001,
-            }
-        ],
-        "excitation": {"type": "plane_wave"},
+def test_generate_nec2_deck_plane_wave_ignores_feed_segment_fields():
+    """A plane wave has no feed segment, so its EX line must not depend on
+    the wire's 'tag'/'segments' -- the fields the voltage path's
+    default_tag/default_segment computation reads.
+
+    Note: this can't be proven by handing generate_nec2_deck() a wire
+    *missing* 'segments' and checking it doesn't crash -- that scenario is
+    unreachable. required_wire_fields (simulation/nec2pp.py) requires
+    'segments' on every wire, for both excitation types, before the
+    excitation branch is ever reached, so a wire missing it always raises
+    ValueError there regardless of excitation type; the voltage path's
+    default_tag/default_segment computation is never the thing that would
+    fail. Instead, this proves non-invocation the way it's actually
+    observable: two wires with different 'tag'/'segments' values, otherwise
+    identical, must produce byte-identical plane_wave EX lines."""
+    base_wire = {
+        "tag": 1,
+        "segments": 7,
+        "x1_m": 0.0,
+        "y1_m": 0.0,
+        "z1_m": -0.25,
+        "x2_m": 0.0,
+        "y2_m": 0.0,
+        "z2_m": 0.25,
+        "radius_m": 0.001,
     }
-    # Must not raise even though the wire dict is otherwise the same shape
-    # the voltage path's default_tag/default_segment logic reads from.
-    deck = generate_nec2_deck(geometry, frequency_hz=300e6)
-    ex_line = next(line for line in deck.split("\n") if line.startswith("EX "))
-    assert ex_line.startswith("EX 1 ")
+    other_wire = {**base_wire, "tag": 99, "segments": 4}
+    excitation = {"type": "plane_wave"}
+    deck_a = generate_nec2_deck(
+        {"wires": [base_wire], "excitation": excitation}, frequency_hz=300e6
+    )
+    deck_b = generate_nec2_deck(
+        {"wires": [other_wire], "excitation": excitation}, frequency_hz=300e6
+    )
+    ex_a = next(line for line in deck_a.split("\n") if line.startswith("EX "))
+    ex_b = next(line for line in deck_b.split("\n") if line.startswith("EX "))
+    assert ex_a == ex_b == "EX 1 1 1 0 0 0 0 0 0"
 
 
 def test_generate_nec2_deck_invalid_excitation_type_raises():
