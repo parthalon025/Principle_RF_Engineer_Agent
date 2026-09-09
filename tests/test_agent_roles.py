@@ -49,6 +49,7 @@ from agent.main import (
     ProvenanceIntegrityError,
     _assert_calculated_provenance_is_tool_backed,
     principal,
+    run_meep_simulation,
 )
 from orchestration.policy import assert_all_tools_categorized, category_for
 
@@ -525,6 +526,25 @@ def test_antenna_and_test_roles_get_meep_simulation():
     assert "run_meep_simulation" not in _tool_names(ROLES["systems"])
     assert "run_meep_simulation" not in _tool_names(ROLES["microwave"])
     assert "run_meep_simulation" not in _tool_names(ROLES["verification"])
+
+
+def test_run_meep_simulation_tool_description_reflects_far_field_support():
+    """agent/main.py's own @function_tool-wrapped run_meep_simulation (the
+    surface an agent driven through this module -- as opposed to the MCP
+    server -- actually sees) carries a FOURTH, independently-maintained copy
+    of this tool's docstring, alongside simulation/meep.py's module
+    docstring, mcp_server/server.py's tool docstring, and docs/tools/meep.md
+    -- issue #270 named the first three as needing to change together and
+    missed this one. `@function_tool`-wrapped functions expose their
+    docstring text to the SDK via the `.description` attribute (see
+    agents.tool.FunctionTool), not `.__doc__` on the wrapped callable, so
+    this reads that attribute -- the same text an agent calling this tool
+    surface is actually shown. Regression guard: an agent told outright "NO
+    far-field/gain" never learns geometry['far_field_monitor'] exists."""
+    description = run_meep_simulation.description
+    assert "NO far-field/gain" not in description
+    assert "far_field_monitor" in description
+    assert "gain_dbi" in description
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():

@@ -94,7 +94,16 @@ incidence only) via `_boundaries_and_k_point`, so unit-cell simulation is
 wired up. An optional `transmission_monitor_center_m` (`#240`) adds a
 second, non-subtracted flux monitor behind the structure and reports power
 transmittance; `1 - R - T` (absorption) is deliberately left uncomputed
-(`#243`) — "an adapter reports what it measured, not what it means."
+(`#243`) — "an adapter reports what it measured, not what it means." An
+optional `far_field_monitor` (`#270`) — a closed box of enclosing regions
+plus a list of far-field directions — builds Meep's own near-to-far-field
+transform (`sim.add_near2far`/`mp.Near2FarRegion`) on the full run and
+projects the recorded near fields outward (`sim.get_farfield`) to report
+`gain_dbi` (peak antenna gain in dBi among the requested directions) and a
+`far_field` result, combining that projection with total radiated power
+read from ordinary flux monitors on the same enclosing surface; leaving the
+key out builds no near2far monitor at all, same opt-in shape as the
+transmission monitor.
 Because Meep is imported in-process (`_import_meep()`) but this repo's own
 Docker image installs `pymeep` into a separate conda environment from the
 application's `uv` venv, `MeepSimulator` also accepts a
@@ -113,11 +122,8 @@ automatically.
 Against the adapter's own stated `SCOPE`, several documented Meep features
 are unused: **complex S-parameters** (only power magnitude is extracted, so
 no phase, no complex S21, no multi-port S-matrix, no Touchstone export);
-**near-to-far-field transformation** — the single biggest gap for this
-repo's purpose, since it is exactly the machinery needed to predict antenna
-gain/radiation pattern (`gain_dbi` is always `None` here); **dispersive
-material fits** (Meep can fit measured ε(ω) with multiple poles; this
-adapter supports only one frequency-independent loss tangent or
+**dispersive material fits** (Meep can fit measured ε(ω) with multiple
+poles; this adapter supports only one frequency-independent loss tangent or
 conductivity); **nonlinear/gyrotropic materials**; **GDS/mesh geometry
 import** (only box/cylinder primitives here); **oblique-incidence k_point
 sweeps** (normal incidence only — the module docstring names this
@@ -128,6 +134,20 @@ reflectance, rather than only scored after a human proposes it); and
 **MPB**, the companion eigenmode solver, is not integrated. Component-
 sourcing, filter-synthesis, and literature-ingestion functionality is not
 applicable to Meep's category (a field solver).
+
+**Near-to-far-field transformation** — previously this repo's single
+biggest gap, since it is exactly the machinery needed to predict antenna
+gain/radiation pattern — is now wired up as an opt-in `far_field_monitor`
+key (`#270`; see "How this repo uses it today" above), but narrower than
+Meep's full capability: gain is reported only at the caller's own requested
+directions (not a full-sphere scan, so a true pattern peak the caller never
+asked about can be missed), a periodic unit cell's near2far transform uses
+Meep's default `nperiods=1` (an infinite array's own lattice-summed pattern
+is not computed), and — unlike the reflectance/transmittance recipe, which
+has been checked against a real pymeep install — this gain arithmetic rests
+on a reasoned-but-not-yet-independently-verified assumption that Meep's
+near2far and flux machinery share one absolute scale (see
+`simulation/meep.py`'s `FAR_FIELD_VALIDITY`).
 
 ## Sources
 
