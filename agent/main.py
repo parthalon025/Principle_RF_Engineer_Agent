@@ -977,9 +977,13 @@ def correlate_simulated_and_measured(
     run_openems_simulation's current outputs this can and cannot use yet
     (NEC2++'s single-frequency impedance is always honestly rejected, not
     fabricated from; openEMS's S-parameters are accepted via its
-    "touchstone_file" output when computed=True -- real port probe data was
-    available -- and honestly rejected when computed=False). Temperature
-    normalization is a documented no-op unless both inputs happen to carry
+    "touchstone_file" output only for the single-port case with
+    computed=True -- real port probe data was available -- and honestly
+    rejected otherwise: when computed=False, and also for a multi-port
+    computed=True run, which has no "touchstone_file" and whose
+    "values"/"z0_ohms" shape doesn't match the generic "s_parameters"/"z0"
+    shape this function accepts either). Temperature normalization is a
+    documented no-op unless both inputs happen to carry
     a "temperature_c" field, since no current simulator/external-measurement
     source populates one -- see the returned temperature_note. Returns
     "CALCULATED" provenance for the correlation result itself, alongside
@@ -1260,6 +1264,9 @@ def run_elmer_simulation(
     geometry: dict,
     frequency_hz: float,
     timeout_s: int = 1800,
+    gmsh_executable: str | None = None,
+    elmergrid_executable: str | None = None,
+    elmersolver_executable: str | None = None,
 ) -> dict:
     """Simulate a structure with Elmer FEM's VectorHelmholtz module: a general,
     multiphysics-ready EM cross-check -- NOT a replacement for run_nec2_simulation/
@@ -1296,7 +1303,14 @@ def run_elmer_simulation(
     against real gmsh/ElmerGrid/ElmerSolver binaries -- none is installed in this
     environment; treat any result as unverified end-to-end until it has been run
     against the real tools at least once."""
-    return _run_elmer_simulation(geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s)
+    return _run_elmer_simulation(
+        geometry=geometry,
+        frequency_hz=frequency_hz,
+        timeout_s=timeout_s,
+        gmsh_executable=gmsh_executable,
+        elmergrid_executable=elmergrid_executable,
+        elmersolver_executable=elmersolver_executable,
+    )
 
 
 @function_tool(strict_mode=False)  # same rationale as run_elmer_simulation above --
@@ -1306,6 +1320,7 @@ def generate_freecad_curved_geometry(
     primitives: list[dict],
     curvature: dict,
     timeout_s: int = 600,
+    executable: str | None = None,
 ) -> dict:
     """Map a FLAT unit-cell/array layout (a list of this repo's own "box"/"polygon"
     geometry-dict primitives -- e.g. straight out of geometry.unit_cell.
@@ -1339,7 +1354,10 @@ def generate_freecad_curved_geometry(
     has been run against the real tool at least once (the geometry-dict mapping itself
     is pure Python, exercised directly in tests, and needs no FreeCAD install)."""
     return _run_freecad_curved_geometry(
-        primitives=primitives, curvature=curvature, timeout_s=timeout_s
+        primitives=primitives,
+        curvature=curvature,
+        timeout_s=timeout_s,
+        executable=executable,
     )
 
 

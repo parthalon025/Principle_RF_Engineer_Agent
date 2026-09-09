@@ -17,30 +17,18 @@ through the real `FunctionTool.on_invoke_tool` machinery rather than a plain
 Python call: `@function_tool` wraps the original function into a
 non-callable `Tool` object, so a plain `agent_main.run_ltspice_simulation(...)`
 call is not available to test in the first place.
+
+Code review of issue #317 (a later user of this same invoke-through-
+on_invoke_tool pattern) flagged this file's own `_invoke_ltspice_agent_tool`
+helper as duplicated code once two more copies appeared; it now lives once,
+as `conftest.invoke_agent_tool`.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-
-from agents.tool_context import ToolContext
+from conftest import invoke_agent_tool
 
 import agent.main as agent_main
-
-
-def _invoke_ltspice_agent_tool(**kwargs):
-    all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
-    tool = next(t for t in all_tools if t.name == "run_ltspice_simulation")
-    args_json = json.dumps(kwargs)
-    ctx = ToolContext(
-        context=None,
-        tool_name="run_ltspice_simulation",
-        tool_call_id="test-call",
-        tool_arguments=args_json,
-    )
-    raw = asyncio.run(tool.on_invoke_tool(ctx, args_json))
-    return json.loads(raw) if isinstance(raw, str) else raw
 
 
 def test_run_ltspice_simulation_agent_tool_forwards_job(monkeypatch):
@@ -67,7 +55,7 @@ def test_run_ltspice_simulation_agent_tool_forwards_job(monkeypatch):
         },
     }
 
-    result = _invoke_ltspice_agent_tool(job=job, timeout_s=15)
+    result = invoke_agent_tool("run_ltspice_simulation", job=job, timeout_s=15)
 
     assert captured == {"netlist": None, "netlist_file": None, "job": job, "timeout_s": 15}
     assert result == {"provenance": "SIMULATED"}

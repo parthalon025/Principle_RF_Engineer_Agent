@@ -746,8 +746,13 @@ def correlate_simulated_and_measured(
     (frequency_hz/s_parameters/z0), or one carrying a "touchstone_file" path -- see
     rf_tools/correlation.py's module docstring for exactly which of run_nec2_simulation's/
     run_openems_simulation's current outputs this can and cannot use yet (NEC2++'s
-    single-frequency impedance and openEMS's stubbed S-parameters are both honestly
-    rejected, not fabricated from). Temperature normalization is a documented no-op
+    single-frequency impedance is always honestly rejected, not fabricated from;
+    openEMS's S-parameters are accepted via its "touchstone_file" output only for
+    the single-port case with computed=True -- real port probe data was available
+    -- and honestly rejected otherwise: when computed=False, and also for a
+    multi-port computed=True run, which has no "touchstone_file" and whose
+    "values"/"z0_ohms" shape doesn't match the generic "s_parameters"/"z0" shape
+    this function accepts either). Temperature normalization is a documented no-op
     unless both inputs happen to carry a "temperature_c" field, since no current
     simulator/external-measurement source populates one --
     see the returned temperature_note. Returns "CALCULATED" provenance for the
@@ -1793,7 +1798,9 @@ def ingest_patent(
     is converted to Markdown two columns at a time, the way a patent is printed,
     with the front-page fields (title, inventors, assignee, dates, application
     number) parsed into its header; anything the page did not yield stays empty
-    rather than guessed. render_page_images=False skips the image rendering.
+    rather than guessed. render_page_images=False skips the image rendering; if
+    it fails instead (e.g. poppler not installed), the document is still
+    ingested and the failure reason is recorded, not silently dropped.
     authority_rank is NOT overridden: source_type='patent' already defaults below
     a peer-reviewed paper. A patent's CLAIMS are legal boundary-setting, never
     design guidance. Pass supersedes_document_id to declare this a newer revision
@@ -1836,7 +1843,11 @@ def search_uspto_patents(query: str, max_results: int = 10) -> list:
 @mcp.tool()
 def index_document(document_id: int, requested_backend: str | None = None) -> dict:
     """Embed a stored document's chunks and write the vectors. SENSITIVE/RESTRICTED
-    documents always use the self-hosted backend, no fallback to external."""
+    documents always use the self-hosted backend, with no fallback to the external
+    API; requesting "external" for one raises. PUBLIC/INTERNAL documents honor an
+    explicit requested_backend ("local"/"external") or fall back to the configured
+    default, and fall back from local to external if the self-hosted backend is
+    briefly unreachable."""
     return _index_document(document_id=document_id, requested_backend=requested_backend)
 
 
@@ -1853,7 +1864,9 @@ def search_knowledge(query_text: str, document_id: int | None = None, limit: int
     """Search the knowledge base and return one ranked list of chunk matches, each
     tagged with its match_type ("semantic_external", "semantic_local", or "lexical").
     Defaults to ACTIVE documents only; pass document_id to search a specific
-    document/revision (including a SUPERSEDED one) instead."""
+    document/revision (including a SUPERSEDED one) instead. Ordered by
+    authority_rank first, then each match's own native score -- never a single
+    blended score across match types."""
     return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
 
 
@@ -1869,9 +1882,12 @@ def search_design_records(query_text: str, document_id: int | None = None, limit
 @mcp.tool()
 def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
     """Extract structured component specifications from a stored datasheet/application_note
-    and upsert a components row per part. Runs automatically, no confirmation step.
-    SENSITIVE/RESTRICTED documents always use the self-hosted backend, no fallback to
-    external."""
+    and upsert a components row per part, keyed by (manufacturer, part_number). Runs
+    automatically, no confirmation step. Each specification field carries its own
+    provenance (MANUFACTURER-SPECIFIED/INFERRED/UNKNOWN) and, if it fails its category's
+    physical-plausibility bound, a validation_error. SENSITIVE/RESTRICTED documents always
+    use the self-hosted backend, with no fallback to the external API; requesting
+    "external" for one raises. A non-datasheet/application_note document is a no-op."""
     return _extract_components(document_id=document_id, requested_backend=requested_backend)
 
 
@@ -1923,8 +1939,10 @@ def lookup_mouser_component(part_number: str, license: str, classification: str)
 @mcp.tool()
 def lookup_nexar_component(part_number: str, license: str, classification: str) -> dict:
     """Same contract as lookup_digikey_component, against Nexar's GraphQL API
-    (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). NOT run against the real API
-    in this environment -- see knowledge/nexar.py's module docstring."""
+    (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). Refuses to run unless
+    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND those credentials are configured. Nexar's
+    free "Evaluation" tier caps around 1,000 matched parts. NOT run against the real
+    API in this environment -- see knowledge/nexar.py's module docstring."""
     return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
 
 
@@ -1955,13 +1973,18 @@ def reconcile_component_sources(
 ) -> dict:
     """Reconcile two or three distributor lookups (lookup_digikey_component/
     lookup_mouser_component/lookup_nexar_component results for the SAME queried part
-    number) into ONE components row instead of a duplicate per distributor. Each
-    entry in matches needs at least "distributor" and "manufacturer_part_number"
-    (pass a lookup_* result's fields straight through). datasheet_document_ids
-    optionally maps distributor name -> the document_id its ingest produced.
-    category must be one of this repo's ten RF component categories -- never guessed
-    from a distributor's own catalog taxonomy. Runs automatically, no confirmation
-    step, same posture as extract_components."""
+    number) into ONE components row instead of a duplicate per distributor --
+    CONTEXT.md's Component identity, (manufacturer, part_number) with package/tape-
+    and-reel suffix included, decides what counts as "the same part." Each entry in
+    matches needs at least "distributor" and "manufacturer_part_number" (as returned
+    by the lookup_* tools -- pass those results' fields straight through, do not
+    reformat them). datasheet_document_ids optionally maps distributor name -> the
+    document_id its ingest produced, so the resulting row links back to a real
+    ingested datasheet; omitted or a group with no entry preserves whatever
+    datasheet_document_id (and specifications) the row already had, rather than
+    wiping either. category must be one of this repo's ten RF component categories
+    -- never guessed from a distributor's own catalog taxonomy. Runs automatically,
+    no confirmation step, same posture as extract_components."""
     return _reconcile_components_from_matches(
         matches=matches, category=category, datasheet_document_ids=datasheet_document_ids
     )
@@ -2087,9 +2110,12 @@ def verify_requirement(
     with method, status, expected, actual, evidence_uri, and notes.
     status must be one of NOT VERIFIED/PASS/FAIL/MARGINAL. Verification is
     always this explicit call -- never inferred by matching an
-    engineering_results name against a requirement_id. A requirement_id
-    with no matching row on this design_id is rejected with a structured
-    error rather than creating a stray row."""
+    engineering_results name against a requirement_id, since a wrong
+    automatic guess would produce a silently wrong verification. A
+    requirement_id with no matching row on this design_id is rejected
+    with a structured error rather than creating a stray row. Folding a
+    FAIL into any approval/release gate is out of scope here; this only
+    records the status."""
     return _verify_requirement(
         design_id=design_id,
         requirement_id=requirement_id,

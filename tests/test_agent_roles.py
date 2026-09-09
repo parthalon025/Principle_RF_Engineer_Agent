@@ -48,6 +48,7 @@ from agent.main import (
     SPECIALIST_HANDOFFS,
     ProvenanceIntegrityError,
     _assert_calculated_provenance_is_tool_backed,
+    correlate_simulated_and_measured,
     principal,
     run_meep_simulation,
 )
@@ -653,6 +654,27 @@ def test_run_meep_simulation_tool_description_reflects_far_field_support():
     assert "NO far-field/gain" not in description
     assert "far_field_monitor" in description
     assert "gain_dbi" in description
+
+
+def test_correlate_simulated_and_measured_tool_description_states_single_port_qualifier():
+    """agent/main.py's own @function_tool-wrapped correlate_simulated_and_measured
+    carries an independently-maintained copy of mcp_server/server.py's tool
+    docstring (issue #317, ADR-0032 prefactor audit). Code review of that
+    issue's fix found the corrected text (in both files) still overstated
+    when openEMS's S-parameters are accepted -- it omitted that
+    simulation/openems.py only ever writes a "touchstone_file" for the
+    SINGLE-PORT case (`if len(names) == 1:`); a multi-port computed=True run
+    has no "touchstone_file" and is rejected too, same as computed=False.
+    Regression guard on the agent-facing `.description` text specifically
+    (see test_run_meep_simulation_tool_description_reflects_far_field_support
+    above for why `.description`, not `.__doc__`, is what an agent actually
+    sees)."""
+    description = correlate_simulated_and_measured.description
+    assert "computed=True" in description
+    assert "computed=False" in description
+    assert "both honestly rejected" not in description
+    assert "single-port" in description
+    assert "multi-port" in description
 
 
 def test_antenna_role_gets_patch_length_optimization_tool():
