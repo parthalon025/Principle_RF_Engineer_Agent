@@ -311,12 +311,113 @@ def _build_temperature_note(
     )
 
 
+_TOLERANCE_WITHIN = "WITHIN_KNOWN_TOLERANCE"
+_TOLERANCE_EXCEEDS = "EXCEEDS_KNOWN_TOLERANCE"
+_TOLERANCE_NO_RECORD = "NO_TOLERANCE_ON_RECORD"
+
+
+def _build_tolerance_comparison(
+    comparison: dict[str, Any], known_tolerance_db: float | dict[str, float] | None
+) -> str:
+    """Mechanically compare each S-parameter's already-computed
+    `max_magnitude_diff_db` (`compare_touchstone`'s own number, not
+    recomputed here) against `known_tolerance_db`, and record one of
+    exactly three values -- `WITHIN_KNOWN_TOLERANCE`, `EXCEEDS_KNOWN_
+    TOLERANCE`, `NO_TOLERANCE_ON_RECORD` -- as a new `tolerance_comparison`
+    key directly inside `comparison[param]`, mutating it in place (mirrors
+    how `compare_touchstone`'s own return value is reused/extended
+    unmodified elsewhere in this function).
+
+    This deliberately never allocates blame between the simulation and the
+    design -- see docs/adr/0009-no-specialist-peer-review-in-design-loop.md
+    and issue #254. It answers one narrow, mechanical question -- is this
+    gap's *size* already inside a bound someone logged? -- not *why* the
+    gap exists. There is no fourth value naming 'model' or 'design'; that
+    judgment stays in REDESIGN_DECISION's free-text `rationale`.
+
+    A uniform `float` applies the same bound to every S-parameter present
+    in `comparison`. A `dict` supplies a per-parameter bound, keyed the
+    same way `comparison` itself is (lower-case `s11`/`s21`/... -- this
+    function's own per-S-parameter key convention, reused rather than
+    introducing a second casing). A parameter missing from the dict -- or
+    every parameter, when `known_tolerance_db` is `None` entirely -- gets
+    `NO_TOLERANCE_ON_RECORD`, the same honest "nothing to compare against"
+    default `_build_temperature_note` uses when no temperature data is
+    present.
+
+    Returns the plain-language `tolerance_comparison_note` describing what
+    was actually compared and against what bound (or that nothing was
+    supplied to compare against).
+    """
+    param_keys = [
+        key
+        for key, value in comparison.items()
+        if isinstance(value, dict) and "max_magnitude_diff_db" in value
+    ]
+
+    if known_tolerance_db is None:
+        for key in param_keys:
+            comparison[key]["tolerance_comparison"] = _TOLERANCE_NO_RECORD
+        return (
+            "No known_tolerance_db was supplied -- tolerance_comparison is "
+            f"NO_TOLERANCE_ON_RECORD for every S-parameter ({sorted(param_keys)}). "
+            "This does not mean the simulation and measurement agree or "
+            "disagree; it means no already-known bound was on hand to "
+            "compare the measured diff against."
+        )
+
+    within: list[str] = []
+    exceeds: list[str] = []
+    no_record: list[str] = []
+    for key in param_keys:
+        entry = comparison[key]
+        if isinstance(known_tolerance_db, dict):
+            bound = known_tolerance_db.get(key)
+        else:
+            bound = known_tolerance_db
+
+        if bound is None:
+            entry["tolerance_comparison"] = _TOLERANCE_NO_RECORD
+            no_record.append(key)
+        elif entry["max_magnitude_diff_db"] <= bound:
+            entry["tolerance_comparison"] = _TOLERANCE_WITHIN
+            within.append(f"{key} ({entry['max_magnitude_diff_db']:.3g} dB <= {bound:g} dB)")
+        else:
+            entry["tolerance_comparison"] = _TOLERANCE_EXCEEDS
+            exceeds.append(f"{key} ({entry['max_magnitude_diff_db']:.3g} dB > {bound:g} dB)")
+
+    parts: list[str] = []
+    if within:
+        parts.append(f"within its known tolerance: {', '.join(within)}")
+    if exceeds:
+        parts.append(f"EXCEEDING its known tolerance: {', '.join(exceeds)}")
+    if no_record:
+        parts.append(f"no tolerance on record for: {', '.join(sorted(no_record))}")
+
+    bound_desc = (
+        f"a per-S-parameter bound {known_tolerance_db!r}"
+        if isinstance(known_tolerance_db, dict)
+        else f"a uniform {known_tolerance_db:g} dB bound"
+    )
+    return (
+        f"Compared each S-parameter's max_magnitude_diff_db against "
+        f"{bound_desc} supplied via known_tolerance_db: "
+        + "; ".join(parts)
+        + ". This says only whether the observed gap's size is already "
+        "explained by a bound someone logged -- it does not say whether "
+        "the simulation model or the fabricated design is the reason for "
+        "any gap; that judgment belongs in REDESIGN_DECISION's rationale, "
+        "not here."
+    )
+
+
 def correlate_simulation_measurement(
     simulated: dict[str, Any] | rf.Network,
     measured: dict[str, Any] | rf.Network,
     fixture_path: str | None = None,
     output_fixture_path: str | None = None,
     temperature_tolerance_c: float = 5.0,
+    known_tolerance_db: float | dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Correlate a SIMULATED result against a MEASURED result: normalize
     frequency grid, reference impedance, and (when a fixture is given)
@@ -348,17 +449,39 @@ def correlate_simulation_measurement(
     `measured` happen to carry a `temperature_c` field; otherwise this is
     a documented no-op (see this module's docstring).
 
+    `known_tolerance_db` (optional, issue #254): a caller-supplied,
+    already-known bound in the same dB units `comparison`'s
+    `max_magnitude_diff_db` already reports, either a single `float`
+    applied uniformly to every S-parameter or a `dict` supplying a bound
+    per S-parameter (keyed like `comparison` itself -- lower-case
+    `"s11"`/`"s21"`/...). When supplied, each S-parameter's entry in
+    `comparison` gains a mechanical `tolerance_comparison` field --
+    `"WITHIN_KNOWN_TOLERANCE"`, `"EXCEEDS_KNOWN_TOLERANCE"`, or (for any
+    S-parameter with no bound on record, including every one when this
+    argument is omitted entirely) `"NO_TOLERANCE_ON_RECORD"`. This is a
+    strictly mechanical inside/outside/no-data comparison against a number
+    the caller supplies -- it never decides whether the simulation model
+    or the fabricated design explains a gap (docs/adr/0009-no-specialist-
+    peer-review-in-design-loop.md); that judgment stays in
+    REDESIGN_DECISION's free-text `rationale`.
+
     Returns a dict with:
       - `comparison`: `compare_touchstone`'s own return shape (per
         S-parameter `diff`/`magnitude_diff_db`/`max_magnitude_diff_db`/
         `rms_diff`/`max_abs_diff`, plus `ports`/`common_frequencies_hz`/
-        `common_grid_source`) -- reused unmodified, not reimplemented.
+        `common_grid_source`) -- reused unmodified except that each
+        S-parameter entry also gains `tolerance_comparison` (see
+        `known_tolerance_db` above).
       - `reference_impedance_note`: what z0 normalization actually did.
       - `calibration_plane_note`: what de-embedding actually did (or that
         it was skipped, and why that's an honest default).
       - `temperature_note` / `temperature_detail`: what temperature
         handling actually did (a documented no-op unless data was
         present).
+      - `tolerance_comparison_note`: plain language describing what was
+        compared against `known_tolerance_db` and what bound was used, or
+        that nothing was supplied to compare against (see
+        `known_tolerance_db` above).
       - `simulated_provenance` / `measured_provenance`: the provenance tag
         carried by each input, when present (defaulting to "SIMULATED"/
         "MEASURED" -- this project's own conventions for these two input
@@ -475,12 +598,15 @@ def correlate_simulation_measurement(
 
         comparison = compare_touchstone(str(simulated_path), str(measured_normalized_path))
 
+    tolerance_comparison_note = _build_tolerance_comparison(comparison, known_tolerance_db)
+
     return {
         "comparison": comparison,
         "reference_impedance_note": reference_impedance_note,
         "calibration_plane_note": calibration_plane_note,
         "temperature_note": temperature_note,
         "temperature_detail": temperature_detail,
+        "tolerance_comparison_note": tolerance_comparison_note,
         "simulated_provenance": simulated_provenance,
         "measured_provenance": measured_provenance,
         "provenance": "CALCULATED",

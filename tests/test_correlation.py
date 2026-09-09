@@ -253,6 +253,92 @@ def test_correlate_temperature_one_sided_not_flagged():
 
 
 # ---------------------------------------------------------------------------
+# known_tolerance_db (issue #254): a mechanical, per-S-parameter comparison
+# of the already-computed max_magnitude_diff_db against a caller-supplied
+# bound -- never a "model was wrong"/"design was wrong" verdict (see
+# docs/adr/0009). Mirrors the temperature-tolerance test triad above:
+# supplied-and-within, supplied-and-exceeds, not-supplied-at-all, and a
+# per-parameter dict case.
+# ---------------------------------------------------------------------------
+
+
+def _known_loss_perturbation_result(**kwargs):
+    """Same synthetic simulated/measured pair as
+    test_correlate_known_loss_perturbation_matches_hand_computed_diff:
+    s21 has a known, hand-computable ~0.445 dB diff (20*log10(0.95));
+    s11/s22 are exactly 0 dB apart (both unperturbed matched lines)."""
+    freqs_hz = np.linspace(1e9, 5e9, 9)
+    length_m = 0.05
+    loss_mag = 0.95
+
+    simulated_network = _matched_line_network(freqs_hz, length_m)
+    s_meas = np.zeros((len(freqs_hz), 2, 2), dtype=complex)
+    s21_meas = loss_mag * _lossless_line_s21(freqs_hz, length_m)
+    s_meas[:, 1, 0] = s21_meas
+    s_meas[:, 0, 1] = s21_meas
+    freq = rf.Frequency.from_f(freqs_hz, unit="hz")
+    measured_network = rf.Network(frequency=freq, s=s_meas, z0=50.0)
+
+    return correlate_simulation_measurement(
+        {"network": simulated_network}, {"network": measured_network}, **kwargs
+    )
+
+
+def test_correlate_tolerance_not_supplied_records_no_data():
+    result = _known_loss_perturbation_result()
+
+    for key in ("s11", "s21", "s12", "s22"):
+        assert result["comparison"][key]["tolerance_comparison"] == "NO_TOLERANCE_ON_RECORD"
+    assert "no known_tolerance_db" in result["tolerance_comparison_note"].lower()
+
+
+def test_correlate_tolerance_within_known_bound_not_flagged():
+    result = _known_loss_perturbation_result(known_tolerance_db=1.0)
+
+    comparison = result["comparison"]
+    # s21's known diff is ~0.445 dB, well inside a 1.0 dB bound.
+    assert comparison["s21"]["max_magnitude_diff_db"] == pytest.approx(0.445, abs=1e-2)
+    for key in ("s11", "s21", "s12", "s22"):
+        assert comparison[key]["tolerance_comparison"] == "WITHIN_KNOWN_TOLERANCE"
+    assert "1" in result["tolerance_comparison_note"]
+
+
+def test_correlate_tolerance_exceeds_known_bound_flagged():
+    result = _known_loss_perturbation_result(known_tolerance_db=0.1)
+
+    comparison = result["comparison"]
+    assert comparison["s21"]["tolerance_comparison"] == "EXCEEDS_KNOWN_TOLERANCE"
+    # s11/s22 are exactly 0 dB apart -- still inside even a tight 0.1 dB bound.
+    for key in ("s11", "s22"):
+        assert comparison[key]["tolerance_comparison"] == "WITHIN_KNOWN_TOLERANCE"
+
+
+def test_correlate_tolerance_dict_applies_per_parameter_independently():
+    result = _known_loss_perturbation_result(known_tolerance_db={"s21": 0.1})
+
+    comparison = result["comparison"]
+    assert comparison["s21"]["tolerance_comparison"] == "EXCEEDS_KNOWN_TOLERANCE"
+    # s11/s12/s22 weren't named in the dict -- no tolerance on record for
+    # them, not a fabricated pass borrowed from s21's bound.
+    for key in ("s11", "s12", "s22"):
+        assert comparison[key]["tolerance_comparison"] == "NO_TOLERANCE_ON_RECORD"
+
+
+def test_correlate_tolerance_comparison_never_names_model_or_design():
+    """docs/adr/0009: this field must never allocate blame between 'the
+    model was wrong' and 'the design was wrong' -- it is a mechanical
+    inside/outside/no-data comparison only, exactly three values."""
+    result = _known_loss_perturbation_result(known_tolerance_db={"s21": 0.1})
+
+    allowed = {"WITHIN_KNOWN_TOLERANCE", "EXCEEDS_KNOWN_TOLERANCE", "NO_TOLERANCE_ON_RECORD"}
+    for key in ("s11", "s21", "s12", "s22"):
+        assert result["comparison"][key]["tolerance_comparison"] in allowed
+    note_lower = result["tolerance_comparison_note"].lower()
+    for banned in ("model was wrong", "design was wrong", "model_wrong", "design_wrong"):
+        assert banned not in note_lower
+
+
+# ---------------------------------------------------------------------------
 # Bridging the type gap: input shapes, and honest failure on the shapes
 # today's NEC2++/openEMS adapters actually produce.
 # ---------------------------------------------------------------------------
