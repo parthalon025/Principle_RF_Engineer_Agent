@@ -1240,17 +1240,26 @@ def run_elmer_simulation(
     timeout_s: int = 1800,
 ) -> dict:
     """Simulate a structure with Elmer FEM's VectorHelmholtz module: a general,
-    multiphysics-ready EM cross-check kept available for a FUTURE coupled-physics
-    need (e.g. EM/thermal analysis on a mounted "adaptive EM skin") -- NOT a
-    replacement for run_nec2_simulation/run_openems_simulation/run_hfss_simulation on
-    everyday antenna work, since Elmer's primary user base is structural/CFD/heat-
-    transfer, not EM. Generates a Gmsh OpenCASCADE .geo script from structured
-    geometry (a single rectangular domain with isotropic material, plus an optional
-    rectangular excitation sub-region -- see simulation.elmer.generate_gmsh_geo_script
-    for the full shape), meshes it with gmsh, converts the mesh to ElmerSolver's
-    native format with ElmerGrid, generates a matching VectorHelmholtz .sif (see
-    simulation.elmer.generate_elmer_sif), runs it with ElmerSolver, and parses
-    whatever raw output is available. Returns "SIMULATED" provenance. CRITICAL SCOPE
+    multiphysics-ready EM cross-check -- NOT a replacement for run_nec2_simulation/
+    run_openems_simulation/run_hfss_simulation on everyday antenna work, since
+    Elmer's primary user base is structural/CFD/heat-transfer, not EM. Generates a
+    Gmsh OpenCASCADE .geo script from structured geometry (a single rectangular
+    domain with isotropic material, plus an optional rectangular excitation
+    sub-region -- see simulation.elmer.generate_gmsh_geo_script for the full shape),
+    meshes it with gmsh, converts the mesh to ElmerSolver's native format with
+    ElmerGrid, generates a matching VectorHelmholtz .sif (see simulation.elmer.
+    generate_elmer_sif), runs it with ElmerSolver, and parses whatever raw output is
+    available. Returns "SIMULATED" provenance. COUPLED EM+THERMAL (issue #281): pass
+    an optional `geometry["thermal"]` block (`heat_conductivity_w_mk`,
+    `density_kg_m3`, `heat_capacity_j_kgk`, plus optional `fixed_temperature_faces_k`/
+    `convective_faces` boundary conditions -- see simulation.elmer.generate_elmer_sif
+    for the full shape) to add a Heat Equation solve driven by the EM solve's own
+    Joule-heating loss on the same mesh -- e.g. how hot a mounted "adaptive EM skin"
+    gets from soaking up radio energy while sitting on a warm surface, in the same
+    run as the EM-only result. The returned dict then also carries a `thermal_result`
+    key (`computed=True` with `max_temperature_k`, or `computed=False` with an
+    explanatory note -- same honest-gap pattern as `s_parameters`/`far_field`).
+    Omitting `geometry["thermal"]` runs EM-only exactly as before. CRITICAL SCOPE
     LIMIT: unlike OpenParEM/Palace, Elmer's VectorHelmholtz module has NO native
     antenna-specific port/S-parameter/far-field/gain post-processing -- this tool's
     excitation (an impressed "Body Force"/"Current Density" current source) and
@@ -2852,13 +2861,17 @@ ROLE_SPECS: list[RoleSpec] = [
             "and is young/less battle-tested than the other three "
             "simulators, Elmer FEM's VectorHelmholtz simulation "
             "(run_elmer_simulation, issue #64) as a general, multiphysics-"
-            "ready EM cross-check kept available for a future coupled-"
-            "physics need (e.g. EM/thermal on a mounted 'adaptive EM "
-            "skin') -- NOT a substitute for the three tools above on "
-            "everyday antenna work, since Elmer's VectorHelmholtz module "
-            "has no native antenna-specific port/S-parameter/far-field/"
-            "gain post-processing (its excitation and boundary conditions "
-            "are hand-assembled, see simulation/elmer.py), "
+            "ready EM cross-check -- NOT a substitute for the three tools "
+            "above on everyday antenna work, since Elmer's VectorHelmholtz "
+            "module has no native antenna-specific port/S-parameter/far-"
+            "field/gain post-processing (its excitation and boundary "
+            "conditions are hand-assembled, see simulation/elmer.py); it "
+            "also now supports a coupled EM+thermal run mode (issue #281 "
+            "-- pass geometry['thermal'] to add a Heat Equation solve "
+            "driven by the EM solve's own Joule heating, e.g. how hot a "
+            "mounted 'adaptive EM skin' gets from soaking up radio energy "
+            "on a warm surface; the result's 'thermal_result' key carries "
+            "the outcome), "
             "(issue #65) run_kicad_gerber2ems_simulation for a REAL, "
             "as-laid-out KiCad PCB design (not a hand-modeled geometry "
             "dict) -- gerber2ems drives openEMS internally via its own "
