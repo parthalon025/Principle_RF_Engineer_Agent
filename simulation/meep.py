@@ -106,6 +106,29 @@ per-fact citations below):
     (add_flux -> run -> get_flux_data/get_fluxes -> reset_meep -> add_flux
     again -> load_minus_flux_data -> run -> get_fluxes), with the same
     sign convention (`reflectance = -reflected_flux / baseline_flux`).
+  - Near-to-far-field transform (#270): `sim.add_near2far(fcen, df, nfreq,
+    *Near2FarRegion)` and `mp.Near2FarRegion(center=, size=, weight=)`
+    ("identical to FluxRegion except for the name", weight of +-1 marking
+    each region's outward-normal direction so opposite faces of a closed
+    box net to the OUTWARD total): meep.readthedocs.io/en/latest/
+    Python_User_Interface/, near2far section, fetched directly during
+    implementation. `sim.get_farfield(near2far, x)` -- a METHOD on the
+    Simulation instance, not a module-level `mp.get_farfield` (confirmed by
+    fetching github.com/NanoComp/meep/blob/master/doc/docs/
+    Python_Tutorials/Near_to_Far_Field_Spectra.md directly and reading its
+    own worked code, `far_field = sim.get_farfield(n2f_mon, mp.Vector3(...))`)
+    -- returns far-field E/H at one point as a flat list of length 6*nfreq
+    (Ex,Ey,Ez,Hx,Hy,Hz per frequency, Cartesian coordinates). The Poynting-
+    vector cross-product this module's own `_compute_far_field` uses to
+    turn those E/H into a radiation intensity (`flux_x = Re(Ey*conj(Hz) -
+    Ez*conj(Hy))`, etc.) matches Meep's own `examples/antenna-radiation.py`
+    /Near-to-Far-Field-Spectra tutorial, same fetch. Meep's own docs warn
+    far fields "cannot be directly compared to time-domain fields" and are
+    "easiest to use... where overall scaling... cancel[s] out" -- this
+    module's gain_dbi leans on exactly that cancellation (dividing by a
+    total radiated power built from the SAME run's ordinary flux monitors),
+    which is THIS MODULE'S OWN reasoned application, not something the
+    tutorial itself computes end to end -- see FAR_FIELD_VALIDITY.
   - Installation / no PyPI wheel / no native Windows support: meep.
     readthedocs.io/en/latest/Installation/, quoted directly: "The
     recommended way to install PyMeep is using the Conda package manager"
@@ -161,6 +184,13 @@ HAS ANY OF THIS BEEN RUN FOR REAL? Partly, and the parts differ:
     Meep's Python API this module calls (tests/test_meep.py). Those tests
     prove the adapter says what it means to say to Meep; they cannot prove
     Meep answered correctly.
+  - The optional far-field/gain transform (#270) is squarely in that last,
+    less-verified bucket: it rests on the primary-source API citations
+    above and on tests/test_meep.py's fake, but has NOT been run against a
+    real pymeep install the way the reflectance/transmittance recipe has
+    -- there is no verification/meep_*.py script for it yet. Treat
+    `gain_dbi`/`far_field` as unverified end to end until one exists; see
+    FAR_FIELD_VALIDITY for the specific assumption this rests on.
 
 SCOPE OF THIS IMPLEMENTATION (explicitly narrower than a full Meep feature
 set, and explicitly narrower than openEMS's own S-parameter extraction --
@@ -223,13 +253,28 @@ each limit below is a genuine, stated gap, not silently glossed over):
     conductors-only geometry the two are the same thing; with a thick
     lossy substrate they are not, and the difference is the substrate's
     own loss.
-  - Far-field/gain: NOT computed -- would require Meep's own separate
-    near-to-far-field post-processing machinery, not invoked here (same
-    honest gap simulation/openems.py's module docstring already carries
-    for openEMS's separate nf2ff tool). `far_field` in this module's
-    output always carries computed=False and an explanatory note, for
-    structural parity with nec2pp.py's/openems.py's own result shape (so
-    downstream code can treat every simulator's result uniformly).
+  - Far-field/gain: OPTIONAL, via Meep's own near-to-far-field transform
+    (#270) -- ask for it by naming a `far_field_monitor` in `geometry`
+    (`enclosing_regions`, a closed box of Near2FarRegion-equivalent planes
+    around the source and structure, plus `directions`, the far-field
+    points to report gain at); leave it out and `far_field` still always
+    carries `computed=False` and an explanatory note (structural parity
+    with nec2pp.py's/openems.py's own result shape, so downstream code can
+    treat every simulator's result uniformly), same three-state discipline
+    as the optional transmission monitor above. `sim.add_near2far`/`mp.
+    Near2FarRegion` build the monitor on the FULL run (conductors present
+    -- gain describes the real structure, not the conductor-free
+    baseline); `sim.get_farfield` projects the recorded near fields out to
+    each requested direction, and `gain_dbi = 10*log10(4*pi*U/P_rad)`
+    combines the resulting radiation intensity with total radiated power
+    read from ordinary flux monitors on that SAME enclosing surface. This
+    is genuinely less battle-tested than the reflectance/transmittance
+    recipe above: it has NOT been run against real pymeep the way that one
+    has (docs/meep-absorber-validation.md) -- see `_compute_far_field`'s
+    own docstring and this result's own `validity` entries for what
+    remains a reasoned assumption (the near2far/flux normalization match)
+    rather than a verified fact, and for the peak-of-requested-directions-
+    only caveat (not a full-sphere scan).
   - No H5 field-dump files are requested or parsed -- this module's
     `SimulationResult.workdir` exists only to satisfy the Simulator
     contract (simulation/base.py) and is not otherwise populated.
@@ -351,6 +396,74 @@ PERIODIC_ABSORBER_VALIDITY: tuple[dict[str, str], ...] = (
             "so this is the right shape of approximation, but it is one"
         ),
         "cheapest_test": ("narrow the band and confirm the answer at centre does not move"),
+    },
+)
+
+
+# What remains APPROXIMATE about the optional far-field/gain transform
+# (#270), same warn-never-block discipline as PERIODIC_ABSORBER_VALIDITY
+# above. Rides alongside every far_field result that DID compute, rather
+# than blocking one.
+FAR_FIELD_VALIDITY: tuple[dict[str, str], ...] = (
+    {
+        "flag": "gain_is_peak_of_requested_directions_only",
+        "assumed": (
+            "outputs['gain_dbi'] is the largest value found among the "
+            "caller's own 'directions' entries -- not a full-sphere scan"
+        ),
+        "costs": (
+            "a real antenna's true peak gain can sit in a direction nobody "
+            "asked about; a coarse or one-sided set of directions can under- "
+            "or over-state the antenna's actual peak"
+        ),
+        "cheapest_test": (
+            "add more directions (a denser angular sweep) and confirm the "
+            "reported peak stops moving"
+        ),
+    },
+    {
+        "flag": "near2far_scale_matches_flux_monitors_by_assumption",
+        "assumed": (
+            "the total radiated power (from ordinary flux monitors, "
+            "mp.get_fluxes) and the far-field intensity (from sim."
+            "get_farfield's E/H) share the same absolute scale, so their "
+            "ratio in gain_dbi's 4*pi*U/P_rad is meaningful -- reasoned from "
+            "Meep's own documented near2far/flux internals (both derive "
+            "from the same per-run DFT field accumulation), NOT "
+            "independently reproduced against a real pymeep run the way "
+            "the reflectance/transmittance recipe was "
+            "(docs/meep-absorber-validation.md)"
+        ),
+        "costs": (
+            "if that assumption is wrong, gain_dbi is off by a fixed "
+            "multiplicative factor (an additive dB offset) at every "
+            "direction and frequency -- the SHAPE of the radiation pattern "
+            "across directions would still be trustworthy even if the "
+            "absolute number were not"
+        ),
+        "cheapest_test": (
+            "run one known case (e.g. a resonant half-wave dipole, textbook "
+            "gain 2.15 dBi) through a real pymeep install and compare"
+        ),
+    },
+    {
+        "flag": "periodic_far_field_uses_a_finite_transform",
+        "assumed": (
+            "when geometry['periodic_axes'] is also set, the near2far "
+            "transform is still built with Meep's default nperiods=1 (no "
+            "lattice summation across the infinite array Bloch boundaries "
+            "imply)"
+        ),
+        "costs": (
+            "a periodic unit cell's true far field is an array pattern, not "
+            "a single element's; nperiods=1 answers 'what would one element "
+            "radiate in isolation', which is a different, usually smaller, "
+            "number"
+        ),
+        "cheapest_test": (
+            "Meep documents an nperiods argument on add_near2far specifically "
+            "for this case; wiring it through is future work, not done here"
+        ),
     },
 )
 
@@ -699,6 +812,53 @@ def _validate_port(port: dict[str, Any]) -> None:
         )
 
 
+def _validate_far_field_monitor(far_field_monitor: dict[str, Any]) -> None:
+    """Nested-within-geometry field validation -> ValueError, matching
+    _validate_port's own convention above (SimulatorError is reserved for
+    job-dict-top-level required keys, checked directly in
+    MeepSimulator.run()).
+
+    geometry['far_field_monitor'] (#270) is optional at the top level --
+    absent, no near2far monitor is built and nothing else here runs. Present,
+    it needs a CLOSED surface ('enclosing_regions', at least one region) to
+    read total radiated power from and at least one 'directions' point to
+    project the far field at -- a near-to-far-field transform with nothing
+    enclosed or nowhere to look is not a request for anything."""
+    required = ("enclosing_regions", "directions")
+    missing = [f for f in required if f not in far_field_monitor]
+    if missing:
+        raise ValueError(f"geometry['far_field_monitor'] missing required field(s): {missing}")
+
+    regions = far_field_monitor["enclosing_regions"]
+    if not regions:
+        raise ValueError(
+            "geometry['far_field_monitor']['enclosing_regions'] must not be empty -- "
+            "a near-to-far-field transform needs a closed surface enclosing the "
+            "source and the structure under test to read total radiated power from"
+        )
+    for idx, region in enumerate(regions):
+        missing_region = [f for f in ("center_m", "size_m") if f not in region]
+        if missing_region:
+            raise ValueError(
+                f"geometry['far_field_monitor']['enclosing_regions'][{idx}] missing "
+                f"required field(s): {missing_region}"
+            )
+
+    directions = far_field_monitor["directions"]
+    if not directions:
+        raise ValueError(
+            "geometry['far_field_monitor']['directions'] must not be empty -- name at "
+            "least one far-field point to project the near2far transform onto and "
+            "report gain at"
+        )
+    for idx, direction in enumerate(directions):
+        if "point_m" not in direction:
+            raise ValueError(
+                f"geometry['far_field_monitor']['directions'][{idx}] missing "
+                "required field(s): ['point_m']"
+            )
+
+
 def _build_source(mp_module: Any, port: dict[str, Any], a_m: float) -> Any:
     frequency_hz = float(port["frequency_hz"])
     fcen = _hz_to_meep_freq(frequency_hz, a_m)
@@ -913,6 +1073,215 @@ def _compute_transmittance(
 
 
 # ---------------------------------------------------------------------------
+# Far-field / gain (#270) -- Meep's own documented near-to-far-field
+# transform, opt-in via geometry['far_field_monitor'], same "give it and the
+# extra work happens, leave it out and nothing changes" shape #240's
+# transmission_monitor_center_m established for the analogous second-monitor
+# case. See module docstring citations for add_near2far/Near2FarRegion/
+# get_farfield's real API shapes (all fetched directly from meep.
+# readthedocs.io/en/latest/Python_User_Interface/ and the Near-to-Far-Field-
+# Spectra tutorial during implementation).
+# ---------------------------------------------------------------------------
+
+
+def _add_near2far_monitor(
+    mp_module: Any,
+    sim: Any,
+    fcen: float,
+    fwidth: float,
+    nfreq: int,
+    regions: list[dict[str, Any]],
+    a_m: float,
+) -> Any:
+    """sim.add_near2far(fcen, df, nfreq, *Near2FarRegion) -- built on the
+    FULL run only (conductors present): gain describes the actual radiating
+    structure, not the conductor-free reference baseline the reflectance/
+    transmittance recipe uses for normalization. There is no "gain of the
+    empty background" concept to normalize against here."""
+    near2far_regions = [
+        mp_module.Near2FarRegion(
+            center=_vector3(mp_module, region["center_m"], a_m),
+            size=_vector3(mp_module, region["size_m"], a_m),
+            weight=float(region.get("weight", 1.0)),
+        )
+        for region in regions
+    ]
+    return sim.add_near2far(fcen, fwidth, nfreq, *near2far_regions)
+
+
+def _far_field_not_requested() -> dict[str, Any]:
+    """The "nobody asked" state -- said out loud, never left blank. Same
+    three-state discipline _transmittance_not_requested() already documents
+    for the analogous optional-second-monitor shape:
+
+      * not requested           -> computed False, requested False (here)
+      * requested, uncomputable -> computed False, requested True  (below)
+      * measured, maybe a null  -> computed True, with the numbers (a real
+            radiation-pattern null in one direction is a genuine answer)
+    """
+    return {
+        "computed": False,
+        "requested": False,
+        "note": (
+            "No far-field monitor was requested, so this structure's "
+            "radiation pattern and antenna gain were never measured -- this "
+            "is silence, not a measured value. Ask for it by giving "
+            "geometry a 'far_field_monitor' dict with 'enclosing_regions' "
+            "(a closed box of Near2FarRegion-equivalent planes around the "
+            "source and structure) and 'directions' (far-field points, in "
+            "meters, to report gain at)."
+        ),
+    }
+
+
+def _compute_far_field(
+    frequency_hz_points: list[float],
+    enclosing_regions: list[dict[str, Any]],
+    region_fluxes: list[list[float]],
+    directions: list[dict[str, Any]],
+    direction_fields: list[list[complex]],
+    a_m: float,
+) -> dict[str, Any]:
+    """Pure function: turns already-fetched Meep data (flux spectra, raw
+    far-field E/H) into a far_field result -- no mp_module/sim access here,
+    per this repo's "caller fetches, pure function resolves" convention
+    (CLAUDE.md; designs/element_alphabet.py and designs/material_
+    properties.py are the clearest existing examples).
+
+    RADIATED POWER: sum over enclosing_regions of weight * mp.get_fluxes(...)
+    at that region -- Near2FarRegion "is identical to FluxRegion except for
+    the name" (module docstring citation), and Meep's own near-to-far-field
+    tutorial computes total radiated power BOTH this way (a near-field flux
+    box) and by integrating the far field over a full sphere specifically to
+    demonstrate the two agree -- so this reads the cheaper one. Each
+    region's own weight (+1/-1, the caller's responsibility, same as real
+    Meep) is what makes opposite faces of a closed box net to the OUTWARD
+    total instead of cancelling to zero.
+
+    GAIN AT ONE DIRECTION: gain_dbi = 10*log10(4*pi*U/P_rad), where
+    U = r**2 * S_r is the radiation intensity (power per solid angle,
+    Balanis-style antenna-gain definition) and S_r is the radial component
+    of the time-averaged Poynting vector, 0.5*Re(E x conj(H)) -- the same
+    cross-product Meep's own antenna-radiation-pattern example computes
+    (flux_x = Re(Ey*conj(Hz) - Ez*conj(Hy)) etc., fetched during
+    implementation), with the textbook leading 0.5 restored (that example
+    only normalizes its pattern by its own peak, so an overall factor never
+    mattered to it; it matters here because gain_dbi divides by a
+    SEPARATELY-scaled quantity, P_rad).
+
+    r MUST be in MEEP's own dimensionless distance units (point_m / a_m),
+    NOT raw meters: the far field decays as 1/r in Meep's own coordinate
+    system, so r**2*S_r is r-independent (the defining property of a correct
+    radiation intensity) only when r matches the units S_r was computed in.
+    Using meters instead would leak the caller's arbitrary
+    characteristic_length_m choice into gain_dbi as a spurious a_m**2 factor
+    inside the logarithm -- exactly the kind of modeling-choice leak this
+    module's unit conversions are designed to avoid everywhere else.
+
+    See FAR_FIELD_VALIDITY for what remains an assumption rather than a
+    verified fact (this recipe has NOT been run against real pymeep the way
+    the reflectance/transmittance one has -- docs/meep-absorber-
+    validation.md)."""
+    num_freqs = len(frequency_hz_points)
+    radiated_power = [0.0] * num_freqs
+    for region, flux in zip(enclosing_regions, region_fluxes, strict=True):
+        weight = float(region.get("weight", 1.0))
+        for i, value in enumerate(flux):
+            radiated_power[i] += weight * value
+
+    if not radiated_power or any(p <= 0 for p in radiated_power):
+        return {
+            "computed": False,
+            "requested": True,
+            "note": (
+                "the enclosing surface's own net outward flux -- the "
+                "denominator gain is measured against -- was zero or "
+                "negative at at least one frequency, so no gain can be "
+                "reported there (this is a failed measurement, not a "
+                "measured zero). Check that 'enclosing_regions' truly forms "
+                "a CLOSED box around the source and structure with "
+                "outward-facing 'weight's (+1 on faces whose normal points "
+                "away from the enclosed volume, -1 on the opposite ones) -- "
+                "the same convention Meep's own Near2FarRegion uses."
+            ),
+        }
+
+    direction_results: list[dict[str, Any]] = []
+    for direction, fields in zip(directions, direction_fields, strict=True):
+        point_m = direction["point_m"]
+        r_m = math.sqrt(sum(c * c for c in point_m))
+        if r_m == 0:
+            raise ValueError(
+                "geometry['far_field_monitor']['directions'] point_m must not be "
+                "the coordinate origin -- a far-field direction needs a radius to "
+                "project the near2far transform out to"
+            )
+        r_hat = [c / r_m for c in point_m]
+        r_meep = r_m / a_m  # see docstring: MUST be meep units, not meters
+
+        gains: list[float | None] = []
+        for f_idx in range(num_freqs):
+            ex, ey, ez, hx, hy, hz = fields[6 * f_idx : 6 * f_idx + 6]
+            sx = 0.5 * (ey * hz.conjugate() - ez * hy.conjugate()).real
+            sy = 0.5 * (ez * hx.conjugate() - ex * hz.conjugate()).real
+            sz = 0.5 * (ex * hy.conjugate() - ey * hx.conjugate()).real
+            s_r = sx * r_hat[0] + sy * r_hat[1] + sz * r_hat[2]
+            u = (r_meep**2) * s_r
+            p_rad = radiated_power[f_idx]
+            gains.append(None if u <= 0 else 10.0 * math.log10(4.0 * math.pi * u / p_rad))
+        direction_results.append(
+            {"label": direction.get("label"), "point_m": list(point_m), "gain_dbi": gains}
+        )
+
+    return {
+        "computed": True,
+        "requested": True,
+        "method": (
+            "Near-to-far-field gain via Meep's own documented near2far "
+            "machinery: sim.add_near2far/mp.Near2FarRegion builds the "
+            "monitor on the full run, sim.get_farfield projects the "
+            "recorded near fields out to each requested direction, and "
+            "gain_dbi = 10*log10(4*pi*U/P_rad) combines that with total "
+            "radiated power read from ordinary flux monitors on the SAME "
+            "enclosing surface (mp.get_fluxes, signed by each region's own "
+            "weight). See simulation/meep.py's module docstring for the "
+            "full citation and this result's own 'validity' entries."
+        ),
+        "frequency_hz": frequency_hz_points,
+        "radiated_power": radiated_power,
+        "directions": direction_results,
+        "validity": [dict(flag) for flag in FAR_FIELD_VALIDITY],
+        "note": (
+            "gain_dbi at each direction/frequency is the peak-normal-"
+            "incidence-style antenna gain in dBi (decibels relative to a "
+            "hypothetical isotropic radiator) -- a null (None) at some "
+            "direction/frequency means the far field genuinely radiated "
+            "nothing measurable that way, not that the measurement failed. "
+            "outputs['gain_dbi'] at the top level is the MAXIMUM of every "
+            "computed value here -- see 'validity' for why that is a peak "
+            "among the requested directions only, not a full-sphere scan."
+        ),
+    }
+
+
+def _peak_gain_dbi(far_field_result: dict[str, Any]) -> float | None:
+    """The single headline number outputs['gain_dbi'] carries: the largest
+    gain found among every requested direction/frequency, or None when
+    far_field was never requested or came back uncomputable (see
+    _compute_far_field's own docstring for why this is a peak among
+    REQUESTED directions, not a full-sphere scan)."""
+    if not far_field_result.get("computed"):
+        return None
+    values = [
+        gain
+        for direction in far_field_result["directions"]
+        for gain in direction["gain_dbi"]
+        if gain is not None
+    ]
+    return max(values) if values else None
+
+
+# ---------------------------------------------------------------------------
 # MeepSimulator: the Simulator contract (simulation/base.py, unchanged).
 # ---------------------------------------------------------------------------
 
@@ -977,6 +1346,9 @@ class MeepSimulator(Simulator):
                 raise SimulatorError(f"geometry[{required_key!r}] is required")
         port = geometry["port"]
         _validate_port(port)
+        far_field_monitor = geometry.get("far_field_monitor")
+        if far_field_monitor is not None:
+            _validate_far_field_monitor(far_field_monitor)
 
         mp_module = (
             self._meep_module
@@ -990,29 +1362,20 @@ class MeepSimulator(Simulator):
         workdir.mkdir(parents=True, exist_ok=True)
 
         if self._delegates_to_another_interpreter():
-            s_parameters = _run_in_meep_interpreter(
+            result = _run_in_meep_interpreter(
                 str(self._python_executable), geometry, a_m, nfreq, job, workdir
             )
         else:
-            s_parameters = _run_reflectance_cross_check(mp_module, geometry, a_m, nfreq, job)
+            result = _run_reflectance_cross_check(mp_module, geometry, a_m, nfreq, job)
 
         return SimulationResult(
             simulator=self.name,
             status="COMPLETED",
             workdir=workdir,
             outputs={
-                "s_parameters": s_parameters,
-                "far_field": {
-                    "computed": False,
-                    "note": (
-                        "Far-field/gain pattern extraction requires Meep's "
-                        "own separate near-to-far-field post-processing "
-                        "machinery, not invoked here -- see simulation/"
-                        "meep.py's module docstring 'SCOPE OF THIS "
-                        "IMPLEMENTATION'."
-                    ),
-                },
-                "gain_dbi": None,
+                "s_parameters": result["s_parameters"],
+                "far_field": result["far_field"],
+                "gain_dbi": result["gain_dbi"],
             },
         )
 
@@ -1225,6 +1588,23 @@ def _run_reflectance_cross_check(
             mp_module, full_sim, fcen, fwidth, nfreq, transmission_center_m, monitor_size_m, a_m
         )
     )
+    # Optional far-field monitor (#270): built on the FULL run only, since
+    # gain describes the actual radiating structure, not the conductor-free
+    # reference baseline. Absent geometry['far_field_monitor'], nothing here
+    # runs and the full run builds exactly the monitors it always did.
+    far_field_monitor = geometry.get("far_field_monitor")
+    near2far_monitor = None
+    radiated_power_monitors: list[Any] = []
+    if far_field_monitor is not None:
+        near2far_monitor = _add_near2far_monitor(
+            mp_module, full_sim, fcen, fwidth, nfreq, far_field_monitor["enclosing_regions"], a_m
+        )
+        radiated_power_monitors = [
+            _add_flux_monitor(
+                mp_module, full_sim, fcen, fwidth, nfreq, region["center_m"], region["size_m"], a_m
+            )
+            for region in far_field_monitor["enclosing_regions"]
+        ]
     # Only the REFLECTION monitor gets the reference fields subtracted. That
     # subtraction is what cancels the source's own outgoing pulse so the
     # remainder is the reflected wave; applied behind the structure it would
@@ -1236,6 +1616,23 @@ def _run_reflectance_cross_check(
     reflected_flux = mp_module.get_fluxes(refl_flux_full)
     transmitted_flux = (
         None if transmission_monitor is None else mp_module.get_fluxes(transmission_monitor)
+    )
+    # Near2far/flux data must be pulled out before reset_meep() discards it,
+    # same as every other monitor above -- but the actual Poynting-vector/
+    # gain arithmetic is pure and happens below, after the reset, per this
+    # repo's "caller fetches, pure function resolves" convention.
+    region_fluxes = (
+        None
+        if far_field_monitor is None
+        else [mp_module.get_fluxes(monitor) for monitor in radiated_power_monitors]
+    )
+    direction_fields = (
+        None
+        if far_field_monitor is None
+        else [
+            full_sim.get_farfield(near2far_monitor, _vector3(mp_module, direction["point_m"], a_m))
+            for direction in far_field_monitor["directions"]
+        ]
     )
     full_sim.reset_meep()
 
@@ -1249,7 +1646,24 @@ def _run_reflectance_cross_check(
         if transmitted_flux is None or incident_forward_flux is None
         else _compute_transmittance(frequency_hz_points, transmitted_flux, incident_forward_flux)
     )
-    return s_parameters
+
+    far_field_result = (
+        _far_field_not_requested()
+        if far_field_monitor is None
+        else _compute_far_field(
+            frequency_hz_points,
+            far_field_monitor["enclosing_regions"],
+            region_fluxes,
+            far_field_monitor["directions"],
+            direction_fields,
+            a_m,
+        )
+    )
+    return {
+        "s_parameters": s_parameters,
+        "far_field": far_field_result,
+        "gain_dbi": _peak_gain_dbi(far_field_result),
+    }
 
 
 def run_meep_simulation(
@@ -1303,6 +1717,31 @@ def run_meep_simulation(
               back); leave it out and no transmission monitor is built at
               all. Leaving it out is right for a ground-backed surface,
               where nothing gets through by construction.
+          "far_field_monitor": {              # OPTIONAL (#270) -- ask for
+              antenna gain/radiation-pattern via Meep's own near-to-far-
+              field transform. Leave it out and no near2far monitor is
+              built at all (no extra solver cost).
+              "enclosing_regions": [           # required if given: a
+                  {"center_m": [x,y,z], "size_m": [x,y,z],
+                   "weight": 1.0 (default, +-1)},  # CLOSED box of planes
+                  ...                          # around the source AND the
+              ],                               # structure -- opposite faces
+                                                # need opposite 'weight' so
+                                                # their net flux is the
+                                                # OUTWARD total (this is
+                                                # THE caller's own
+                                                # responsibility, same as
+                                                # real Meep's Near2FarRegion).
+              "directions": [                  # required if given: far-
+                  {"point_m": [x,y,z],          # field points (meters, same
+                   "label": str (optional)},    # coordinate space as
+                  ...                           # everything else here) to
+              ],                                # project the field to and
+                                                 # report gain at. Should be
+                                                 # far from the structure;
+                                                 # this module does not
+                                                 # check that.
+          },
         }
 
     Result: `s_parameters` carries reflectance/s11_magnitude as it always
@@ -1319,6 +1758,26 @@ def run_meep_simulation(
     Absorption is deliberately NOT computed here: `1 - R - T` is a reading
     of two measurements, and this adapter reports what it measured, not
     what it means (issue #243).
+
+    `far_field` (#270) follows the exact same three-state shape, keyed off
+    `far_field_monitor` instead:
+
+        {"computed": False, "requested": False, "note": ...}  # nobody asked
+        {"computed": False, "requested": True,  "note": ...}  # asked, but
+            #   the enclosing surface's own net radiated power was <= 0
+        {"computed": True, "requested": True, "frequency_hz": [...],
+         "radiated_power": [...], "directions": [{"label": ..., "point_m":
+         [...], "gain_dbi": [...]}, ...], "validity": [...], "note": ...}
+
+    `gain_dbi` at the top level is the single largest value found across
+    every requested direction/frequency (None when far_field was not
+    requested or came back uncomputable) -- see FAR_FIELD_VALIDITY (module-
+    level) for what this number does and does not cover: it is a peak
+    among the CALLER'S OWN requested directions, not a full-sphere scan,
+    and its absolute scale rests on a reasoned (not independently pymeep-
+    verified) assumption that Meep's near2far and flux machinery share one
+    normalization -- see `_compute_far_field`'s own docstring for the
+    physics and unit-conversion reasoning.
 
     See this module's header comment for the format-verification citations
     (Meep's own dimensionless unit system and Python API) and its honest
