@@ -68,6 +68,13 @@ PRINT_ONLY_JOB = {
     "outputs": ["VDB(out)", "VP(out)"],
 }
 
+HB_JOB = {
+    "components": FILTER_COMPONENTS
+    + [{"type": "V", "name": "V1", "n1": "in", "n2": "0", "dc": 0.0, "ac_mag": 1.0}],
+    "analysis": {"type": "hb", "fundamental_freqs_hz": [2.4e9]},
+    "outputs": ["VDB(out)", "VP(out)"],
+}
+
 
 def _make_fake_xyce(tmp_path: Path, body: str) -> Path:
     """Write a small fake 'Xyce' executable (a Python script body,
@@ -127,6 +134,56 @@ def test_generate_xyce_netlist_op_line():
     job = {"components": FILTER_COMPONENTS, "analysis": {"type": "op"}}
     netlist = generate_xyce_netlist(job, print_file=None, touchstone_file=None)
     assert ".OP" in netlist.split("\n")
+
+
+# ---------------------------------------------------------------------------
+# .HB (Harmonic Balance) netlist generation (issue #282) -- see
+# simulation/xyce.py's module docstring for the Reference Guide `.HB`
+# citation (section 2.1.13, p.45) and the `.PRINT HB` two-output-file
+# honest scope note.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_xyce_netlist_hb_line():
+    job = {
+        "components": FILTER_COMPONENTS,
+        "analysis": {"type": "hb", "fundamental_freqs_hz": [2.4e9]},
+    }
+    netlist = generate_xyce_netlist(job, print_file=None, touchstone_file=None)
+    assert ".HB 2.4e+09" in netlist.split("\n")
+
+
+def test_generate_xyce_netlist_hb_multitone_line():
+    # Xyce's `.HB <fundamental frequencies>` general form (Reference Guide
+    # section 2.1.13, p.45) takes one or more space-separated frequencies --
+    # more than one selects multi-tone HB (e.g. an LO tone and an RF tone
+    # driving a mixer).
+    job = {
+        "components": FILTER_COMPONENTS,
+        "analysis": {"type": "hb", "fundamental_freqs_hz": [1e4, 2e2]},
+    }
+    netlist = generate_xyce_netlist(job, print_file=None, touchstone_file=None)
+    assert ".HB 10000 200" in netlist.split("\n")
+
+
+def test_generate_xyce_netlist_hb_print_line_for_outputs():
+    netlist = generate_xyce_netlist(HB_JOB, print_file="xyce_output.csv", touchstone_file=None)
+    assert ".PRINT HB FORMAT=CSV FILE=xyce_output.csv VDB(out) VP(out)" in netlist
+
+
+def test_generate_xyce_netlist_hb_missing_fundamental_freqs_raises():
+    job = {"components": FILTER_COMPONENTS, "analysis": {"type": "hb"}}
+    with pytest.raises(ValueError, match="fundamental_freqs_hz"):
+        generate_xyce_netlist(job, print_file=None, touchstone_file=None)
+
+
+def test_generate_xyce_netlist_hb_empty_fundamental_freqs_raises():
+    job = {
+        "components": FILTER_COMPONENTS,
+        "analysis": {"type": "hb", "fundamental_freqs_hz": []},
+    }
+    with pytest.raises(ValueError, match="fundamental_freqs_hz"):
+        generate_xyce_netlist(job, print_file=None, touchstone_file=None)
 
 
 def test_generate_xyce_netlist_raw_cards_inserted_verbatim():
@@ -332,6 +389,32 @@ def test_run_xyce_simulation_end_to_end_lin_touchstone(tmp_path: Path):
     network = rf.Network(result["touchstone_file"])
     assert network.nports == 2
     assert np.allclose(network.f, np.array([0.1e9, 1.0e9]))
+
+
+def test_run_xyce_simulation_end_to_end_hb_print(tmp_path: Path):
+    # (issue #282) `.PRINT HB FORMAT=CSV` round-trips through the same
+    # parse_xyce_csv() path as `.AC`/`.TRAN` -- `_ANALYSIS_TYPES` accepting "hb" is the only
+    # thing this needed; `want_print` and the generic
+    # `.PRINT {type} FORMAT=CSV FILE=...` line-generation already handled
+    # any accepted analysis type unmodified (see simulation/xyce.py's
+    # header docstring for the honest caveat on a real Xyce run's actual
+    # `.PRINT HB` file-output shape, which was not independently verified).
+    csv_text = "FREQ,VDB(OUT),VP(OUT)\n2400000000.000000,-3.010000,-45.000000\n"
+    script = _make_fake_xyce_py(tmp_path, {"xyce_output.csv": csv_text})
+
+    result = run_xyce_simulation(
+        job=HB_JOB,
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run"),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["scale_name"] == "FREQ"
+    assert result["scale"] == pytest.approx([2.4e9])
+    assert result["values"]["VDB(OUT)"] == pytest.approx([-3.01])
+    assert result["values"]["VP(OUT)"] == pytest.approx([-45.0])
+    assert "s_parameters" not in result
 
 
 def test_run_xyce_simulation_missing_touchstone_file_stays_uncomputed(tmp_path: Path):

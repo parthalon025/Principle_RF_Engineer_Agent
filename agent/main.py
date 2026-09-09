@@ -1344,9 +1344,12 @@ def run_xyce_simulation(job: dict, timeout_s: int = 600) -> dict:
     license needed -- prefer this over run_ngspice_simulation for a larger circuit
     or when real S-parameters are needed): generate a netlist from a structured job
     dict (R/L/C/V/I components, optional "raw_cards" escape hatch for nonlinear
-    devices/subcircuits, an op/ac/tran "analysis", optional node-voltage/branch-
-    current "outputs", and optional "ports" -- see simulation.xyce.generate_xyce_netlist
-    for the full shape), run it via Xyce, and return the requested `.PRINT` outputs
+    devices/subcircuits, an op/ac/tran/hb "analysis" (hb = Harmonic Balance, Xyce's
+    periodic large-signal steady-state analysis for a driven mixer or nonlinear
+    amplifier/unit cell -- see simulation/xyce.py's module docstring), optional
+    node-voltage/branch-current "outputs", and optional "ports" -- see
+    simulation.xyce.generate_xyce_netlist for the full shape), run it via Xyce,
+    and return the requested `.PRINT` outputs
     (CSV columns vs. frequency/time) and/or, when "ports" are given (requires
     analysis type "ac"), REAL S-parameters extracted via Xyce's native `.LIN` linear-
     network analysis and exported to a genuine Touchstone file (surfaced as
