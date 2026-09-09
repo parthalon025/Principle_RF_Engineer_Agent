@@ -94,29 +94,62 @@ invokes `ElmerSolver` as a subprocess; and `parse_elmer_output()` reads the
 returns `s_parameters`/`far_field` as `computed=False` since VectorHelmholtz
 has no native port model or far-field/gain post-processing.
 `run_elmer_simulation()` orchestrates the whole pipeline, tagged
-`provenance: "SIMULATED"`. Not implemented: any coupled multiphysics run —
-the module's own docstring names this as the actual reason it exists, not yet
-built; calibrated ports, S-parameters or far-field; curved, multi-material, or
-multi-region geometry; and any non-EM Elmer solver. None of gmsh/ElmerGrid/
-ElmerSolver is installed in this environment; the pipeline is exercised only
-against fake test scripts, per the module's own "HONEST CAVEAT."
+`provenance: "SIMULATED"`.
+
+**Coupled EM+thermal (issue #281) is now built.** An optional
+`geometry["thermal"]` block (bulk heat conductivity/density/heat capacity,
+plus per-face fixed-temperature or convective boundary conditions) makes
+`generate_elmer_sif()` add a `Heat Equation` (`HeatSolve`/`HeatSolver`) solver
+block alongside the existing `VectorHelmholtz` ones, on the same mesh. The EM
+solve's local ohmic/dielectric loss density is wired into the heat solver's
+source term with two real Elmer keywords, both confirmed directly from
+Elmer's own source rather than guessed by analogy: `Calculate Div of
+Poynting Vector = Logical True` on `VectorHelmholtzCalcFields` (which makes
+VectorHelmholtz itself export a `"Joule Heating"` field — confirmed in
+`VectorHelmholtz.F90`'s own `CalcFieldsLocalAssembly`) and `Joule Heat =
+Logical True` on a `Body Force` block (Elmer's own EM-module-agnostic
+heat-source flag, confirmed in `Differentials.F90`'s `JouleHeat()` function
+and cross-checked against Elmer's own `InductionHeating2`/`3`/`4` tutorial
+`.sif` files). `parse_elmer_output()`/`run_elmer_simulation()` surface a
+coupled run's peak temperature as a new `thermal_result` field
+(`computed=True` with a `max_temperature_k` value when a coupled run's
+`SaveScalars` output has a `"max: Temperature"` column, `computed=False` +
+an explanatory note otherwise) — the same honestly-gapped shape as
+`s_parameters`/`far_field`. Calling the existing entry points with no
+`geometry["thermal"]` key is unchanged: no `Heat Equation` block, no `Joule
+Heat` keyword, EM-only output. See `simulation/elmer.py`'s module docstring
+"COUPLED EM+THERMAL" section for the full citation trail.
+
+Still not implemented: calibrated ports, S-parameters or far-field; curved,
+multi-material, or multi-region geometry; periodic/Floquet unit-cell
+boundaries; and any non-EM, non-heat Elmer solver (structural, CFD,
+MagnetoDynamics, circuit coupling). None of gmsh/ElmerGrid/ElmerSolver is
+installed in this environment; the pipeline (EM-only and coupled) is
+exercised only against fake test scripts, per the module's own "HONEST
+CAVEAT."
 
 ## Capabilities not yet used here
 
-The single biggest gap, and the actual stated reason this adapter exists:
-**coupled EM+thermal multiphysics** — running VectorHelmholtz together with
-Elmer's heat-transfer solver on one mesh so electromagnetic losses in a
-mounted "adaptive EM skin" become a heat source in a thermal solve of the
-same structure. Elmer supports this natively today; this repo's other EM
-solvers cannot do it at all. Beyond that: Elmer's other EM modules
-(MagnetoDynamics, circuit coupling) go unused; its structural and CFD solvers
-are irrelevant to RF work but relevant to a genuine mechanical/thermal
-cross-check of a mounted skin; no periodic/Floquet unit-cell boundary
-condition is wired up, so — unlike this repo's Palace adapter — Elmer cannot
-today characterize a metasurface/FSS unit cell, this repo's core use case;
-and curved/conformal geometry, multi-material layering, and calibrated
-port/S-parameter extraction remain absent from both the geometry model and
-the post-processing, gaps the module's own docstring already names.
+Coupled EM+thermal multiphysics — the single biggest gap named in earlier
+research passes, and the actual stated reason this adapter exists — is now
+implemented (see above); this section covers what is still unused. Elmer's
+other EM modules (MagnetoDynamics, circuit coupling) go unused; its
+structural and CFD solvers are irrelevant to RF work but relevant to a
+genuine mechanical cross-check of a mounted skin. No periodic/Floquet
+unit-cell boundary condition is wired up, so — unlike this repo's Palace
+adapter — Elmer cannot today characterize a metasurface/FSS unit cell, this
+repo's core use case. Curved/conformal geometry, multi-material layering,
+and calibrated port/S-parameter extraction remain absent from both the
+geometry model and the post-processing, gaps the module's own docstring
+already names. The new thermal boundary-condition model itself is limited to
+two types (a fixed-temperature Dirichlet face, or a convective/Robin face
+with a heat-transfer coefficient and ambient temperature) — Elmer's
+radiation boundary condition (`Radiation = Diffuse Gray`, used in its own
+`InductionHeating2` tutorial) is not wired up here. Also unbuilt: iterative/
+transient coupling for temperature-dependent material properties (this
+module's coupled mode runs one steady-state iteration, EM then heat, in that
+order — correct when material properties don't depend on temperature, but
+not a general two-way-coupled solve).
 
 ## Sources
 
@@ -127,5 +160,10 @@ the post-processing, gaps the module's own docstring already names.
 - [5] https://www.csc.fi/en/web/elmer — CSC's own Elmer page (maintainer identity, applications, webinar program)
 - [6] https://csc.fi/en/news/elmer-versatile-multiphysical-modeling/ — CSC news piece (module list including Elmer/Ice, multiphysics framing)
 - [7] https://github.com/ElmerCSC/elmerfem/blob/devel/fem/src/modules/EMWaveSolver.F90 — sibling EM solver module (confirms VectorHelmholtz is one of several distinct EM modules, not Elmer's only one)
+- [8] https://github.com/ElmerCSC/elmerfem/blob/devel/fem/src/Differentials.F90 — `JouleHeat()` function (issue #281): confirms the `Joule Heat = Logical True` Body Force flag and its `'Joule Heating e'` field-name lookup, EM-module-agnostic
+- [9] https://github.com/ElmerCSC/elmerfem/blob/devel/fem/src/DiffuseConvectiveGeneralAnisotropic.F90 — confirms `JouleHeat()` is called from the generic diffusion-convection RHS assembly `HeatSolve.F90` itself uses
+- [10] https://github.com/ElmerCSC/elmerfem/blob/devel/fem/src/modules/HeatSolve.F90 — `Heat Conductivity`/`Density`/`Heat Capacity` Material keywords and `Temperature`/`Heat Transfer Coefficient`/`External Temperature` boundary-condition keywords, read directly (issue #281)
+- [11] https://github.com/ElmerCSC/elmerfem/blob/devel/fem/src/modules/SaveData/SaveScalars.F90 — `Variable N`/`Operator N` keywords and the `TRIM(Oper0)//': '//TRIM(VariableName)` column-naming rule that produces `"max: Temperature"` (issue #281)
+- [12] https://github.com/ElmerCSC/elmerfem/blob/devel/fem/tests/InductionHeating2/crucible.sif (and `InductionHeating3`/`InductionHeating4`, same directory pattern) — Elmer's own worked induction-heating tutorial cases, cross-checked to confirm `Joule Heat = Logical True` is Elmer's standard, EM-module-independent coupling idiom (issue #281)
 - `simulation/elmer.py`, `simulation/base.py` (this repo) — current adapter implementation and `Simulator` interface
 - Note: https://elmerfem.org/ and https://elmerfem.org/blog/ (Elmer's official project site) returned HTTP 403 Forbidden when fetched directly during this research pass and could not be consulted; the claims above rely on the GitHub and CSC sources instead.
