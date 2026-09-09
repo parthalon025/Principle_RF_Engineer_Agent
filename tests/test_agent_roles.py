@@ -190,6 +190,21 @@ def test_systems_role_gets_etsi_ipr_declaration_sourcing_tool():
     assert "ingest_etsi_ipr_declaration" not in _tool_names(ROLES["principal"])
 
 
+def test_systems_role_gets_3gpp_spec_status_lookup_tool():
+    # issue #285: lookup_3gpp_spec_status is the same knowledge-sourcing
+    # concern as ingest_3gpp_spec (same module, same 3gpp.org host, no
+    # credential) -- sits right beside it here. issue #215 already found
+    # the "implemented and tested but wired onto no role's tool list" gap
+    # once for the ingest siblings; this guards the lookup sibling too.
+    names = _tool_names(ROLES["systems"])
+    assert "lookup_3gpp_spec_status" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        assert "lookup_3gpp_spec_status" not in _tool_names(ROLES[key])
+    # Not principal-direct either -- reachable via the systems handoff only,
+    # same as ingest_3gpp_spec (see test_principal_role_is_scoped_not_broad).
+    assert "lookup_3gpp_spec_status" not in _tool_names(ROLES["principal"])
+
+
 def test_systems_role_gets_patent_sourcing_tool():
     # issue #219: fetching a USPTO patent grant/publication is the same
     # knowledge-authoring concern as ingest_arxiv_paper/ingest_3gpp_spec/

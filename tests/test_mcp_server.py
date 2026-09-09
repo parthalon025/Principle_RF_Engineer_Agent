@@ -176,6 +176,10 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # issue #284 adds 1 more (ingest_etsi_ipr_declaration, the SR 000 314
     # IPR/FRAND-declaration register client): 88 + 1 = 89.
+    #
+    # issue #285 adds 1 more (lookup_3gpp_spec_status, the DynaReport
+    # version/withdrawal status lookup wired onto the tool surface right
+    # beside its ingest_3gpp_spec sibling): 89 + 1 = 90.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -209,6 +213,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #257-T2: search_arxiv_papers
         + 1  # issue #286: realize_lowpass_stepped_impedance_microstrip_filter
         + 1  # issue #284: ingest_etsi_ipr_declaration
+        + 1  # issue #285: lookup_3gpp_spec_status
     )
     assert len(registered_names) == expected
 
@@ -281,8 +286,11 @@ def test_standards_body_sourcing_tools_are_registered():
     # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule were
     # implemented and tested (knowledge/sourcing/threegpp.py, etsi.py,
     # fcc_ecfr.py) but wired onto no tool surface -- this asserts they now are.
+    # issue #285's lookup_3gpp_spec_status joins the same assertion so this
+    # test keeps catching the exact same gap for its own sibling function.
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "ingest_3gpp_spec" in registered_names
+    assert "lookup_3gpp_spec_status" in registered_names
     assert "ingest_etsi_standard" in registered_names
     assert "ingest_fcc_rule" in registered_names
 
@@ -317,6 +325,29 @@ def test_ingest_3gpp_spec_calls_through(monkeypatch):
         "classification": "INTERNAL",
         "supersedes_document_id": None,
     }
+
+
+def test_lookup_3gpp_spec_status_calls_through(monkeypatch):
+    # Mocked, not hitting the network -- the real fetch/parse logic is
+    # exercised in tests/test_sourcing_threegpp.py; this only confirms the
+    # MCP wrapper forwards its one argument to knowledge.sourcing.threegpp.
+    captured = {}
+
+    def fake_lookup(spec_number):
+        captured["spec_number"] = spec_number
+        return {
+            "spec_number": spec_number,
+            "title": "NR; UE radio transmission and reception",
+            "withdrawn": True,
+            "version": None,
+        }
+
+    monkeypatch.setattr(server, "_lookup_3gpp_spec_status", fake_lookup)
+
+    result = server.lookup_3gpp_spec_status("38.101")
+
+    assert captured == {"spec_number": "38.101"}
+    assert result["withdrawn"] is True
 
 
 def test_ingest_etsi_standard_calls_through(monkeypatch):

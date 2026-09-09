@@ -55,6 +55,7 @@ from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standar
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
+from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1651,6 +1652,28 @@ def ingest_3gpp_spec(
 
 
 @function_tool
+def lookup_3gpp_spec_status(spec_number: str) -> dict:
+    """Look up spec_number (e.g. "38.101", or a multi-part spec like
+    "38.101-1") in 3GPP's own DynaReport per-series table (3gpp.org's free,
+    no-login HTML database of every spec's status back to 1999; series
+    derived the same way ingest_3gpp_spec derives it -- text before the
+    first "." only) and report its title and whether 3GPP has marked it
+    withdrawn. Run this before ingest_3gpp_spec to catch a withdrawn spec
+    before downloading and ingesting it -- e.g. TS 38.101 itself is
+    withdrawn while its five parts, 38.101-1..5, remain current.
+    Returns {"spec_number", "title", "withdrawn", "version"}. version is
+    always None: the real per-series page this reads has no version
+    column at all (confirmed against a live fetch) -- see
+    knowledge/sourcing/threegpp.py's module docstring for where a real
+    version string does live on 3GPP's site and why fetching it is out of
+    scope here. Raises if spec_number is not a row in the fetched table --
+    a typo, or a spec whose series differs from the one derived from it --
+    naming every spec number the table DID contain, rather than returning
+    a placeholder status."""
+    return _lookup_3gpp_spec_status(spec_number)
+
+
+@function_tool
 def ingest_etsi_standard(
     document_url: str,
     license: str,
@@ -2648,6 +2671,7 @@ _ALL_TOOLS = [
     ingest_arxiv_paper,
     search_arxiv_papers,
     ingest_3gpp_spec,
+    lookup_3gpp_spec_status,
     ingest_etsi_standard,
     ingest_etsi_ipr_declaration,
     ingest_fcc_rule,
@@ -2750,7 +2774,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "search_arxiv_papers before proposing a new element or mechanism "
             "-- 'search precedent before inventing' -- fetching 3GPP specs/"
             "ETSI standards/FCC eCFR rule text via ingest_3gpp_spec/"
-            "ingest_etsi_standard/ingest_fcc_rule, surfacing ETSI's "
+            "ingest_etsi_standard/ingest_fcc_rule (check a 3GPP spec's "
+            "current DynaReport withdrawn/current status via "
+            "lookup_3gpp_spec_status first, so a withdrawn spec doesn't "
+            "get ingested as if it were current), surfacing ETSI's "
             "IPR/(F)RAND-declaration register against a standard already "
             "ingested via ingest_etsi_ipr_declaration, and fetching US "
             "patents and published patent applications from the USPTO via "
@@ -2777,6 +2804,7 @@ ROLE_SPECS: list[RoleSpec] = [
             ingest_arxiv_paper,
             search_arxiv_papers,
             ingest_3gpp_spec,
+            lookup_3gpp_spec_status,
             ingest_etsi_standard,
             ingest_etsi_ipr_declaration,
             ingest_fcc_rule,
