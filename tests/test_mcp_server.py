@@ -173,6 +173,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #286 adds 1 more (realize_lowpass_stepped_impedance_microstrip_
     # filter, the stepped-impedance microstrip physical realization of a
     # synthesized lowpass ladder): 87 + 1 = 88.
+    #
+    # issue #284 adds 1 more (ingest_etsi_ipr_declaration, the SR 000 314
+    # IPR/FRAND-declaration register client): 88 + 1 = 89.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -205,6 +208,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #219: ingest_patent
         + 1  # issue #257-T2: search_arxiv_papers
         + 1  # issue #286: realize_lowpass_stepped_impedance_microstrip_filter
+        + 1  # issue #284: ingest_etsi_ipr_declaration
     )
     assert len(registered_names) == expected
 
@@ -341,6 +345,42 @@ def test_ingest_etsi_standard_calls_through(monkeypatch):
     assert captured["license"] == "ETSI terms"
     assert captured["classification"] == "INTERNAL"
     assert captured["supersedes_document_id"] is None
+
+
+def test_ingest_etsi_ipr_declaration_is_registered():
+    # issue #284: the SR 000 314 IPR/FRAND-declaration register client,
+    # wired onto the MCP tool surface alongside its ingest_etsi_standard
+    # sibling.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "ingest_etsi_ipr_declaration" in registered_names
+
+
+def test_ingest_etsi_ipr_declaration_calls_through(monkeypatch):
+    captured = {}
+
+    def fake_ingest(document_url, *, declared_against_document_id, license, classification):
+        captured.update(
+            document_url=document_url,
+            declared_against_document_id=declared_against_document_id,
+            license=license,
+            classification=classification,
+        )
+        return {"status": "ok", "document_id": 4}
+
+    monkeypatch.setattr(server, "_ingest_etsi_ipr_declaration", fake_ingest)
+
+    result = server.ingest_etsi_ipr_declaration(
+        "https://ipr.etsi.org/IPRDetails.aspx?IPRD_ID=198&IPRD_TYPE_ID=2&MODE=2",
+        declared_against_document_id=2,
+        license="ETSI terms",
+        classification="INTERNAL",
+    )
+
+    assert result == {"status": "ok", "document_id": 4}
+    assert captured["document_url"].startswith("https://ipr.etsi.org/IPRDetails.aspx")
+    assert captured["declared_against_document_id"] == 2
+    assert captured["license"] == "ETSI terms"
+    assert captured["classification"] == "INTERNAL"
 
 
 def test_ingest_fcc_rule_calls_through(monkeypatch):
