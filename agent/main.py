@@ -43,6 +43,9 @@ from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datash
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.literature_search import (
+    search_literature_for_capability_warning as _search_literature_for_capability_warning,
+)
 from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
 from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
@@ -1495,6 +1498,35 @@ def search_arxiv_papers(query: str, max_results: int = 10) -> list:
     return _search_arxiv_papers(query, max_results=max_results)
 
 
+# strict_mode=False: `capability_warning` is a free-form dict (one
+# `capability_warnings` entry -- see orchestration/design_loop.py's
+# `_validate_capability_warnings`, whose `family`/`capability_property`/
+# `reason` values are open text, not a fixed enum) -- same open-schema
+# reason as create_design's requirements/architecture above.
+@function_tool(strict_mode=False)
+def search_literature_for_capability_warning(
+    capability_warning: dict, material_or_ink_name: str
+) -> dict:
+    """Search this project's own knowledge base, then arXiv, for a citable measured
+    value for material_or_ink_name's capability_property -- the gap named by one
+    Capability-warning entry (issue #327, ADR-0033) -- fires only for a Material-/
+    Ink-property library miss that already carries a Capability warning (issue
+    #324). capability_warning is one entry from a capability_warnings list -- only
+    capability_kind/capability_property are read; capability_warning's own "family"
+    names the DESIGN family this warning is attached to (e.g. "patch_antenna"), NOT
+    a material/ink product name, so material_or_ink_name (e.g. "FR4", "MXene ink")
+    must be supplied separately -- you already know it from the design's own
+    context. Raises if capability_kind is not "material" or "ink" ("fabrication"
+    gaps have no literature-search equivalent -- ADR-0033). Returns candidates
+    (title/identifier/excerpt, local-knowledge matches first, then arXiv) when any
+    exist; when nothing citable is found, found=False and message says so plainly
+    rather than approximating a number. Never calls ingest_document and never
+    writes a Material-property/Ink-property library entry -- finding a source and
+    trusting it as evidence stay two separate, deliberate steps; a human still
+    confirms and adds any entry."""
+    return _search_literature_for_capability_warning(capability_warning, material_or_ink_name)
+
+
 @function_tool
 def ingest_3gpp_spec(
     spec_number: str,
@@ -2482,6 +2514,7 @@ _ALL_TOOLS = [
     ingest_document,
     ingest_arxiv_paper,
     search_arxiv_papers,
+    search_literature_for_capability_warning,
     ingest_3gpp_spec,
     ingest_etsi_standard,
     ingest_fcc_rule,
@@ -2567,7 +2600,16 @@ ROLE_SPECS: list[RoleSpec] = [
             "by hand, just run in software, candidate after candidate, until "
             "a target is met, scores plateau, or the evaluation budget runs "
             "out; it halts and reports rather than proceeding the instant it "
-            "would reach a gated step."
+            "would reach a gated step. You alone also hold "
+            "search_literature_for_capability_warning (issue #327, ADR-0033): "
+            "given one of the loop's own capability_warnings entries whose "
+            "capability_kind is 'material' or 'ink', plus the actual material/ink "
+            "product name from the design's own context (the entry's own 'family' "
+            "names the design family it's attached to, not a material/ink name), "
+            "search this project's knowledge base then arXiv for a citable "
+            "measured value -- candidates only, never a settled number, and it "
+            "never writes a library entry itself; a human still confirms and adds "
+            "one."
         ),
         tools=list(_ALL_TOOLS),
     ),
@@ -3071,6 +3113,11 @@ _PRINCIPAL_DIRECT_TOOLS = [
     inspect_design_loop_state,
     compile_lab_test_plan,
     run_candidate_search,
+    # Capability-warning literature search (principal-exclusive, issue #327/
+    # ADR-0033): fires on a capability_warnings entry the design loop itself
+    # produced, so it belongs beside the loop tools above, not the systems
+    # role's general-purpose search_arxiv_papers.
+    search_literature_for_capability_warning,
 ]
 
 _principal_spec = _SPEC_BY_KEY["principal"]

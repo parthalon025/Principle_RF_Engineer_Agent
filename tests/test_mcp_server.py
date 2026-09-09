@@ -165,6 +165,9 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # issue #257-T2 adds 1 more (search_arxiv_papers, arXiv topic/keyword
     # discovery search wired onto the tool surface): 86 + 1 = 87.
+    #
+    # issue #327 adds 1 more (search_literature_for_capability_warning, the
+    # Capability-warning literature-search tool, ADR-0033): 87 + 1 = 88.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -196,6 +199,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 3  # issue #215: ingest_3gpp_spec, ingest_etsi_standard, ingest_fcc_rule
         + 1  # issue #219: ingest_patent
         + 1  # issue #257-T2: search_arxiv_papers
+        + 1  # issue #327: search_literature_for_capability_warning
     )
     assert len(registered_names) == expected
 
@@ -262,6 +266,70 @@ def test_search_arxiv_papers_never_calls_ingest_document(monkeypatch):
     monkeypatch.setattr(server, "_search_arxiv_papers", lambda query, *, max_results: [])
 
     server.search_arxiv_papers("metamaterial")
+
+
+def test_search_literature_for_capability_warning_is_registered():
+    # issue #327 (ADR-0033): knowledge/literature_search.py's
+    # search_literature_for_capability_warning, wired onto the MCP tool
+    # surface.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_literature_for_capability_warning" in registered_names
+
+
+def test_search_literature_for_capability_warning_calls_through(monkeypatch):
+    # Mocked, not hitting a database or the network -- the real search/
+    # validation logic is exercised in tests/test_literature_search.py; this
+    # only confirms the MCP wrapper forwards its arguments unchanged and
+    # returns the underlying result unchanged.
+    captured = {}
+    result = {"found": False, "candidates": [], "message": "nothing citable found"}
+
+    def fake_search(capability_warning, material_or_ink_name):
+        captured["capability_warning"] = capability_warning
+        captured["material_or_ink_name"] = material_or_ink_name
+        return result
+
+    monkeypatch.setattr(server, "_search_literature_for_capability_warning", fake_search)
+
+    warning = {
+        "family": "patch_antenna",
+        "capability_kind": "material",
+        "capability_property": "eps_r",
+    }
+    returned = server.search_literature_for_capability_warning(warning, "MXene ink film")
+
+    assert returned == result
+    assert captured == {"capability_warning": warning, "material_or_ink_name": "MXene ink film"}
+
+
+def test_search_literature_for_capability_warning_never_calls_ingest_document(monkeypatch):
+    # AC3: search and ingest stay two separate calls. Mirrors
+    # test_search_arxiv_papers_never_calls_ingest_document above, one layer
+    # up at the MCP wrapper -- the underlying search itself is stubbed here
+    # too (same as that test does for _search_arxiv_papers) so this stays a
+    # wrapper-wiring check, not a live DB/network call; the real never-
+    # calls-ingest_document behavior against real search logic is covered
+    # in tests/test_literature_search.py.
+    def fail_if_called(**kwargs):
+        raise AssertionError(
+            "search_literature_for_capability_warning must never call ingest_document"
+        )
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(
+        server,
+        "_search_literature_for_capability_warning",
+        lambda capability_warning, material_or_ink_name: {
+            "found": False,
+            "candidates": [],
+            "message": "none",
+        },
+    )
+
+    server.search_literature_for_capability_warning(
+        {"family": "patch_antenna", "capability_kind": "material", "capability_property": "eps_r"},
+        "MXene ink film",
+    )
 
 
 def test_standards_body_sourcing_tools_are_registered():

@@ -130,10 +130,14 @@ def test_principal_role_is_scoped_not_broad():
         "run_candidate_search",
     ):
         assert tool_name in names
-    # 8 design-record + 2 search + 5 design-loop = 15 direct tools. The 5
-    # specialist handoffs are NOT in .tools -- see the handoff-specific
-    # tests below for those.
-    assert len(names) == 15
+    # Capability-warning literature search (issue #327/ADR-0033): fires on
+    # the design loop's own capability_warnings output, so it stays beside
+    # the design-iteration-loop tools above -- still principal-exclusive.
+    assert "search_literature_for_capability_warning" in names
+    # 8 design-record + 2 search + 5 design-loop + 1 capability-warning
+    # literature search = 16 direct tools. The 5 specialist handoffs are NOT
+    # in .tools -- see the handoff-specific tests below for those.
+    assert len(names) == 16
 
 
 def test_principal_module_alias_matches_registry():
@@ -210,6 +214,25 @@ def test_search_arxiv_papers_is_categorized_ingestion_auto():
     # never itself writes a document.
     assert category_for("search_arxiv_papers") == category_for("ingest_arxiv_paper")
     assert category_for("search_arxiv_papers") == "ingestion_auto"
+
+
+def test_principal_role_gets_capability_warning_literature_search_tool():
+    # issue #327 (ADR-0033): search_literature_for_capability_warning fires
+    # on a capability_warnings entry the design loop itself produced -- a
+    # principal-exclusive concern (advance_design_loop_step is principal-
+    # exclusive too), unlike search_arxiv_papers's general-purpose topic
+    # search above, which lives on systems instead.
+    names = _tool_names(ROLES["principal"])
+    assert "search_literature_for_capability_warning" in names
+    for key in ("systems", "microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "search_literature_for_capability_warning" not in role_names
+
+
+def test_search_literature_for_capability_warning_is_categorized_ingestion_auto():
+    # Same bucket as search_arxiv_papers, for the same reason -- see
+    # policies/tool_policy.yaml's own comment beside this entry.
+    assert category_for("search_literature_for_capability_warning") == "ingestion_auto"
 
 
 def test_systems_role_gets_component_sourcing_tools():

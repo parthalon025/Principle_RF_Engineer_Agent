@@ -202,9 +202,19 @@ ingestion_auto:
   # just this project's own knowledge base) -- ingestion_auto, grouped by
   # "external, credential-free knowledge/sourcing operation," is still the
   # closest fit.
+  # issue #327 (ADR-0033): search_literature_for_capability_warning
+  # (knowledge/literature_search.py) sits here for exactly the same reason
+  # search_arxiv_papers does, immediately above -- it reaches the same
+  # credential-free arXiv query API (via search_arxiv_papers itself) plus
+  # this project's own knowledge base, never itself writes a document, and
+  # is not a `calculation` or an in-project-only `read_only` lookup. Scoped
+  # narrower still than search_arxiv_papers: it only ever fires on a
+  # Material-/Ink-property Capability-warning entry (issue #324), not a
+  # free-text topic search.
   - ingest_document
   - ingest_arxiv_paper
   - search_arxiv_papers
+  - search_literature_for_capability_warning
   - ingest_3gpp_spec
   - ingest_etsi_standard
   - ingest_fcc_rule
