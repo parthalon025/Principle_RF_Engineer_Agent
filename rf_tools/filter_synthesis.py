@@ -530,17 +530,29 @@ def realize_lowpass_stepped_impedance_microstrip(
             f"board's manufacturable trace widths allow."
         )
 
-    omega_c = 2 * math.pi * network.cutoff_hz
+    wc = 2 * math.pi * network.cutoff_hz
     sections = []
     for element in network.elements:
         if element.topology == "L":
             z0 = z_high_ohm
-            assert element.inductance_h is not None  # lowpass "L" always sets this
-            beta_l = omega_c * element.inductance_h / z0
+            if element.inductance_h is None:
+                raise ValueError(
+                    f"element at position {element.position} has topology='L' "
+                    f"but inductance_h=None; a lowpass 'L' branch must carry "
+                    f"the series inductor value this method needs to compute "
+                    f"bl = wc * L / z_high_ohm."
+                )
+            beta_l = wc * element.inductance_h / z0
         elif element.topology == "C":
             z0 = z_low_ohm
-            assert element.capacitance_f is not None  # lowpass "C" always sets this
-            beta_l = omega_c * element.capacitance_f * z0
+            if element.capacitance_f is None:
+                raise ValueError(
+                    f"element at position {element.position} has topology='C' "
+                    f"but capacitance_f=None; a lowpass 'C' branch must carry "
+                    f"the shunt capacitor value this method needs to compute "
+                    f"bl = wc * C * z_low_ohm."
+                )
+            beta_l = wc * element.capacitance_f * z0
         else:
             raise ValueError(
                 f"realize_lowpass_stepped_impedance_microstrip has no microstrip "
@@ -549,7 +561,7 @@ def realize_lowpass_stepped_impedance_microstrip(
             )
         width_m = microstrip_synthesize_width_m(z0, eps_r, h_m)
         eps_eff = microstrip_effective_permittivity(eps_r, width_m, h_m)
-        beta = omega_c * eps_eff**0.5 / _SPEED_OF_LIGHT_M_S
+        beta = wc * eps_eff**0.5 / _SPEED_OF_LIGHT_M_S
         sections.append(
             MicrostripLineSection(
                 position=element.position,

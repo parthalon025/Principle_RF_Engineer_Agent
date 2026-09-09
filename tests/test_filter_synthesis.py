@@ -658,3 +658,34 @@ def test_stepped_impedance_invalid_substrate_inputs_raise():
         realize_lowpass_stepped_impedance_microstrip(net, eps_r=1.0, h_m=_H_M)
     with pytest.raises(ValueError):
         realize_lowpass_stepped_impedance_microstrip(net, eps_r=_EPS_R, h_m=0.0)
+
+
+def test_stepped_impedance_rejects_a_lowpass_l_element_missing_its_inductance():
+    """FilterElement/FilterNetwork are public, directly-constructible
+    dataclasses -- this function cannot assume every network it receives came
+    from synthesize_filter(). A hand-built 'L' branch with inductance_h=None
+    is a reachable, invalid input, and must raise a named ValueError rather
+    than fail deep inside the arithmetic (e.g. `omega_c * None / z0`)."""
+    import dataclasses
+
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
+    series_index = next(i for i, e in enumerate(net.elements) if e.topology == "L")
+    broken_element = dataclasses.replace(net.elements[series_index], inductance_h=None)
+    broken_elements = list(net.elements)
+    broken_elements[series_index] = broken_element
+    broken_net = dataclasses.replace(net, elements=tuple(broken_elements))
+    with pytest.raises(ValueError, match="inductance_h"):
+        realize_lowpass_stepped_impedance_microstrip(broken_net, eps_r=_EPS_R, h_m=_H_M)
+
+
+def test_stepped_impedance_rejects_a_lowpass_c_element_missing_its_capacitance():
+    import dataclasses
+
+    net = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
+    shunt_index = next(i for i, e in enumerate(net.elements) if e.topology == "C")
+    broken_element = dataclasses.replace(net.elements[shunt_index], capacitance_f=None)
+    broken_elements = list(net.elements)
+    broken_elements[shunt_index] = broken_element
+    broken_net = dataclasses.replace(net, elements=tuple(broken_elements))
+    with pytest.raises(ValueError, match="capacitance_f"):
+        realize_lowpass_stepped_impedance_microstrip(broken_net, eps_r=_EPS_R, h_m=_H_M)
