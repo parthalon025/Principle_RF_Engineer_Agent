@@ -466,3 +466,41 @@ CREATE TABLE IF NOT EXISTS pending_design_release_approvals (
 
 CREATE INDEX IF NOT EXISTS pending_design_release_approvals_design_id_idx
 ON pending_design_release_approvals (design_id);
+
+-- Issue #321 (ADR-0031, CONTEXT.md: Requirements document). One row per
+-- REVISION of a design's Requirements document, never updated in place --
+-- "every revision is kept, never overwritten" (ADR-0031), the same instinct
+-- that keeps an ADR's own corrections dated and appended rather than
+-- silently rewriting the claim they correct. A document's current
+-- status/narrative/requirement_targets is simply its highest
+-- revision_number row for that design_id; the full review history is every
+-- row for that design_id, ordered by revision_number.
+--
+-- One Requirements document per Design (ADR-0031: "one document per Design,
+-- not one per Customer requirement") -- enforced by
+-- designs.requirements_document.create_requirements_document refusing a
+-- second document for a design_id that already has one, not by a schema
+-- constraint here (a second document would simply be a second, distinct
+-- revision_number=1 row, which the application layer never writes).
+--
+-- `narrative` is the single capability-description/intended-effect prose
+-- for the whole design; `requirement_targets` is a dict keyed by
+-- requirement_id, one entry per Customer requirement row already recorded
+-- on the design, each entry shaped like designs.requirement_targets.
+-- propose_target/mark_unscoreable's own output -- the same structured
+-- fields ADR-0031 says get extracted into requirements[requirement_id]
+-- once this document reaches CONFIRMED (a later ticket's job, not this
+-- one's).
+CREATE TABLE IF NOT EXISTS requirements_documents (
+    id BIGSERIAL PRIMARY KEY,
+    design_id BIGINT NOT NULL REFERENCES designs(id) ON DELETE CASCADE,
+    revision_number INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    narrative TEXT NOT NULL,
+    requirement_targets JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(design_id, revision_number)
+);
+
+CREATE INDEX IF NOT EXISTS requirements_documents_design_id_idx
+ON requirements_documents (design_id);
