@@ -49,28 +49,6 @@ below are that PDF's own):
     section 2.1.31.3 (p.135-136) -- see the HONEST SCOPE NOTE ON `.PRINT
     HB`'s TWO OUTPUT FILES below for what that section says beyond the
     plain `.AC`/`.TRAN` one-file model this adapter already handles.
-
-HONEST SCOPE NOTE ON `.PRINT HB`'s TWO OUTPUT FILES (added for issue #282,
-alongside the pre-existing `.LIN` confidence caveat below): section 2.1.31.3
-documents that a single `.PRINT HB` statement generates TWO output files --
-one frequency-domain, one time-domain (`<netlist-name>.HB.FD.csv` and
-`<netlist-name>.HB.TD.csv` under FORMAT=CSV) -- not the ONE file `.PRINT
-AC`/`.PRINT TRAN` write via this module's own `FILE=` argument. This
-module's generic `.PRINT {type} FORMAT=CSV FILE=<file>` line-generation and
-run_xyce_simulation()'s single-`print_file`-readback (both left unchanged by
-issue #282, which only wires up the `.HB` analysis line and job-dict
-contract) assume the `.AC`/`.TRAN` one-file model; whether a real Xyce run
-honors `FILE=` for the frequency-domain file specifically, ignores it and
-uses the two `<netlist-name>.HB.*` names regardless, or something else, was
-NOT independently verified against a second primary source (see the
-Reference Guide's own pointer, in its `.PRINT` FILE= description, to "the
-Xyce Users' Guide['s] 'Results Output and Evaluation Options' section...for
-analysis types (e.g., AC and HB) that can produce multiple output files" --
-that Users' Guide section was not fetched in this pass). Request explicit
-frequency-domain output variables (VDB()/VP()/etc., matching this module's
-existing `.AC` convention) and confirm the actual output filename against a
-real Xyce run before relying on `.PRINT HB` for anything beyond this
-ticket's netlist-generation/job-dict-plumbing scope.
   - `.LIN [SPARCALC=<1|0>] [FORMAT=<TOUCHSTONE|TOUCHSTONE2>]
     [LINTYPE=<S|Y|Z>] [DATAFORMAT=<RI|MA|DB>] [FILE=<file>]` general form
     -- a native linear-network S-/Y-/Z-parameter extraction analysis
@@ -116,6 +94,28 @@ netlist suite) in this pass, and since no real Xyce binary was available
 to run end-to-end (see below), treat the `.LIN`/Port-device path
 specifically as carrying one extra notch of uncertainty beyond this
 module's other, more routine (.AC/.TRAN/.PRINT) coverage.
+
+HONEST SCOPE NOTE ON `.PRINT HB`'s TWO OUTPUT FILES (added for issue #282,
+alongside the `.LIN` confidence caveat above): section 2.1.31.3 documents
+that a single `.PRINT HB` statement generates TWO output files -- one
+frequency-domain, one time-domain (`<netlist-name>.HB.FD.csv` and
+`<netlist-name>.HB.TD.csv` under FORMAT=CSV) -- not the ONE file `.PRINT
+AC`/`.PRINT TRAN` write via this module's own `FILE=` argument. This
+module's generic `.PRINT {type} FORMAT=CSV FILE=<file>` line-generation and
+run_xyce_simulation()'s single-`print_file`-readback (both left unchanged by
+issue #282, which only wires up the `.HB` analysis line and job-dict
+contract) assume the `.AC`/`.TRAN` one-file model; whether a real Xyce run
+honors `FILE=` for the frequency-domain file specifically, ignores it and
+uses the two `<netlist-name>.HB.*` names regardless, or something else, was
+NOT independently verified against a second primary source (see the
+Reference Guide's own pointer, in its `.PRINT` FILE= description, to "the
+Xyce Users' Guide['s] 'Results Output and Evaluation Options' section...for
+analysis types (e.g., AC and HB) that can produce multiple output files" --
+that Users' Guide section was not fetched in this pass). Request explicit
+frequency-domain output variables (VDB()/VP()/etc., matching this module's
+existing `.AC` convention) and confirm the actual output filename against a
+real Xyce run before relying on `.PRINT HB` for anything beyond this
+ticket's netlist-generation/job-dict-plumbing scope.
 
 SCOPE OF THIS IMPLEMENTATION:
   - Analyses: `.OP`, `.AC`, `.TRAN`, `.HB` (issue #282 added `.HB` --
