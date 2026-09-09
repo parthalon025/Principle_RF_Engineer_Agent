@@ -47,7 +47,7 @@ starts from a real answer instead of institutional memory.
 | Tool | What it is, and why this repo uses it | Biggest capability not yet wired up |
 |---|---|---|
 | [Digi-Key Product Information API v4](digikey.md) | OAuth2 REST API to Digi-Key's own distributor catalog. | `ProductDetails`/parametric data is unused — only enough is fetched to find a datasheet; no frequency/impedance/tolerance parametric matching. |
-| [Mouser Search API](mouser.md) | Flat-API-key REST API to Mouser's own distributor catalog. | Pricing, availability, lead-time, and compliance (RoHS/REACH/export-control) fields are already returned by the one call this repo makes, but dropped before reaching scoring. |
+| [Mouser Search API](mouser.md) | Flat-API-key REST API to Mouser's own distributor catalog. | `search/keyword` free-text discovery is unused — a part must already be known by exact MPN; pricing/availability/lead-time/compliance fields were the biggest gap until ticket #274 wired them into `lookup_mouser_datasheet()`'s result. |
 | [Nexar API (Octopart data)](nexar.md) | OAuth2 GraphQL API aggregating stock/pricing across *many* distributors at once (Mouser and Digi-Key included). | Multi-distributor pricing/availability aggregation — the trait that most distinguishes Nexar from the other two — is never queried; also unused: per-part ECAD footprint data. |
 
 ## Knowledge & standards ingestion (5)
@@ -76,9 +76,11 @@ A few gaps repeat across categories, not just within one tool:
 - **Far-field/antenna pattern output** is a real capability in openEMS, HFSS, Meep, and
   OpenParEM, but only OpenParEM's adapter currently returns it — the others report
   S-parameters only.
-- **Data already fetched but discarded**: Mouser's pricing/availability/compliance fields
-  arrive in the one response this repo's adapter already makes, and are dropped before
-  reaching scoring — a zero-additional-API-cost gap, unlike everything above it.
+- **Data already fetched but discarded**: this was Mouser's pricing/availability/compliance
+  fields, arriving in the one response this repo's adapter already makes but dropped before
+  reaching scoring — a zero-additional-API-cost gap, unlike everything above it. Ticket #274
+  closed it; Digi-Key's `ProductDetails`/parametric data (row above) is the same pattern,
+  still open.
 
 ## Methodology
 
