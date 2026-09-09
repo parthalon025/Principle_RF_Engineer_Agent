@@ -158,6 +158,22 @@ def ingest_etsi_ipr_declaration(
     `fetch_fn` defaults to a real HTTP GET (`knowledge.sourcing._http.
     download_bytes`) and exists so tests can inject a stub instead of
     hitting the network.
+
+    The validate/download/write-to-tempdir/`ingest_document()` block below
+    is a deliberate near-copy of `ingest_etsi_standard`'s, not an oversight
+    (code review, issue #284): the issue's own spec text asks this function
+    to validate and download "exactly the same way `ingest_etsi_standard`
+    does," and every ingestion client in this package repeats this same
+    handful of lines independently rather than sharing a helper --
+    `ingest_3gpp_spec` in `threegpp.py` has the identical
+    `Path(download_dir) if download_dir else Path(tempfile.mkdtemp(prefix=
+    ...))` / `work_dir.mkdir(parents=True, exist_ok=True)` shape, and no
+    such helper exists anywhere in this package today (see `_http.py`'s
+    "five thin ingestion clients" docstring). Keeping each function a fully
+    self-contained thin client matches this file's own "no new ingestion
+    logic lives here" rule. A package-wide `_download_to_tempfile()` helper
+    would be a reasonable future refactor, but it would touch all five
+    modules, which is out of this ticket's scope.
     """
     parsed = urlparse(document_url)
     if parsed.netloc != _ALLOWED_IPR_HOST or parsed.path != _ALLOWED_IPR_PATH:
