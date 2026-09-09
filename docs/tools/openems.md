@@ -83,29 +83,39 @@ LGPLv3, which allows linking from non-GPL code [4].
 **`generate_openems_xml()`** builds a full FDTD-XML file from a structured
 geometry/materials/ports/mesh dict: `Box`, `Cylinder`, or (issue #55)
 planar `Polygon` primitives (the last covering arbitrary unit-cell outlines
-like split-ring resonators), a rectilinear mesh, and per-port `Excitation`
+like split-ring resonators), a rectilinear mesh, per-port `Excitation`
 (Gaussian pulse), `LumpedElement` termination, and voltage/current
-`ProbeBox` pairs. **`OpenemsSimulator.run()`** shells out to the real
-`openEMS` binary via `subprocess` (default `--disable-dumps`, since this
-adapter doesn't parse H5 field dumps), keeping only the log tail.
-**`parse_openems_output()`** reads that log for convergence metadata
-(energy-decay end-criteria vs. max-timesteps termination), then, given the
-workdir and port list, **`_compute_s_parameters_from_probes()`** FFTs each
-port's voltage/current dump, decomposes incident/reflected waves per
-openEMS's own `calcLumpedPort.m` formula, and computes real S-parameters —
-for a single port, the full S11, also written as a Touchstone `.s1p` via
-`skrf`. **`run_openems_simulation()`** orchestrates all of the above,
-tagging results `provenance: "SIMULATED"`.
+`ProbeBox` pairs, and (issue #269) an optional `nf2ff` recording-box
+definition — a dozen per-face `DumpBox` field-dump properties, one E and
+one H frequency-domain dump per enclosing-box face, following openEMS's
+own `CreateNF2FFBox.m` naming convention. **`OpenemsSimulator.run()`**
+shells out to the real `openEMS` binary via `subprocess` (default
+`--disable-dumps`, since ordinarily this adapter doesn't parse H5 field
+dumps — dropped automatically for a run that requests an `nf2ff` box, so
+its dumps actually get written). **`parse_openems_output()`** reads that
+log for convergence metadata (energy-decay end-criteria vs. max-timesteps
+termination), then, given the workdir and port list,
+**`_compute_s_parameters_from_probes()`** FFTs each port's voltage/current
+dump, decomposes incident/reflected waves per openEMS's own
+`calcLumpedPort.m` formula, and computes real S-parameters — for a single
+port, the full S11, also written as a Touchstone `.s1p` via `skrf`. Given
+the workdir and an `nf2ff` box definition,
+**`_compute_far_field_from_nf2ff()`** shells out to openEMS's own
+*separate* `nf2ff` command-line tool (a distinct binary from `openEMS`
+itself, built from the same source tree) against the FD field dumps just
+written, then parses its result HDF5 (`/nf2ff/E_theta`, `/nf2ff/E_phi`,
+`/nf2ff/P_rad`, `/nf2ff` `Prad` attribute) into a real per-angle `pattern`
+table and `gain_dbi` — structurally parallel to `simulation/nec2pp.py`'s
+own `pattern`/`gain_dbi` keys. **`run_openems_simulation()`** orchestrates
+all of the above, tagging results `provenance: "SIMULATED"`.
 
-The module's own header states the real `openEMS` binary is **not
-installed in this environment**, so this has not been exercised end-to-end
-against a real run — an explicitly-flagged gap, not a silent one.
+The module's own header states the real `openEMS` binary (and the
+separate `nf2ff` binary) are **not installed in this environment**, so
+none of this has been exercised end-to-end against a real run — an
+explicitly-flagged gap, not a silent one.
 
 ## Capabilities not yet used here
 
-- **Far-field/gain (NF2FF)**: a real openEMS capability this adapter never
-  invokes — `far_field` always reports `computed=False`. For evaluating
-  antenna patterns (not just S-parameters) this is the single biggest gap.
 - **Dispersive/anisotropic materials**: the adapter only emits isotropic,
   non-dispersive values, though CSXCAD's XML already supports per-axis
   tensors and openEMS supports Drude/Lorentz/Debye dispersion.
@@ -130,5 +140,10 @@ against a real run — an explicitly-flagged gap, not a silent one.
 - [9] GitHub code search for `Floquet repo:thliebig/openEMS` — single tutorial-comment match, no dedicated Floquet-port implementation found
 - [10] https://github.com/thliebig/openEMS/blob/master/matlab/SetBoundaryCond.m — boundary-condition setter; documented types are PML/MUR/PEC/PMC, no periodic type
 - [11] https://raw.githubusercontent.com/thliebig/openEMS/master/matlab/Tutorials/CRLH_Extraction.m — periodic-metamaterial tutorial using PML/MUR/PEC walls plus a separately-computed Bloch-Floquet dispersion check, not a true periodic boundary
+- [12] https://raw.githubusercontent.com/thliebig/openEMS/master/matlab/CreateNF2FFBox.m — the NF2FF recording-box convention (12 per-face DumpBox properties, "\<name\>\_E\_\<face\>"/"\<name\>\_H\_\<face\>" naming), fetched directly
+- [13] https://raw.githubusercontent.com/thliebig/CSXCAD/master/src/CSPropDumpBox.cpp, `.h`, and `matlab/AddDump.m` — the `DumpBox` property's XML attribute shape (DumpType/DumpMode/FileType) and its numeric-code meanings, fetched directly
+- [14] https://raw.githubusercontent.com/thliebig/openEMS/master/nf2ff/main.cpp and `nf2ff/nf2ff.cpp` — the standalone `nf2ff` command-line tool's CLI contract (`nf2ff <xml-file>`) and its own input-XML/result-HDF5 schemas, fetched directly
+- [15] https://raw.githubusercontent.com/thliebig/openEMS/master/nf2ff/nf2ff_calc.cpp — the Directivity(theta,phi) = 4·π·r²·P_rad(theta,phi)/Prad_total formula this adapter's own gain_dbi is computed from, fetched directly
+- [16] https://raw.githubusercontent.com/thliebig/openEMS/master/python/openEMS/nf2ff.py — openEMS's own Python NF2FF result reader; confirms h5py reads the result HDF5's complex fields as native numpy complex arrays with no manual real/imag reassembly, fetched directly
 - `simulation/openems.py` and `simulation/base.py` (this repo) — current adapter implementation and `Simulator` interface, including its own extensive source citations for the FDTD-XML format
 - Not independently confirmed in this pass: GitHub's Releases page for `thliebig/openEMS` reports no formal releases (project is tagged but not "Released" in GitHub's UI sense); version history above is read from tags only

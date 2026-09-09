@@ -989,13 +989,25 @@ def run_openems_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: 
     can't adequately model. Returns "SIMULATED" provenance. S-parameters are REAL --
     FFT-computed from the run's port ProbeBox voltage/current time-domain dumps --
     when those dump files are present (this module's own XML now requests them);
-    they fall back to an honestly-flagged computed=False when they aren't. IMPORTANT
-    SCOPE LIMIT: far-field extraction is still NOT computed -- it requires openEMS's
-    separate nf2ff tool, out of scope for this pass (see simulation/openems.py's
-    module docstring). Format verified against primary openEMS/CSXCAD documentation
-    (see simulation/openems.py's module docstring for citations) but NOT against a
-    real openEMS binary -- none is installed in this environment; treat any result as
-    unverified end-to-end until it has been run against the real tool at least once."""
+    they fall back to an honestly-flagged computed=False when they aren't. Far-field/
+    gain is REAL too (issue #269) when geometry includes an optional "nf2ff" key: a
+    near-field-to-far-field recording box ("p1_m"/"p2_m" corners enclosing every
+    radiating structure, plus optional "directions"/"name"/"frequencies_hz"/
+    "radius_m"/"center_m"/"eps_r"/"mue_r"/theta-phi angle-grid overrides -- see
+    simulation.openems.generate_openems_xml for the full shape). Requesting it also
+    keeps this run's field/NF2FF dumps enabled automatically (the default
+    --disable-dumps flag would otherwise suppress them). The result's "gain_dbi" is
+    then a real number and "far_field" carries a real per-angle "pattern" table,
+    structurally parallel to run_nec2_simulation's own "pattern"/"gain_dbi" keys --
+    which is what lets the design loop's default SIMULATION-step scored field
+    (gain_dbi) work the same way for either simulator. Without an "nf2ff" key, or if
+    openEMS's separate nf2ff post-processing step doesn't produce a parseable result,
+    "far_field" stays an honestly-flagged computed=False stub with an explanatory
+    note -- never a fabricated number. Format verified against primary openEMS/CSXCAD
+    documentation (see simulation/openems.py's module docstring for citations) but
+    NOT against a real openEMS binary -- none is installed in this environment; treat
+    any result as unverified end-to-end until it has been run against the real tool
+    at least once."""
     return _run_openems_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
