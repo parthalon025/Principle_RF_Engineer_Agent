@@ -41,6 +41,18 @@ this client does not assume a specific one.
 Thin client per this repo's knowledge-sourcing seam: download the zip,
 extract the one document file, hand it to `knowledge.ingest.ingest_document`
 unchanged (`source_type='standard'`). No new ingestion logic lives here.
+
+This module also holds a second responsibility added by ticket #285:
+`lookup_3gpp_spec_status`, a DynaReport-backed version/withdrawal status
+lookup with no ingestion step of its own (see the "DynaReport version/
+withdrawal lookup" section comment below, above `SpecNotFoundError`, for
+its full scope). Kept in this file rather than split out per CLAUDE.md's
+"Improve before adding" SRP guidance -- "extend when the file stays
+cohesive; split only when adding would push it past one responsibility":
+both functions are 3GPP-sourcing concerns sharing the same `_spec_url`-
+style series-derivation rule (text before the first ".") and the same
+injectable `fetch_fn` seam, and a reader asking "how does this repo talk
+to 3GPP" needs both together, not decoupled into separate files.
 """
 
 from __future__ import annotations
@@ -57,14 +69,24 @@ from knowledge.ingest import ingest_document
 from knowledge.sourcing._http import download_bytes
 
 
-class SpecNotFoundError(Exception):
+class SpecNotFoundError(ValueError):
     """Raised by `lookup_3gpp_spec_status` when `spec_number` does not
     appear as a row in the fetched DynaReport per-series table -- e.g. a
     typo, or a spec that belongs to a different series than the one
-    derived from it. Named after this module's other "warn, never guess"
-    failure modes (`knowledge.db.DuplicateDocumentError`,
-    `geometry.unit_cell.SymbolNotFoundError`): identify exactly what is
-    missing rather than returning an empty/placeholder result."""
+    derived from it.
+
+    A `ValueError` subclass, not a bare `Exception`: this is "the
+    identifier given doesn't resolve to a row in a fetched collection", the
+    same failure shape this repo's closest precedents already name --
+    `geometry.unit_cell.SymbolNotFoundError` and
+    `designs.design_families.UnknownDesignFamilyError`, both `ValueError`
+    subclasses naming exactly what was looked for and what IS available,
+    never a bare `KeyError` (`knowledge.db.DuplicateDocumentError`, the
+    other module this class was previously compared to, is the same "warn,
+    never guess" instinct applied to a different failure shape -- a
+    conflict/already-exists case, not a lookup miss -- so it is a weaker
+    analog for base-class choice than the two above). Identify exactly what
+    is missing rather than returning an empty/placeholder result."""
 
 
 # Preference order when a 3GPP zip contains more than one candidate member:
@@ -174,6 +196,15 @@ def ingest_3gpp_spec(
 # silently drop the field, `version` is always returned as `None` with this
 # reasoning on the record. Closing the gap for real means a follow-up ticket
 # against the per-spec detail page, not stretching this one.
+#
+# Independently re-checked during this diff's own code review (2026-09-09):
+# a direct fetch of the live page hit the same HTTP 403 3gpp.org returns to
+# most automated clients, but a text-rendering proxy fetch of the same URL
+# confirmed the same shape reported above -- a flat "spec number / title /
+# status" list with no version column and no base-36 version-style token
+# (e.g. "h00") anywhere on the page. This does not replace re-fetching the
+# real page if 3GPP ever changes its markup; it corroborates the finding on
+# the record a second time, from a second vantage point.
 class _SeriesTableParser(HTMLParser):
     """Parses the `<table id="a3dyntab">` on a 3GPP DynaReport per-series
     page into rows of `{"spec_number", "title", "withdrawn"}`. Handles the
@@ -246,13 +277,15 @@ class _SeriesTableParser(HTMLParser):
 
 def _parse_series_table(html_text: str) -> list[dict[str, Any]]:
     """Pure parsing half of `lookup_3gpp_spec_status` -- "caller fetches,
-    pure function resolves" (this repo's own convention, see
-    `designs/element_alphabet.py`'s docstring for the pattern this mirrors).
-    Takes the already-decoded HTML of a DynaReport per-series page and
-    returns one dict per spec row: `spec_number`, `title`, `withdrawn`
-    (`version` is not present here -- see the section docstring above for
-    why `lookup_3gpp_spec_status` always reports it as `None`). Directly
-    unit-testable with a plain string, no network/fetch_fn involved.
+    this function only resolves" (this repo's own convention; see
+    `geometry/unit_cell.py`'s docstring, which credits
+    `designs.material_properties.resolve_material_property` for the same
+    phrasing, for the pattern this mirrors). Takes the already-decoded HTML
+    of a DynaReport per-series page and returns one dict per spec row:
+    `spec_number`, `title`, `withdrawn` (`version` is not present here --
+    see the section docstring above for why `lookup_3gpp_spec_status`
+    always reports it as `None`). Directly unit-testable with a plain
+    string, no network/fetch_fn involved.
     """
     parser = _SeriesTableParser()
     parser.feed(html_text)
@@ -277,7 +310,11 @@ def lookup_3gpp_spec_status(
     Raises `SpecNotFoundError` if `spec_number` does not appear as a row in
     the fetched table (a typo, or a spec whose series differs from the one
     derived from it) -- this function never guesses or returns a
-    placeholder status.
+    placeholder status. The error names every spec number the fetched
+    table DID contain (matching `geometry.unit_cell.SymbolNotFoundError`'s
+    "name what was sought and what IS available" shape), so a caller can
+    tell a mistyped spec/dash/suffix apart from a series table that came
+    back empty or malformed.
 
     `fetch_fn` defaults to a real HTTP GET (`knowledge.sourcing._http.
     download_bytes`) and exists so tests can inject a stub instead of
@@ -297,6 +334,9 @@ def lookup_3gpp_spec_status(
                 "version": None,
             }
 
+    known = sorted(row["spec_number"] for row in rows)
     raise SpecNotFoundError(
-        f"{spec_number!r} not found in the {series}-series DynaReport table fetched from {url}"
+        f"{spec_number!r} not found in the {series}-series DynaReport table "
+        f"fetched from {url}. Known spec numbers in that table: "
+        f"{known if known else '(table had no rows -- check the series page itself)'}."
     )

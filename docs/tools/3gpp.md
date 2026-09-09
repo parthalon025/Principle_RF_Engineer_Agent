@@ -130,11 +130,18 @@ rot per this repo's own CLAUDE.md. A real current-version number does live
 on 3GPP's site, on the much heavier, ASP.NET/RadGrid-rendered per-*spec*
 detail page (`/dynareport/{spec-no-dot}.htm`, one fetch per spec, not per
 series) — closing that half of the gap is unstarted work, not done here.
-Six tests in `tests/test_sourcing_threegpp.py` cover withdrawn/current
+Seven tests in `tests/test_sourcing_threegpp.py` cover withdrawn/current
 detection, series-URL derivation from a multi-part spec number, the
-not-found error, the always-`None` version field (with the reasoning
-above), and the pure HTML-parsing function on its own, no `fetch_fn`
-involved.
+not-found error (`SpecNotFoundError`, a `ValueError` subclass naming every
+spec the fetched table DID contain), the always-`None` version field (with
+the reasoning above), and the pure HTML-parsing function on its own, no
+`fetch_fn` involved. Registered under `ingestion_auto` in
+`policies/tool_policy.yaml` (ungated, same as `ingest_3gpp_spec`), and
+wired onto the MCP tool surface (`mcp_server/server.py`) and the systems
+role's tool list (`agent/main.py`) right beside `ingest_3gpp_spec` -- issue
+#215 found this exact "implemented and tested, wired onto no tool surface"
+gap once already for the sibling ingest functions, so this one ships
+alongside its own registration rather than repeating that gap.
 
 ## Capabilities not yet used here
 

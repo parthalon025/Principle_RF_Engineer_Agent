@@ -211,10 +211,22 @@ ingestion_auto:
   # Users" documents read-only anonymous access, and Google's crawler --
   # which holds no ETSI session -- has these pages indexed directly). No
   # credential, no self-gate to categorize this under approval_self_gated.
+  #
+  # ticket #285: lookup_3gpp_spec_status sits here too, right beside
+  # ingest_3gpp_spec -- same credential-free 3gpp.org endpoint (its own
+  # DynaReport per-series HTML table rather than the FTP archive), same
+  # ungated posture, same module (knowledge/sourcing/threegpp.py). Like
+  # search_arxiv_papers above, it never itself calls ingest_document -- it
+  # only reports a spec's title/withdrawn/version status -- so it is not a
+  # `calculation` (nothing derived) and not `read_only` in that category's
+  # own sense (it reaches an external network endpoint, not just this
+  # project's own knowledge base); "external, credential-free knowledge/
+  # sourcing operation" is still the closest fit.
   - ingest_document
   - ingest_arxiv_paper
   - search_arxiv_papers
   - ingest_3gpp_spec
+  - lookup_3gpp_spec_status
   - ingest_etsi_standard
   - ingest_etsi_ipr_declaration
   - ingest_fcc_rule

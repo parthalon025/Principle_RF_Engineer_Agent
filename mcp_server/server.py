@@ -38,6 +38,7 @@ from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standar
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
+from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1579,6 +1580,29 @@ def ingest_3gpp_spec(
         classification=classification,
         supersedes_document_id=supersedes_document_id,
     )
+
+
+@mcp.tool()
+def lookup_3gpp_spec_status(spec_number: str) -> dict:
+    """Look up spec_number (e.g. "38.101", or a multi-part spec like
+    "38.101-1") in 3GPP's own DynaReport per-series table
+    (https://www.3gpp.org/dynareport?code={series}-series.htm, series
+    derived the same way ingest_3gpp_spec derives it -- text before the
+    first "." only) and report its title and whether 3GPP has marked it
+    withdrawn. Run this before ingest_3gpp_spec to catch a withdrawn spec
+    before downloading and ingesting it -- e.g. TS 38.101 itself is
+    withdrawn while its five parts, 38.101-1..5, remain current.
+    Returns {"spec_number", "title", "withdrawn", "version"}. version is
+    always None: the real per-series page this reads has no version
+    column at all (confirmed against a live fetch) -- see
+    knowledge/sourcing/threegpp.py's module docstring for where a real
+    version string does live on 3GPP's site and why fetching it is out of
+    scope here.
+    Raises SpecNotFoundError (a ValueError subclass) if spec_number is not
+    a row in the fetched table -- a typo, or a spec whose series differs
+    from the one derived from it -- naming every spec number the table DID
+    contain, rather than returning a placeholder status."""
+    return _lookup_3gpp_spec_status(spec_number)
 
 
 @mcp.tool()

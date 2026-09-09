@@ -196,7 +196,7 @@ _SERIES_TABLE_HTML = """
 """
 
 
-def test_lookup_reports_withdrawn_spec_as_withdrawn(monkeypatch):
+def test_lookup_reports_withdrawn_spec_as_withdrawn():
     fetched_urls: list[str] = []
 
     def fake_fetch(url: str) -> bytes:
@@ -211,7 +211,7 @@ def test_lookup_reports_withdrawn_spec_as_withdrawn(monkeypatch):
     assert result["title"] == "NR; UE radio transmission and reception"
 
 
-def test_lookup_reports_current_part_as_not_withdrawn(monkeypatch):
+def test_lookup_reports_current_part_as_not_withdrawn():
     result = threegpp.lookup_3gpp_spec_status(
         "38.101-1", fetch_fn=lambda url: _SERIES_TABLE_HTML.encode("utf-8")
     )
@@ -242,6 +242,23 @@ def test_lookup_raises_a_named_error_when_spec_not_in_table():
         )
 
 
+def test_lookup_not_found_error_is_a_value_error_naming_known_specs():
+    # Matches geometry.unit_cell.SymbolNotFoundError's "name what was sought
+    # AND what IS available" shape (both are ValueError subclasses for the
+    # same "identifier doesn't resolve to a row in a fetched collection"
+    # failure), so a caller can tell a mistyped spec/dash/suffix apart from
+    # a series table that came back empty or malformed.
+    with pytest.raises(ValueError, match="38.999") as exc_info:
+        threegpp.lookup_3gpp_spec_status(
+            "38.999", fetch_fn=lambda url: _SERIES_TABLE_HTML.encode("utf-8")
+        )
+
+    assert isinstance(exc_info.value, threegpp.SpecNotFoundError)
+    message = str(exc_info.value)
+    assert "38.101" in message
+    assert "38.101-1" in message
+
+
 def test_lookup_reports_version_as_none_since_the_real_per_series_page_has_no_version_column():
     """Ticket #285's acceptance criteria ask for "the correct current version
     string for a non-withdrawn spec row" -- but the real per-series
@@ -266,10 +283,11 @@ def test_lookup_reports_version_as_none_since_the_real_per_series_page_has_no_ve
 
 def test_parse_series_table_is_a_pure_function_no_fetch_needed():
     """`_parse_series_table` is the pure parsing half of the lookup -- the
-    "caller fetches, pure function resolves" split this repo's other
-    modules (designs/element_alphabet.py, designs/material_properties.py)
-    already establish. Directly unit-testable with a plain string, no
-    fetch_fn/monkeypatching required."""
+    "caller fetches, this function only resolves" split `geometry/
+    unit_cell.py`'s own docstring establishes for `designs.
+    material_properties.resolve_material_property`'s fetch/resolve seam.
+    Directly unit-testable with a plain string, no fetch_fn/monkeypatching
+    required."""
     rows = threegpp._parse_series_table(_SERIES_TABLE_HTML)
 
     by_spec = {row["spec_number"]: row for row in rows}
