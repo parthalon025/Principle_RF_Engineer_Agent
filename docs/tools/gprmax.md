@@ -116,7 +116,13 @@ Concretely wired up:
   (`#material` + full-footprint `#box`) — the feature this adapter exists
   for — plus caller-supplied `materials` (dielectric bodies) and
   `conductors` (PEC, via gprMax's reserved `pec` identifier), and exactly
-  **one** `#transmission_line`-fed port with its Gaussian `#waveform`.
+  **one** `#transmission_line`-fed port with its Gaussian `#waveform`. Both
+  `half_space` and any `materials` entry may also carry an optional
+  `dispersion` field (issue #277), emitted as the matching
+  `#add_dispersion_debye`/`_lorentz`/`_drude` command immediately after
+  that material's `#material` line — the frequency-dependent counterpart
+  to the plain-`#material` case, for absorber/ferrite/FSS-substrate
+  modelling.
 - **`parse_gprmax_output()`** reads the `.out` HDF5 file's `/tls/tl1/`
   Vinc/Vtotal/Itotal dumps and computes S11(f) and Zin(f) by FFT
   (`_compute_s_and_z_from_tl()`), reproducing gprMax's own official
@@ -143,23 +149,25 @@ synthetic `.out` files, not a real gprMax run.
 
 ## Capabilities not yet used here
 
-The single most significant unused capability is **dispersive material
-models** (`#add_dispersion_debye/_lorentz/_drude`) [6]. This repo's adapter
-only exposes gprMax's simple non-dispersive `#material` (constant epsilon_r/
-conductivity), but real absorber, ferrite, and frequency-selective-surface
-substrates are frequency-dependent by nature — an absorber tuned to be lossy
-at one band and transparent at another is exactly a Debye/Lorentz material,
-and the whole point of an FSS or absorber design is often that dispersive
-response. Also unused: **GPU (CUDA) and MPI acceleration**, which could speed
-up or parallelize the sweeps this repo's scoring loop needs; **`#soil_peplinski`
-+ `#fractal_box`** for a realistic (non-uniform) lossy ground, useful for
-buried/embedded antenna work closer to gprMax's original GPR domain than this
-repo's flat-surface metasurface focus; and multi-port/`#hertzian_dipole`
-excitation for coupling or array studies. None of gprMax's own capabilities
-address periodic/unit-cell metamaterial characterization, filter synthesis,
-component sourcing, or literature ingestion — those are out of this tool's
-category and are handled by other adapters (e.g. Palace for Floquet/periodic
-boundaries) in this repo.
+**Dispersive material models** (`#add_dispersion_debye/_lorentz/_drude`) [6]
+were this section's single most significant gap as of this report's original
+research pass, and are now wired up (issue #277): both the `half_space`
+ground fill and any `materials` entry accept an optional `dispersion` field,
+emitted as the matching `#add_dispersion_*` command right after that
+material's `#material` line, letting the adapter model an absorber, ferrite,
+or frequency-selective-surface substrate that is lossy at one band and
+nearly transparent at another — instead of only the flat, frequency-
+independent `#material` approximation. Still unused: **GPU (CUDA) and MPI
+acceleration**, which could speed up or parallelize the sweeps this repo's
+scoring loop needs; **`#soil_peplinski` + `#fractal_box`** for a realistic
+(non-uniform) lossy ground, useful for buried/embedded antenna work closer
+to gprMax's original GPR domain than this repo's flat-surface metasurface
+focus; and multi-port/`#hertzian_dipole` excitation for coupling or array
+studies. None of gprMax's own capabilities address periodic/unit-cell
+metamaterial characterization, filter synthesis, component sourcing, or
+literature ingestion — those are out of this tool's category and are
+handled by other adapters (e.g. Palace for Floquet/periodic boundaries) in
+this repo.
 
 ## Sources
 
