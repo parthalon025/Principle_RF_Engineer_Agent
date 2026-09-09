@@ -56,6 +56,7 @@ from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standar
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.fcc_ecfr import search_fcc_rules as _search_fcc_rules
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
+from knowledge.sourcing.patent import search_uspto_patents as _search_uspto_patents
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
 from optimization.rf_objectives import (
@@ -1839,8 +1840,10 @@ def ingest_patent(
     same application ("US 2022/0192066 A1", "20220192066") -- the same invention
     published at two moments, and often worth ingesting both, since they differ
     a lot in how readable the file is. This tool CANNOT look one number up from
-    the other (that needs a keyed API this project has no credential for) and it
-    does NOT search: call it once per number you already have.
+    the other (that needs a keyed lookup-by-number call this project has not
+    built), and it does NOT itself search -- use search_uspto_patents (issue
+    #280) for "find patents about X", then call this once per number the search
+    turns up.
     How the file is read depends on what is in it, not on which number you gave.
     Every USPTO PDF measured so far is a scan -- a photograph of the page, with
     no machine-readable text -- so the usual path is: hand the PDF to the normal
@@ -1870,6 +1873,36 @@ def ingest_patent(
         supersedes_document_id=supersedes_document_id,
         render_page_images=render_page_images,
     )
+
+
+@function_tool
+def search_uspto_patents(query: str, max_results: int = 10) -> list:
+    """Search the USPTO Open Data Portal (ODP) by topic/full-text (issue #280)
+    and return a ranked list of candidates for review -- NOT documents in the
+    corpus. Each candidate carries number/title/date/snippet (snippet is always
+    None: ODP's search response is bibliographic metadata -- title, dates,
+    applicant/inventor -- not a text excerpt of the matched document; see
+    knowledge/sourcing/patent.py's module docstring). Use "search precedent
+    before inventing" (CLAUDE.md) to judge relevance before spending an
+    ingestion pass on it. Pass a chosen candidate's number straight to
+    ingest_patent unchanged (it already round-trips through
+    normalize_patent_number, so it is never rejected as an implausible number)
+    along with the license/classification ADR-0001 requires for that specific
+    document -- this tool never calls ingest_document or ingest_patent itself,
+    so finding a patent here never counts as trusting it. Refuses to run unless
+    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND USPTO_ODP_API_KEY is configured (see
+    .env.example) -- unlike ingest_patent above, this places a real,
+    credentialed call to a third party (ODP requires a free USPTO.gov account
+    with a linked, ID.me-verified identity, confirmed live this ticket: a
+    request with no key is refused with HTTP 401 before ODP even reads the
+    query). ODP's own request/response shape is corroborated from multiple
+    independent working API clients but NOT run against the real API in this
+    environment -- treat any result as unverified end-to-end until it has been
+    run against the real API at least once. A topic with no matches returns []
+    (a real "nobody has filed this" result); a missing credential or an
+    unreachable API raises instead of returning an empty list, so the two cases
+    are never confused."""
+    return _search_uspto_patents(query, max_results=max_results)
 
 
 @function_tool
@@ -2583,6 +2616,14 @@ def run_candidate_search(
 #                   (device/network-level, not a systems-level concern) or
 #                   the knowledge *auditing* tools (read_document/
 #                   extract_components -- verification's job, see below).
+#                   Also (issue #280) search_uspto_patents, ingest_patent's sibling
+#                   discovery step: full-text topic search against the USPTO Open Data
+#                   Portal, returning candidates only, never itself calling ingest_document
+#                   or ingest_patent -- the same "search precedent before inventing"
+#                   discipline search_arxiv_papers already applies, credentialed this
+#                   time (require_external_network_tools_enabled, a real USPTO.gov/ID.me
+#                   account), so it sits in approval_self_gated rather than
+#                   ingestion_auto in policies/tool_policy.yaml.
 #   - microwave:    passive/active RF component and network analysis. Gets
 #                   VSWR, return loss, noise figure, Touchstone analysis, the
 #                   S/Z/Y/ABCD two-port parameter conversions, stability
@@ -2749,6 +2790,7 @@ _ALL_TOOLS = [
     ingest_fcc_rule,
     search_fcc_rules,
     ingest_patent,
+    search_uspto_patents,
     index_document,
     read_document,
     search_knowledge,
@@ -2857,7 +2899,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "rule text by topic/keyword via search_fcc_rules before you "
             "already know which part covers it, and fetching US "
             "patents and published patent applications from the USPTO via "
-            "ingest_patent) other roles rely on. Defer network-level "
+            "ingest_patent, or searching the USPTO Open Data Portal by topic "
+            "via search_uspto_patents first (issue #280) -- same 'search "
+            "precedent before inventing' discipline as arXiv, credentialed "
+            "this time) other roles rely on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
@@ -2886,6 +2931,7 @@ ROLE_SPECS: list[RoleSpec] = [
             ingest_fcc_rule,
             search_fcc_rules,
             ingest_patent,
+            search_uspto_patents,
             index_document,
             search_knowledge,
             lookup_digikey_component,

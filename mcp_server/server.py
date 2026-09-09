@@ -39,6 +39,7 @@ from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standar
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.fcc_ecfr import search_fcc_rules as _search_fcc_rules
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
+from knowledge.sourcing.patent import search_uspto_patents as _search_uspto_patents
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
 from optimization.rf_objectives import (
@@ -1771,7 +1772,8 @@ def ingest_patent(
     "12089385") or the pre-grant publication number of the same application
     ("US 2022/0192066 A1", "20220192066") -- the same invention published at two
     moments, often worth ingesting both. It cannot look one number up from the
-    other, and it does not search: call it once per number you have.
+    other, and it does not itself search -- use search_uspto_patents (issue #280)
+    for "find patents about X", then call this once per number the search turns up.
     Which conversion runs depends on what is in the file, not on which number
     you gave. Every USPTO PDF measured so far is a scan -- a photograph of the
     page with no machine-readable text -- so the usual path hands the PDF to the
@@ -1792,6 +1794,32 @@ def ingest_patent(
         supersedes_document_id=supersedes_document_id,
         render_page_images=render_page_images,
     )
+
+
+@mcp.tool()
+def search_uspto_patents(query: str, max_results: int = 10) -> list:
+    """Search the USPTO Open Data Portal (ODP) by topic/full-text (issue #280)
+    and return a ranked list of candidates for review -- NOT documents in the
+    corpus. Each candidate carries number/title/date/snippet (snippet is always
+    None -- ODP's search response is bibliographic metadata, not a text excerpt
+    of the matched document; see knowledge/sourcing/patent.py's module docstring).
+    Use "search precedent before inventing" (CLAUDE.md) to judge relevance before
+    spending an ingestion pass on it. Pass a chosen candidate's number straight
+    to ingest_patent unchanged (it already round-trips through
+    normalize_patent_number), along with the license/classification ADR-0001
+    requires for that specific document -- this tool never calls ingest_document
+    or ingest_patent itself, so finding a patent here never counts as trusting
+    it. Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND
+    USPTO_ODP_API_KEY is configured (see .env.example) -- unlike ingest_patent
+    above, this places a real, credentialed call to a third party (ODP requires
+    a free USPTO.gov account with a linked, ID.me-verified identity). ODP's own
+    request/response shape is corroborated from multiple independent working API
+    clients but NOT run against the real API in this environment -- treat any
+    result as unverified end-to-end until it has been run against the real API
+    at least once. A topic with no matches returns [] (a real "nobody has filed
+    this" result); a missing credential or an unreachable API raises instead of
+    returning an empty list, so the two cases are never confused."""
+    return _search_uspto_patents(query, max_results=max_results)
 
 
 @mcp.tool()
