@@ -1445,7 +1445,10 @@ def test_prediction_provenance_is_always_inferred_confirmed_and_refuted_can_disa
     against a real CONFIRMED-vs-REFUTED disagreeing pair, not just prose."""
     state = _state_at_analysis()
     achieved = patch_resonant_frequency_hz(
-        _BASE_CANDIDATE["eps_r"], _BASE_CANDIDATE["w_m"], _BASE_CANDIDATE["h_m"], _BASE_CANDIDATE["l_m"]
+        _BASE_CANDIDATE["eps_r"],
+        _BASE_CANDIDATE["w_m"],
+        _BASE_CANDIDATE["h_m"],
+        _BASE_CANDIDATE["l_m"],
     )
     target = propose_target(value=achieved, comparator="EQUALS", unit="Hz", tolerance=1e8)
 
@@ -1482,7 +1485,6 @@ def test_prediction_never_affects_scoring_or_stopping_rules(tmp_path):
     best_candidate_index/best_candidate_overall_score_percent/stop_reason/
     stop_detail/candidates_evaluated -- a Prediction only ever adds a new
     "prediction" field to the record, never changes any other one."""
-    state = _state_at_analysis()
     fake_nec2pp = _make_fake_nec2pp(tmp_path)
     good = _full_candidate(tmp_path, fake_nec2pp)
     target = _exact_frequency_target(good, tolerance=5e7)
@@ -1515,7 +1517,7 @@ def test_prediction_never_affects_scoring_or_stopping_rules(tmp_path):
         "candidates_requested",
     ):
         assert without.get(key) == with_pred.get(key), key
-    for w_entry, p_entry in zip(without["trail"], with_pred["trail"]):
+    for w_entry, p_entry in zip(without["trail"], with_pred["trail"], strict=True):
         assert w_entry["overall_score_percent"] == p_entry["overall_score_percent"]
         assert w_entry["all_targets_met"] == p_entry["all_targets_met"]
         assert w_entry["status"] == p_entry["status"]
@@ -1549,3 +1551,85 @@ def test_prediction_never_affects_scoring_or_stopping_rules(tmp_path):
         without_plateau["best_candidate_overall_score_percent"]
         == with_plateau["best_candidate_overall_score_percent"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Group 8: mechanism_claim -- a single, batch-level, verbatim-passthrough
+# string (issue #253, docs/adr/0022). Direct parallel to the per-candidate
+# "note" field's own test above, plus coverage that it is recorded on every
+# early-return path since it is captured before any candidate runs.
+# ---------------------------------------------------------------------------
+
+
+def test_mechanism_claim_is_forwarded_verbatim_or_none_when_omitted(tmp_path):
+    state = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    target = _exact_frequency_target(candidate, tolerance=5e7)
+
+    with_claim = run_candidate_search(
+        state,
+        [candidate],
+        {"analysis": {"target": target}},
+        mechanism_claim="the shortest candidate scores worst",
+    )
+    assert with_claim["mechanism_claim"] == "the shortest candidate scores worst"
+
+    without_claim = run_candidate_search(
+        _state_at_analysis(), [candidate], {"analysis": {"target": target}}
+    )
+    assert without_claim["mechanism_claim"] is None
+
+
+def test_mechanism_claim_is_recorded_before_any_candidate_runs():
+    """A mechanism_claim is carried onto the result even when the loop
+    halts before evaluating a single candidate -- it is captured at the
+    top of run_candidate_search, before the gated-step/out-of-scope/
+    completed checks that can each return early."""
+    state = start_design_loop(REQUIREMENTS).to_dict()
+    state["design_id"] = 1
+    state["design_key"] = "SOLVER-MECHANISM-CLAIM-TEST"
+    state["persisted_decision_count"] = 0
+    assert state["current_step"] == DesignStep.ARCHITECTURE.value
+
+    target = _exact_frequency_target(_BASE_CANDIDATE)
+    result = run_candidate_search(
+        state,
+        [_BASE_CANDIDATE],
+        {"analysis": {"target": target}},
+        mechanism_claim="untested going in, but stated anyway",
+    )
+
+    assert result["stop_reason"] == "gated_step_pending_approval"
+    assert result["candidates_evaluated"] == 0
+    assert result["mechanism_claim"] == "untested going in, but stated anyway"
+
+
+def test_mechanism_claim_never_influences_scoring_or_stopping_rules(tmp_path):
+    """Never parsed or scored by this module (Implementation Decisions) --
+    the exact same batch, with and without a mechanism_claim, produces
+    byte-for-byte identical scoring/stopping fields."""
+    state_a = _state_at_analysis()
+    state_b = _state_at_analysis()
+    fake_nec2pp = _make_fake_nec2pp(tmp_path)
+    candidate = _full_candidate(tmp_path, fake_nec2pp)
+    target = _exact_frequency_target(candidate, tolerance=5e7)
+
+    without = run_candidate_search(state_a, [candidate], {"analysis": {"target": target}})
+    with_claim = run_candidate_search(
+        state_b,
+        [candidate],
+        {"analysis": {"target": target}},
+        mechanism_claim="a claim with no bearing on the arithmetic",
+    )
+
+    for key in (
+        "overall_score_percent",
+        "all_targets_met",
+        "best_candidate_index",
+        "best_candidate_overall_score_percent",
+        "stop_reason",
+        "stop_detail",
+        "candidates_evaluated",
+    ):
+        assert without.get(key) == with_claim.get(key), key

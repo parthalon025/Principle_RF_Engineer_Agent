@@ -405,6 +405,25 @@ test running the same batch with and without Predictions attached and
 asserting every pre-existing field is byte-for-byte identical.
 
 ------------------------------------------------------------------------
+MECHANISM CLAIM: ONE TESTABLE REASON FOR THE WHOLE BATCH, NOT ONE GUESS
+PER CANDIDATE (issue #253, docs/adr/0022).
+
+`mechanism_claim` is a single optional string parameter on the call
+itself, not a candidate field -- a Prediction (above) states what value a
+candidate is expected to score; a Mechanism claim states WHY the batch was
+shaped the way it was (ADR-0022's own example: "the shortest candidate
+scores worst"), one ordering statement for the batch as a whole. It is
+carried straight through onto the result dict's own `mechanism_claim`
+field, verbatim, and is never parsed, validated, or scored by this
+module -- exactly as Predictions are never allowed to influence
+`overall_score_percent`/convergence, the reverse also holds: nothing here
+checks whether the claim held up. That reading is left to a human, or a
+later LLM turn, working from the batch's own `trail`. Omitted, it reads
+`None`; present, it appears unchanged, including on every early-return
+path (`loop_completed`/`gated_step_pending_approval`/`out_of_scope_step`),
+since the claim is recorded before any candidate runs.
+
+------------------------------------------------------------------------
 STOPPING RULES -- the three this ticket names, plus two structural halts.
 
   - `"target_satisfaction"`: the first candidate whose `overall_score_
@@ -1082,6 +1101,7 @@ def run_candidate_search(
     plateau_epsilon: float = 0.5,
     target_satisfaction_threshold: float = 100.0,
     design_id: int | None = None,
+    mechanism_claim: str | None = None,
 ) -> dict[str, Any]:
     """Drive a batch of LLM-proposed candidates through a design loop's
     ungated ANALYSIS/SIMULATION/OPTIMIZATION span, candidate after
@@ -1145,6 +1165,17 @@ def run_candidate_search(
         `best_candidate_state` -- those three remain scoped to THIS call's
         own newly-evaluated candidates only, since a historical score has
         no matching NEW state to hand back.
+      - `mechanism_claim`: optional (default `None`). A single testable
+        ordering statement for why this batch was proposed the way it was
+        (e.g. "the shortest candidate scores worst") -- one claim for the
+        whole batch, never per candidate (that is what each candidate's
+        own `"prediction"` key is for; see `candidates` above and
+        "PREDICTION" in this module's docstring). Carried straight through
+        onto the result dict's own `mechanism_claim` field, verbatim,
+        never parsed or scored by this module (ADR-0022; issue #253) --
+        present on every return path, including the early
+        `loop_completed`/`gated_step_pending_approval`/`out_of_scope_step`
+        stops, since it is recorded before any candidate runs.
 
     Raises `SolverError` for a malformed call (bad `state`/`candidates`/
     `score_specs`/`design_id` shape, or an out-of-range budget/plateau
@@ -1166,6 +1197,8 @@ def run_candidate_search(
         identically).
       - `loop_id` / `iteration` / `design_id`: copied from `state`, for a
         reader who has only this result at hand.
+      - `mechanism_claim`: the `mechanism_claim` argument, verbatim, or
+        `None` if omitted -- see that argument's own entry above.
       - `convergence_rule`: always `"worst_of_scored_steps"` -- see
         "DESIGN QUESTION 3".
       - `target_satisfaction_threshold` / `plateau_window` /
@@ -1227,6 +1260,7 @@ def run_candidate_search(
         "loop_id": state.get("loop_id"),
         "iteration": state.get("iteration"),
         "design_id": state.get("design_id"),
+        "mechanism_claim": mechanism_claim,
         "convergence_rule": "worst_of_scored_steps",
         "target_satisfaction_threshold": target_satisfaction_threshold,
         "plateau_window": plateau_window,
