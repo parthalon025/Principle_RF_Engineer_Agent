@@ -94,9 +94,9 @@ plus a `raw_cards` escape hatch for anything else (semiconductor devices,
 subcircuits) since this repo deliberately does not generate SPICE
 model-parameter syntax itself — and emits a `.control` block for one of
 seven analysis types: `op`/`ac`/`tran`/`noise`/`disto` write results with
-`wrdata` (one shared scale column, via `set wr_singlescale`, plus one value
-column per output, or a real/imaginary pair per output for the three that
-are complex small-signal quantities — `ac`, `disto`, and noise's own
+`wrdata` (one shared scale column, via `set wr_singlescale`, plus one real
+value column per output, or a real/imaginary pair per output for the two
+complex small-signal quantities — `ac` and `disto`; `noise`'s own
 spectral-density vectors stay real); `pz`/`sens` have no swept axis to
 write at all, so their block ends with `print all` instead (issue #283 —
 neither analysis sweeps anything, so `wrdata`'s "one row per swept point"
