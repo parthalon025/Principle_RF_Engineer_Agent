@@ -114,6 +114,52 @@ It is not imported by, and does not import, `agent/main.py` or
 `mcp_server/server.py` -- see `tests/test_approval_cli.py`'s structural
 test for the two-sided proof that `request_loop_step_approval` itself
 never reaches either tool registry, by name.
+
+THE RELEASE GATE (issue #258 ticket 3): the same surface, a second pending
+table. Everything above is the loop-step gate this module was originally
+built for (ticket 2). `designs/release_approval.py`'s
+`request_design_release_approval` is the sibling gate for moving a design to
+`RELEASED` -- its own module docstring makes the same "THIS CODEBASE DOES
+NOT WIRE UP A REAL HUMAN-FACING APPROVAL UI/WORKFLOW" statement, with its
+own, separate, process-local signing key (deliberately not shared with the
+loop-step gate's -- see that module's docstring). It needed the identical
+missing door, so it gets it here rather than in a second, parallel module:
+one CLI, one mental model, a second pending table shaped for what a release
+decision actually is.
+
+A release decision is not mid-loop state -- there is no `loop_state`/
+`step_input` to save, no `GATED_STEPS` to check against. What a human needs
+to decide "may this exact design revision move to RELEASED" is just the
+`designs.release_approval.release_fingerprint_fields` shape itself:
+`design_id`, `design_key`, `revision`, `target`. `pending_design_release_
+approvals` (`db/schema.sql`) stores exactly those plus `submitted_by`/
+`submitted_at`, mirroring `pending_loop_step_approvals`'s shape without the
+loop-specific columns it has no use for. `submit_pending_release_approval`
+takes the design dict a human already has on hand -- `designs.service.
+read_design`'s own return shape, the same way `submit_pending_approval`
+takes a caller-held `loop_state` dict rather than fetching one itself; this
+module still calls no function in `designs/service.py` (its docstring's
+point about `list_pending_approvals` above holds here too -- there is
+nothing to join).
+
+`decide_pending_release_approval` is the ONLY place this module calls
+`request_design_release_approval`, the same way `decide_pending_approval`
+is the only caller of `request_loop_step_approval` -- never the other
+gate's minting function, never both from one call. Ticket 3's own scope
+stops at minting: a successful approval here writes the `GATE_DESIGN_
+RELEASE` audit record and hands the receipt back to the human (printed, or
+`--out`) -- it does NOT call `designs.service.update_design_status` (nor
+anything else) to actually flip the design's status to `RELEASED`.
+`designs.service.update_design_status` already accepts an `approval`
+argument (issue #145) but the agent/MCP-facing `advance_design_status` tool
+does not yet thread a receipt through to it -- wiring that tool to accept
+and forward a minted `DesignReleaseApprovalReceipt` is ticket 4's job, not
+this one's. Until then, this module's release-gate surface only ever mints
+and hands back a receipt; nothing here writes to the `designs` table at
+all. A refusal is symmetric with the loop-step gate's: it writes the
+`GATE_DESIGN_RELEASE` audit record and deletes the pending row, and touches
+nothing else -- there is no "advance" step here to skip in the first
+place.
 """
 
 from __future__ import annotations
@@ -130,12 +176,20 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 import designs.db as designs_db
+from designs.models import DesignStatus
+from designs.release_approval import (
+    DesignReleaseApprovalError,
+    DesignReleaseApprovalReceipt,
+    release_fingerprint_fields,
+    request_design_release_approval,
+)
 from orchestration.approval import (
     LoopStepApprovalReceipt,
     OrchestrationError,
     request_loop_step_approval,
 )
 from orchestration.approval_audit import (
+    GATE_DESIGN_RELEASE,
     GATE_LOOP_STEP,
     OUTCOME_APPROVED,
     OUTCOME_REFUSED,
@@ -152,10 +206,15 @@ from orchestration.tooling import advance_design_loop_step
 __all__ = [
     "ApprovalCliError",
     "decide_pending_approval",
+    "decide_pending_release_approval",
     "describe_pending_approval",
+    "describe_pending_release_approval",
     "get_pending_approval",
+    "get_pending_release_approval",
     "list_pending_approvals",
+    "list_pending_release_approvals",
     "submit_pending_approval",
+    "submit_pending_release_approval",
 ]
 
 
@@ -451,6 +510,241 @@ def decide_pending_approval(
 
 
 # ---------------------------------------------------------------------------
+# The release gate (issue #258 ticket 3) -- the same shape of functions as
+# the loop-step gate above, backed by `pending_design_release_approvals`
+# instead of `pending_loop_step_approvals`. See this module's docstring's
+# "THE RELEASE GATE" section for why a release decision needs no
+# loop_state/step_input and no GATED_STEPS check.
+# ---------------------------------------------------------------------------
+
+
+def submit_pending_release_approval(
+    design: dict[str, Any],
+    submitted_by: str,
+    target: DesignStatus | str = DesignStatus.RELEASED,
+) -> dict[str, Any]:
+    """Register one pending design-release approval request, computed from
+    a caller-held `design` dict -- exactly `designs.service.read_design`'s
+    own return shape, the same convention `submit_pending_approval` follows
+    for a caller-held `loop_state`.
+
+    Raises `ApprovalCliError` -- naming exactly what's wrong, before any
+    database write -- if `design` carries no `design_id`/`design_key`/
+    `revision` (it did not come from `designs.service.read_design`), if the
+    design is already `RELEASED` (there is nothing left for a human to
+    approve), or if `submitted_by` is blank.
+    """
+    if not submitted_by or not submitted_by.strip():
+        raise ApprovalCliError(
+            "submitted_by (the identity of the human registering this request) is required"
+        )
+    design_id = design.get("design_id")
+    if design_id is None:
+        raise ApprovalCliError(
+            "design has no 'design_id' -- it must come from "
+            "designs.service.read_design(design_id), not a hand-built dict"
+        )
+    design_key = design.get("design_key")
+    if not design_key:
+        raise ApprovalCliError(
+            "design has no 'design_key' -- it must come from "
+            "designs.service.read_design(design_id), not a hand-built dict"
+        )
+    revision = design.get("revision")
+    if revision is None:
+        raise ApprovalCliError(
+            "design has no 'revision' -- it must come from "
+            "designs.service.read_design(design_id), not a hand-built dict"
+        )
+    if design.get("status") == str(DesignStatus.RELEASED):
+        raise ApprovalCliError(
+            f"design_id={design_id} is already RELEASED -- there is nothing "
+            "left for a human to approve here"
+        )
+
+    fingerprint_fields = release_fingerprint_fields(design_id, design_key, revision, target)
+
+    conn = _connect()
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                INSERT INTO pending_design_release_approvals
+                    (design_id, design_key, revision, target, fingerprint_fields, submitted_by)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    design_id,
+                    design_key,
+                    str(revision),
+                    str(target),
+                    Json(fingerprint_fields),
+                    submitted_by,
+                ),
+            )
+            row = cur.fetchone()
+            assert row is not None
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return row
+
+
+def list_pending_release_approvals(design_id: int | None = None) -> list[dict[str, Any]]:
+    """Every currently-pending design-release approval request, oldest
+    first -- the release-gate twin of `list_pending_approvals` above, same
+    "a row exists here iff it is unresolved" convention."""
+    conn = _connect()
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            if design_id is None:
+                cur.execute("SELECT * FROM pending_design_release_approvals ORDER BY submitted_at")
+            else:
+                cur.execute(
+                    "SELECT * FROM pending_design_release_approvals "
+                    "WHERE design_id = %s ORDER BY submitted_at",
+                    (design_id,),
+                )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_pending_release_approval(request_id: int) -> dict[str, Any] | None:
+    """One pending release-approval request row by id, or None if it does
+    not exist (already resolved, or never submitted)."""
+    conn = _connect()
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT * FROM pending_design_release_approvals WHERE id = %s", (request_id,)
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def describe_pending_release_approval(row: dict[str, Any]) -> dict[str, Any]:
+    """The full, unsummarized view of one pending release request a human
+    reviews before deciding: the exact design_key/revision/target the
+    receipt will be bound to, and the decision content itself
+    (`fingerprint_fields`, verbatim -- never paraphrased) -- see issue #258
+    story #22."""
+    return {
+        "request_id": row["id"],
+        "design_id": row["design_id"],
+        "design_key": row["design_key"],
+        "revision": row["revision"],
+        "target": row["target"],
+        "fingerprint_fields": row["fingerprint_fields"],
+        "submitted_by": row["submitted_by"],
+        "submitted_at": str(row["submitted_at"]),
+    }
+
+
+def _delete_pending_release(conn: psycopg.Connection, request_id: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM pending_design_release_approvals WHERE id = %s", (request_id,))
+
+
+def decide_pending_release_approval(
+    request_id: int,
+    decision: str,
+    approved_by: str,
+) -> dict[str, Any]:
+    """Approve or refuse one pending release request, by id. `decision`
+    must be `"approve"` or `"refuse"`.
+
+    Calls `designs.release_approval.request_design_release_approval`
+    directly and unmodified -- the ONLY call to it anywhere in this
+    module -- with `fingerprint_fields` exactly as stored by
+    `submit_pending_release_approval` and an `approval_callback` that
+    returns `True` for an approval or `False` for a refusal; nothing else
+    in this codebase decides that outcome.
+
+    EITHER outcome writes exactly one `orchestration.approval_audit.
+    append_audit_record` row (`gate=GATE_DESIGN_RELEASE`) before the
+    pending row is deleted. Unlike the loop-step gate's `decide_pending_
+    approval`, there is no further "advance" call on the approval path --
+    ticket 3's scope stops at minting the receipt and handing it back (see
+    this module's docstring's "THE RELEASE GATE" section); nothing here
+    writes to the `designs` table, on either outcome. A refusal is
+    therefore exactly as inert as an approval, minus the receipt: both
+    write one audit record and delete the pending row, nothing else.
+
+    Raises `ApprovalCliError` for an unknown request id, an unknown
+    `decision` value, or a blank `approved_by` -- checked before
+    `request_design_release_approval` is ever called.
+    """
+    if decision not in ("approve", "refuse"):
+        raise ApprovalCliError(f"decision must be 'approve' or 'refuse', got {decision!r}")
+    if not approved_by or not approved_by.strip():
+        raise ApprovalCliError(
+            "approved_by (the identity of the approving/refusing human) is required"
+        )
+
+    row = get_pending_release_approval(request_id)
+    if row is None:
+        raise ApprovalCliError(
+            f"no pending release approval request with id={request_id} -- it may "
+            "already have been resolved, or never submitted (see "
+            "submit_pending_release_approval)"
+        )
+
+    fingerprint_fields = row["fingerprint_fields"]
+    approve = decision == "approve"
+
+    def _callback(_fields: dict[str, Any]) -> bool:
+        return approve
+
+    conn = _connect()
+    try:
+        try:
+            receipt: DesignReleaseApprovalReceipt | None
+            try:
+                receipt = request_design_release_approval(
+                    fingerprint_fields, approved_by=approved_by, approval_callback=_callback
+                )
+            except DesignReleaseApprovalError:
+                if approve:
+                    # approval_callback above always returns True for an
+                    # approve decision -- this branch is unreachable in
+                    # practice (approved_by was already validated above)
+                    # and exists only so a future change to
+                    # request_design_release_approval's own raise
+                    # conditions cannot silently mint a fabricated receipt
+                    # here.
+                    raise
+                receipt = None
+
+            outcome = OUTCOME_APPROVED if receipt is not None else OUTCOME_REFUSED
+            append_audit_record(conn, GATE_DESIGN_RELEASE, fingerprint_fields, approved_by, outcome)
+            _delete_pending_release(conn, request_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
+
+    if receipt is None:
+        return {
+            "status": "refused",
+            "request_id": request_id,
+            "fingerprint_fields": fingerprint_fields,
+        }
+    return {
+        "status": "approved",
+        "request_id": request_id,
+        "receipt": receipt.to_dict(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI. `uv run python -m orchestration.approval_cli <subcommand> ...` --
 # this repo's own established convention for a locally-run script (see this
 # module's docstring); there is no `[project.scripts]` entry in
@@ -505,14 +799,64 @@ def _cmd_decide(decision: str, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_list_release(args: argparse.Namespace) -> int:
+    _print(list_pending_release_approvals(design_id=args.design_id))
+    return 0
+
+
+def _cmd_show_release(args: argparse.Namespace) -> int:
+    row = get_pending_release_approval(args.request_id)
+    if row is None:
+        print(f"no pending release approval request with id={args.request_id}", file=sys.stderr)
+        return 1
+    _print(describe_pending_release_approval(row))
+    return 0
+
+
+def _cmd_submit_release(args: argparse.Namespace) -> int:
+    design = _read_json(args.design)
+    row = submit_pending_release_approval(
+        design, submitted_by=args.submitted_by, target=args.target
+    )
+    _print(
+        {
+            "request_id": row["id"],
+            "design_id": row["design_id"],
+            "design_key": row["design_key"],
+            "revision": row["revision"],
+            "target": row["target"],
+        }
+    )
+    return 0
+
+
+def _cmd_decide_release(decision: str, args: argparse.Namespace) -> int:
+    """Unlike the loop-step gate's `_cmd_decide` (whose `new_state` also
+    lives on, durably, in the loop's own `designs` row), a minted release
+    receipt exists NOWHERE else once this call returns -- it is not written
+    to any table (ticket 3's scope stops at minting it; see this module's
+    docstring). So it is always handed back: printed to stdout, and ALSO
+    written to `--out` when given, rather than one or the other."""
+    result = decide_pending_release_approval(
+        args.request_id, decision, approved_by=args.approved_by
+    )
+    if result["status"] == "approved" and args.out:
+        Path(args.out).write_text(
+            json.dumps(result["receipt"], indent=2, default=str), encoding="utf-8"
+        )
+        result = result | {"receipt_written_to": args.out}
+    _print(result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="orchestration.approval_cli",
         description=(
             "Local, human-only surface for granting or refusing a design-loop "
-            "step approval (issue #258). Never reachable from the agent "
-            "conversation -- run this directly, at a terminal, on the machine "
-            "you trust."
+            "step approval, or a design-release approval (issue #258). Never "
+            "reachable from the agent conversation -- run this directly, at a "
+            "terminal, on the machine you trust."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -542,6 +886,53 @@ def build_parser() -> argparse.ArgumentParser:
     p_refuse.add_argument("--approved-by", required=True, help="Identity of the refusing human.")
     p_refuse.set_defaults(func=lambda a: _cmd_decide("refuse", a))
 
+    # The release gate (issue #258 ticket 3) -- same shape, its own
+    # subcommands rather than overloading the loop-step ones above with a
+    # --kind flag, so `--state`/`--step-input` (loop-only) and `--design`
+    # (release-only) never both look valid for the same subcommand.
+    p_list_r = sub.add_parser(
+        "list-release", help="List every currently-pending design-release approval request."
+    )
+    p_list_r.add_argument("--design-id", type=int, default=None)
+    p_list_r.set_defaults(func=_cmd_list_release)
+
+    p_show_r = sub.add_parser(
+        "show-release", help="Show one pending release request's full fingerprint."
+    )
+    p_show_r.add_argument("request_id", type=int)
+    p_show_r.set_defaults(func=_cmd_show_release)
+
+    p_submit_r = sub.add_parser(
+        "submit-release", help="Register a new pending design-release approval request."
+    )
+    p_submit_r.add_argument(
+        "--design",
+        required=True,
+        help="Path to the design JSON file (designs.service.read_design's output).",
+    )
+    p_submit_r.add_argument("--submitted-by", required=True)
+    p_submit_r.add_argument(
+        "--target",
+        default=str(DesignStatus.RELEASED),
+        help="Status this approval is for (default: RELEASED).",
+    )
+    p_submit_r.set_defaults(func=_cmd_submit_release)
+
+    p_approve_r = sub.add_parser(
+        "approve-release", help="Approve a pending release request and mint the receipt."
+    )
+    p_approve_r.add_argument("request_id", type=int)
+    p_approve_r.add_argument("--approved-by", required=True)
+    p_approve_r.add_argument("--out", default=None, help="Path to write the receipt JSON.")
+    p_approve_r.set_defaults(func=lambda a: _cmd_decide_release("approve", a))
+
+    p_refuse_r = sub.add_parser(
+        "refuse-release", help="Refuse a pending release request; the design is untouched."
+    )
+    p_refuse_r.add_argument("request_id", type=int)
+    p_refuse_r.add_argument("--approved-by", required=True, help="Identity of the refusing human.")
+    p_refuse_r.set_defaults(func=lambda a: _cmd_decide_release("refuse", a))
+
     return parser
 
 
@@ -556,7 +947,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (ApprovalCliError, OrchestrationError) as exc:
+    except (ApprovalCliError, OrchestrationError, DesignReleaseApprovalError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
 

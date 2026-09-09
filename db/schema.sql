@@ -339,3 +339,28 @@ ON pending_loop_step_approvals (design_id);
 
 CREATE INDEX IF NOT EXISTS pending_loop_step_approvals_loop_id_idx
 ON pending_loop_step_approvals (loop_id);
+
+-- The design-release gate's own version of the table above (issue #258
+-- ticket 3): one row per pending "may this design revision move to
+-- RELEASED" decision, holding exactly what
+-- `designs.release_approval.release_fingerprint_fields` needs
+-- (design_id/design_key/revision/target) plus who submitted it. A release
+-- decision has no mid-loop state to snapshot (no loop_state/step_input
+-- columns here, unlike the table above) -- the fingerprint fields ARE the
+-- whole decision. A row is deleted the moment it is resolved (approved or
+-- refused), same convention as `pending_loop_step_approvals`; the durable
+-- record of what was decided lives in `approval_audit_log`
+-- (gate='design_release') instead.
+CREATE TABLE IF NOT EXISTS pending_design_release_approvals (
+    id BIGSERIAL PRIMARY KEY,
+    design_id BIGINT REFERENCES designs(id) ON DELETE CASCADE,
+    design_key TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    target TEXT NOT NULL,
+    fingerprint_fields JSONB NOT NULL,
+    submitted_by TEXT NOT NULL,
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS pending_design_release_approvals_design_id_idx
+ON pending_design_release_approvals (design_id);
