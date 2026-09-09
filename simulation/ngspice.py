@@ -52,6 +52,73 @@ sheer size did not):
     (this module imports its component-card generation from there, shared
     with simulation/xyce.py once both were written and the overlap was
     confirmed real).
+  - `.NOISE OUTVAR SRC dec|oct|lin ND FSTART FSTOP <pts_per_summary>` general
+    form; `onoise_spectrum`/`inoise_spectrum` as the real-valued (not
+    complex) output vectors ngspice's own noise analysis creates on its
+    "noise1" plot, and that running the lowercase interactive `noise ...`
+    command (mirroring chapter 13's other interactive analysis commands --
+    `ac`, `dc`, `op`, `sens`, `tf`, `tran` are explicitly documented there)
+    makes that plot current so `wrdata file onoise_spectrum
+    inoise_spectrum` reads it back without a plot-qualified name: (issue
+    #283) nmg.gitlab.io/ngspice-manual/analysesandoutputcontrol_batchmode/
+    analyses/noise_noiseanalysis.html for the dot-command syntax and vector
+    names; a real worked ngspice-KiCad noise-analysis tutorial
+    (melonkinenbi.f5.si/.../Tutor4_OpAmpNoise, corroborated by a second,
+    independent copy of the same tutorial at freeplanets.ship.jp) for the
+    literal ".control { run; setplot noise1; wrdata noise.dat
+    noise1.onoise_spectrum noise1.inoise_spectrum }" worked example
+    confirming both the vector names and that they are readable
+    unqualified once "noise1" is the current plot -- fetched via
+    search-engine summary of these pages, not independently re-fetched as
+    primary text in this pass.
+  - `.DISTO dec|oct|lin ND|NO|NP FSTART FSTOP <f2overf1>` general form
+    (issue #283): nmg.gitlab.io/ngspice-manual/
+    analysesandoutputcontrol_batchmode/analyses/disto_distortionanalysis.html
+    -- fetched directly; its own text states the fundamental-frequency
+    sweep runs "exactly as in the .ac command" (hence this module reuses
+    ac's sweep_type/points/start_freq_hz/stop_freq_hz field names for
+    disto too) and that results are "AC values of all node voltages and
+    branch currents at the harmonic frequencies 2F1 and 3F1" (hence they
+    are parsed as complex, the same wrdata shape as `.AC`). That running
+    `disto ...` makes a "disto1" plot current (2nd harmonic; 3rd harmonic
+    needs the qualified "disto2.<expr>" name) is corroborated by a real
+    ngspice-users forum worked example
+    (sourceforge.net/p/ngspice/discussion/ngspice-tips/thread/e58621f6,
+    "Min. w. example for disto analysis" -- `disto dec 10 10 30k / setplot
+    disto1 / ... hardcopy ... V(4) ... / hardcopy ... disto2.V(4) ...`),
+    fetched via search-engine summary of that thread, not independently
+    re-fetched as primary text in this pass.
+  - `.PZ node1 node2 node3 node4 cur|vol pol|zer|pz` general form (issue
+    #283): nmg.gitlab.io/ngspice-manual/analysesandoutputcontrol_batchmode/
+    analyses/pz_pole-zeroanalysis.html -- fetched directly, and this exact
+    page states "in interactive mode, the command syntax is the same
+    except that the first field is pz instead of .pz" and "to print the
+    results, one should use the command print all" (hence this module's
+    pz/sens `.control` blocks end with "print all", not `wrdata`, and pz's
+    interactive command is confirmed rather than assumed-by-analogy the
+    way disto's is above). The `<name> = <real>,<imag>` per-vector "print
+    all" line shape (e.g. "pole(1) = -2.618033988749895e+00,
+    0.000000000000000e+00") is corroborated by two independent real
+    ngspice-forum `.PZ` worked-output examples (sourceforge.net/p/ngspice/
+    discussion/127605/thread/14338e7e and electronics-lab.com/forums/
+    threads/how-to-plot-pole-zero-results-in-ngspice.72612), fetched via
+    search-engine summary, not independently re-fetched as primary text in
+    this pass -- see parse_ngspice_print_values()'s own docstring for the
+    same caveat repeated where it is actually relied on.
+  - `.SENS OUTVAR` (DC) / `.SENS OUTVAR AC dec|oct|lin ND|NO|NP FSTART
+    FSTOP` (AC) general form (issue #283): nmg.gitlab.io/ngspice-manual/
+    analysesandoutputcontrol_batchmode/analyses/
+    sens_dcorsmall-signalacsensitivityanalysis.html -- fetched directly
+    (note this page's own URL drops the hyphen ngspice's table of contents
+    implies -- "dcorsmall-signalac", not "dcorsmallsignalac" -- confirmed
+    by testing both). Per-parameter sensitivities are reported as "change
+    in output per unit change of input" (absolute, not normalized). This
+    module's own SENS "print all" line-shape parsing is an HONEST
+    EXTRAPOLATION from `.PZ`'s confirmed "line" layout for length-1
+    vectors (see parse_ngspice_print_values()'s own docstring) -- no
+    literal `.SENS` "print all" worked-output example could be found in
+    this pass to independently confirm it carries the identical
+    "name = value" shape.
   - ngspice's own per-subtree license mix (used for docs/LICENSE_MATRIX.md,
     NOT assumed to be one blanket license per this repo's own discipline):
     the actual COPYING file at
@@ -66,11 +133,28 @@ sheer size did not):
 
 SCOPE OF THIS IMPLEMENTATION:
   - Analyses: `.OP` (bias point), `.AC` (small-signal frequency sweep),
-    `.TRAN` (transient) -- covering the matching-network/filter (AC) and
-    amplifier-nonlinearity (TRAN) use cases the ticket names. `.DC` sweep
-    is NOT implemented (not named in the ticket's acceptance criteria; the
-    same generate_ngspice_netlist()/parse_ngspice_wrdata() shape could
-    support it in a future pass).
+    `.TRAN` (transient), `.NOISE` (noise figure), `.DISTO` (harmonic
+    distortion), `.PZ` (pole-zero), and `.SENS` (DC/AC sensitivity) --
+    covering the matching-network/filter (AC), amplifier-nonlinearity
+    (TRAN/DISTO), and amplifier/LNA-noise (NOISE) use cases named across
+    the original ticket (#57) and this one (#283), plus PZ/SENS's
+    stability/parameter-sensitivity use case. `.NOISE`/`.DISTO` results are
+    parsed into the same structured `{scale, scale_name, values}` shape as
+    `.AC`/`.TRAN`/`.OP` via parse_ngspice_wrdata() (noise's spectral-
+    density vectors real-valued; disto's harmonic-distortion vectors
+    complex, like AC). `.PZ`/`.SENS` do NOT fit that shape -- neither
+    analysis sweeps anything, so there is no frequency/time axis to
+    report -- and are instead parsed by the sibling
+    parse_ngspice_print_values() from the interactive `print all` command's
+    text output; see that function's own docstring for the citation and
+    the one still-open honest gap (`.SENS`'s "print all" line shape is an
+    extrapolation from `.PZ`'s confirmed one, not independently
+    re-verified against a real `.SENS` "print all" worked example). `.DC`
+    sweep and `.TF` (transfer function) are NOT implemented (`.DC` was not
+    named in the original ticket's acceptance criteria; `.TF` is
+    explicitly out of #283's scope per that ticket's own text -- both
+    remain a gap the same generate_ngspice_netlist()/parse_ngspice_wrdata()
+    shape could close in a future pass).
   - Components: structured R/L/C/V/I via simulation/spice_netlist.py, plus
     a `raw_cards` escape hatch for anything else (semiconductor devices,
     subcircuits, controlled sources) -- see that module's docstring SCOPE
@@ -102,9 +186,10 @@ matched the filter's known physics (near-unity |v(out)| at 1Hz, rolled off
 to ~1.6e-4 by 1MHz) -- see tests/test_ngspice.py's real-binary test for the
 reproducible version of this same check. This covers the `.AC` analysis
 path, plain R/L/C/V components, and wrdata parsing end to end. NOT yet
-verified against a real binary: `.TRAN`/`.OP` analyses and the `raw_cards`
-escape hatch -- those remain format-verified-against-documentation only,
-same caveat as before. A second real binary (ngspice-42, Ubuntu 24.04's
+verified against a real binary: `.TRAN`/`.OP` analyses, the `raw_cards`
+escape hatch, and (added issue #283) `.NOISE`/`.DISTO`/`.PZ`/`.SENS` --
+those remain format-verified-against-documentation only, same caveat as
+before. A second real binary (ngspice-42, Ubuntu 24.04's
 apt package -- see this repo's Dockerfile) was also confirmed to exist at
 the adapter's plain default executable name "ngspice" with no NGSPICE_BIN
 override needed on Linux, unlike Windows where the portable build's
@@ -447,9 +532,10 @@ def parse_ngspice_wrdata(text: str, outputs: list[str], analysis_type: str) -> d
         else:
             values[name] = [row[col] for row in rows]
 
+    is_frequency_scaled = analysis_type in _FREQUENCY_SCALE_ANALYSIS_TYPES
     return {
         "scale": scale,
-        "scale_name": "frequency_hz" if analysis_type in _FREQUENCY_SCALE_ANALYSIS_TYPES else "time_s",
+        "scale_name": "frequency_hz" if is_frequency_scaled else "time_s",
         "values": values,
     }
 
