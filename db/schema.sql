@@ -233,6 +233,71 @@ CREATE TABLE IF NOT EXISTS process_records (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Issue #256 ticket 2 (ADR-0027). A symbol-alphabet entry is a "letter":
+-- one printed-and-measured Symbol, keyed by the five-part key ADR-0027
+-- point 4 settled -- `(element family, symbol, band, incidence-angle
+-- range, process)`. `process_id` is `NOT NULL REFERENCES
+-- process_records(id)` because ADR-0027 is explicit that "an entry
+-- carrying no process reference is an assumption, not a measurement"
+-- (issue #256 user story 4) -- enforced here at the schema level as well
+-- as by `designs.element_alphabet.add_symbol_entry`'s own pure-function
+-- check, so an insert against a process id that doesn't exist fails
+-- loudly (FK violation) rather than creating a dangling reference (user
+-- story 16).
+--
+-- `frequency_low_hz`/`frequency_high_hz` and `incidence_angle_low_deg`/
+-- `incidence_angle_high_deg` are both stored as ranges, never a single
+-- point -- the same "a band, not a point" discipline `material_properties`
+-- already applies to frequency (issue #256 user story 14).
+--
+-- `geometry` (JSONB) holds the same primitive-dict shape
+-- `geometry/unit_cell.py` already produces/consumes -- a single "box"/
+-- "polygon" primitive dict, or a list of them -- so a fetched entry can be
+-- handed straight into `generate_unit_cell_array`/
+-- `generate_coded_unit_cell_array`'s `unit_cell`/`symbol_library` argument
+-- with no reshaping (user story 10). `response` (JSONB) holds the
+-- characterised `|Gamma|`/`angle Gamma` vs. frequency curve as an array of
+-- `{frequency_hz, magnitude, phase_deg}` points (user story 13) -- not a
+-- single test point.
+--
+-- No UNIQUE constraint on the five key fields, deliberately, the same
+-- reasoning as `process_records` above: two entries that agree on
+-- family/symbol/band/incidence-angle range but differ only in
+-- `process_id` (e.g. the same outline printed in carbon ink vs. MXene) are
+-- two separate letters, never merged (ADR-0027 point 4's own worked
+-- example; issue #256 user story 17). Nothing here expires or
+-- invalidates a row on a process change either (ADR-0027 point 3): a
+-- lookup against a process id that no longer matches simply returns
+-- nothing, which is a query-time behaviour (`designs/element_alphabet.py`),
+-- not a schema-level status column -- ADR-0027 explicitly rejected a
+-- library with a status field.
+--
+-- `provenance` is stored on the row (for consistency with how every other
+-- provenance-carrying table in this codebase names its own evidence class
+-- explicitly -- issue #256's Implementation Decisions) even though its
+-- value is never a caller choice: every row this program writes here is
+-- `MEASURED` (`knowledge.provenance.MEASURED`), enforced at the pure
+-- function layer, not by a CHECK constraint -- mirroring how
+-- `material_properties.provenance` is TEXT NOT NULL with the closed vocabulary
+-- enforced in Python, not SQL.
+CREATE TABLE IF NOT EXISTS symbol_alphabet_entries (
+    id BIGSERIAL PRIMARY KEY,
+    element_family TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    frequency_low_hz DOUBLE PRECISION NOT NULL,
+    frequency_high_hz DOUBLE PRECISION NOT NULL,
+    incidence_angle_low_deg DOUBLE PRECISION NOT NULL,
+    incidence_angle_high_deg DOUBLE PRECISION NOT NULL,
+    process_id BIGINT NOT NULL REFERENCES process_records(id),
+    geometry JSONB NOT NULL,
+    response JSONB NOT NULL,
+    provenance TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS symbol_alphabet_entries_family_symbol_idx
+ON symbol_alphabet_entries (element_family, symbol);
+
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw
 ON document_chunks USING hnsw (embedding vector_cosine_ops);
 
