@@ -298,7 +298,7 @@ def search_mouser_product(
     if not matches:
         return {"status": "no_match", "distributor": "mouser", "queried": query}
 
-    best = matches[0]
+    best, _details = matches[0]
     if not best.datasheet_url:
         return {
             "status": "no_datasheet",
