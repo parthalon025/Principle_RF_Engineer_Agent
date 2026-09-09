@@ -60,6 +60,18 @@ from agents.lifecycle import AgentHooks
 from agents.mcp import MCPServerStdio, ToolFilterStatic, create_static_tool_filter
 from agents.mcp.server import MCPServerStdioParams
 
+# These five names are module-private to agent/main.py (leading underscore
+# applied by that module's own author) rather than the "import a public name
+# and re-alias it _locally" pattern used elsewhere in this repo (e.g.
+# `from designs.service import create_design as _create_design`). Reaching
+# into them directly is deliberate: they ARE the single source of truth this
+# ticket exists to reuse rather than re-derive (see this module's own
+# docstring, "derived from the same source objects, not hand-copied"), and
+# `agent/main.py` cannot be touched to re-export them publicly without
+# violating issue #318's own scope. The failure mode if agent/main.py ever
+# renames one of these is loud, not silent: this import raises `ImportError`
+# at collection/import time, well before any test assertion runs -- there is
+# no linter warning, but there is also no way to miss it.
 from agent.main import (
     _PRINCIPAL_DIRECT_TOOLS,
     _SPEC_BY_KEY,
