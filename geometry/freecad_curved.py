@@ -615,6 +615,42 @@ def _exact_curved_geometry(
     }
 
 
+def _macro_object_build_lines(objects: list[dict[str, Any]]) -> list[str]:
+    """The per-unit-cell `Part::Feature`-building macro lines -- extracted
+    so BOTH `generate_freecad_macro()` (STEP-export path) and
+    `generate_freecad_fem_mesh_macro()` (FEM-mesh path, issue #288) build
+    the exact same tilted-plane solid for the exact same input, and can
+    never silently drift apart on how a unit cell's true 3D shape is
+    constructed (see module docstring "WHY NOT A ROTATED PLACEMENT").
+    Assumes the caller's own macro preamble has already initialized `doc`
+    plus the three list variables `objects_built`, `built_shapes`, `errors`
+    (those exact names -- this function's emitted lines reference them)."""
+    lines: list[str] = []
+    for obj in objects:
+        name = obj["name"]
+        lines.append(f"# --- {name} ---")
+        lines.append("try:")
+        lines.append(f"    pts = [App.Vector(*p) for p in {obj['local_offsets_m']!r}]")
+        lines.append("    wire = Part.makePolygon(pts, True)")
+        lines.append("    face = Part.Face([wire])")
+        if obj["thickness_m"] is not None:
+            extrude_vec = tuple(n * obj["thickness_m"] for n in obj["normal"])
+            lines.append(f"    shape = face.extrude(App.Vector(*{extrude_vec!r}))")
+        else:
+            lines.append("    shape = face")
+        lines.append(f'    feature = doc.addObject("Part::Feature", {name!r})')
+        lines.append("    feature.Shape = shape")
+        lines.append(
+            f"    feature.Placement = App.Placement("
+            f"App.Vector(*{obj['center_m']!r}), App.Rotation())"
+        )
+        lines.append(f"    objects_built.append({name!r})")
+        lines.append("    built_shapes.append(shape)")
+        lines.append("except Exception as exc:")
+        lines.append(f"    errors.append({{'name': {name!r}, 'error': str(exc)}})")
+    return lines
+
+
 def generate_freecad_macro(
     primitives: list[dict[str, Any]],
     curvature: dict[str, Any],
@@ -661,28 +697,7 @@ def generate_freecad_macro(
         "errors = []",
     ]
 
-    for obj in objects:
-        name = obj["name"]
-        lines.append(f"# --- {name} ---")
-        lines.append("try:")
-        lines.append(f"    pts = [App.Vector(*p) for p in {obj['local_offsets_m']!r}]")
-        lines.append("    wire = Part.makePolygon(pts, True)")
-        lines.append("    face = Part.Face([wire])")
-        if obj["thickness_m"] is not None:
-            extrude_vec = tuple(n * obj["thickness_m"] for n in obj["normal"])
-            lines.append(f"    shape = face.extrude(App.Vector(*{extrude_vec!r}))")
-        else:
-            lines.append("    shape = face")
-        lines.append(f'    feature = doc.addObject("Part::Feature", {name!r})')
-        lines.append("    feature.Shape = shape")
-        lines.append(
-            f"    feature.Placement = App.Placement("
-            f"App.Vector(*{obj['center_m']!r}), App.Rotation())"
-        )
-        lines.append(f"    objects_built.append({name!r})")
-        lines.append("    built_shapes.append(shape)")
-        lines.append("except Exception as exc:")
-        lines.append(f"    errors.append({{'name': {name!r}, 'error': str(exc)}})")
+    lines += _macro_object_build_lines(objects)
 
     lines += [
         "",
