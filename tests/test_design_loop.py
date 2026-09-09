@@ -1003,6 +1003,106 @@ def test_correlation_consumes_external_measurement_result_with_no_changes(tmp_pa
     assert "s11" in decision.result["comparison"]
 
 
+def test_correlation_passes_known_tolerance_db_through_to_the_recorded_decision(
+    tmp_path: Path,
+):
+    """issue #254: known_tolerance_db in step_input reaches
+    rf_tools.correlation.correlate_simulation_measurement the same
+    pass-through way fixture_path/output_fixture_path/
+    temperature_tolerance_c already do, and its mechanical, three-value
+    tolerance_comparison result (never a model-vs-design verdict -- see
+    docs/adr/0009) shows up in the recorded decision's result."""
+    touchstone_path = _write_measured_touchstone(tmp_path, name="for_tolerance")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, step_input_override={"touchstone_file": str(touchstone_path)}
+    )
+
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_loop_step(
+        state,
+        {"simulated": simulated_override, "known_tolerance_db": 0.01},
+    )
+
+    decision = state.decisions[-1]
+    assert decision.kind == "correlation"
+    comparison = decision.result["comparison"]
+    assert comparison["s11"]["tolerance_comparison"] == "EXCEEDS_KNOWN_TOLERANCE"
+    assert "tolerance_comparison_note" in decision.result
+    allowed = {"WITHIN_KNOWN_TOLERANCE", "EXCEEDS_KNOWN_TOLERANCE", "NO_TOLERANCE_ON_RECORD"}
+    assert comparison["s11"]["tolerance_comparison"] in allowed
+
+
+def test_correlation_omits_known_tolerance_db_still_records_no_data_by_default(tmp_path: Path):
+    """User story 15: a run that never supplies known_tolerance_db behaves
+    exactly like it did before this feature -- no new required field, no
+    new gate -- and each S-parameter honestly reads NO_TOLERANCE_ON_RECORD
+    rather than a fabricated pass/fail."""
+    touchstone_path = _write_measured_touchstone(tmp_path, name="no_tolerance_supplied")
+    state = start_design_loop(REQUIREMENTS)
+    state = _advance_to(state, DesignStep.MEASUREMENT, grant_intermediate_approvals=True)
+    state = _grant_and_advance(
+        state, DesignStep.MEASUREMENT, step_input_override={"touchstone_file": str(touchstone_path)}
+    )
+
+    simulated_override = {
+        "frequency_hz": [2.0e9, 2.5e9, 3.0e9],
+        "s_parameters": {"S11": ["0.1+0.01j", "0.2+0.02j", "0.3+0.03j"]},
+        "z0": 50.0,
+    }
+    state = advance_loop_step(state, {"simulated": simulated_override})
+
+    decision = state.decisions[-1]
+    assert decision.result["comparison"]["s11"]["tolerance_comparison"] == "NO_TOLERANCE_ON_RECORD"
+
+
+def test_redesign_decision_step_input_shape_is_unchanged_by_tolerance_comparison():
+    """Regression guard for issue #254's own scope boundary: this feature
+    lives entirely in the ungated CORRELATION step (rf_tools/correlation.py)
+    and orchestration/design_loop.py's _handle_correlation pass-through --
+    it must leave REDESIGN_DECISION's required step_input fields,
+    DesignLoopValidationError behavior, and the legal next_action values
+    completely untouched (docs/adr/0009; issue #254 user story 16)."""
+    assert REDESIGN_ACTIONS == frozenset({"iterate", "accept_design"})
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _run_full_cycle_up_to_redesign(state)
+
+    for missing_field in ("decision", "rationale", "next_action"):
+        step_input = {
+            "decision": "x",
+            "rationale": "y",
+            "next_action": "iterate",
+        }
+        del step_input[missing_field]
+        fields = _fingerprint(state, DesignStep.REDESIGN_DECISION, step_input)
+        receipt = request_loop_step_approval(
+            fields, approved_by="jane", approval_callback=lambda f: True
+        )
+        with pytest.raises(DesignLoopValidationError, match="missing required field"):
+            advance_loop_step(state, step_input, approval=receipt)
+
+    # A known_tolerance_db-shaped extra field is not part of this step's
+    # schema and must not be silently accepted as a substitute for the
+    # real required fields, nor smuggle a fourth next_action value in.
+    step_input = {
+        "decision": "x",
+        "rationale": "y",
+        "next_action": "known_tolerance_db",
+    }
+    fields = _fingerprint(state, DesignStep.REDESIGN_DECISION, step_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane", approval_callback=lambda f: True
+    )
+    with pytest.raises(DesignLoopValidationError, match="next_action"):
+        advance_loop_step(state, step_input, approval=receipt)
+
+
 def test_advance_loop_step_rejects_external_measurement_with_no_approval(tmp_path: Path):
     touchstone_path = _write_measured_touchstone(tmp_path, name="no_approval")
     state = start_design_loop(REQUIREMENTS)
