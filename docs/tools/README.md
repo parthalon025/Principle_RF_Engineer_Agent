@@ -54,24 +54,24 @@ starts from a real answer instead of institutional memory.
 
 | Tool | What it is, and why this repo uses it | Biggest capability not yet wired up |
 |---|---|---|
-| [arXiv API](arxiv.md) | Free, no-auth preprint search/metadata API — pulls RF/EM papers in as `LITERATURE-SUPPORTED` evidence. | `search_query` (field/boolean/date discovery) is entirely unused; every call already needs a known paper ID, so the tool can't answer "find prior art on X" on its own. |
+| [arXiv API](arxiv.md) | Free, no-auth preprint search/metadata API — pulls RF/EM papers in as `LITERATURE-SUPPORTED` evidence. | `search_query` (field/boolean/date discovery) was wired up as `search_arxiv_papers` (issue #257) — candidates only, never auto-ingested. Still unused: per-field (title/author/category-only) query construction beyond a caller building the field-prefixed string by hand. |
 | [ETSI standards](etsi.md) | Free, no-registration direct-PDF download of published European telecom/RF standards. | An undocumented `data.php` search endpoint would resolve a bare standard number to its download URL automatically, closing the adapter's one manual-lookup gap — flagged as unofficial, so used cautiously if at all. |
 | [FCC rules via eCFR Title 47 API](fcc-ecfr.md) | Free, no-auth REST API to the authoritative, continuously updated US Code of Federal Regulations. | The Search Service (full-text search across Title 47) is unused — there's no way to ask "which sections mention EIRP" without already knowing the part number. |
 | [3GPP specifications](3gpp.md) | Free, no-login FTP archive of every cellular-standard spec/version as a zip file. | No way to resolve "what is the current version of spec X" — the free DynaReport metadata surface that could answer that is unused. |
-| [USPTO patent PDFs](uspto-patents.md) | Free, no-auth PDF download of any US patent/publication by number — this repo cites patents (e.g. US12089385B2) as primary sources for metasurface physics. | USPTO's free, key-authenticated Open Data Portal search API (structured search by inventor/assignee/classification/keyword) is entirely unused — today a patent must already be known by number; there is no path to *discovering* one. |
+| [USPTO patent PDFs and patent search](uspto-patents.md) | Free, no-auth PDF download of any US patent/publication by number — this repo cites patents (e.g. US12089385B2) as primary sources for metasurface physics. Full-text search against the Open Data Portal (issue #280, `search_uspto_patents`) is now wired up too, candidates only, never auto-ingested. | ODP's own `filters`/`rangeFilters`/`sort`/`fields` request parameters (structured search by date range, applicant, or classification, or a caller-chosen field projection) beyond the bare full-text query and result count this repo sends are unused, and so is its Patent File Wrapper prosecution-history/continuity/documents data for an application already found. |
 
 ## Cross-cutting patterns
 
 A few gaps repeat across categories, not just within one tool:
 
-- **Discovery was the recurring hole in the knowledge-ingestion tier — now half-closed.**
-  ETSI, 3GPP, and USPTO patents still expose only "fetch a document whose identifier I
-  already know" — none is wired up for "find me documents about X." arXiv (issue #257)
-  and FCC eCFR (issue #279) both now have a discovery-search sibling
-  (`search_arxiv_papers`, `search_fcc_rules`) returning candidates for a plain-topic
-  query, ahead of the deliberate ingest step. Closing the remaining three would change
-  what kind of question the agent's own literature search can answer without a human
-  supplying an ID first.
+- **Discovery was the recurring hole in the knowledge-ingestion tier — mostly closed now.**
+  arXiv (issue #257, `search_arxiv_papers`), FCC eCFR (issue #279, `search_fcc_rules`),
+  and USPTO patents (issue #280, `search_uspto_patents`) all now expose "find me
+  documents about X," returning candidates for review that a caller must still choose
+  to ingest deliberately — none auto-writes to the knowledge base. ETSI and 3GPP still
+  expose only "fetch a document whose identifier I already know": prior research for
+  both found no public search API to build one against (see their own docs/tools
+  files).
 - **Periodic/Floquet unit-cell characterization** — this program's central metamaterial
   need — exists natively in HFSS and Palace, but only Palace's adapter uses it, and even
   there embedded metal conductors (the common real case) aren't supported yet. NEC2++,

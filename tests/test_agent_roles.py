@@ -269,6 +269,34 @@ def test_search_arxiv_papers_is_categorized_ingestion_auto():
     assert category_for("search_arxiv_papers") == "ingestion_auto"
 
 
+def test_systems_role_gets_uspto_discovery_search_tool():
+    # issue #280: search_uspto_patents (full-text discovery search against
+    # the USPTO Open Data Portal) is wired onto the same role as its sibling
+    # ingest_patent -- both are the same "bring USPTO patents into reach of
+    # the design loop" knowledge-sourcing concern, discovery finding
+    # candidates ahead of the deliberate ingest step.
+    names = _tool_names(ROLES["systems"])
+    assert "search_uspto_patents" in names
+    for key in ("microwave", "antenna", "test", "verification"):
+        role_names = _tool_names(ROLES[key])
+        assert "search_uspto_patents" not in role_names
+    # Not principal-direct either -- reachable via the systems handoff only,
+    # same as ingest_patent (see test_principal_role_is_scoped_not_broad).
+    assert "search_uspto_patents" not in _tool_names(ROLES["principal"])
+
+
+def test_search_uspto_patents_is_categorized_approval_self_gated():
+    # UNLIKE search_arxiv_papers (ingestion_auto, credential-free):
+    # search_uspto_patents calls require_external_network_tools_enabled as
+    # its own first line, the same self-gate the three distributor lookups
+    # (lookup_digikey_component and siblings) already have -- see
+    # policies/tool_policy.yaml's approval_self_gated comment on why a
+    # credentialed USPTO ODP call belongs here rather than beside its own
+    # credential-free ingest_patent sibling.
+    assert category_for("search_uspto_patents") == category_for("lookup_digikey_component")
+    assert category_for("search_uspto_patents") == "approval_self_gated"
+
+
 def test_systems_role_gets_component_sourcing_tools():
     # ticket #67: sourcing a datasheet straight from a distributor and
     # reconciling it into one components row is the same knowledge-

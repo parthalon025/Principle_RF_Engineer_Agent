@@ -54,7 +54,6 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +64,7 @@ from knowledge.sourcing_common import (
     ComponentMatch,
     download_to_file,
     make_workdir,
+    post_json,
     require_external_network_tools_enabled,
 )
 
@@ -95,11 +95,7 @@ def _search_by_part_number(part_number: str, api_key: str) -> dict[str, Any]:
         {"SearchByPartRequest": {"mouserPartNumber": part_number, "partSearchOptions": "None"}}
     ).encode()
     url = f"{_SEARCH_URL}?apiKey={api_key}"
-    req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 -- real search call
-        return json.loads(resp.read())
+    return post_json(url, body, {"Content-Type": "application/json"})
 
 
 @dataclass(frozen=True)

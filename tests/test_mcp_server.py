@@ -189,6 +189,9 @@ def test_registered_tool_count_matches_old_plus_new():
     # ProductDetails endpoint -- parametric attributes and price/quantity
     # breaks -- wired onto the tool surface alongside its
     # lookup_digikey_component sibling): 91 + 1 = 92.
+    #
+    # issue #280 adds 1 more (search_uspto_patents, USPTO ODP full-text
+    # discovery search wired onto the tool surface): 92 + 1 = 93.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -225,6 +228,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #285: lookup_3gpp_spec_status
         + 1  # issue #279: search_fcc_rules
         + 1  # issue #275: lookup_digikey_product_details
+        + 1  # issue #280: search_uspto_patents
     )
     assert len(registered_names) == expected
 
@@ -542,6 +546,49 @@ def test_ingest_patent_calls_through(monkeypatch):
         "supersedes_document_id": None,
         "render_page_images": True,
     }
+
+
+def test_search_uspto_patents_is_registered():
+    # issue #280: knowledge/sourcing/patent.py's search_uspto_patents, wired
+    # onto the MCP tool surface alongside its ingest_patent sibling.
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "search_uspto_patents" in registered_names
+
+
+def test_search_uspto_patents_calls_through(monkeypatch):
+    # Mocked, not hitting the network or a live credential -- the real
+    # search/parse logic is exercised in tests/test_sourcing_patent.py; this
+    # only confirms the MCP wrapper forwards its arguments to
+    # knowledge.sourcing.patent and returns its candidate list unchanged.
+    captured = {}
+    candidates = [{"number": "US12089385", "title": "X", "date": "2024-09-10", "snippet": None}]
+
+    def fake_search(query, *, max_results):
+        captured.update(query=query, max_results=max_results)
+        return candidates
+
+    monkeypatch.setattr(server, "_search_uspto_patents", fake_search)
+
+    result = server.search_uspto_patents("conformal metamaterial absorber X-band")
+
+    assert result == candidates
+    assert captured == {
+        "query": "conformal metamaterial absorber X-band",
+        "max_results": 10,
+    }
+
+
+def test_search_uspto_patents_never_calls_ingest_patent_or_ingest_document(monkeypatch):
+    # Mirrors tests/test_sourcing_patent.py's own version of this guard, one
+    # layer up at the MCP wrapper: search and ingest stay two separate calls.
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("search_uspto_patents must never ingest anything")
+
+    monkeypatch.setattr(server, "_ingest_document", fail_if_called)
+    monkeypatch.setattr(server, "_ingest_patent", fail_if_called)
+    monkeypatch.setattr(server, "_search_uspto_patents", lambda query, *, max_results: [])
+
+    server.search_uspto_patents("conformal metamaterial skin")
 
 
 def test_correlate_simulated_and_measured_is_registered():
