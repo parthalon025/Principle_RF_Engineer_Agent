@@ -208,32 +208,50 @@ from typing import Any
 from .base import SimulationResult, Simulator, SimulatorError
 from .spice_netlist import format_components, format_number
 
-_ANALYSIS_TYPES = ("op", "ac", "tran", "noise", "disto", "pz", "sens")
+# Single source of truth for how each analysis type is generated and parsed
+# (see generate_ngspice_netlist()'s per-type branches and
+# parse_ngspice_wrdata()'s docstring for what each flag controls below).
+# Previously these were four separate parallel tuples that a new analysis
+# type had to be added to by hand, independently, and get right in all four
+# (Fowler's "Repeated Switches" smell) -- this collapses that bookkeeping
+# into one table so adding an 8th analysis type means editing one entry
+# here instead of hunting down four tuples that must agree with each other.
+#   wrdata: its ".control"-block interactive command leaves a frequency- or
+#     time-swept vector readable by `wrdata` (pz/sens do NOT -- see
+#     print_value below).
+#   print_value: reports a small, unswept set of complex values (poles/
+#     zeros, per-parameter sensitivities) via the interactive `print all`
+#     command instead -- see parse_ngspice_print_values() and this module's
+#     SCOPE docstring section for the citation and honest caveat.
+#   complex: `wrdata` writes a (real, imag) pair per requested output for
+#     this analysis's vectors (AC small-signal quantities); every other
+#     wrdata-shaped analysis writes one real value per output. `.DISTO`'s
+#     harmonic-distortion vectors are themselves AC quantities at the swept
+#     fundamental frequency, so they are complex too -- see this module's
+#     docstring for the citation.
+#   frequency_scale: this wrdata-shaped analysis's scale column is
+#     frequency rather than time.
+_ANALYSIS_TYPE_INFO: dict[str, dict[str, bool]] = {
+    "op": {"wrdata": True, "print_value": False, "complex": False, "frequency_scale": False},
+    "ac": {"wrdata": True, "print_value": False, "complex": True, "frequency_scale": True},
+    "tran": {"wrdata": True, "print_value": False, "complex": False, "frequency_scale": False},
+    "noise": {"wrdata": True, "print_value": False, "complex": False, "frequency_scale": True},
+    "disto": {"wrdata": True, "print_value": False, "complex": True, "frequency_scale": True},
+    "pz": {"wrdata": False, "print_value": True, "complex": False, "frequency_scale": False},
+    "sens": {"wrdata": False, "print_value": True, "complex": False, "frequency_scale": False},
+}
 
-# Analyses whose ".control"-block interactive command still leaves a
-# frequency- or time-swept vector readable by `wrdata` (see
-# generate_ngspice_netlist()'s per-type branches below and
-# parse_ngspice_wrdata()'s docstring for the exact column shape each one
-# produces). ".pz"/".sens" do NOT belong here -- see _PRINT_VALUE_ANALYSIS_TYPES.
-_WRDATA_ANALYSIS_TYPES = ("op", "ac", "tran", "noise", "disto")
-
-# Analyses that report a small, unswept set of complex values (poles/zeros,
-# per-parameter sensitivities) via the interactive `print all` command
-# instead of a swept vector `wrdata` can write -- see parse_ngspice_print_values()
-# and this module's SCOPE docstring section for the citation and honest
-# caveat on this text format.
-_PRINT_VALUE_ANALYSIS_TYPES = ("pz", "sens")
-
-# `wrdata` writes a (real, imag) pair per requested output for an analysis
-# whose vectors are complex (AC small-signal quantities); every other
-# wrdata-shaped analysis writes one real value per output. `.DISTO`'s
-# harmonic-distortion vectors are themselves AC (small-signal) quantities at
-# the swept fundamental frequency, so they are complex too -- see this
-# module's docstring for the citation.
-_COMPLEX_WRDATA_ANALYSIS_TYPES = ("ac", "disto")
-
-# `wrdata`-shaped analyses whose scale column is frequency rather than time.
-_FREQUENCY_SCALE_ANALYSIS_TYPES = ("ac", "noise", "disto")
+_ANALYSIS_TYPES = tuple(_ANALYSIS_TYPE_INFO)
+_WRDATA_ANALYSIS_TYPES = tuple(t for t, info in _ANALYSIS_TYPE_INFO.items() if info["wrdata"])
+_PRINT_VALUE_ANALYSIS_TYPES = tuple(
+    t for t, info in _ANALYSIS_TYPE_INFO.items() if info["print_value"]
+)
+_COMPLEX_WRDATA_ANALYSIS_TYPES = tuple(
+    t for t, info in _ANALYSIS_TYPE_INFO.items() if info["complex"]
+)
+_FREQUENCY_SCALE_ANALYSIS_TYPES = tuple(
+    t for t, info in _ANALYSIS_TYPE_INFO.items() if info["frequency_scale"]
+)
 
 
 class NgspiceSimulator(Simulator):
@@ -276,7 +294,16 @@ class NgspiceSimulator(Simulator):
             simulator=self.name,
             status="COMPLETED",
             workdir=workdir,
-            outputs={"log": log_text[-8000:]},
+            # "log" is a short diagnostic convenience only -- capped to its
+            # last 8000 characters, same rationale as the SimulatorError
+            # diagnostic two lines above. "log_file" is the untruncated file
+            # on disk (see simulation/ltspice.py's NgspiceSimulator-sibling
+            # for the same "log" + "log_file" pairing) -- a caller that needs
+            # the FULL batch-mode text (e.g. run_ngspice_simulation()'s
+            # `.PZ`/`.SENS` print-all parsing below, where the meaningful
+            # lines could otherwise fall outside the last 8000 characters)
+            # must re-read it from here rather than trust the capped string.
+            outputs={"log": log_text[-8000:], "log_file": str(log_file)},
         )
 
 
@@ -288,18 +315,30 @@ _AC_SWEEP_FIELDS = ("sweep_type", "points", "start_freq_hz", "stop_freq_hz")
 def _require_fields(analysis: dict[str, Any], type_label: str, required: tuple[str, ...]) -> None:
     """Raise the same 'analysis (type=...) missing required field(s): [...]'
     ValueError every analysis-type branch below uses, naming exactly what is
-    absent rather than failing generically (see this repo's CLAUDE.md:
-    'warn, never block; never silently apply the wrong tool')."""
+    absent rather than failing generically -- this repo's CLAUDE.md has a
+    "Warn, never block" section on being specific about what a warning
+    assumes and costs; the same specificity applies to a hard validation
+    error (name exactly what's missing, don't just say "invalid job")."""
     missing = [f for f in required if f not in analysis]
     if missing:
         raise ValueError(f"analysis (type={type_label!r}) missing required field(s): {missing}")
 
 
-def _validate_sweep_type(sweep_type: str) -> None:
-    if sweep_type not in ("dec", "oct", "lin"):
-        raise ValueError(
-            f"analysis['sweep_type'] must be 'dec', 'oct', or 'lin', got {sweep_type!r}"
-        )
+def _require_allowed(analysis: dict[str, Any], field: str, allowed: tuple[str, ...]) -> str:
+    """Raise a 'must be one of (...)' ValueError naming the field, the
+    allowed values, and what was actually given if analysis[field] isn't
+    one of `allowed` -- the same "value not in an allowed set" shape used
+    for sweep_type/tf_type/analysis_mode below, and the phrasing this
+    codebase already uses elsewhere for the same kind of check (e.g.
+    simulation/spice_netlist.py, simulation/xyce.py, simulation/meep.py).
+    Returns the validated value so a caller can use it inline."""
+    value = analysis[field]
+    if value not in allowed:
+        raise ValueError(f"analysis[{field!r}] must be one of {allowed}, got {value!r}")
+    return value
+
+
+_SWEEP_TYPES = ("dec", "oct", "lin")
 
 
 def generate_ngspice_netlist(
@@ -401,16 +440,13 @@ def generate_ngspice_netlist(
         run_command = "op"
     elif analysis_type == "ac":
         _require_fields(analysis, "ac", _AC_SWEEP_FIELDS)
-        _validate_sweep_type(analysis["sweep_type"])
+        _require_allowed(analysis, "sweep_type", _SWEEP_TYPES)
         run_command = (
             f"ac {analysis['sweep_type']} {int(analysis['points'])} "
             f"{format_number(analysis['start_freq_hz'])} {format_number(analysis['stop_freq_hz'])}"
         )
     elif analysis_type == "tran":
-        required = ("step_s", "stop_s")
-        missing = [f for f in required if f not in analysis]
-        if missing:
-            raise ValueError(f"analysis (type='tran') missing required field(s): {missing}")
+        _require_fields(analysis, "tran", ("step_s", "stop_s"))
         tran_fields = [format_number(analysis["step_s"]), format_number(analysis["stop_s"])]
         if "start_s" in analysis:
             tran_fields.append(format_number(analysis["start_s"]))
@@ -419,7 +455,7 @@ def generate_ngspice_netlist(
         run_command = "tran " + " ".join(tran_fields)
     elif analysis_type == "noise":
         _require_fields(analysis, "noise", ("output_node", "src", *_AC_SWEEP_FIELDS))
-        _validate_sweep_type(analysis["sweep_type"])
+        _require_allowed(analysis, "sweep_type", _SWEEP_TYPES)
         run_command = (
             f"noise {analysis['output_node']} {analysis['src']} {analysis['sweep_type']} "
             f"{int(analysis['points'])} {format_number(analysis['start_freq_hz'])} "
@@ -429,7 +465,7 @@ def generate_ngspice_netlist(
             run_command += f" {int(analysis['pts_per_summary'])}"
     elif analysis_type == "disto":
         _require_fields(analysis, "disto", _AC_SWEEP_FIELDS)
-        _validate_sweep_type(analysis["sweep_type"])
+        _require_allowed(analysis, "sweep_type", _SWEEP_TYPES)
         run_command = (
             f"disto {analysis['sweep_type']} {int(analysis['points'])} "
             f"{format_number(analysis['start_freq_hz'])} {format_number(analysis['stop_freq_hz'])}"
@@ -440,14 +476,8 @@ def generate_ngspice_netlist(
         _require_fields(
             analysis, "pz", ("node1", "node2", "node3", "node4", "tf_type", "analysis_mode")
         )
-        tf_type = analysis["tf_type"]
-        if tf_type not in ("cur", "vol"):
-            raise ValueError(f"analysis['tf_type'] must be 'cur' or 'vol', got {tf_type!r}")
-        analysis_mode = analysis["analysis_mode"]
-        if analysis_mode not in ("pol", "zer", "pz"):
-            raise ValueError(
-                f"analysis['analysis_mode'] must be 'pol', 'zer', or 'pz', got {analysis_mode!r}"
-            )
+        tf_type = _require_allowed(analysis, "tf_type", ("cur", "vol"))
+        analysis_mode = _require_allowed(analysis, "analysis_mode", ("pol", "zer", "pz"))
         run_command = (
             f"pz {analysis['node1']} {analysis['node2']} {analysis['node3']} "
             f"{analysis['node4']} {tf_type} {analysis_mode}"
@@ -455,12 +485,9 @@ def generate_ngspice_netlist(
     else:  # sens
         _require_fields(analysis, "sens", ("outvar",))
         run_command = f"sens {analysis['outvar']}"
-        present = [f for f in _AC_SWEEP_FIELDS if f in analysis]
-        if present:
-            if len(present) != len(_AC_SWEEP_FIELDS):
-                missing = [f for f in _AC_SWEEP_FIELDS if f not in analysis]
-                raise ValueError(f"analysis (type='sens') missing required field(s): {missing}")
-            _validate_sweep_type(analysis["sweep_type"])
+        if any(f in analysis for f in _AC_SWEEP_FIELDS):
+            _require_fields(analysis, "sens", _AC_SWEEP_FIELDS)
+            _require_allowed(analysis, "sweep_type", _SWEEP_TYPES)
             run_command += (
                 f" ac {analysis['sweep_type']} {int(analysis['points'])} "
                 f"{format_number(analysis['start_freq_hz'])} "
@@ -608,10 +635,15 @@ def run_ngspice_simulation(
     [float, ...] | [[real, imag], ...]}`. For `.PZ`/`.SENS`, there is no
     swept axis to report at all (`scale`/`scale_name` are `None`) --
     `values` instead comes from parse_ngspice_print_values() reading the
-    `print all` text out of ngspice's own batch-mode log file (the same
-    file NgspiceSimulator.run() already reads back for its diagnostics; see
-    that method's own citation for why the log file, not stdout, is
-    trusted for ngspice's batch-mode text output).
+    `print all` text out of ngspice's own batch-mode log file, re-read in
+    full from disk via NgspiceSimulator.run()'s "log_file" output rather
+    than its "log" output -- "log" is capped to its last 8000 characters
+    (a diagnostic convenience only; see that method's own citation), and a
+    real run's netlist echo, convergence warnings, or ngspice's own
+    end-of-run summary text can push the `print all` lines outside that
+    trailing window, silently starving parse_ngspice_print_values() of the
+    very data it exists to parse. The same untruncated-file-read approach
+    the `wrdata` path below already uses for its own output file.
 
     See this module's header comment for the format-verification citations
     and the honest caveats: netlist generation and result parsing are
@@ -640,30 +672,39 @@ def run_ngspice_simulation(
     )
 
     if analysis_type in _PRINT_VALUE_ANALYSIS_TYPES:
-        values = parse_ngspice_print_values(result.outputs.get("log", ""))
-        return {
-            "provenance": "SIMULATED",
-            "scale_name": None,
-            "scale": None,
-            "values": values,
-            "simulator": result.simulator,
-            "status": result.status,
-            "workdir": str(result.workdir),
-            "netlist_file": str(netlist_file),
-            "output_file": None,
-        }
-
-    output_text = output_file.read_text() if output_file.exists() else ""
-    parsed = parse_ngspice_wrdata(output_text, outputs, analysis_type)
+        scale_name = None
+        scale = None
+        values = parse_ngspice_print_values(_read_full_ngspice_log(result))
+        output_file_str = None
+    else:
+        output_text = output_file.read_text() if output_file.exists() else ""
+        parsed = parse_ngspice_wrdata(output_text, outputs, analysis_type)
+        scale_name = parsed["scale_name"]
+        scale = parsed["scale"]
+        values = parsed["values"]
+        output_file_str = str(output_file)
 
     return {
         "provenance": "SIMULATED",
-        "scale_name": parsed["scale_name"],
-        "scale": parsed["scale"],
-        "values": parsed["values"],
+        "scale_name": scale_name,
+        "scale": scale,
+        "values": values,
         "simulator": result.simulator,
         "status": result.status,
         "workdir": str(result.workdir),
         "netlist_file": str(netlist_file),
-        "output_file": str(output_file),
+        "output_file": output_file_str,
     }
+
+
+def _read_full_ngspice_log(result: SimulationResult) -> str:
+    """Return the complete text of the batch-mode log NgspiceSimulator.run()
+    already wrote to disk, re-reading it from "log_file" rather than trusting
+    "log" (capped to its last 8000 characters -- see that method's own
+    citation) -- see run_ngspice_simulation()'s own docstring for why this
+    matters for `.PZ`/`.SENS`. Falls back to the capped "log" text only if
+    "log_file" is somehow absent or has since been removed."""
+    log_file = result.outputs.get("log_file")
+    if log_file and Path(log_file).exists():
+        return Path(log_file).read_text(errors="replace")
+    return result.outputs.get("log", "")

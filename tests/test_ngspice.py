@@ -528,6 +528,11 @@ def test_ngspice_simulator_invokes_dash_b_dash_o_and_netlist(tmp_path: Path):
     assert tokens[3] == str(netlist_file)
     assert result.status == "COMPLETED"
     assert result.provenance == "SIMULATED"
+    # "log_file" is the untruncated file on disk -- see
+    # test_run_ngspice_simulation_pz_survives_log_truncation for why a
+    # caller needs this instead of the capped "log" string.
+    assert result.outputs["log_file"].endswith("ngspice.log")
+    assert Path(result.outputs["log_file"]).read_text() == result.outputs["log"]
 
 
 def test_ngspice_simulator_nonzero_exit_raises_simulator_error_with_log_content(tmp_path: Path):
@@ -676,6 +681,35 @@ def test_run_ngspice_simulation_end_to_end_pz(tmp_path: Path):
     assert result["values"]["zero(1)"] == pytest.approx([-0.3333333333333333, 0.0])
     assert result["scale"] is None
     assert result["scale_name"] is None
+
+
+def test_run_ngspice_simulation_pz_survives_log_truncation(tmp_path: Path):
+    # Regression test: NgspiceSimulator.run()'s outputs["log"] is a short
+    # diagnostic convenience capped to its last 8000 characters (see that
+    # method's own docstring) -- .PZ/.SENS results must not be parsed from
+    # that capped copy, since ngspice's own end-of-run text (or, in a real
+    # run, convergence warnings/netlist echo) appearing after "print all"
+    # can push the meaningful lines outside that trailing window. This
+    # reproduces exactly that: >8000 characters of log text AFTER the
+    # print-all lines, which would leave an empty/incomplete "values" dict
+    # if parsed from the truncated "log" string instead of re-reading the
+    # full log file from disk.
+    pz_lines = (
+        "pole(1) = -2.618033988749895e+00,0.000000000000000e+00\n"
+        "zero(1) = -3.333333333333333e-01,0.000000000000000e+00\n"
+    )
+    trailing_padding = "z" * 8100  # forces pz_lines out of a naive [-8000:] tail
+    log_text = pz_lines + trailing_padding
+    script = _make_fake_ngspice(
+        tmp_path, f'import sys\nwith open(sys.argv[3], "w") as f:\n    f.write({log_text!r})\n'
+    )
+
+    result = run_ngspice_simulation(
+        job=PZ_JOB, timeout_s=10, executable=str(script), workdir=str(tmp_path / "pz_long_log")
+    )
+
+    assert result["values"]["pole(1)"] == pytest.approx([-2.618033988749895, 0.0])
+    assert result["values"]["zero(1)"] == pytest.approx([-0.3333333333333333, 0.0])
 
 
 def test_run_ngspice_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
