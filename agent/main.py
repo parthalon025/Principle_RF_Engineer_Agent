@@ -50,6 +50,7 @@ from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
 from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
 from knowledge.sourcing.arxiv import search_arxiv_papers as _search_arxiv_papers
+from knowledge.sourcing.etsi import ingest_etsi_ipr_declaration as _ingest_etsi_ipr_declaration
 from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
@@ -1686,6 +1687,46 @@ def ingest_etsi_standard(
 
 
 @function_tool
+def ingest_etsi_ipr_declaration(
+    document_url: str,
+    declared_against_document_id: int,
+    license: str,
+    classification: str,
+) -> dict:
+    """Download an ETSI IPR/(F)RAND-declaration document from the SR 000 314
+    register and ingest it into the knowledge base as source_type='standard'
+    -- the same source type ingest_etsi_standard uses for every ETSI
+    deliverable, since a licensing declaration is still an ETSI document.
+    Plain language: a company that believes it holds a patent essential to
+    building to a standard declares it here and promises (F)RAND terms --
+    fair, reasonable, and non-discriminatory licensing, not a free grant --
+    so a design that leans on a standard with a declaration on file may
+    still cost something to license before it can be built.
+    Fetch-by-identifier only, not search: document_url must be a specific
+    declaration's own page, e.g. "https://ipr.etsi.org/IPRDetails.aspx?
+    IPRD_ID=198&IPRD_TYPE_ID=2&MODE=2" -- confirmed live during this
+    ticket's research as a stable, unauthenticated, no-session-required URL
+    (Google's own crawler has this exact URL indexed with no sessionkey
+    parameter). ipr.etsi.org is a distinct subdomain from www.etsi.org, and
+    like the standards-search UI, has no confirmed scriptable search API --
+    obtain the URL from https://ipr.etsi.org/ (the human-facing search
+    form) however you already found it.
+    declared_against_document_id: the documents.id (from a prior
+    ingest_etsi_standard call) of the standard this declaration was filed
+    against -- stored as extra_metadata so the declaration stays traceably
+    linked to the standard it constrains, never inferred or guessed.
+    ETSI's IPR declarations are free to view but carry the same copyright/
+    (F)RAND posture as its standards; license must be the reuse terms that
+    actually apply, this tool does not assume a default."""
+    return _ingest_etsi_ipr_declaration(
+        document_url,
+        declared_against_document_id=declared_against_document_id,
+        license=license,
+        classification=classification,
+    )
+
+
+@function_tool
 def ingest_fcc_rule(
     part: int,
     license: str,
@@ -2608,6 +2649,7 @@ _ALL_TOOLS = [
     search_arxiv_papers,
     ingest_3gpp_spec,
     ingest_etsi_standard,
+    ingest_etsi_ipr_declaration,
     ingest_fcc_rule,
     ingest_patent,
     index_document,
@@ -2708,8 +2750,10 @@ ROLE_SPECS: list[RoleSpec] = [
             "search_arxiv_papers before proposing a new element or mechanism "
             "-- 'search precedent before inventing' -- fetching 3GPP specs/"
             "ETSI standards/FCC eCFR rule text via ingest_3gpp_spec/"
-            "ingest_etsi_standard/ingest_fcc_rule, and fetching US patents "
-            "and published patent applications from the USPTO via "
+            "ingest_etsi_standard/ingest_fcc_rule, surfacing ETSI's "
+            "IPR/(F)RAND-declaration register against a standard already "
+            "ingested via ingest_etsi_ipr_declaration, and fetching US "
+            "patents and published patent applications from the USPTO via "
             "ingest_patent) other roles rely on. Defer network-level "
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
@@ -2734,6 +2778,7 @@ ROLE_SPECS: list[RoleSpec] = [
             search_arxiv_papers,
             ingest_3gpp_spec,
             ingest_etsi_standard,
+            ingest_etsi_ipr_declaration,
             ingest_fcc_rule,
             ingest_patent,
             index_document,

@@ -1,4 +1,4 @@
-# ETSI standards (deliver-path PDFs)
+# ETSI standards (deliver-path PDFs) and the IPR/FRAND-declaration register
 
 ETSI (the European Telecommunications Standards Institute) is the European
 standards body that writes and publishes the radio-equipment and EMC
@@ -80,28 +80,57 @@ per document, exactly as for every other ingested source.
 
 ## How this repo uses it today
 
-`knowledge/sourcing/etsi.py`'s single function, `ingest_etsi_standard()`,
-takes a caller-supplied `document_url`, validates it's
-`https://www.etsi.org/deliver/...` (rejecting anything else), downloads the
-bytes (`knowledge.sourcing._http.download_bytes`, injectable as `fetch_fn`
-for tests), writes them to a temp or caller-given directory, and hands the
-file to `knowledge.ingest.ingest_document(source_type="standard", ...)`
-unchanged — no ETSI-specific parsing. `policies/tool_policy.yaml` lists
-`ingest_etsi_standard` under `ingestion_auto` (no human-approval gate)
-precisely because it needs no credential.
+`knowledge/sourcing/etsi.py` has two functions, both following the same
+shape (issue #284 added the second, next to the first):
+
+- `ingest_etsi_standard()` takes a caller-supplied `document_url`,
+  validates it's `https://www.etsi.org/deliver/...` (rejecting anything
+  else), downloads the bytes (`knowledge.sourcing._http.download_bytes`,
+  injectable as `fetch_fn` for tests), writes them to a temp or
+  caller-given directory, and hands the file to
+  `knowledge.ingest.ingest_document(source_type="standard", ...)`
+  unchanged — no ETSI-specific parsing.
+- `ingest_etsi_ipr_declaration()` does the same thing against a document
+  from SR 000 314, ETSI's public IPR/FRAND licensing-declaration register
+  — confirmed (issue #284's own research) to be served from a *different*
+  host than the deliver-path PDFs: `ipr.etsi.org`, a dedicated subdomain
+  whose sole purpose is this database, rather than a directory under
+  `www.etsi.org`'s general site. An individual declaration's URL there is
+  `https://ipr.etsi.org/IPRDetails.aspx?IPRD_ID=<n>&IPRD_TYPE_ID=<n>&
+  MODE=<n>` — confirmed live, not assumed: Google's own crawler has
+  indexed `https://ipr.etsi.org/IPRDetails.aspx?IPRD_ID=198&
+  IPRD_TYPE_ID=2&MODE=2` with no `sessionkey` query parameter at all,
+  which is decisive since Googlebot holds no ETSI session — a page it can
+  render, cache, and index must not require one. That matches ETSI's own
+  "ETSI IPR Online Database User Guide for Anonymous Users"
+  (`ipr.etsi.org/UserGuide/UserGuide_Anonymous.htm`, via search index),
+  which documents that anonymous, unauthenticated users get read-only
+  access to declarations in "reflected" state. The function validates
+  `document_url` is exactly `https://ipr.etsi.org/IPRDetails.aspx?...`
+  (rejecting, e.g., the search form itself), downloads it the same way,
+  and passes `extra_metadata={"declared_against_document_id": ...}`
+  through to `ingest_document()` so the stored declaration stays
+  traceably linked to the standard it was filed against (also
+  `source_type="standard"` — a licensing declaration is still an ETSI
+  document, not a new source type).
+
+`policies/tool_policy.yaml` lists both `ingest_etsi_standard` and
+`ingest_etsi_ipr_declaration` under `ingestion_auto` (no human-approval
+gate) precisely because neither needs a credential.
 
 ## Capabilities not yet used here
 
 The adapter cannot discover a deliver URL from a bare standard number
 (e.g. "EN 300 328") — the caller must already have the exact versioned
-path, since no scriptable catalogue-search endpoint was found. It also
-never checks whether a previously ingested standard has since been
-superseded by a newer version (ETSI's own version folder in the URL, e.g.
-`02.02.01_60`, is exactly the signal that would drive that check) or
-queries ETSI's SR 000 314 IPR/FRAND declaration register to surface
-patent-licensing exposure before a design leans on a specific standard —
-both would strengthen this repo's "traceable to research" and warning
-discipline without adding a credentialed dependency.
+path, since no scriptable catalogue-search endpoint was found; the same is
+true of an IPR declaration's `IPRD_ID` — no scriptable search/query API
+was found for `ipr.etsi.org` either (it's a dynamic ASP.NET application,
+not a static per-document path), so a caller must already have the
+specific declaration's `IPRDetails.aspx` URL, obtained by searching
+`https://ipr.etsi.org/` by hand. Neither function ever checks whether a
+previously ingested standard has since been superseded by a newer version
+(ETSI's own version folder in the URL, e.g. `02.02.01_60`, is exactly the
+signal that would drive that check).
 
 ## Sources
 
@@ -123,3 +152,32 @@ discipline without adding a credentialed dependency.
   on ETSI, including the "over 56,000 documents" figure
 - `knowledge/sourcing/etsi.py`, `knowledge/ingest.py`,
   `policies/tool_policy.yaml` (this repo, read in full)
+
+Issue #284 (IPR/FRAND-declaration register) additions, all via search
+index — direct WebFetch of every `ipr.etsi.org` URL tried this session
+also returned HTTP 403 (same bot-blocking behaviour as `www.etsi.org`
+above, not evidence of an auth requirement):
+
+- https://ipr.etsi.org/ — the IPR Online Database's own landing/search page
+- https://ipr.etsi.org/ETSI_UserGuide.aspx?uniqueId=1 and
+  https://ipr.etsi.org/UserGuide/UserGuide_Anonymous.htm — ETSI's own
+  "User Guide for Anonymous Users," confirming anonymous/unauthenticated
+  read-only access to declarations in "reflected" state
+- https://ipr.etsi.org/IPRDetails.aspx?IPRD_ID=198&IPRD_TYPE_ID=2&MODE=2 —
+  a live individual-declaration URL, found indexed by Google with no
+  `sessionkey` parameter, which is the decisive signal that this page
+  renders without one (Googlebot holds no ETSI session)
+- Several further `https://ipr.etsi.org/IPRDetails.aspx?IPRD_ID=...`
+  results (IDs including 1152, 1193, 2071, 2774, 2969, 3043, 6456, 8008,
+  8872), all sharing the same `IPRDetails.aspx?IPRD_ID=<n>&
+  IPRD_TYPE_ID=<n>&MODE=<n>[&sessionkey=...]` shape — cross-checked to
+  confirm the query-parameter pattern, not a one-off
+- https://www.etsi.org/deliver/etsi_sr/000300_000399/000314/ (several
+  dated versions found, e.g. `02.38.01_60/sr_000314v023801p.pdf`) — SR 000
+  314 itself, the periodic snapshot report of the live database
+- https://www.etsi.org/images/files/IPR/etsi-guide-on-ipr.pdf and
+  https://www.etsi.org/images/files/IPR/FAQ-IPR-Question1.pdf — ETSI's own
+  guide/FAQ describing the database and its declaration workflow
+- `knowledge/sourcing/etsi.py`, `mcp_server/server.py`, `agent/main.py`,
+  `policies/tool_policy.yaml` (this repo, re-read after this ticket's
+  changes)

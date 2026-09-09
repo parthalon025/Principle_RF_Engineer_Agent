@@ -203,11 +203,20 @@ ingestion_auto:
   # just this project's own knowledge base) -- ingestion_auto, grouped by
   # "external, credential-free knowledge/sourcing operation," is still the
   # closest fit.
+  # issue #284: ingest_etsi_ipr_declaration sits here too, right beside
+  # ingest_etsi_standard -- same reasoning again, just against the SR 000
+  # 314 IPR/FRAND-declaration register instead of the deliver-path PDFs.
+  # Confirmed during this ticket's research: ipr.etsi.org's individual
+  # declaration pages need no login (ETSI's own "User Guide for Anonymous
+  # Users" documents read-only anonymous access, and Google's crawler --
+  # which holds no ETSI session -- has these pages indexed directly). No
+  # credential, no self-gate to categorize this under approval_self_gated.
   - ingest_document
   - ingest_arxiv_paper
   - search_arxiv_papers
   - ingest_3gpp_spec
   - ingest_etsi_standard
+  - ingest_etsi_ipr_declaration
   - ingest_fcc_rule
   - ingest_patent
   - index_document
