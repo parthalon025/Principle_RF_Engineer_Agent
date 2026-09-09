@@ -88,25 +88,56 @@ spicelib's own `RawRead` class (trace names, axis, per-trace waveforms —
 real or complex for AC results — converted to plain JSON-safe lists), never
 re-implementing the binary format itself. `run_ltspice_simulation()` ties
 both together end to end and returns a dict tagged `"provenance": "SIMULATED"`.
-The module accepts only an already-written SPICE netlist (raw text or an
-existing file) — unlike some of this repo's other simulator adapters, it
-does not generate a netlist from a structured component-description dict,
-on the reasoning that a SPICE netlist is already a natural hand-written or
-externally-generated format. spicelib is an optional install extra
-(`pip install '.[ltspice]'`), imported lazily so importing the module never
-requires it. The module's own docstring records that no real LTspice binary
-is installed in this environment, so the invocation mechanics are verified
-against spicelib's own upstream source and exercised in tests against a
-stub executable, but not yet end-to-end against a real LTspice binary.
+The module accepts an already-written SPICE netlist (raw text or an
+existing file) for the general case — unlike some of this repo's other
+simulator adapters, it does not generate a netlist from a structured
+component-description dict for every analysis type, on the reasoning that a
+SPICE netlist is already a natural hand-written or externally-generated
+format. spicelib is an optional install extra (`pip install '.[ltspice]'`),
+imported lazily so importing the module never requires it. The module's own
+docstring records that no real LTspice binary is installed in this
+environment, so the invocation mechanics are verified against spicelib's
+own upstream source and exercised in tests against a stub executable, but
+not yet end-to-end against a real LTspice binary.
+
+One structured-job-dict generator is carved out of that "hand it a finished
+netlist" rule: `generate_ltspice_net_netlist()` templates LTspice's own
+`.net` statement — the same two-port S-/Y-/Z-/H-parameter extraction this
+file's "Full capabilities" section describes — from a job dict shaped like
+`{"components": [...], "ports": [...], "analysis": {...}}`, mirroring
+`simulation/xyce.py`'s `generate_xyce_netlist()` job shape as closely as
+`.net`'s real syntax allows (each `ports` entry names either the driven
+source, `{"role": "input", "name": "V1"}`, or the loaded node/resistor,
+`{"role": "output", "kind": "V"|"I", ...}` — `.net` addresses its two ports
+by reference to an already-declared source/node/resistor, not via a
+repeatable Port-device card the way Xyce's `.LIN` does). `run_ltspice_
+simulation()` accepts this job dict through a `job=` parameter (mutually
+exclusive with `netlist`/`netlist_file`), generates the netlist, runs it
+through the same `LtspiceSimulator` path, and surfaces whatever S11/S21/
+S12/S22/Zin/Zout/etc. traces come back via `extract_ltspice_network_
+parameters()` — a pure function reading `parse_ltspice_raw()`'s already-
+parsed trace dict, added to the result under `network_parameters`. Per the
+primary source now cited below, `.net` has no `LINTYPE=`-style selector the
+way Xyce's `.LIN` does: one run computes admittance/impedance/Y-/Z-/H-/
+S-parameters together, so this generator's job dict has no parameter-type
+field to select one.
 
 ## Capabilities not yet used here
 
-- **`.net` two-port S/Y/Z/H-parameter extraction** [5] — the adapter passes
-  through whatever netlist and switches the caller supplies, but nothing in
-  this repo templates a `.net`-based netlist the way `simulation/xyce.py`
-  templates Xyce's `.LIN` analysis, so LTspice's built-in equivalent of a
-  filter/matching-network S-parameter sweep is reachable only if a caller
-  hand-writes it.
+- **`.net` two-port S/Y/Z/H-parameter extraction — partially closed** [5]:
+  `generate_ltspice_net_netlist()` / `run_ltspice_simulation(job=...)` now
+  template and run this (see "How this repo uses it today" above), but the
+  exact trace-name strings LTspice writes into the `.raw` file for each
+  parameter (S11/S21/S12/S22, Zin/Zout/Yin/Yout, and the Y/Z/H equivalents)
+  are corroborated only by community sources, not confirmed against a real
+  LTspice binary's actual output (none is installed in this environment —
+  see "How this repo uses it today" above) — see
+  `extract_ltspice_network_parameters()`'s own docstring for the honest
+  caveat. What remains genuinely unsupported: 1-port (`Zin`/`Yin`-only)
+  jobs are not specifically validated (the generator only checks for an
+  input/output pair), and `.net`'s `list`-frequency `.AC` variant
+  (`.ac list <freq> [<freq> ...]`) is not exposed — only `lin`/`oct`/`dec`
+  sweeps, matching `simulation/xyce.py`'s own `.AC` support.
 - **spicelib's `SimRunner` parallel batch sweeps and Monte Carlo/worst-case
   toolkits** [6] — useful for a tolerance-sensitivity study of a matching
   network's component values feeding an FSS/absorber unit cell, but
@@ -133,7 +164,8 @@ LTspice.
 - [2] https://en.wikipedia.org/wiki/LTspice — corroborating history only (Linear Technology origin, 2017 ADI acquisition); not a primary ADI source
 - [3] https://ltspice.analog.com/download/updates.txt — ADI's own version/release-notes feed, fetched directly
 - [4] https://ltwiki.org/LTspiceHelpXVII/LTspiceHelp/html/Running_Under_Linux.htm and community reports (WineHQ forum, groups.io LTspice list) on Wine/Linux status, via search-engine summary
-- [5] LTspice `.net` two-port network-parameter statement, via search-engine summary of user tutorials/forum material referencing LTspice's own help documentation (not fetched directly from ADI's own help pages in this pass)
+- [5] `.net` two-port network-parameter statement — UPDATED (issue #287, 2026-09-09): exact syntax (`.net [V(out[,ref])|I(Rout)] <Vin|Iin> [Rin=<val>] [Rout=<val>]`) and the "computes Y/Z/H/S-parameters together, no selector switch" fact now fetched directly from https://ltwiki.org/LTspiceHelp/LTspiceHelp/_NET_Compute_Network_Parameters_in_a_AC_Analysis.htm (LTwiki's direct HTML mirror of ADI's own bundled LTspiceHelp.chm content — the same "ltwiki.org counts as fetched-directly-primary" precedent source [8] below already relies on). The exact output *trace-name* strings (S11/S21/S12/S22, Zin/Zout/Yin/Yout) are NOT stated on that page; those are corroborated only by several independent LTspice-user community threads (ADI's own EngineerZone forum among them, plus edaboard.com and a sci.electronics.design/Google Groups thread, both via search-engine summary — direct fetch returned HTTP 403 and 429 respectively in this session) describing exactly those names in LTspice's waveform-viewer "Add Traces" dialog after a `.net` run — see `simulation/ltspice.py`'s module docstring and `extract_ltspice_network_parameters()`'s own docstring for the full citation and honest caveat. Superseded the prior citation here, which was a search-engine summary of tutorials/forum material never fetched directly.
+- [5b] `.ac <oct, dec, lin> <Nsteps> <StartFreq> <EndFreq>` — fetched directly from https://ltwiki.org/LTspiceHelpXVII/LTspiceHelp/html/AC_Analysis.htm (same LTwiki-mirrors-ADI's-help-content basis as [5]).
 - [6] https://github.com/nunobrum/spicelib — fetched directly
 - [7] PyLTSpice's own README/docs statement that it is "mostly based on the spicelib package" — as cited in `simulation/ltspice.py`'s module docstring, not independently re-fetched in this pass
 - [8] https://ltwiki.org/LTspiceHelpXVII/LTspiceHelp/html/License_Agreement_Disclaimer.htm — fetched directly
