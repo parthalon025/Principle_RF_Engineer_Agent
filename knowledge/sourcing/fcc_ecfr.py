@@ -222,6 +222,19 @@ def _parse_search_candidates(payload: dict[str, Any], max_results: int) -> list[
     404 if handed straight to it. A dropped result does not count against
     `max_results` -- the cap applies to the Title-47 candidates actually
     returned, not to eCFR's raw (every-title) result count.
+
+    A Title-47 result with no int-parseable `hierarchy["part"]` is dropped
+    the same way, for the same reason: the Search Service can match at a
+    coarser level than "part" (a chapter- or title-level hit carries no
+    `part` key at all), and `ingest_fcc_rule(part, ...)` has no meaning to
+    call without one -- there is no partial or best-guess part to fall
+    back to. This is a defensive-parsing choice against an external
+    service's response shape, not a signal that something is broken; it is
+    deliberately silent for the same reason the title filter above is:
+    `search_fcc_rules`'s own contract (see its docstring) is "an unreachable
+    API raises, a query that surfaces nothing *ingestible* returns fewer
+    candidates" -- never a warning field bolted onto the candidate-list
+    return shape the issue #279 acceptance criteria fixes.
     """
     candidates: list[dict[str, Any]] = []
     for result in payload.get("results", []):
@@ -232,6 +245,8 @@ def _parse_search_candidates(payload: dict[str, Any], max_results: int) -> list[
         try:
             part = int(part_raw)
         except (TypeError, ValueError):
+            # Coarser-than-part hit (e.g. a title- or chapter-level match) --
+            # see the docstring above for why this is dropped, not raised.
             continue
 
         candidates.append(

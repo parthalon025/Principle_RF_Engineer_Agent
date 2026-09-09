@@ -235,6 +235,44 @@ def test_search_fcc_rules_respects_max_results_after_title_filtering():
     assert candidates[0]["part"] == 90
 
 
+_SEARCH_RESULTS_WITH_COARSE_HIT = json.dumps(
+    {
+        "results": [
+            {
+                # A Title-47 hit matched above part level -- e.g. a
+                # chapter- or title-level heading -- carries no "part" key
+                # at all. ingest_fcc_rule(part, ...) has no meaning to call
+                # without one, so this must be dropped like a non-47 title
+                # is, not raise and not appear in the returned candidates.
+                "hierarchy": {"title": "47"},
+                "headings": {"title": "Telecommunication"},
+                "full_text_excerpt": "this chapter governs <strong>EIRP</strong>...",
+            },
+            {
+                "hierarchy": {"title": "47", "part": "15", "section": "15.209"},
+                "headings": {"section": "Radiated emission limits, general requirements."},
+                "full_text_excerpt": "field strength of <strong>emissions</strong>...",
+            },
+        ],
+        "meta": {"total_count": 2},
+    }
+).encode("utf-8")
+
+
+def test_search_fcc_rules_drops_title_47_hit_with_no_parseable_part():
+    """A Title-47 result matched at a coarser level than "part" (no `part`
+    key in its `hierarchy`) is not ingestible via `ingest_fcc_rule(part,
+    ...)` and must be dropped rather than raising or producing a candidate
+    with a garbage `part` value."""
+    candidates = fcc_ecfr.search_fcc_rules(
+        "EIRP", fetch_fn=lambda url: _SEARCH_RESULTS_WITH_COARSE_HIT
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["part"] == 15
+    assert candidates[0]["section"] == "15.209"
+
+
 def test_search_fcc_rules_never_calls_ingest_document(monkeypatch):
     """Enforces the same "search returns candidates, a separate call
     ingests one" split as search_arxiv_papers (issue #257) --
