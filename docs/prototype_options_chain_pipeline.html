@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Options Chain</title>
+<style>
+  :root{
+    --bg:#f4f1ea;
+    --surface:#ffffff;
+    --surface-2:#faf7f0;
+    --ink:#1b2129;
+    --ink-2:#4a5261;
+    --muted:#80858c;
+    --border:#ddd6c7;
+    --accent:#2f6f5e;
+    --accent-soft:#e1efe9;
+    --warn:#a1611f;
+    --warn-soft:#f5e8d8;
+    --plan:#4c4fa3;
+    --plan-soft:#eceafb;
+    --grid-line: rgba(27,33,41,0.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#12161b; --surface:#1a2029; --surface-2:#1f2530; --ink:#e8e5db; --ink-2:#b7bcc4;
+      --muted:#8b9099; --border:#2b333d; --accent:#5fb59a; --accent-soft:rgba(95,181,154,.16);
+      --warn:#d99a4e; --warn-soft:rgba(217,154,78,.16); --plan:#9a9fe6; --plan-soft:rgba(154,159,230,.16);
+      --grid-line: rgba(232,229,219,0.06);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12161b; --surface:#1a2029; --surface-2:#1f2530; --ink:#e8e5db; --ink-2:#b7bcc4;
+    --muted:#8b9099; --border:#2b333d; --accent:#5fb59a; --accent-soft:rgba(95,181,154,.16);
+    --warn:#d99a4e; --warn-soft:rgba(217,154,78,.16); --plan:#9a9fe6; --plan-soft:rgba(154,159,230,.16);
+    --grid-line: rgba(232,229,219,0.06);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,Segoe UI,sans-serif;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  .wrap{max-width:1240px; margin:0 auto; padding:48px 28px 96px;}
+  h1,h2,h3{font-family:"IBM Plex Sans",sans-serif; text-wrap:balance; margin:0;}
+  .mono{font-family:"IBM Plex Mono",monospace;}
+  a{color:var(--accent);}
+
+  /* ---------- header ---------- */
+  header.top{padding-bottom:28px; border-bottom:1px solid var(--border); margin-bottom:32px;}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:10px;}
+  h1{font-size:clamp(28px,4vw,42px); font-weight:600; letter-spacing:-.01em; margin-bottom:14px;}
+  .lede{font-size:16px; line-height:1.65; color:var(--ink-2); max-width:74ch; margin-bottom:0;}
+  .lede strong{color:var(--ink); font-weight:600;}
+
+  /* ---------- legend + toggle ---------- */
+  .control-bar{
+    display:flex; flex-wrap:wrap; align-items:center; gap:22px;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:16px 20px; margin-bottom:36px;
+  }
+  .legend{display:flex; flex-wrap:wrap; gap:18px;}
+  .legend-item{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-2);}
+  .swatch{width:26px; height:16px; border-radius:4px; flex:none;}
+  .swatch.built{border:2px solid var(--accent); background:var(--accent-soft);}
+  .swatch.partial{border:2px dashed var(--warn); background:var(--warn-soft);}
+  .swatch.planned{border:2px dotted var(--plan); background:var(--plan-soft);}
+  .spacer{flex:1 1 auto;}
+  .switch-row{display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:500;}
+  .switch{position:relative; width:42px; height:24px; flex:none;}
+  .switch input{opacity:0; width:100%; height:100%; margin:0; cursor:pointer; position:absolute; inset:0; z-index:2;}
+  .switch .track{position:absolute; inset:0; background:var(--border); border-radius:999px; transition:background .15s;}
+  .switch .thumb{position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:var(--surface); box-shadow:0 1px 2px rgba(0,0,0,.3); transition:transform .15s;}
+  .switch input:checked + .track{background:var(--plan);}
+  .switch input:checked + .track + .thumb{transform:translateX(18px);}
+  .switch input:focus-visible + .track{outline:2px solid var(--plan); outline-offset:2px;}
+
+  /* ---------- figures ---------- */
+  figure{margin:0 0 40px;}
+  figure svg{width:100%; height:auto; display:block; background:var(--surface); border:1px solid var(--border); border-radius:14px;}
+  figcaption{font-size:13.5px; color:var(--muted); margin-top:10px; line-height:1.5; max-width:78ch;}
+  figcaption .k{color:var(--ink-2); font-weight:600;}
+  .fig-title{font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:600; margin-bottom:10px;}
+
+  svg .box-fill{fill:var(--surface-2);}
+  svg .box-stroke{stroke:var(--ink); stroke-width:2;}
+  svg .lbl{fill:var(--ink); font-family:"IBM Plex Sans",sans-serif; font-weight:600;}
+  svg .sub{fill:var(--muted); font-family:"IBM Plex Mono",monospace;}
+  svg .arrow-line{stroke:var(--ink-2); stroke-width:2; fill:none;}
+  svg .arrowhead{fill:var(--ink-2);}
+  svg .span-box{fill:none; stroke:var(--muted); stroke-width:1.6; stroke-dasharray:6 5;}
+  svg .span-lbl{fill:var(--muted); font-family:"IBM Plex Mono",monospace; font-size:11px;}
+  svg .gate-flag{fill:var(--ink);}
+  svg .gate-lbl{fill:var(--bg); font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:9.5px; letter-spacing:.06em;}
+  svg .node{cursor:pointer;}
+  svg .node .box-fill{transition:fill .15s;}
+  svg .node:hover .box-fill{fill:var(--accent-soft);}
+  svg .node:focus{outline:none;}
+  svg .node.hl .box-stroke{stroke:var(--plan); stroke-width:3.4;}
+  svg .node.hl .box-fill{fill:var(--plan-soft);}
+  svg .node.hl .diamond{stroke:var(--plan); stroke-width:3.4; fill:var(--plan-soft);}
+  svg .node.hl .sub{fill:var(--plan); font-weight:600;}
+  svg .fail-box{fill:var(--surface-2); stroke:var(--muted); stroke-width:2; stroke-dasharray:3 4; opacity:.6;}
+  svg .fail-lbl{fill:var(--muted); font-family:"IBM Plex Mono",monospace; font-size:10.5px;}
+  svg .diamond{fill:var(--accent-soft); stroke:var(--accent); stroke-width:2;}
+  svg .bus-dot{fill:var(--ink-2);}
+
+  .planned-overlay{display:none;}
+  body.show-planned .planned-overlay{display:block;}
+  svg .planned-box{fill:var(--plan-soft); stroke:var(--plan); stroke-width:2; stroke-dasharray:2.5 4;}
+  svg .planned-lbl{fill:var(--plan); font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600;}
+  svg .planned-leader{stroke:var(--plan); stroke-width:1.6; stroke-dasharray:2.5 4; fill:none;}
+  .planned-overlay.hl-planned .planned-box{stroke-width:3;}
+
+  /* ---------- walkthrough ---------- */
+  .walkthrough{margin-bottom:48px;}
+  .wt-tabs{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;}
+  .wt-tab{
+    font-family:"IBM Plex Mono",monospace; font-size:12.5px; padding:9px 14px; border-radius:999px;
+    border:1px solid var(--border); background:var(--surface); color:var(--ink-2); cursor:pointer;
+  }
+  .wt-tab.active{background:var(--ink); color:var(--bg); border-color:var(--ink);}
+  .wt-panel{display:none; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px 22px; font-size:14.5px; line-height:1.65; color:var(--ink-2);}
+  .wt-panel.active{display:block;}
+  .wt-panel strong{color:var(--ink);}
+
+  /* ---------- cards ---------- */
+  section.stage{margin-bottom:44px;}
+  .stage-head{display:flex; align-items:baseline; gap:12px; margin-bottom:18px;}
+  .stage-head h2{font-size:20px;}
+  .stage-head .count{font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--muted);}
+  .card-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(300px,1fr)); gap:16px;}
+  .card{background:var(--surface); border-radius:12px; padding:18px 20px; display:flex; flex-direction:column; gap:9px;}
+  .card.built{border:2px solid var(--accent);}
+  .card.partial{border:2px dashed var(--warn);}
+  .card.planned{border:2px dotted var(--plan);}
+  .card.flash{animation:flash 0.9s ease;}
+  @keyframes flash{ 0%{box-shadow:0 0 0 4px var(--plan-soft);} 100%{box-shadow:0 0 0 0 transparent;} }
+  .card-head{display:flex; align-items:center; gap:8px;}
+  .card-head .tag{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted);}
+  .card-head h3{font-size:15.5px; flex:1;}
+  .status-pill{font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px; border-radius:999px; flex:none;}
+  .status-pill.built{background:var(--accent-soft); color:var(--accent);}
+  .status-pill.partial{background:var(--warn-soft); color:var(--warn);}
+  .status-pill.planned{background:var(--plan-soft); color:var(--plan);}
+  .card .files{font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--muted); word-break:break-word;}
+  .card .tools{display:flex; flex-wrap:wrap; gap:6px;}
+  .chip{font-family:"IBM Plex Mono",monospace; font-size:11px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:2px 7px; color:var(--ink-2);}
+  .card p{margin:0; font-size:13.5px; line-height:1.55; color:var(--ink-2);}
+  .card p strong{color:var(--ink);}
+  .lands{font-size:12.5px; color:var(--plan); font-weight:600;}
+
+  /* ---------- footer ---------- */
+  .footnote{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:22px 24px; font-size:13.5px; line-height:1.65; color:var(--ink-2);}
+  .footnote h2{font-size:15px; margin-bottom:12px;}
+  .footnote table{width:100%; border-collapse:collapse; font-size:13px;}
+  .footnote th, .footnote td{text-align:left; padding:7px 10px 7px 0; border-bottom:1px solid var(--border); vertical-align:top;}
+  .footnote th{color:var(--muted); font-weight:600; font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase; letter-spacing:.05em;}
+  .footnote .src{font-family:"IBM Plex Mono",monospace; font-size:12px;}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">Principle_RF_Engineer_Agent — pipeline map, read from the code</div>
+  <h1>The options chain, start to finish</h1>
+  <p class="lede">This is what the agent actually does today, stage by stage, when it walks a requirement from prose to a batch of scored candidate designs — traced from the running code (<span class="mono">orchestration/design_loop.py</span>, <span class="mono">orchestration/solver.py</span>), not from the roadmap or the ADR prose, per this repo's own rule that planning docs are a plan someone wrote once, not a status report. <strong>Solid outlines are built and wired today. Dashed outlines are wired but incomplete. Dotted outlines are decisions an ADR already made that no code implements yet</strong> — switch them on to see exactly where each one would plug in.</p>
+</header>
+
+<div class="control-bar">
+  <div class="legend">
+    <div class="legend-item"><span class="swatch built"></span>Built &amp; wired</div>
+    <div class="legend-item"><span class="swatch partial"></span>Wired, but incomplete</div>
+    <div class="legend-item"><span class="swatch planned"></span>Proposed — no code yet</div>
+  </div>
+  <div class="spacer"></div>
+  <label class="switch-row" for="toggle-planned">
+    <span class="switch">
+      <input type="checkbox" id="toggle-planned" checked>
+      <span class="track"></span>
+      <span class="thumb"></span>
+    </span>
+    Show proposed improvements on the diagram
+  </label>
+</div>
+
+<figure>
+  <div class="fig-title">Figure 1 — the nine-step design loop</div>
+  <svg viewBox="0 0 1360 420" role="img" aria-label="The design loop: Requirements leads to a gated Architecture step, then Analysis, Simulation and Optimization (the solver's ungated span), then Verification, a gated Measurement step, Correlation, and a gated Redesign Decision that either loops back to Architecture or accepts the design.">
+    <defs>
+      <marker id="arrowhead1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+      </marker>
+    </defs>
+
+    <!-- solver span bracket -->
+    <rect x="500" y="24" width="720" height="102" rx="14" class="span-box"/>
+    <text x="860" y="16" text-anchor="middle" class="span-lbl">orchestration/solver.py runs a whole batch through this span — Figure 2</text>
+
+    <!-- Row 1 -->
+    <g class="node" id="n-req" tabindex="0" onclick="focusCard('req-intake')">
+      <rect x="40" y="40" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="130" y="68" text-anchor="middle" class="lbl" font-size="13">1 · REQUIREMENTS</text>
+      <text x="130" y="87" text-anchor="middle" class="sub" font-size="10.5">requirement_targets.py</text>
+    </g>
+
+    <g class="node" id="n-arch" tabindex="0" onclick="focusCard('architecture')">
+      <rect x="285" y="40" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="375" y="68" text-anchor="middle" class="lbl" font-size="13">2 · ARCHITECTURE</text>
+      <text x="375" y="87" text-anchor="middle" class="sub" font-size="10.5">design_families.py</text>
+      <rect x="378" y="28" width="70" height="18" rx="9" class="gate-flag"/>
+      <text x="413" y="41" text-anchor="middle" class="gate-lbl">GATED</text>
+    </g>
+
+    <g class="node" id="n-analysis" tabindex="0" onclick="focusCard('analysis')">
+      <rect x="530" y="40" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="620" y="68" text-anchor="middle" class="lbl" font-size="13">3 · ANALYSIS</text>
+      <text x="620" y="87" text-anchor="middle" class="sub" font-size="10.5">closed-form / fast tier</text>
+    </g>
+
+    <g class="node" id="n-sim" tabindex="0" onclick="focusCard('simulation')">
+      <rect x="775" y="40" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="865" y="68" text-anchor="middle" class="lbl" font-size="13">4 · SIMULATION</text>
+      <text x="865" y="87" text-anchor="middle" class="sub" font-size="10.5">full wave</text>
+    </g>
+
+    <g class="node" id="n-opt" tabindex="0" onclick="focusCard('optimization')">
+      <rect x="1020" y="40" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="1110" y="68" text-anchor="middle" class="lbl" font-size="13">5 · OPTIMIZATION</text>
+      <text x="1110" y="87" text-anchor="middle" class="sub" font-size="10.5">rf_objectives.py</text>
+    </g>
+
+    <!-- Row 1 arrows -->
+    <line x1="220" y1="75" x2="278" y2="75" class="arrow-line" marker-end="url(#arrowhead1)"/>
+    <line x1="465" y1="75" x2="523" y2="75" class="arrow-line" marker-end="url(#arrowhead1)"/>
+    <line x1="710" y1="75" x2="768" y2="75" class="arrow-line" marker-end="url(#arrowhead1)"/>
+    <line x1="955" y1="75" x2="1013" y2="75" class="arrow-line" marker-end="url(#arrowhead1)"/>
+    <!-- drop to row 2 -->
+    <line x1="1110" y1="110" x2="1110" y2="253" class="arrow-line" marker-end="url(#arrowhead1)"/>
+
+    <!-- Row 2 (reversed) -->
+    <g class="node" id="n-verify" tabindex="0" onclick="focusCard('verification')">
+      <rect x="1020" y="260" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="1110" y="288" text-anchor="middle" class="lbl" font-size="13">6 · VERIFICATION</text>
+      <text x="1110" y="307" text-anchor="middle" class="sub" font-size="10.5">verify_requirement</text>
+    </g>
+
+    <g class="node" id="n-measure" tabindex="0" onclick="focusCard('measurement')">
+      <rect x="775" y="260" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="865" y="288" text-anchor="middle" class="lbl" font-size="13">7 · MEASUREMENT</text>
+      <text x="865" y="307" text-anchor="middle" class="sub" font-size="10.5">measurement/external.py</text>
+      <rect x="828" y="248" width="70" height="18" rx="9" class="gate-flag"/>
+      <text x="863" y="261" text-anchor="middle" class="gate-lbl">GATED</text>
+    </g>
+
+    <g class="node" id="n-correlate" tabindex="0" onclick="focusCard('correlation')">
+      <rect x="530" y="260" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="620" y="288" text-anchor="middle" class="lbl" font-size="13">8 · CORRELATION</text>
+      <text x="620" y="307" text-anchor="middle" class="sub" font-size="10.5">rf_tools/correlation.py</text>
+    </g>
+
+    <g class="node" id="n-redesign" tabindex="0" onclick="focusCard('redesign')">
+      <rect x="285" y="260" width="180" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="375" y="288" text-anchor="middle" class="lbl" font-size="13">9 · REDESIGN DECISION</text>
+      <text x="375" y="307" text-anchor="middle" class="sub" font-size="10.5">writes to Postgres here</text>
+      <rect x="328" y="248" width="70" height="18" rx="9" class="gate-flag"/>
+      <text x="363" y="261" text-anchor="middle" class="gate-lbl">GATED</text>
+    </g>
+
+    <!-- Row 2 arrows (right to left) -->
+    <line x1="1020" y1="295" x2="958" y2="295" class="arrow-line" marker-end="url(#arrowhead1)"/>
+    <line x1="775" y1="295" x2="713" y2="295" class="arrow-line" marker-end="url(#arrowhead1)"/>
+    <line x1="530" y1="295" x2="468" y2="295" class="arrow-line" marker-end="url(#arrowhead1)"/>
+
+    <!-- loop back -->
+    <path d="M300,260 C260,200 260,150 300,113" class="arrow-line" marker-end="url(#arrowhead1)"/>
+    <text x="222" y="188" text-anchor="middle" class="span-lbl">iterate</text>
+
+    <!-- precedent search, attached near Architecture -->
+    <g class="node" id="n-precedent" tabindex="0" onclick="focusCard('precedent')">
+      <rect x="285" y="145" width="180" height="46" rx="9" class="box-fill box-stroke" stroke-dasharray="0"/>
+      <text x="375" y="165" text-anchor="middle" class="lbl" font-size="11.5">precedent search</text>
+      <text x="375" y="180" text-anchor="middle" class="sub" font-size="9.5">local corpus only</text>
+    </g>
+    <line x1="375" y1="110" x2="375" y2="142" class="arrow-line" marker-end="url(#arrowhead1)"/>
+
+    <!-- planned: open literature discovery, next to precedent search -->
+    <g class="planned-overlay">
+      <rect x="70" y="145" width="195" height="46" rx="9" class="planned-box"/>
+      <text x="167" y="163" text-anchor="middle" class="planned-lbl" font-size="10.5">+ open-literature search</text>
+      <text x="167" y="178" text-anchor="middle" class="planned-lbl" font-size="9">by keyword, not just by ID</text>
+      <line x1="265" y1="168" x2="283" y2="168" class="planned-leader"/>
+    </g>
+
+    <!-- planned: element/coding-alphabet library, between architecture and analysis -->
+    <g class="planned-overlay">
+      <rect x="500" y="150" width="215" height="46" rx="9" class="planned-box"/>
+      <text x="607" y="168" text-anchor="middle" class="planned-lbl" font-size="10.5">+ element / coding-alphabet</text>
+      <text x="607" y="183" text-anchor="middle" class="planned-lbl" font-size="9">library — printed letters only</text>
+      <path d="M607,150 C607,130 620,120 620,110" class="planned-leader"/>
+    </g>
+
+    <!-- planned: real solver for tier B, near Simulation -->
+    <g class="planned-overlay">
+      <rect x="775" y="145" width="180" height="46" rx="9" class="planned-box"/>
+      <text x="865" y="163" text-anchor="middle" class="planned-lbl" font-size="10.5">+ wire Palace/openEMS</text>
+      <text x="865" y="178" text-anchor="middle" class="planned-lbl" font-size="9">for reflection-phase / diffusive</text>
+      <line x1="865" y1="145" x2="865" y2="112" class="planned-leader"/>
+    </g>
+
+    <!-- planned: approval UI, spanning the three gates -->
+    <g class="planned-overlay">
+      <rect x="828" y="228" width="200" height="16" rx="8" class="planned-box"/>
+      <text x="928" y="240" text-anchor="middle" class="planned-lbl" font-size="9.5">+ a real approval callback →</text>
+      <line x1="863" y1="248" x2="863" y2="244" class="planned-leader"/>
+    </g>
+
+    <!-- planned: structured attribution between correlation and redesign -->
+    <g class="planned-overlay">
+      <rect x="440" y="345" width="215" height="42" rx="9" class="planned-box"/>
+      <text x="547" y="362" text-anchor="middle" class="planned-lbl" font-size="10.5">+ structured attribution</text>
+      <text x="547" y="376" text-anchor="middle" class="planned-lbl" font-size="9">model wrong, or design wrong?</text>
+      <path d="M547,345 C547,320 520,306 502,299" class="planned-leader"/>
+    </g>
+  </svg>
+  <figcaption><span class="k">Reading it:</span> the loop runs left to right, drops down, and returns right to left — the same shape as the mermaid diagram in this repo's own README, redrawn here with every gap made visible. Click any box to jump to its full explanation below.</figcaption>
+</figure>
+
+<figure>
+  <div class="fig-title">Figure 2 — inside one options-chain batch (orchestration/solver.py)</div>
+  <svg viewBox="0 0 1360 470" role="img" aria-label="Inside run_candidate_search: a batch of proposed candidates fans out, each runs Analysis, Simulation and Optimization independently, one candidate fails and is skipped, the rest are scored and the worst-performing requirement decides each candidate's score, a stopping rule picks when to stop, and the single best candidate's state is returned.">
+    <defs>
+      <marker id="arrowhead2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+      </marker>
+    </defs>
+
+    <rect x="16" y="205" width="150" height="60" rx="10" class="box-fill box-stroke"/>
+    <text x="91" y="230" text-anchor="middle" class="lbl" font-size="11.5">requirement</text>
+    <text x="91" y="246" text-anchor="middle" class="lbl" font-size="11.5">target + prior misses</text>
+
+    <line x1="166" y1="235" x2="216" y2="235" class="arrow-line" marker-end="url(#arrowhead2)"/>
+    <circle cx="222" cy="235" r="5" class="bus-dot"/>
+    <text x="222" y="200" text-anchor="middle" class="sub" font-size="10">N proposed candidates</text>
+
+    <!-- planned: prediction + mechanism, at the fan-out point -->
+    <g class="planned-overlay">
+      <rect x="20" y="18" width="250" height="44" rx="9" class="planned-box"/>
+      <text x="145" y="36" text-anchor="middle" class="planned-lbl" font-size="10.5">+ Prediction &amp; Mechanism claim</text>
+      <text x="145" y="51" text-anchor="middle" class="planned-lbl" font-size="9">recorded per candidate, before scoring</text>
+      <path d="M145,62 C160,110 200,170 222,225" class="planned-leader"/>
+    </g>
+
+    <!-- 4 lanes -->
+    <!-- lane 1 -->
+    <line x1="227" y1="90" x2="252" y2="90" class="arrow-line" marker-end="url(#arrowhead2)"/>
+    <g class="node" id="n-lane1" tabindex="0" onclick="focusCard('solver')">
+      <rect x="256" y="64" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="326" y="94" text-anchor="middle" class="lbl" font-size="11">analysis</text>
+      <rect x="428" y="64" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="498" y="94" text-anchor="middle" class="lbl" font-size="11">simulation</text>
+      <rect x="600" y="64" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="670" y="94" text-anchor="middle" class="lbl" font-size="11">optimization</text>
+      <line x1="396" y1="90" x2="424" y2="90" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <line x1="568" y1="90" x2="596" y2="90" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <line x1="740" y1="90" x2="778" y2="90" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <circle cx="796" cy="90" r="20" class="diamond"/>
+      <text x="796" y="94" text-anchor="middle" class="lbl" font-size="10.5">93%</text>
+    </g>
+
+    <!-- lane 2 -->
+    <line x1="227" y1="175" x2="252" y2="175" class="arrow-line" marker-end="url(#arrowhead2)"/>
+    <g class="node" id="n-lane2" tabindex="0" onclick="focusCard('solver')">
+      <rect x="256" y="149" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="326" y="179" text-anchor="middle" class="lbl" font-size="11">analysis</text>
+      <rect x="428" y="149" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="498" y="179" text-anchor="middle" class="lbl" font-size="11">simulation</text>
+      <rect x="600" y="149" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="670" y="179" text-anchor="middle" class="lbl" font-size="11">optimization</text>
+      <line x1="396" y1="175" x2="424" y2="175" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <line x1="568" y1="175" x2="596" y2="175" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <line x1="740" y1="175" x2="778" y2="175" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <circle cx="796" cy="175" r="20" class="diamond"/>
+      <text x="796" y="179" text-anchor="middle" class="lbl" font-size="10.5">100%</text>
+    </g>
+
+    <!-- lane 3: failing candidate -->
+    <line x1="227" y1="260" x2="252" y2="260" class="arrow-line" marker-end="url(#arrowhead2)"/>
+    <g class="node" id="n-lane3" tabindex="0" onclick="focusCard('solver')">
+      <rect x="256" y="234" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="326" y="264" text-anchor="middle" class="lbl" font-size="11">analysis</text>
+      <line x1="396" y1="260" x2="424" y2="260" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <rect x="428" y="234" width="140" height="52" rx="8" class="fail-box"/>
+      <text x="498" y="260" text-anchor="middle" class="fail-lbl" font-size="10.5">simulation</text>
+      <text x="498" y="274" text-anchor="middle" class="fail-lbl" font-size="9">✕ failed — skipped</text>
+    </g>
+
+    <!-- lane 4 -->
+    <line x1="227" y1="345" x2="252" y2="345" class="arrow-line" marker-end="url(#arrowhead2)"/>
+    <g class="node" id="n-lane4" tabindex="0" onclick="focusCard('solver')">
+      <rect x="256" y="319" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="326" y="349" text-anchor="middle" class="lbl" font-size="11">analysis</text>
+      <rect x="428" y="319" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="498" y="349" text-anchor="middle" class="lbl" font-size="11">simulation</text>
+      <rect x="600" y="319" width="140" height="52" rx="8" class="box-fill box-stroke"/>
+      <text x="670" y="349" text-anchor="middle" class="lbl" font-size="11">optimization</text>
+      <line x1="396" y1="345" x2="424" y2="345" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <line x1="568" y1="345" x2="596" y2="345" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <line x1="740" y1="345" x2="778" y2="345" class="arrow-line" marker-end="url(#arrowhead2)"/>
+      <circle cx="796" cy="345" r="20" class="diamond"/>
+      <text x="796" y="349" text-anchor="middle" class="lbl" font-size="10.5">81%</text>
+    </g>
+
+    <!-- converge -->
+    <path d="M816,90 C880,90 880,220 936,220" class="arrow-line" marker-end="url(#arrowhead2)"/>
+    <path d="M816,175 C880,175 880,220 936,220" class="arrow-line" marker-end="url(#arrowhead2)"/>
+    <path d="M816,345 C880,345 880,225 940,225" class="arrow-line" marker-end="url(#arrowhead2)"/>
+
+    <g class="node" id="n-worst" tabindex="0" onclick="focusCard('success-score')">
+      <polygon points="1010,190 1080,220 1010,250 940,220" class="diamond"/>
+      <text x="1010" y="216" text-anchor="middle" class="lbl" font-size="10">worst-of-scored-</text>
+      <text x="1010" y="229" text-anchor="middle" class="lbl" font-size="10">steps</text>
+    </g>
+
+    <line x1="1080" y1="220" x2="1116" y2="220" class="arrow-line" marker-end="url(#arrowhead2)"/>
+
+    <g class="node" id="n-stop" tabindex="0" onclick="focusCard('solver')">
+      <rect x="1120" y="185" width="150" height="70" rx="10" class="box-fill box-stroke"/>
+      <text x="1195" y="210" text-anchor="middle" class="lbl" font-size="10.5">stopping rule</text>
+      <text x="1195" y="225" text-anchor="middle" class="sub" font-size="9">target hit / plateau /</text>
+      <text x="1195" y="238" text-anchor="middle" class="sub" font-size="9">budget / gate ahead</text>
+    </g>
+
+    <g class="node" id="n-winner" tabindex="0" onclick="focusCard('solver')">
+      <text x="1200" y="270" text-anchor="middle" class="sub" font-size="9.5">best_candidate_state →</text>
+      <text x="1200" y="283" text-anchor="middle" class="sub" font-size="9.5">Fig.1 · Verification</text>
+    </g>
+  </svg>
+  <figcaption><span class="k">Reading it:</span> this whole diagram happens inside the dashed bracket in Figure 1. A batch is not a vote between architectures — it is many parameter guesses <em>inside one already-approved family</em>, each scored by its single worst-performing requirement, never an average.</figcaption>
+</figure>
+
+<div class="walkthrough">
+  <div class="wt-tabs">
+    <button class="wt-tab active" data-wt="s1">One design, start to finish</button>
+    <button class="wt-tab" data-wt="s2">Inside one batch</button>
+    <button class="wt-tab" data-wt="s3">Where fidelity quietly drops</button>
+    <button class="wt-tab" data-wt="s4">The seven gaps</button>
+  </div>
+  <div class="wt-panel active" id="panel-s1">A requirement enters at <strong>Requirements</strong> and can only leave, iteration after iteration, through <strong>Redesign Decision</strong> — the one place anything is actually written to the database. Three steps carry a padlock: <strong>Architecture</strong>, <strong>Measurement</strong>, and <strong>Redesign Decision</strong> itself. None of the three can be crossed without a signed, human-bound approval receipt — not another AI role checking the first one's work, on purpose (that idea was considered and rejected: see <span class="mono">ADR-0009</span>).</div>
+  <div class="wt-panel" id="panel-s2">Once one architecture is approved, the model can propose a whole batch of parameter guesses at once — that batch, run through <span class="mono">run_candidate_search</span>, is the actual "options chain." Each guess runs Analysis, Simulation and Optimization on its own; lane 3 above fails partway through and is simply marked failed and skipped — it never aborts the other three. The batch stops the moment one guess satisfies the target, or the running best score stalls (a plateau), or the evaluation budget runs out, or the loop reaches a step that needs a human — and it always records which of those four reasons applied.</div>
+  <div class="wt-panel" id="panel-s3">Choose <strong>reflection-phase steering</strong> or <strong>diffusive scattering</strong> at Architecture, and neither family declares a full-wave solver in the registry. <strong>Simulation</strong> quietly falls back to a thin-wire, method-of-moments solver built for antennas made of wires — the wrong physics for a periodic surface — and nothing raises an error to say so. It is the quietest gap in the pipeline today, which is exactly why it is worth knowing about.</div>
+  <div class="wt-panel" id="panel-s4">Every dotted outline on this page is a decision an ADR already made in writing, with no code behind it yet — from a literature search that can actually search instead of only fetching a citation you already have, to a library of shapes that were printed and measured rather than only simulated, to a person's "yes" having anywhere to actually land. Turn the toggle on above, and follow each dotted line to the exact box it would sit beside.</div>
+</div>
+
+<section class="stage">
+  <div class="stage-head"><h2>Built &amp; wired</h2><span class="count">what runs today, unmodified</span></div>
+  <div class="card-grid">
+
+    <article class="card built" id="card-req-intake">
+      <div class="card-head"><span class="tag">01</span><h3>Requirement intake</h3><span class="status-pill built">Built</span></div>
+      <p class="files">design_loop.py:382 · designs/service.py:54</p>
+      <p class="tools"><span class="chip">create_design</span><span class="chip">start_new_design_loop</span></p>
+      <p><strong>Decides:</strong> records the customer's stated requirement, word for word, as the loop's first decision, and opens a real database row for the design.</p>
+      <p><strong>Why:</strong> nothing here reads intent yet — that comes next. This step exists so the original prose survives untouched and tagged <span class="mono">ASSUMED</span>, so later stages can be checked against what was actually asked for, not a paraphrase of it.</p>
+    </article>
+
+    <article class="card built" id="card-req-target">
+      <div class="card-head"><span class="tag">01a</span><h3>Requirement → target</h3><span class="status-pill built">Built</span></div>
+      <p class="files">requirement_targets.py:186, 202, 210, 301</p>
+      <p class="tools"><span class="chip">propose_requirement_target</span><span class="chip">confirm_requirement_target</span><span class="chip">mark_requirement_unscoreable</span></p>
+      <p><strong>Decides:</strong> turns prose ("needs to work at 2.4 GHz without losing gain") into a number, a comparator (at-least / at-most / equals), a unit, and an optional tolerance.</p>
+      <p><strong>Why:</strong> the one module named directly in this project's own charter — it never calls an LLM. It only checks the number the model proposed is finite and the unit isn't blank; the judgment about what the requirement means stays with the model, the code just checks the paperwork is filled in. Even after a human confirms the target it stays <span class="mono">ASSUMED</span> forever — confirming a reading of prose makes it more trusted, not a different kind of evidence.</p>
+    </article>
+
+    <article class="card built" id="card-architecture">
+      <div class="card-head"><span class="tag">02</span><h3>Architecture</h3><span class="status-pill built">Built · gated</span></div>
+      <p class="files">design_loop.py:456 · design_families.py</p>
+      <p class="tools"><span class="chip">advance_design_loop_step</span></p>
+      <p><strong>Decides:</strong> commits this iteration to exactly one of six design families — patch, absorber, transmissive absorber, reflection-phase steering, diffusive scattering, or polarization conversion.</p>
+      <p><strong>Why:</strong> the pipeline deliberately does not auto-generate several architectures and silently rank-pick the best-scoring one — a human has to see and approve the one being tried (<span class="mono">ADR-0014</span>). One of only three places in the whole loop where a human's yes is required before anything proceeds.</p>
+    </article>
+
+    <article class="card built" id="card-precedent">
+      <div class="card-head"><span class="tag">02a</span><h3>Precedent search — local corpus</h3><span class="status-pill built">Built</span></div>
+      <p class="files">knowledge/search.py</p>
+      <p class="tools"><span class="chip">search_knowledge</span><span class="chip">search_design_records</span></p>
+      <p><strong>Decides:</strong> looks for a prior design, patent, or paper already sitting in the project's own database before letting the model invent something new.</p>
+      <p><strong>Why:</strong> keyword plus meaning-based (embedding) search over what's already been read in genuinely works. What it can't do yet is go and find something nobody has fed in first — see the partial and proposed cards below.</p>
+    </article>
+
+    <article class="card built" id="card-analysis">
+      <div class="card-head"><span class="tag">03</span><h3>Analysis — closed form</h3><span class="status-pill built">Built</span></div>
+      <p class="files">design_loop.py:600 · rf_tools/absorber.py · rf_tools/calculations.py</p>
+      <p class="tools"><span class="chip">internal — driven by the loop &amp; the solver</span></p>
+      <p><strong>Decides:</strong> a cheap, pencil-and-paper-grade estimate — for an absorber, the single worst-absorbing frequency in the required band from an equivalent-circuit model (Costa/Luukkonen); for a patch, its resonant frequency from the closed-form patch formula.</p>
+      <p><strong>Why:</strong> the "evaluate cheap before expensive" tier this project's method calls for. For absorbers it also runs the Rozanov thickness-versus-bandwidth limit as a real number, not just a comment, so a physically impossible design is caught before a solver ever sees it.</p>
+    </article>
+
+    <article class="card built" id="card-simulation">
+      <div class="card-head"><span class="tag">04</span><h3>Simulation — full wave</h3><span class="status-pill built">Built</span></div>
+      <p class="files">design_loop.py:748 · simulation/nec2pp.py · simulation/meep.py</p>
+      <p class="tools"><span class="chip">run_nec2_simulation</span><span class="chip">run_meep_simulation</span><span class="chip">+11 more standalone adapters</span></p>
+      <p><strong>Decides:</strong> a physically grounded confirmation of the cheap guess — method-of-moments for a patch antenna (NEC2), FDTD with periodic boundaries for an absorber sheet (MEEP).</p>
+      <p><strong>Why:</strong> confirms or contradicts the closed-form estimate before money or bench time is spent. Thirteen solver adapters exist in this codebase (openEMS, HFSS, Palace, Elmer, and more), but the loop only auto-wires two of them today — see the partial cards for exactly where that falls short.</p>
+    </article>
+
+    <article class="card built" id="card-optimization">
+      <div class="card-head"><span class="tag">05</span><h3>Optimization</h3><span class="status-pill built">Built</span></div>
+      <p class="files">design_loop.py:919 · optimization/rf_objectives.py</p>
+      <p class="tools"><span class="chip">optimize_patch_length_for_target_frequency</span></p>
+      <p><strong>Decides:</strong> searches one parameter — patch length — to hit the target frequency, by Bayesian search by default, or grid / genetic / gradient on request.</p>
+      <p><strong>Why:</strong> only wired for the patch family today. A search over which pre-characterised shape sits in which cell is the natural optimizer for the metasurface families — it has a name reserved for it (<span class="mono">COMBINATORIAL</span>) and nothing behind it yet.</p>
+    </article>
+
+    <article class="card built" id="card-solver">
+      <div class="card-head"><span class="tag">05'</span><h3>run_candidate_search — the options chain</h3><span class="status-pill built">Built</span></div>
+      <p class="files">orchestration/solver.py</p>
+      <p class="tools"><span class="chip">run_candidate_search</span></p>
+      <p><strong>Decides:</strong> drives a whole batch of the model's proposed parameter sets through Analysis → Simulation → Optimization, scores every one, and hands back the ranked batch plus its pick of the best.</p>
+      <p><strong>Why:</strong> a candidate is scored by its single worst-performing requirement, never an average — "the design is only as good as its worst-performing stated requirement." The batch stops on hitting the target, on the score plateauing, on running out of its evaluation budget, or on reaching a step that needs a human — and always says which, so a budget running out is never mistaken for a design being finished.</p>
+    </article>
+
+    <article class="card built" id="card-success-score">
+      <div class="card-head"><span class="tag">05a</span><h3>success_score</h3><span class="status-pill built">Built</span></div>
+      <p class="files">designs/success_score.py:320, 348, 448</p>
+      <p class="tools"><span class="chip">internal — called by run_candidate_search</span></p>
+      <p><strong>Decides:</strong> how close one numeric result sits to its target — non-linear and bounded, so overshooting a threshold isn't extra credit.</p>
+      <p><strong>Why:</strong> every score carries two separate flags — how the target was obtained (always <span class="mono">ASSUMED</span>, read from prose) and whether a human has confirmed it (<span class="mono">PROPOSED</span> or <span class="mono">CONFIRMED</span>). Keeping those separate stops a score against an unreviewed guess from ever being confused with a score against something a person actually checked.</p>
+    </article>
+
+    <article class="card built" id="card-verification">
+      <div class="card-head"><span class="tag">06</span><h3>Verification</h3><span class="status-pill built">Built</span></div>
+      <p class="files">design_loop.py:940</p>
+      <p class="tools"><span class="chip">verify_requirement</span></p>
+      <p><strong>Decides:</strong> compiles one row per requirement — expected value, actual value, pass / fail / conditional pass / blocked — from the evidence already on record.</p>
+      <p><strong>Why:</strong> not gated. Summarising evidence that already exists isn't a judgment call that needs a human's sign-off; approving what to do about it, later, is.</p>
+    </article>
+
+    <article class="card built" id="card-labtest">
+      <div class="card-head"><span class="tag">06'</span><h3>Lab test plan</h3><span class="status-pill built">Built</span></div>
+      <p class="files">orchestration/lab_test_plan.py:765, 849</p>
+      <p class="tools"><span class="chip">compile_lab_test_plan</span></p>
+      <p><strong>Decides:</strong> before a bench trip — what to measure, by what method, and what this iteration already predicts the answer is, plus a plain list of which requirements can't be checked at all, and exactly why.</p>
+      <p><strong>Why:</strong> this is "when stuck, name the missing measurement," actually built. Four named reasons cover every case a requirement is unverifiable, so a trip to the lab confirms a stated guess instead of going fishing.</p>
+    </article>
+
+    <article class="card built" id="card-measurement">
+      <div class="card-head"><span class="tag">07</span><h3>Measurement</h3><span class="status-pill built">Built · gated</span></div>
+      <p class="files">design_loop.py:955 · measurement/external.py</p>
+      <p class="tools"><span class="chip">advance_design_loop_step(touchstone_file=...)</span></p>
+      <p><strong>Decides:</strong> accepts one Touchstone file (.sNp) measured on real, independent bench equipment as evidence.</p>
+      <p><strong>Why:</strong> there is no instrument control anywhere in this codebase, on purpose — a file someone measured and physically brought back is the only way anything earns the top-ranked <span class="mono">MEASURED</span> label. Also one of the three gates: a human decides this measurement is accepted evidence for this design.</p>
+    </article>
+
+    <article class="card built" id="card-correlation">
+      <div class="card-head"><span class="tag">08</span><h3>Correlation</h3><span class="status-pill built">Built</span></div>
+      <p class="files">design_loop.py:1017 · rf_tools/correlation.py:314</p>
+      <p class="tools"><span class="chip">correlate_simulated_and_measured</span></p>
+      <p><strong>Decides:</strong> a number — how far the simulated prediction sits from what was actually measured, per S-parameter (worst-case dB difference, RMS difference).</p>
+      <p><strong>Why:</strong> half of "compare prediction against result," fully built as arithmetic. The other half — whether the model's physics or the fabricated part is what broke — stays a written judgment call at the next step, not a computed verdict. See the proposed card below for the trade-off.</p>
+    </article>
+
+    <article class="card built" id="card-redesign">
+      <div class="card-head"><span class="tag">09</span><h3>Redesign decision</h3><span class="status-pill built">Built · gated</span></div>
+      <p class="files">design_loop.py:1050 · tooling.py:294</p>
+      <p class="tools"><span class="chip">advance_design_loop_step</span></p>
+      <p><strong>Decides:</strong> iterate (loop back to Architecture, iteration count up by one) or accept the design. There is no third "release it" option anywhere in the code.</p>
+      <p><strong>Why:</strong> the only point in the whole loop where anything is actually written to the database — one transaction, everything recorded since this step last fired. A test in the repo proves structurally that nothing can skip straight from here to manufacture.</p>
+    </article>
+
+    <article class="card built" id="card-approval-gates">
+      <div class="card-head"><span class="tag">·</span><h3>The human-approval gate</h3><span class="status-pill built">Built · unwired</span></div>
+      <p class="files">orchestration/approval.py · designs/release_approval.py</p>
+      <p class="tools"><span class="chip">request_loop_step_approval</span><span class="chip">request_design_release_approval</span></p>
+      <p><strong>Decides:</strong> whether a given Architecture / Measurement / Redesign-decision / Release step is actually allowed to happen.</p>
+      <p><strong>Why:</strong> the program's one hard stop — "no print, no order, no release without a human saying yes" — built as a signed receipt tied to the exact decision it approves, so it can't be replayed against a different one. Today, though, nothing in the repository connects it to an actual person: the callback defaults to nothing, and calling it with nothing always refuses. That's the intended fail-safe, not a bug — but it also means a design can't be walked past Architecture at all in an unmodified deployment. See the proposed card below.</p>
+    </article>
+
+  </div>
+</section>
+
+<section class="stage">
+  <div class="stage-head"><h2>Wired, but incomplete</h2><span class="count">the code reaches for something that isn't finished</span></div>
+  <div class="card-grid">
+
+    <article class="card partial" id="card-sim-gap-absorber">
+      <div class="card-head"><h3>Absorber full-wave check</h3><span class="status-pill partial">Partial</span></div>
+      <p class="files">simulation/meep.py — periodic_absorber_capability_gaps()</p>
+      <p><strong>Decides (attempted):</strong> FDTD with periodic (Floquet) boundaries, for a periodic absorber sheet.</p>
+      <p><strong>Why it's stuck:</strong> the adapter exists and is called, but reports missing periodic-boundary, lossy-dielectric and resistive-sheet support, and raises instead of returning a number. The closed-form Analysis result is what the loop actually relies on for this family today — the right destination, just not built yet.</p>
+    </article>
+
+    <article class="card partial" id="card-sim-gap-tierb">
+      <div class="card-head"><h3>Reflection-phase / diffusive simulation</h3><span class="status-pill partial">Partial</span></div>
+      <p class="files">design_families.py · design_loop.py:726</p>
+      <p><strong>Decides (silently, and wrong):</strong> which full-wave engine simulates a metasurface family.</p>
+      <p><strong>Why it's stuck:</strong> neither family declares a simulation adapter, so the code quietly falls back to NEC2 — a thin-wire solver with no business modelling a periodic surface — without raising an error. The quietest gap in the whole pipeline: nothing tells you it happened.</p>
+    </article>
+
+    <article class="card partial" id="card-precedent-gap">
+      <div class="card-head"><h3>Precedent search — fetch, not discover</h3><span class="status-pill partial">Partial</span></div>
+      <p class="files">knowledge/sourcing/__init__.py</p>
+      <p><strong>Decides:</strong> what published literature can be pulled in as evidence.</p>
+      <p><strong>Why it's stuck:</strong> the module's own docstring says it outright — fetch by known ID only. You can hand it a specific patent or arXiv number to ingest; there's no tool that searches the open literature by keyword to go find one. "Search precedent before inventing" today means searching what's already sitting in this project's own database.</p>
+    </article>
+
+  </div>
+</section>
+
+<section class="stage">
+  <div class="stage-head"><h2>Proposed — no code yet</h2><span class="count">decisions an ADR already made, with nothing built behind them</span></div>
+  <div class="card-grid">
+
+    <article class="card planned" id="card-plan-open-search">
+      <div class="card-head"><h3>Open-literature discovery search</h3><span class="status-pill planned">Planned</span></div>
+      <p class="lands">Lands: right after Architecture, beside precedent search</p>
+      <p><strong>Would decide:</strong> a query-based search across patents, arXiv and standards — "find me a shape that does X" — rather than only "fetch this ID I already have."</p>
+      <p><strong>Why:</strong> closes the gap named above, and makes "search precedent before inventing" actually mean searching, not just recalling what's already stored.</p>
+    </article>
+
+    <article class="card planned" id="card-plan-alphabet">
+      <div class="card-head"><h3>Element / Coding-Alphabet library</h3><span class="status-pill planned">Planned</span></div>
+      <p class="lands">Lands: between Architecture and Analysis, feeding metasurface candidate generation</p>
+      <p><strong>Would decide:</strong> which pre-characterised shapes ("letters") are available to place, keyed by shape, band, incidence angle and the exact process (machine, ink, cure) that made them.</p>
+      <p><strong>Why:</strong> the whole argument of <span class="mono">ADR-0027</span> is that a library only worth trusting is built from letters that were actually printed and measured, not simulated — the project's stated point of difference from every other metasurface library. There's no table for it today: no schema, no store, just a function that expects the caller to already hand it a finished dictionary of shapes. Filling this in is named, in the program's own charter, as its very first job.</p>
+    </article>
+
+    <article class="card planned" id="card-plan-prediction">
+      <div class="card-head"><h3>Prediction + mechanism claim, per batch</h3><span class="status-pill planned">Planned</span></div>
+      <p class="lands">Lands: inside run_candidate_search, in the same call that proposes each candidate</p>
+      <p><strong>Would decide:</strong> one predicted value per candidate, plus one stated reason for the whole batch — written down before Analysis runs, not after.</p>
+      <p><strong>Why:</strong> <span class="mono">ADR-0022</span>'s argument — a batch of guesses that land in the right ballpark for the wrong reason still teaches nothing. Recording the guess and the reason for it before the answer is known is what turns four hundred failed candidates into a sortable dataset instead of noise. Designed to never block a run — an absence would just be recorded, not refused.</p>
+    </article>
+
+    <article class="card planned" id="card-plan-tierb-adapter">
+      <div class="card-head"><h3>A real Tier-B solver</h3><span class="status-pill planned">Planned</span></div>
+      <p class="lands">Lands: design_families.py's registry entries for reflection-phase &amp; diffusive</p>
+      <p><strong>Would decide:</strong> the full-wave engine those two families actually simulate against.</p>
+      <p><strong>Why:</strong> Palace already exists in this codebase with native periodic (Floquet) ports, and is validated against Palace's own published results to within 0.056 dB — sitting there unused by the loop. Pointing the registry at it (or openEMS) instead of the silent NEC2 fallback turns an un-flagged wrong answer into either a right one or an honest refusal.</p>
+    </article>
+
+    <article class="card planned" id="card-plan-combinatorial-opt">
+      <div class="card-head"><h3>Combinatorial (symbol-placement) optimizer</h3><span class="status-pill planned">Planned</span></div>
+      <p class="lands">Lands: Optimization, Tier-B families only</p>
+      <p><strong>Would decide:</strong> which pre-characterised letter sits in which cell of the array, searched rather than hand-placed.</p>
+      <p><strong>Why:</strong> already named as a value in the registry; nothing implements it, and it depends on the alphabet above existing first.</p>
+    </article>
+
+    <article class="card planned" id="card-plan-attribution">
+      <div class="card-head"><h3>Structured attribution</h3><span class="status-pill planned">Planned</span></div>
+      <p class="lands">Lands: between Correlation and Redesign Decision</p>
+      <p><strong>Would decide:</strong> a simple tag alongside the free text — was the mismatch the model's physics, or the fabricated part?</p>
+      <p><strong>Why:</strong> would make that judgment call searchable across a project's history instead of buried in prose. Worth weighing against this project's own stance that it deliberately doesn't over-formalize a judgment call that's still a human's to make — offered here as a real trade-off, not a clear win.</p>
+    </article>
+
+    <article class="card planned" id="card-plan-approval-ui">
+      <div class="card-head"><h3>A real approval callback</h3><span class="status-pill planned">Planned</span></div>
+      <p class="lands">Lands: wherever a gate sits — Architecture, Measurement, Redesign Decision, Release</p>
+      <p><strong>Would decide:</strong> how an actual human's "yes" reaches the gate — a CLI prompt, a Slack message, a small web form.</p>
+      <p><strong>Why:</strong> the gate mechanism itself is real and already tamper-evident; nothing is on the other end of it. Without this, every gated step refuses unconditionally — safe, but it also means the loop can't currently be walked end to end even for a design a person is ready to approve.</p>
+    </article>
+
+  </div>
+</section>
+
+<div class="footnote">
+  <h2>Checked against the code, not just the docs</h2>
+  <table>
+    <tr><th>Document says</th><th>Code actually does</th></tr>
+    <tr><td class="src">ROADMAP.md files external-measurement ingestion and design history under milestones 0.6 / 0.7</td><td>Both are fully built and wired into the loop today (Measurement, Correlation steps) — the milestone label is stale, not the feature.</td></tr>
+    <tr><td class="src">CONTEXT.md: the Element/Coding-Alphabet library is "a persistent, cross-run store"</td><td>No such table exists in the schema. See the planned card above.</td></tr>
+    <tr><td class="src">ADR-0022: candidates carry a Prediction and Mechanism claim</td><td>The ADR's own closing line says it plainly — "this is a plan-only decision... no code accompanies it."</td></tr>
+    <tr><td class="src">CLAUDE.md: "the 82 tools"</td><td>86 are registered today. The count moved; the sentence didn't.</td></tr>
+  </table>
+</div>
+
+</div>
+
+<script>
+(function(){
+  var toggle = document.getElementById('toggle-planned');
+  function applyToggle(){ document.body.classList.toggle('show-planned', toggle.checked); }
+  toggle.addEventListener('change', applyToggle);
+  applyToggle();
+
+  var nodeIds = ['n-req','n-arch','n-precedent','n-analysis','n-sim','n-opt','n-verify','n-measure','n-correlate','n-redesign','n-lane1','n-lane2','n-lane3','n-lane4','n-worst','n-stop','n-winner'];
+
+  function clearHighlight(){
+    nodeIds.forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.classList.remove('hl');
+    });
+    document.querySelectorAll('.planned-overlay').forEach(function(n){ n.classList.remove('hl-planned'); });
+  }
+
+  var scenarios = {
+    s1: ['n-req','n-arch','n-precedent','n-analysis','n-sim','n-opt','n-verify','n-measure','n-correlate','n-redesign'],
+    s2: ['n-lane1','n-lane2','n-lane3','n-lane4','n-worst','n-stop','n-winner'],
+    s3: ['n-arch','n-sim'],
+    s4: []
+  };
+
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.wt-tab'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.wt-panel'));
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(){
+      tabs.forEach(function(t){ t.classList.remove('active'); });
+      panels.forEach(function(p){ p.classList.remove('active'); });
+      tab.classList.add('active');
+      var key = tab.getAttribute('data-wt');
+      var panel = document.getElementById('panel-' + key);
+      if (panel) panel.classList.add('active');
+      clearHighlight();
+      if (key === 's4') {
+        document.querySelectorAll('.planned-overlay').forEach(function(n){ n.classList.add('hl-planned'); });
+        toggle.checked = true;
+        applyToggle();
+      } else {
+        scenarios[key].forEach(function(id){
+          var el = document.getElementById(id);
+          if (el) el.classList.add('hl');
+        });
+      }
+    });
+  });
+
+  window.focusCard = function(id){
+    var card = document.getElementById('card-' + id);
+    if (!card) return;
+    card.scrollIntoView({behavior:'smooth', block:'center'});
+    card.classList.add('flash');
+    setTimeout(function(){ card.classList.remove('flash'); }, 900);
+  };
+})();
+</script>
+</body>
+</html>
