@@ -43,6 +43,7 @@ from simulation.kicad_gerber2ems import (
     generate_gerber2ems_config,
     parse_gerber2ems_port_csv,
     parse_gerber2ems_results,
+    run_kicad_drc,
     run_kicad_gerber2ems_simulation,
 )
 
@@ -420,6 +421,186 @@ def test_parse_gerber2ems_results_aggregates_all_ports(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# run_kicad_drc -- subprocess-plumbing tests against a fake "kicad-cli"
+# script, following the same make_fake_executable pattern as
+# KicadGerber2emsSimulator.run()'s tests below. The fake script mimics
+# `kicad-cli pcb drc --format json --output <path> --exit-code-violations
+# <board_file>` (see simulation/kicad_gerber2ems.py's module docstring for
+# the primary-source citations to kicad-cli's CLI reference and to KiCad's
+# own DRC JSON report schema, https://schemas.kicad.org/drc.v1.json): it
+# reads its own `--output` argument, writes a caller-supplied JSON report
+# there, and exits with a caller-supplied code -- mirroring real kicad-cli's
+# own --exit-code-violations contract (exit 0 = no violations, exit 5 =
+# violations found, both of which still write the report).
+# ---------------------------------------------------------------------------
+
+_FAKE_KICAD_CLI_DRC_PY = """
+import sys
+
+args = sys.argv[1:]
+assert args[:2] == ["pcb", "drc"], args
+assert "--format" in args and args[args.index("--format") + 1] == "json", args
+assert "--exit-code-violations" in args, args
+assert args[-1].endswith(".kicad_pcb"), args
+output_path = args[args.index("--output") + 1]
+
+with open(output_path, "w") as f:
+    f.write({report_json!r})
+
+sys.stderr.write({stderr!r})
+sys.exit({exit_code})
+"""
+
+
+def _make_fake_kicad_cli_drc(
+    tmp_path: Path, report: dict, exit_code: int = 0, stderr: str = "", name: str = "fake_kicad_cli"
+) -> Path:
+    body = _FAKE_KICAD_CLI_DRC_PY.format(
+        report_json=json.dumps(report), exit_code=exit_code, stderr=stderr
+    )
+    return make_fake_executable(tmp_path, body, name=name)
+
+
+_NO_VIOLATIONS_REPORT = {
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "source": "board.kicad_pcb",
+    "date": "2026-09-09T00:00:00",
+    "kicad_version": "10.0.0",
+    "coordinate_units": "mm",
+    "violations": [],
+    "unconnected_items": [],
+    "schematic_parity": [],
+}
+
+_TWO_VIOLATIONS_ONE_EXCLUDED_REPORT = {
+    **_NO_VIOLATIONS_REPORT,
+    "violations": [
+        {
+            "type": "clearance",
+            "severity": "error",
+            "description": "Clearance violation between F.Cu tracks",
+            "excluded": False,
+            "items": [{"description": "Track", "pos": {"x": 1.0, "y": 2.0}, "uuid": "abc"}],
+        },
+        {
+            "type": "silk_edge_clearance",
+            "severity": "warning",
+            "description": "Silkscreen clipped by board edge",
+            "excluded": True,
+            "comment": "reviewed, acceptable",
+            "items": [{"description": "Segment", "pos": {"x": 0.0, "y": 0.0}, "uuid": "def"}],
+        },
+    ],
+}
+
+
+def test_run_kicad_drc_reports_violations_and_filters_excluded(tmp_path: Path):
+    script = _make_fake_kicad_cli_drc(
+        tmp_path, _TWO_VIOLATIONS_ONE_EXCLUDED_REPORT, exit_code=5, name="fake_kicad_cli_violations"
+    )
+    board_file = tmp_path / "board.kicad_pcb"
+    board_file.write_text("(kicad_pcb)")
+
+    result = run_kicad_drc(str(board_file), workdir=tmp_path / "drc", kicad_cli_path=str(script))
+
+    assert result["checked"] is True
+    # The excluded (already human-reviewed) violation must be filtered out --
+    # see run_kicad_drc's own docstring for why.
+    assert result["violation_count"] == 1
+    assert result["violations"] == [
+        {
+            "severity": "error",
+            "type": "clearance",
+            "description": "Clearance violation between F.Cu tracks",
+        }
+    ]
+    assert Path(result["report_file"]).is_file()
+
+
+def test_run_kicad_drc_no_violations_returns_empty_list(tmp_path: Path):
+    script = _make_fake_kicad_cli_drc(
+        tmp_path, _NO_VIOLATIONS_REPORT, exit_code=0, name="fake_kicad_cli_clean"
+    )
+    board_file = tmp_path / "board.kicad_pcb"
+    board_file.write_text("(kicad_pcb)")
+
+    result = run_kicad_drc(str(board_file), workdir=tmp_path / "drc", kicad_cli_path=str(script))
+
+    assert result["checked"] is True
+    assert result["violation_count"] == 0
+    assert result["violations"] == []
+
+
+def test_run_kicad_drc_raises_on_unexpected_exit_code(tmp_path: Path):
+    script = _make_fake_kicad_cli_drc(
+        tmp_path,
+        _NO_VIOLATIONS_REPORT,
+        exit_code=2,
+        stderr="fatal: could not open board file\\n",
+        name="fake_kicad_cli_broken",
+    )
+    board_file = tmp_path / "board.kicad_pcb"
+    board_file.write_text("(kicad_pcb)")
+
+    # Exit code 2 is neither kicad-cli's own "0 = no violations" nor
+    # "5 = violations found" (--exit-code-violations contract) -- a
+    # genuine tool failure, which DOES halt (this is not a board
+    # violation, it's a broken DRC run -- "warn, never block" applies to
+    # the former, not the latter).
+    with pytest.raises(SimulatorError, match="could not open board file"):
+        run_kicad_drc(str(board_file), workdir=tmp_path / "drc", kicad_cli_path=str(script))
+
+
+def test_run_kicad_drc_raises_when_report_file_missing(tmp_path: Path):
+    # A fake that exits 0 (success) but never writes the --output file --
+    # a report_file check independent of the exit-code check above.
+    script = make_fake_executable(
+        tmp_path, "import sys\nsys.exit(0)\n", name="fake_kicad_cli_no_report"
+    )
+    board_file = tmp_path / "board.kicad_pcb"
+    board_file.write_text("(kicad_pcb)")
+
+    with pytest.raises(SimulatorError, match="report"):
+        run_kicad_drc(str(board_file), workdir=tmp_path / "drc", kicad_cli_path=str(script))
+
+
+def test_run_kicad_drc_timeout_raises_simulator_error(tmp_path: Path):
+    script = make_fake_executable(
+        tmp_path, "import time\ntime.sleep(5)\n", name="fake_kicad_cli_hang"
+    )
+    board_file = tmp_path / "board.kicad_pcb"
+    board_file.write_text("(kicad_pcb)")
+
+    with pytest.raises(SimulatorError, match="timed out"):
+        run_kicad_drc(
+            str(board_file), workdir=tmp_path / "drc", kicad_cli_path=str(script), timeout_s=1
+        )
+
+
+def test_run_kicad_drc_raises_clearly_when_executable_missing(tmp_path: Path):
+    missing = tmp_path / "does-not-exist-kicad-cli"
+    board_file = tmp_path / "board.kicad_pcb"
+    board_file.write_text("(kicad_pcb)")
+
+    with pytest.raises(SimulatorError, match="kicad-cli"):
+        run_kicad_drc(str(board_file), workdir=tmp_path / "drc", kicad_cli_path=str(missing))
+
+
+def test_run_kicad_drc_picks_up_executable_from_kicad_cli_bin_env_var(tmp_path, monkeypatch):
+    script = _make_fake_kicad_cli_drc(
+        tmp_path, _NO_VIOLATIONS_REPORT, exit_code=0, name="fake_kicad_cli_env"
+    )
+    monkeypatch.setenv("KICAD_CLI_BIN", str(script))
+    board_file = tmp_path / "board.kicad_pcb"
+    board_file.write_text("(kicad_pcb)")
+
+    result = run_kicad_drc(str(board_file), workdir=tmp_path / "drc")
+
+    assert result["checked"] is True
+    assert result["violation_count"] == 0
+
+
+# ---------------------------------------------------------------------------
 # KicadGerber2emsSimulator.run() -- workdir precondition checks (no
 # subprocess involved).
 # ---------------------------------------------------------------------------
@@ -537,6 +718,7 @@ class FakeKicadConnection:
 
 def test_run_kicad_gerber2ems_simulation_end_to_end_with_fakes(tmp_path: Path):
     script = _make_fake_gerber2ems_py(tmp_path)
+    drc_script = _make_fake_kicad_cli_drc(tmp_path, _NO_VIOLATIONS_REPORT, exit_code=0)
     fake_conn = FakeKicadConnection()
     fake_board = FakeBoard(stackup_layers=DEFAULT_STACKUP_LAYERS)
     connect_calls = []
@@ -551,6 +733,7 @@ def test_run_kicad_gerber2ems_simulation_end_to_end_with_fakes(tmp_path: Path):
         workdir=str(tmp_path / "run"),
         timeout_s=10,
         executable=str(script),
+        kicad_cli_path=str(drc_script),
         connect_fn=fake_connect,
         kipy_api=_make_fake_api(),
     )
@@ -571,8 +754,57 @@ def test_run_kicad_gerber2ems_simulation_end_to_end_with_fakes(tmp_path: Path):
     assert written_config["format_version"] == "1.2"
     assert written_config["frequency"] == {"start": 1e8, "stop": 6e9}
 
+    # DRC ran, found nothing, and neither halted the pipeline nor produced
+    # any warning of its own.
+    assert result["drc"]["checked"] is True
+    assert result["drc"]["violation_count"] == 0
+    assert result["warnings"] == []
+
+
+def test_run_kicad_gerber2ems_simulation_still_computes_when_drc_finds_violations(tmp_path: Path):
+    """Per CLAUDE.md's 'warn, never block': a board with reported DRC
+    violations still proceeds all the way through export and simulation --
+    this is the acceptance-criteria behavior, exercised end to end rather
+    than asserted only in run_kicad_drc's own unit tests above."""
+    script = _make_fake_gerber2ems_py(tmp_path)
+    drc_script = _make_fake_kicad_cli_drc(
+        tmp_path, _TWO_VIOLATIONS_ONE_EXCLUDED_REPORT, exit_code=5
+    )
+    fake_conn = FakeKicadConnection()
+    fake_board = FakeBoard(stackup_layers=DEFAULT_STACKUP_LAYERS)
+
+    def fake_connect(board_file, kicad_cli_path=None):
+        return fake_conn, fake_board
+
+    result = run_kicad_gerber2ems_simulation(
+        board_file="board_with_a_short.kicad_pcb",
+        config={"frequency": {"start": 1e8, "stop": 6e9}},
+        workdir=str(tmp_path / "run"),
+        timeout_s=10,
+        executable=str(script),
+        kicad_cli_path=str(drc_script),
+        connect_fn=fake_connect,
+        kipy_api=_make_fake_api(),
+    )
+
+    # The gerber2ems stage still ran to completion and produced results --
+    # DRC violations did not stop it.
+    assert result["status"] == "COMPLETED"
+    assert result["computed"] is True
+    assert set(result["ports"].keys()) == {"0"}
+
+    assert result["drc"]["checked"] is True
+    assert result["drc"]["violation_count"] == 1  # excluded entry filtered
+    assert result["drc"]["violations"][0]["type"] == "clearance"
+
+    # The violation surfaces as a visible, non-fatal warning on the
+    # top-level result -- mirroring export_kicad_fab_assets()'s own
+    # warnings: list[str] pattern.
+    assert any("DRC" in w and "1" in w for w in result["warnings"])
+
 
 def test_run_kicad_gerber2ems_simulation_closes_connection_even_on_export_failure(tmp_path: Path):
+    drc_script = _make_fake_kicad_cli_drc(tmp_path, _NO_VIOLATIONS_REPORT, exit_code=0)
     fake_conn = FakeKicadConnection()
     failing_board = FakeBoard(omit_cu_gerber=True)
 
@@ -584,8 +816,35 @@ def test_run_kicad_gerber2ems_simulation_closes_connection_even_on_export_failur
             board_file="broken.kicad_pcb",
             config={"frequency": {"start": 1e8, "stop": 6e9}},
             workdir=str(tmp_path / "run2"),
+            kicad_cli_path=str(drc_script),
             connect_fn=fake_connect,
             kipy_api=_make_fake_api(),
         )
 
     assert fake_conn.closed is True
+
+
+def test_run_kicad_gerber2ems_simulation_drc_failure_halts_before_export(tmp_path: Path):
+    """A genuinely broken DRC invocation (not a board violation -- kicad-cli
+    itself failing) is a real tool failure and DOES halt, before the
+    pipeline ever connects to KiCad for export -- proving DRC runs first."""
+    drc_script = _make_fake_kicad_cli_drc(
+        tmp_path, _NO_VIOLATIONS_REPORT, exit_code=2, stderr="fatal: bad board\\n"
+    )
+    connect_calls = []
+
+    def fake_connect(board_file, kicad_cli_path=None):
+        connect_calls.append(board_file)
+        return FakeKicadConnection(), FakeBoard(stackup_layers=DEFAULT_STACKUP_LAYERS)
+
+    with pytest.raises(SimulatorError, match="bad board"):
+        run_kicad_gerber2ems_simulation(
+            board_file="broken.kicad_pcb",
+            config={"frequency": {"start": 1e8, "stop": 6e9}},
+            workdir=str(tmp_path / "run3"),
+            kicad_cli_path=str(drc_script),
+            connect_fn=fake_connect,
+            kipy_api=_make_fake_api(),
+        )
+
+    assert connect_calls == []  # never reached the KiCad connect/export step
