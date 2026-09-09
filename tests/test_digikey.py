@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from knowledge.digikey import lookup_digikey_datasheet
+from knowledge.digikey import lookup_digikey_datasheet, search_digikey_product
 from knowledge.sourcing_common import ExternalNetworkToolsDisabledError
 
 
@@ -148,6 +148,83 @@ def test_search_is_called_with_the_token_from_get_token(monkeypatch):
     )
 
     assert seen == {"part_number": "LM358DR", "token": "expected-token"}
+
+
+# ---------------------------------------------------------------------------
+# search_digikey_product (issue #326): the same real keyword-search request
+# as lookup_digikey_datasheet, but WITHOUT the download/ingest half -- a
+# citation-only match for a human to review, never a step that writes to the
+# knowledge base itself. No `download`/`ingest` seam exists to inject here
+# because this function never calls either.
+# ---------------------------------------------------------------------------
+
+
+def test_search_refuses_without_allow_external_network_tools(monkeypatch):
+    monkeypatch.delenv("ALLOW_EXTERNAL_NETWORK_TOOLS", raising=False)
+    with pytest.raises(ExternalNetworkToolsDisabledError):
+        search_digikey_product("conductive silver ink")
+
+
+def test_search_ok_match_returns_product_and_datasheet_without_ingesting(monkeypatch):
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+
+    result = search_digikey_product(
+        "conductive silver ink",
+        get_token=lambda: "fake-token",
+        search=lambda query, token: _digikey_raw(
+            mpn="8331-14G",
+            manufacturer="MG Chemicals",
+            datasheet_url="https://example.com/8331-14g.pdf",
+        ),
+    )
+
+    assert result == {
+        "status": "ok",
+        "distributor": "digikey",
+        "manufacturer": "MG Chemicals",
+        "manufacturer_part_number": "8331-14G",
+        "datasheet_url": "https://example.com/8331-14g.pdf",
+    }
+
+
+def test_search_no_match_returns_clear_nothing_found_result(monkeypatch):
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+
+    result = search_digikey_product(
+        "no such ink exists anywhere",
+        get_token=lambda: "fake-token",
+        search=lambda query, token: {"Products": []},
+    )
+
+    assert result == {
+        "status": "no_match",
+        "distributor": "digikey",
+        "queried": "no such ink exists anywhere",
+    }
+
+
+def test_search_match_with_no_datasheet_url_is_reported_as_no_datasheet(monkeypatch):
+    monkeypatch.setenv("ALLOW_EXTERNAL_NETWORK_TOOLS", "true")
+
+    result = search_digikey_product(
+        "conductive silver ink",
+        get_token=lambda: "fake-token",
+        search=lambda query, token: _digikey_raw(datasheet_url=None),
+    )
+
+    assert result["status"] == "no_datasheet"
+    assert result["manufacturer_part_number"] == "LM358DR"
+
+
+def test_search_never_downloads_or_ingests_anything():
+    """search_digikey_product takes no download/ingest parameters at all --
+    there is no way to call it and have it write to the knowledge base
+    (issue #326 acceptance criterion 3)."""
+    import inspect
+
+    params = inspect.signature(search_digikey_product).parameters
+    assert "download" not in params
+    assert "ingest" not in params
 
 
 def test_product_missing_manufacturer_product_number_is_skipped(monkeypatch):

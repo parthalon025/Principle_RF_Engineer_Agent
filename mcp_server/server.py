@@ -26,6 +26,7 @@ from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datash
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
+from knowledge.ink_lookup import search_ink_product as _search_ink_product
 from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
 from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
 from knowledge.read import read_document as _read_document
@@ -1646,6 +1647,23 @@ def lookup_nexar_component(part_number: str, license: str, classification: str) 
     (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). NOT run against the real API
     in this environment -- see knowledge/nexar.py's module docstring."""
     return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def search_ink_product(query: str) -> dict:
+    """Search Digi-Key, then Mouser, for a real, purchasable ink/adhesive product
+    matching query -- e.g. a query assembled from an unresolved ink-related
+    Capability warning's own family/capability_property/reason fields. Returns
+    {"status": "ok", "distributor": "digikey" | "mouser", "manufacturer": ...,
+    "manufacturer_part_number": ..., "datasheet_url": ...} on a match, or
+    {"status": "no_match", "queried": query, "checked": ["digikey", "mouser"]} when
+    neither distributor offers a usable citation -- never a guessed or approximated
+    value. Never calls ingest_document and never writes to the Ink-property library
+    itself -- a found product is a citation for a human to review, the same "search
+    and cite, never auto-populate" posture as search_arxiv_papers. Refuses to run
+    unless ALLOW_EXTERNAL_NETWORK_TOOLS=true, same self-gate as
+    lookup_digikey_component/lookup_mouser_component."""
+    return _search_ink_product(query)
 
 
 @mcp.tool()

@@ -178,3 +178,52 @@ def lookup_mouser_datasheet(
         "datasheet_url": best.datasheet_url,
         "ingest": ingest_result,
     }
+
+
+def search_mouser_product(
+    query: str,
+    *,
+    get_api_key: GetApiKeyFn = _get_api_key,
+    search: SearchFn = _search_by_part_number,
+) -> dict[str, Any]:
+    """Search Mouser's Search API for `query` and return the best match's
+    identity and datasheet link ONLY -- no download step, no
+    `ingest_document` call, unlike `lookup_mouser_datasheet` above (issue
+    #326: same "search and cite, never auto-populate" posture as
+    `knowledge.digikey.search_digikey_product`'s own docstring explains in
+    full). There is deliberately no `download`/`ingest` parameter to inject
+    here: this function has no code path that could call either.
+
+    Same real API-key-authenticated search POST as `lookup_mouser_datasheet`
+    (see module docstring), same ALLOW_EXTERNAL_NETWORK_TOOLS gate, same
+    defensive `_parse_matches`, same identity contract (`manufacturer_part_
+    number` is Mouser's `ManufacturerPartNumber`, never its own
+    `MouserPartNumber` catalog code).
+
+    Returns `{"status": "no_match" | "no_datasheet" | "ok", ...}` -- same
+    three-way contract as `knowledge.digikey.search_digikey_product`.
+    """
+    require_external_network_tools_enabled("Mouser")
+
+    api_key = get_api_key()
+    raw = search(query, api_key)
+    matches = _parse_matches(raw)
+    if not matches:
+        return {"status": "no_match", "distributor": "mouser", "queried": query}
+
+    best = matches[0]
+    if not best.datasheet_url:
+        return {
+            "status": "no_datasheet",
+            "distributor": "mouser",
+            "manufacturer": best.manufacturer,
+            "manufacturer_part_number": best.manufacturer_part_number,
+        }
+
+    return {
+        "status": "ok",
+        "distributor": "mouser",
+        "manufacturer": best.manufacturer,
+        "manufacturer_part_number": best.manufacturer_part_number,
+        "datasheet_url": best.datasheet_url,
+    }

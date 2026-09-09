@@ -145,10 +145,26 @@ approval_self_gated:
   # (measurement/vna.py, spectrum_analyzer.py, signal_generator.py,
   # power_meter.py): this project no longer offers any physical-instrument
   # actuation capability, so there is nothing left to categorize here.
+  # issue #326: search_ink_product (knowledge/ink_lookup.py) sits here too --
+  # it fires when an unresolved ink-related Capability warning names a gap,
+  # and reaches the SAME two credentialed distributor APIs
+  # (lookup_digikey_component/lookup_mouser_component) via search_digikey_
+  # product/search_mouser_product (knowledge/digikey.py, knowledge/
+  # mouser.py) -- the instant it's called it makes a real, credentialed
+  # call to at least one of Digi-Key/Mouser, gated by the same
+  # require_external_network_tools_enabled() this whole category exists
+  # for. It never calls ingest_document itself (unlike its three
+  # lookup_*_component siblings) -- see knowledge/ink_lookup.py's module
+  # docstring -- but that difference is about what happens on a match, not
+  # about whether a real third-party credential is spent reaching one, so
+  # it belongs in this category, not ingestion_auto (see that category's
+  # own search_arxiv_papers comment for the credential-free case this
+  # tool is NOT).
   - run_hfss_simulation
   - lookup_digikey_component
   - lookup_mouser_component
   - lookup_nexar_component
+  - search_ink_product
 
 ingestion_auto:
   # issue #215: ingest_3gpp_spec/ingest_etsi_standard/ingest_fcc_rule join
