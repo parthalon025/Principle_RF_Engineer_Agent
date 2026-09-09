@@ -183,22 +183,40 @@ class FakeModeler:
 
 
 class FakeSolutionData:
-    def __init__(self, freqs_ghz, magnitude, phase_rad):
+    def __init__(self, freqs_ghz, magnitude, phase_rad, expression="S(1,1)"):
         self.primary_sweep_values = list(freqs_ghz)
         self.full_matrix_mag_phase = (
-            {"S(1,1)": list(magnitude)},
-            {"S(1,1)": list(phase_rad)},
+            {expression: list(magnitude)},
+            {expression: list(phase_rad)},
         )
 
 
+_DEFAULT_S11_FIXTURE = FakeSolutionData(
+    freqs_ghz=[2.2, 2.45, 2.7],
+    magnitude=[0.15, 0.03, 0.22],
+    phase_rad=[0.1, 1.4, -0.5],
+)
+
+
 class FakePost:
-    def __init__(self, solution_data):
-        self._solution_data = solution_data
+    """Fake PostProcessorCommon.get_solution_data(...). `solution_data_by_
+    expression` maps an exact S-parameter expression string (e.g. "S(1,1)"
+    for the lumped-port path, "S(floquet1:1,floquet1:1)" for one Floquet
+    mode) to the FakeSolutionData it should return for that expression; a
+    requested expression not present in the map falls back to `default`
+    (the historical single S(1,1) fixture unless overridden), so a test can
+    override just the expression(s) it cares about without having to
+    enumerate every possible one (e.g. a custom Floquet port name)."""
+
+    def __init__(self, solution_data_by_expression=None, default=None):
+        self._by_expression = solution_data_by_expression or {}
+        self._default = default or _DEFAULT_S11_FIXTURE
         self.calls = []
 
     def get_solution_data(self, **kwargs):
         self.calls.append(kwargs)
-        return self._solution_data
+        (expression,) = kwargs["expressions"]
+        return self._by_expression.get(expression, self._default)
 
 
 class FakeHfss:
@@ -215,14 +233,28 @@ class FakeHfss:
         self.modeler = FakeModeler()
         self.mesh = FakeMesh()
         self.post = FakePost(
-            FakeSolutionData(
-                freqs_ghz=[2.2, 2.45, 2.7],
-                magnitude=[0.15, 0.03, 0.22],
-                phase_rad=[0.1, 1.4, -0.5],
-            )
+            {
+                # Distinct fixture values per mode so a test can tell the
+                # extraction genuinely read two different expressions
+                # apart, rather than reading the same fixed data twice.
+                "S(floquet1:1,floquet1:1)": FakeSolutionData(
+                    freqs_ghz=[2.2, 2.45, 2.7],
+                    magnitude=[0.05, 0.02, 0.08],
+                    phase_rad=[3.05, 3.10, 3.00],
+                    expression="S(floquet1:1,floquet1:1)",
+                ),
+                "S(floquet1:2,floquet1:2)": FakeSolutionData(
+                    freqs_ghz=[2.2, 2.45, 2.7],
+                    magnitude=[0.06, 0.025, 0.09],
+                    phase_rad=[-3.05, -3.10, -3.00],
+                    expression="S(floquet1:2,floquet1:2)",
+                ),
+            }
         )
         self.material_assignments: dict[str, str] = {}
         self.ports: list[dict] = []
+        self.lattice_pair_calls: list[dict] = []
+        self.floquet_port_calls: list[dict] = []
         self.setups: list[dict] = []
         self.sweeps: list[dict] = []
         self.analyze_calls: list[dict] = []
@@ -237,6 +269,15 @@ class FakeHfss:
 
     def lumped_port(self, **kwargs):
         self.ports.append(kwargs)
+        return object()
+
+    def auto_assign_lattice_pairs(self, assignment, **kwargs):
+        call = {"assignment": assignment, **kwargs}
+        self.lattice_pair_calls.append(call)
+        return [f"{assignment}_lattice_x", f"{assignment}_lattice_y"]
+
+    def create_floquet_port(self, **kwargs):
+        self.floquet_port_calls.append(kwargs)
         return object()
 
     def create_setup(self, **kwargs):
@@ -283,6 +324,35 @@ PATCH_GEOMETRY = {
         "name": "feed",
         "sheet": {"p1_m": [0.015, 0.005, 0.0], "p2_m": [0.015, 0.005, 0.0016]},
         "impedance_ohms": 50.0,
+    },
+    "mesh": {"max_length_mm": 0.5},
+}
+
+
+# A periodic/Floquet-port unit cell (issue #273): a ground-backed patch
+# array's single repeating tile -- one substrate layer, a full-footprint
+# ground conductor (so the cell is reflection-only, per this module's own
+# "a Floquet port on its top face" scope, singular port -- see
+# _apply_floquet_boundaries_and_port's docstring), and a smaller patch
+# conductor, in a 10mm x 10mm x 20mm periodic cell.
+PERIODIC_GEOMETRY = {
+    "materials": [
+        {
+            "name": "substrate",
+            "p1_m": [0.0, 0.0, 0.0],
+            "p2_m": [0.01, 0.01, 0.0016],
+            "material": "FR4_epoxy",
+        }
+    ],
+    "conductors": [
+        {"name": "ground", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.01, 0.01, 0.0]},
+        {"name": "patch", "p1_m": [0.002, 0.002, 0.0016], "p2_m": [0.008, 0.008, 0.0016]},
+    ],
+    "periodic": {
+        "period_x_m": 0.01,
+        "period_y_m": 0.01,
+        "z_max_m": 0.02,
+        "floquet": {"name": "floquet1"},
     },
     "mesh": {"max_length_mm": 0.5},
 }
@@ -508,3 +578,168 @@ def test_missing_frequency_raises_simulator_error(tmp_path: Path):
     simulator = HfssSimulator(confinement_check=lambda: None, archive_dir=str(tmp_path))
     with pytest.raises(SimulatorError, match="frequency_hz"):
         simulator.run({"geometry": PATCH_GEOMETRY})
+
+
+# ---------------------------------------------------------------------------
+# Periodic/Floquet-port unit-cell characterization (issue #273) -- alongside
+# the existing single-lumped-port box path exercised above. See
+# simulation/hfss.py's _apply_floquet_boundaries_and_port and
+# _extract_hfss_floquet_results docstrings for the primary-source PyAEDT
+# method citations this exercises against the fakes below.
+# ---------------------------------------------------------------------------
+
+
+def test_periodic_geometry_builds_unit_cell_box_sized_from_period(tmp_path: Path):
+    _, fake = _run_against_fake(tmp_path, geometry=PERIODIC_GEOMETRY)
+    unit_cell = next(c for c in fake.modeler.created if c["name"] == "unit_cell")
+    assert unit_cell["origin"] == pytest.approx([0.0, 0.0, 0.0])
+    # period_x_m/period_y_m = 0.01m -> 10mm; z_max_m = 0.02m -> 20mm.
+    assert unit_cell["sizes"] == pytest.approx([10.0, 10.0, 20.0])
+    assert fake.material_assignments["unit_cell"] == "vacuum"
+
+
+def test_periodic_geometry_auto_assigns_lattice_pairs_on_unit_cell(tmp_path: Path):
+    _, fake = _run_against_fake(tmp_path, geometry=PERIODIC_GEOMETRY)
+    assert len(fake.lattice_pair_calls) == 1
+    assert fake.lattice_pair_calls[0]["assignment"] == "unit_cell"
+    assert fake.lattice_pair_calls[0]["coordinate_plane"] == "XY"
+
+
+def test_periodic_geometry_creates_floquet_sheet_at_top_of_cell(tmp_path: Path):
+    _, fake = _run_against_fake(tmp_path, geometry=PERIODIC_GEOMETRY)
+    sheet = next(c for c in fake.modeler.created if c["name"] == "floquet1_sheet")
+    assert sheet["origin"] == pytest.approx([0.0, 0.0, 20.0])
+    assert sheet["sizes"] == pytest.approx([10.0, 10.0, 0.0])
+
+
+def test_periodic_geometry_creates_floquet_port_with_explicit_lattice_vectors(tmp_path: Path):
+    _, fake = _run_against_fake(tmp_path, geometry=PERIODIC_GEOMETRY)
+    assert len(fake.floquet_port_calls) == 1
+    call = fake.floquet_port_calls[0]
+    assert call["assignment"] == "floquet1_sheet"
+    # Explicit lattice vectors, computed from period_x_m/period_y_m --
+    # NOT left to pyaedt's own unverified internal auto-detection (see
+    # _apply_floquet_boundaries_and_port's docstring).
+    assert call["lattice_origin"] == pytest.approx([0.0, 0.0, 20.0])
+    assert call["lattice_a_end"] == pytest.approx([10.0, 0.0, 20.0])
+    assert call["lattice_b_end"] == pytest.approx([0.0, 10.0, 20.0])
+    assert call["modes"] == 2
+    assert call["name"] == "floquet1"
+    assert call["renormalize"] is True
+    assert call["deembed_distance"] == 0.0
+
+
+def test_periodic_geometry_conductors_still_apply(tmp_path: Path):
+    """Materials/conductors (substrate, ground, patch) build the same way
+    for a periodic job as for a lumped-port job -- the periodic branch only
+    replaces the port/boundary step, not the whole geometry pipeline."""
+    _, fake = _run_against_fake(tmp_path, geometry=PERIODIC_GEOMETRY)
+    created_names = {c["name"] for c in fake.modeler.created}
+    assert {"substrate", "ground", "patch"} <= created_names
+    assert fake.material_assignments["ground"] == "copper"
+    assert fake.material_assignments["patch"] == "copper"
+
+
+def test_periodic_run_produces_per_mode_reflection_not_lumped_s11(tmp_path: Path):
+    """The required testable-behavior-change criterion: a full
+    HfssSimulator.run(job)-equivalent call with a periodic/Floquet job
+    produces a result whose outputs carry per-unit-cell, per-mode
+    reflection data -- structurally distinct from the lumped-port path's
+    flat S(1,1) shape, not just a renamed copy of it."""
+    result, fake = _run_against_fake(tmp_path, geometry=PERIODIC_GEOMETRY)
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["port_type"] == "floquet"
+    assert result["port_name"] == "floquet1"
+
+    s_params = result["s_parameters"]
+    assert s_params["computed"] is True
+    assert s_params["port_type"] == "floquet"
+    assert s_params["floquet_port"] == "floquet1"
+    assert "expression" not in s_params  # not the flat lumped-port shape
+
+    assert set(s_params["modes"].keys()) == {"mode_1", "mode_2"}
+    mode1 = s_params["modes"]["mode_1"]
+    assert mode1["expression"] == "S(floquet1:1,floquet1:1)"
+    assert mode1["frequency_ghz"] == [2.2, 2.45, 2.7]
+    assert mode1["magnitude_linear"] == [0.05, 0.02, 0.08]
+    mode2 = s_params["modes"]["mode_2"]
+    assert mode2["expression"] == "S(floquet1:2,floquet1:2)"
+    assert mode2["magnitude_linear"] == [0.06, 0.025, 0.09]
+
+    # Two distinct get_solution_data calls, one per mode.
+    solution_calls = [c["expressions"][0] for c in fake.post.calls]
+    assert solution_calls == ["S(floquet1:1,floquet1:1)", "S(floquet1:2,floquet1:2)"]
+
+
+def test_periodic_touchstone_export_is_still_invoked(tmp_path: Path):
+    result, fake = _run_against_fake(tmp_path, geometry=PERIODIC_GEOMETRY)
+    assert len(fake.export_calls) == 1
+    touchstone_path = Path(result["touchstone_file"])
+    assert touchstone_path.exists()
+
+
+def test_periodic_geometry_custom_mode_count_and_name_are_honored(tmp_path: Path):
+    geometry = {
+        **PERIODIC_GEOMETRY,
+        "periodic": {**PERIODIC_GEOMETRY["periodic"], "floquet": {"name": "myport", "modes": 1}},
+    }
+    result, fake = _run_against_fake(tmp_path, geometry=geometry)
+    assert fake.floquet_port_calls[0]["name"] == "myport"
+    assert fake.floquet_port_calls[0]["modes"] == 1
+    assert set(result["s_parameters"]["modes"].keys()) == {"mode_1"}
+    assert result["s_parameters"]["modes"]["mode_1"]["expression"] == "S(myport:1,myport:1)"
+
+
+def test_periodic_geometry_custom_origin_and_z_min_are_honored(tmp_path: Path):
+    geometry = {
+        **PERIODIC_GEOMETRY,
+        "periodic": {
+            **PERIODIC_GEOMETRY["periodic"],
+            "origin_m": [0.001, 0.002],
+            "z_min_m": 0.0005,
+        },
+    }
+    _, fake = _run_against_fake(tmp_path, geometry=geometry)
+    unit_cell = next(c for c in fake.modeler.created if c["name"] == "unit_cell")
+    assert unit_cell["origin"] == pytest.approx([1.0, 2.0, 0.5])
+    assert unit_cell["sizes"] == pytest.approx([10.0, 10.0, 19.5])
+
+
+def test_periodic_geometry_missing_period_x_raises_value_error(tmp_path: Path):
+    geometry = {
+        **PERIODIC_GEOMETRY,
+        "periodic": {"period_y_m": 0.01, "z_max_m": 0.02},
+    }
+    with pytest.raises(ValueError, match="period_x_m"):
+        _run_against_fake(tmp_path, geometry=geometry)
+
+
+def test_periodic_geometry_missing_z_max_raises_value_error(tmp_path: Path):
+    geometry = {
+        **PERIODIC_GEOMETRY,
+        "periodic": {"period_x_m": 0.01, "period_y_m": 0.01},
+    }
+    with pytest.raises(ValueError, match="z_max_m"):
+        _run_against_fake(tmp_path, geometry=geometry)
+
+
+def test_port_and_periodic_together_raises_value_error(tmp_path: Path):
+    geometry = {**PATCH_GEOMETRY, "periodic": PERIODIC_GEOMETRY["periodic"]}
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _run_against_fake(tmp_path, geometry=geometry)
+
+
+def test_neither_port_nor_periodic_raises_value_error(tmp_path: Path):
+    geometry = {k: v for k, v in PATCH_GEOMETRY.items() if k != "port"}
+    with pytest.raises(ValueError, match="port.*periodic|periodic.*port"):
+        _run_against_fake(tmp_path, geometry=geometry)
+
+
+def test_lumped_port_path_is_unaffected_and_reports_port_type_lumped(tmp_path: Path):
+    """The existing non-periodic path must be byte-for-byte unchanged in
+    behavior; the only visible addition is a new "port_type" key."""
+    result, _ = _run_against_fake(tmp_path)
+    assert result["port_type"] == "lumped"
+    assert result["s_parameters"]["expression"] == "S(1,1)"
+    assert result["s_parameters"]["magnitude_linear"] == [0.15, 0.03, 0.22]

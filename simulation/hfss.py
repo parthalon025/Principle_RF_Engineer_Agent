@@ -119,6 +119,80 @@ per-fact citations below. Accessed 2026-09-02):
     f"ANSYSEM_ROOT{...}")`), plus this repo's own `.env.example`
     (`AEDT_VERSION=`) and README.md's Licensing section.
 
+  Periodic/Floquet-port unit-cell characterization (issue #273 -- see
+  _apply_floquet_boundaries_and_port and _extract_hfss_floquet_results
+  below), fetched directly from `src/ansys/aedt/core/hfss.py` on
+  ansys/pyaedt's `main` branch via the same raw.githubusercontent.com/
+  GitHub-code-search-API route as above (accessed 2026-09-09):
+  - `Hfss.auto_assign_lattice_pairs(self, assignment: str | Object3d,
+    coordinate_system: str | None = "Global", coordinate_plane: str | None
+    = "XY") -> list[str]`: full signature, docstring, and body fetched
+    directly. Auto-detects and assigns the periodic ("lattice pair")
+    boundary on a whole object's side faces in one call -- chosen over the
+    two other real candidates this module evaluated for the ticket's
+    "master/slave" boundary (both also fetched and byte-verified from the
+    same file): `Hfss.assign_lattice_pair(assignment: list, reverse_v=False,
+    phase_delay="UseScanAngle", phase_delay_param1="0deg",
+    phase_delay_param2="0deg", name=None)`, which needs a list of exactly
+    two already-known FacePrimitive objects, and the older explicit pair
+    `Hfss.assign_primary(assignment, u_start, u_end, reverse_v=False,
+    coordinate_system="Global", name=None)` /
+    `Hfss.assign_secondary(assignment, primary, u_start, u_end, ...)`,
+    HFSS's original "master"/"slave" boundary UI terminology (no
+    `assign_master`/`assign_slave` method exists in current pyaedt --
+    confirmed absent by the same fetch). All three need a face reference
+    into the created box, but this module's own `_create_box` (see below)
+    already discards the `Object3d` `Modeler3D.create_box` returns and
+    keeps only its name string, and ansys/pyaedt's own test suite
+    (`tests/system/general/test_hfss.py`) hedges box-face-index numbering
+    with an `if DESKTOP_VERSION > "2022.2"` branch -- i.e. even PyAEDT's
+    own maintainers do not treat a box's face-index ordering as stable
+    across AEDT versions. `auto_assign_lattice_pairs` needs no face index
+    at all (just the object itself), so this module uses it instead of
+    guessing an index this module has no way to verify against a real
+    install.
+  - `Hfss.create_floquet_port(self, assignment: str | list, lattice_origin:
+    list | None = None, lattice_a_end: list | None = None, lattice_b_end:
+    list | None = None, modes: int = 2, name: str | None = None,
+    renormalize: bool = True, deembed_distance: int | float | str = 0,
+    reporter_filter: bool | list = True, lattice_cs: str = "Global") ->
+    BoundaryObject`: full signature, docstring, and body fetched directly.
+    `assignment` accepts a sheet/object name string (not just a face id) --
+    confirmed from the body's own
+    `if isinstance(face_id[0], int): props["Faces"] = ... else:
+    props["Objects"] = ...` branch -- so this module passes the same kind
+    of thin-box "sheet" name it already uses for the lumped port (see
+    `_apply_hfss_geometry`'s `port["sheet"]`), not a face id.
+    `lattice_origin`/`lattice_a_end`/`lattice_b_end` default to `None`, in
+    which case the real method defers to
+    `Modeler3D._find_perpendicular_points` -- an internal, underscore-
+    prefixed method this module has NOT fetched or verified. Rather than
+    depend on that unverified internal auto-detection for a value that
+    directly sets the unit cell's own periodicity, this module computes and
+    passes all three explicitly from the same `period_x_m`/`period_y_m`
+    the caller already supplied (see _apply_floquet_boundaries_and_port).
+    `deembed_distance` is documented as "in millimeters" and its exact
+    unit-suffixing (`self.value_with_units(deembed_distance)`, not
+    independently fetched) is assumed to follow the same "bare number ==
+    the design's default length unit (mm)" convention as `create_box`
+    (see `_m_to_mm`'s own citation above) -- this module therefore passes
+    a bare mm float here too, not an unverified unit-suffixed string.
+  - Floquet-port S-parameter naming, `S(<port_name>:<mode_number>,
+    <port_name>:<mode_number>)` (1-indexed mode number): confirmed
+    byte-verbatim from `Hfss.create_fresnel_variables`'s real body
+    (`_create_var("r_te", f"S({floquet_ports[0]}:1,{floquet_ports[0]}:1)")`
+    for mode 1, `f"S({floquet_ports[0]}:2,{floquet_ports[0]}:2)"` for mode
+    2) and from `Hfss.get_fresnel_floquet_ports`'s real body, which parses
+    `self.excitation_names` entries by splitting on ":" into
+    `(port_name, mode)` -- i.e. a multi-mode port's own excitation names
+    are genuinely `"<PortName>:<ModeNumber>"` strings, not a guess. This
+    module reads the raw per-mode self-reflection S-parameter this way
+    (see _extract_hfss_floquet_results) but deliberately does NOT replicate
+    `create_fresnel_variables`'s own extra "-" sign flip on the mode-2 (TM)
+    term (`f"-S(...:2,...:2)")` -- that sign is specific to pyaedt's own
+    SBR+ `.rttbl` Fresnel-table convention (`get_fresnel_coefficients`),
+    not a generic S-parameter reading.
+
 HONEST CAVEAT -- read before trusting any of this end to end: pyaedt is
 NOT installed in this environment (confirmed via `import pyaedt` /
 `import ansys.aedt.core` failing at implementation time) and no licensed
@@ -143,6 +217,7 @@ import os
 import shutil
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -315,9 +390,147 @@ def _create_box(hfss: Any, prim: dict[str, Any], name: str) -> str:
     return name
 
 
-def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> tuple[list[str], str]:
+@dataclass
+class _AppliedGeometry:
+    """What `_apply_hfss_geometry` built, and how to solve/extract it --
+    replaces the old `(conductor_names, port_name)` tuple return so a
+    periodic/Floquet job can additionally report `port_type` and its mode
+    count without `HfssSimulator.run()` guessing which extraction function
+    to call. `port_type` is `"lumped"` (the original, unchanged path) or
+    `"floquet"` (issue #273); `floquet_modes` is meaningless for `"lumped"`
+    (left at its default of 1, matching a lumped port's single quantity)."""
+
+    conductor_names: list[str]
+    port_name: str
+    port_type: str = "lumped"
+    floquet_modes: int = 1
+
+
+def _apply_floquet_boundaries_and_port(
+    hfss: Any, periodic: dict[str, Any], conductor_names: list[str]
+) -> tuple[str, int]:
+    """Build the periodic unit-cell's bounding/background box, auto-assign
+    its side-wall periodic ("lattice pair") boundaries, and create a
+    Floquet port on a thin sheet at the top of the cell -- the periodic
+    counterpart of the single lumped port `_apply_hfss_geometry` builds
+    from `geometry["port"]`.
+
+    `periodic` shape (`geometry["periodic"]`, mutually exclusive with
+    `geometry["port"]` -- see `_apply_hfss_geometry`):
+        {
+          "period_x_m": float,      # required -- unit-cell period along x
+          "period_y_m": float,      # required -- unit-cell period along y
+          "origin_m": [x, y] (default [0.0, 0.0]) -- xy origin (lower-left
+              corner) of the cell's footprint,
+          "z_min_m": float (default 0.0),
+          "z_max_m": float,         # required -- top of the bounding box;
+              the Floquet port sheet sits here,
+          "name": str (default "unit_cell") -- name of the bounding
+              background box `auto_assign_lattice_pairs` is called on,
+          "material": str (default "vacuum") -- the bounding box's material,
+          "floquet": {                            # optional
+              "name": str (default "floquet1"),
+              "modes": int (default 2) -- TE + TM fundamental Floquet
+                  modes at normal incidence, matching
+                  Hfss.create_floquet_port's own `modes=2` default,
+              "deembed_distance_m": float (default 0.0),
+              "renormalize": bool (default True),
+          },
+        }
+
+    SCOPE: exactly one Floquet port, on the cell's top face (z_max_m) --
+    matching this ticket's own framing ("a Floquet port on its top face",
+    singular). This characterizes a REFLECTION-ONLY unit cell (the
+    dominant case this repo cares about -- CLAUDE.md's 0-vs-180-degree
+    reflection-phase framing). A caller wanting a ground-backed cell gets
+    that for free by putting a full-footprint conductor box in
+    `geometry["conductors"]` at z_min_m (same mechanism the lumped-port
+    path already uses for a ground plane) -- no separate "ground_backed"
+    flag exists here, unlike simulation/palace.py's, because HFSS's own
+    per-object-face boundary model doesn't need one: not creating a second
+    Floquet port is enough. If NEITHER a full-footprint conductor NOR a
+    second port is supplied, the cell's bottom face is left with no
+    boundary this module assigns explicitly -- what HFSS does with that
+    face by default is NOT verified here (see module docstring's HONEST
+    CAVEAT); a two-port transmissive Floquet setup (a second port at
+    z_min_m, for an all-dielectric/non-ground-backed structure -- the
+    shape simulation/palace.py's own `ground_backed=False` already
+    supports) is out of scope for this pass.
+
+    This module still does not do CSG boolean union/subtraction (see
+    `_apply_hfss_geometry`'s own docstring) -- the bounding box built here
+    sits alongside, and generally overlapping, whatever `geometry
+    ["materials"]`/`["conductors"]` boxes the caller also supplied, exactly
+    as those already overlap each other in the lumped-port path today.
+
+    See module docstring's citation block for the primary-source signatures
+    of `Hfss.auto_assign_lattice_pairs`/`Hfss.create_floquet_port` this
+    function calls, and why `auto_assign_lattice_pairs` (over
+    `assign_lattice_pair`/`assign_primary`+`assign_secondary`) and explicit
+    `lattice_origin`/`lattice_a_end`/`lattice_b_end` (over leaving them
+    `None`) were chosen.
+
+    Returns (floquet_port_name, modes).
+    """
+    required = ("period_x_m", "period_y_m", "z_max_m")
+    missing = [f for f in required if f not in periodic]
+    if missing:
+        raise ValueError(f"geometry['periodic'] missing required field(s): {missing}")
+
+    period_x_m = float(periodic["period_x_m"])
+    period_y_m = float(periodic["period_y_m"])
+    origin_xy_m = periodic.get("origin_m", [0.0, 0.0])
+    if len(origin_xy_m) != 2:
+        raise ValueError("geometry['periodic']['origin_m'] must have exactly 2 components")
+    origin_x_m, origin_y_m = float(origin_xy_m[0]), float(origin_xy_m[1])
+    z_min_m = float(periodic.get("z_min_m", 0.0))
+    z_max_m = float(periodic["z_max_m"])
+
+    cell_name = periodic.get("name", "unit_cell")
+    _create_box(
+        hfss,
+        {
+            "p1_m": [origin_x_m, origin_y_m, z_min_m],
+            "p2_m": [origin_x_m + period_x_m, origin_y_m + period_y_m, z_max_m],
+        },
+        cell_name,
+    )
+    hfss.assign_material(cell_name, periodic.get("material", "vacuum"))
+    hfss.auto_assign_lattice_pairs(cell_name, coordinate_plane="XY")
+
+    floquet = periodic.get("floquet", {})
+    port_name = floquet.get("name", "floquet1")
+    modes = int(floquet.get("modes", 2))
+    sheet_name = f"{port_name}_sheet"
+    _create_box(
+        hfss,
+        {
+            "p1_m": [origin_x_m, origin_y_m, z_max_m],
+            "p2_m": [origin_x_m + period_x_m, origin_y_m + period_y_m, z_max_m],
+        },
+        sheet_name,
+    )
+    lattice_origin = [_m_to_mm(origin_x_m), _m_to_mm(origin_y_m), _m_to_mm(z_max_m)]
+    lattice_a_end = [_m_to_mm(origin_x_m + period_x_m), _m_to_mm(origin_y_m), _m_to_mm(z_max_m)]
+    lattice_b_end = [_m_to_mm(origin_x_m), _m_to_mm(origin_y_m + period_y_m), _m_to_mm(z_max_m)]
+    hfss.create_floquet_port(
+        assignment=sheet_name,
+        lattice_origin=lattice_origin,
+        lattice_a_end=lattice_a_end,
+        lattice_b_end=lattice_b_end,
+        modes=modes,
+        name=port_name,
+        renormalize=bool(floquet.get("renormalize", True)),
+        deembed_distance=_m_to_mm(float(floquet.get("deembed_distance_m", 0.0))),
+    )
+
+    return port_name, modes
+
+
+def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> _AppliedGeometry:
     """Create material/conductor box primitives, assign materials, create
-    the lumped port, and apply a length-based mesh operation on `hfss`.
+    either the lumped port or (issue #273) a periodic Floquet-port unit
+    cell, and apply a length-based mesh operation on `hfss`.
 
     `geometry` shape:
         {
@@ -330,7 +543,8 @@ def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> tuple[list[str]
               {"name": str (optional), "p1_m", "p2_m",
                "material": str (default "copper")}, ...
           ],
-          "port": {                      # required
+          "port": {                      # exactly one of "port"/"periodic"
+                                          # is required
               "name": str (default "port1"),
               "sheet": {"p1_m": [x,y,z], "p2_m": [x,y,z]},   # thin box
                   modeling the lumped-port excitation sheet
@@ -338,9 +552,17 @@ def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> tuple[list[str]
                   conductor created, typically the ground plane),
               "impedance_ohms": float (default 50.0),
           },
+          "periodic": {                  # exactly one of "port"/"periodic"
+                                          # is required -- see
+                                          # _apply_floquet_boundaries_and_
+                                          # port's own docstring for its
+                                          # full shape (issue #273)
+              "period_x_m": float, "period_y_m": float, "z_max_m": float,
+              ...
+          },
           "mesh": {                      # optional
               "assignment": list[str] (default: the created conductor
-                  names, or the port sheet if there are none),
+                  names, or the port/Floquet sheet if there are none),
               "max_length_mm": float (default 1.0),
           },
         }
@@ -352,7 +574,7 @@ def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> tuple[list[str]
     verified against primary source (not done here, out of scope -- see
     module docstring's citation-confidence discipline).
 
-    Returns (conductor_names, port_name).
+    Returns an _AppliedGeometry.
     """
     conductor_names: list[str] = []
 
@@ -376,25 +598,43 @@ def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> tuple[list[str]
         conductor_names.append(name)
 
     port = geometry.get("port")
-    if not port:
-        raise ValueError("geometry['port'] is required")
-    sheet = port.get("sheet")
-    if not sheet or "p1_m" not in sheet or "p2_m" not in sheet:
-        raise ValueError("geometry['port']['sheet'] must supply p1_m/p2_m")
-    port_name = port.get("name", "port1")
-    sheet_name = f"{port_name}_sheet"
-    _create_box(hfss, sheet, sheet_name)
-    reference = port.get("reference") or (conductor_names[-1] if conductor_names else None)
-    impedance_ohms = port.get("impedance_ohms", 50.0)
-    hfss.lumped_port(
-        assignment=sheet_name,
-        reference=reference,
-        impedance=impedance_ohms,
-        name=port_name,
-    )
+    periodic = geometry.get("periodic")
+    if port and periodic:
+        raise ValueError(
+            "geometry['port'] and geometry['periodic'] are mutually exclusive "
+            "-- a job builds either a single lumped-port box or a periodic "
+            "Floquet-port unit cell, not both"
+        )
+    if not port and not periodic:
+        raise ValueError("geometry['port'] or geometry['periodic'] is required")
+
+    if periodic:
+        port_name, floquet_modes = _apply_floquet_boundaries_and_port(
+            hfss, periodic, conductor_names
+        )
+        port_type = "floquet"
+        mesh_default_targets = conductor_names or [f"{port_name}_sheet"]
+    else:
+        sheet = port.get("sheet")
+        if not sheet or "p1_m" not in sheet or "p2_m" not in sheet:
+            raise ValueError("geometry['port']['sheet'] must supply p1_m/p2_m")
+        port_name = port.get("name", "port1")
+        sheet_name = f"{port_name}_sheet"
+        _create_box(hfss, sheet, sheet_name)
+        reference = port.get("reference") or (conductor_names[-1] if conductor_names else None)
+        impedance_ohms = port.get("impedance_ohms", 50.0)
+        hfss.lumped_port(
+            assignment=sheet_name,
+            reference=reference,
+            impedance=impedance_ohms,
+            name=port_name,
+        )
+        port_type = "lumped"
+        floquet_modes = 1
+        mesh_default_targets = conductor_names or [sheet_name]
 
     mesh = geometry.get("mesh", {})
-    mesh_targets = mesh.get("assignment") or conductor_names or [sheet_name]
+    mesh_targets = mesh.get("assignment") or mesh_default_targets
     max_length_mm = mesh.get("max_length_mm", 1.0)
     hfss.mesh.assign_length_mesh(
         assignment=mesh_targets,
@@ -402,7 +642,7 @@ def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> tuple[list[str]
         name="length_mesh",
     )
 
-    return conductor_names, port_name
+    return _AppliedGeometry(conductor_names, port_name, port_type, floquet_modes)
 
 
 def _create_setup_and_solve(
@@ -473,6 +713,86 @@ def _extract_hfss_results(
             "SolutionData.full_matrix_mag_phase for S(1,1), phase in "
             "radians -- see simulation/hfss.py's module docstring for the "
             "primary-source citation."
+        ),
+    }
+
+    export_result = hfss.export_touchstone(
+        setup=setup_name, sweep=sweep_name, output_file=str(touchstone_path)
+    )
+
+    return {
+        "s_parameters": s_parameters,
+        "touchstone_file": str(touchstone_path),
+        "touchstone_export_result": export_result,
+    }
+
+
+def _extract_hfss_floquet_results(
+    hfss: Any,
+    setup_name: str,
+    sweep_name: str,
+    touchstone_path: Path,
+    floquet_port_name: str,
+    modes: int,
+) -> dict[str, Any]:
+    """Extract each Floquet mode's self-reflection S-parameter vs.
+    frequency via Hfss.post.get_solution_data(...), and export a Touchstone
+    file via Hfss.export_touchstone(...) -- the periodic-unit-cell
+    counterpart of _extract_hfss_results above, for a job built by
+    _apply_floquet_boundaries_and_port (issue #273). Returns per-unit-cell
+    reflection data keyed by mode, NOT a single S(1,1) against a lumped
+    port.
+
+    HFSS names a multi-mode port's terminals "<PortName>:<ModeNumber>"
+    (1-indexed) and reads S-parameters between them as
+    "S(<PortName>:<ModeNumber>,<PortName>:<ModeNumber>)" -- both confirmed
+    byte-verbatim against Hfss.get_fresnel_floquet_ports's and
+    Hfss.create_fresnel_variables's real bodies (see module docstring
+    citation). This function reads that same expression for each mode
+    (mode 1 = TE, mode 2 = TM at normal incidence, per
+    Hfss.create_floquet_port's own `modes=2` default) but -- unlike
+    create_fresnel_variables/get_fresnel_coefficients -- does NOT apply
+    their extra "-" sign flip on the mode-2 (TM) term: that sign is
+    specific to pyaedt's own SBR+ .rttbl Fresnel-table convention, not a
+    generic S-parameter reading, and this function reads the raw
+    self-reflection coefficient, not a Fresnel table.
+
+    Like _extract_hfss_results, this does not independently verify what
+    unit primary_sweep_values reports in, so raw values are returned under
+    an explicit "frequency_ghz" key (the sweep was created with
+    unit="GHz") rather than silently assumed-converted.
+    """
+    modes_by_index: dict[str, Any] = {}
+    for mode in range(1, modes + 1):
+        expression = f"S({floquet_port_name}:{mode},{floquet_port_name}:{mode})"
+        solution_data = hfss.post.get_solution_data(
+            expressions=[expression],
+            setup_sweep_name=f"{setup_name} : {sweep_name}",
+        )
+        mag_by_expr, phase_by_expr = solution_data.full_matrix_mag_phase
+        modes_by_index[f"mode_{mode}"] = {
+            "expression": expression,
+            "frequency_ghz": list(solution_data.primary_sweep_values),
+            "magnitude_linear": list(mag_by_expr.get(expression, [])),
+            "phase_rad": list(phase_by_expr.get(expression, [])),
+        }
+
+    s_parameters = {
+        "computed": True,
+        "port_type": "floquet",
+        "floquet_port": floquet_port_name,
+        "modes": modes_by_index,
+        "note": (
+            "Each entry under 'modes' is one Floquet mode's own "
+            "self-reflection S-parameter (mode_1 = TE, mode_2 = TM at "
+            "normal incidence), read via "
+            f"S({floquet_port_name}:<mode>,{floquet_port_name}:<mode>) -- "
+            "frequency_ghz is SolutionData.primary_sweep_values from a "
+            "sweep created with unit='GHz'; magnitude_linear/phase_rad are "
+            "SolutionData.full_matrix_mag_phase, phase in radians -- see "
+            "simulation/hfss.py's module docstring for the primary-source "
+            "citation on both properties and on the "
+            "S(<port>:<mode>,<port>:<mode>) expression convention."
         ),
     }
 
@@ -582,10 +902,20 @@ class HfssSimulator(Simulator):
         )
 
         try:
-            conductor_names, port_name = _apply_hfss_geometry(hfss, geometry)
+            applied = _apply_hfss_geometry(hfss, geometry)
             _create_setup_and_solve(hfss, frequency_hz, job.get("sweep"), setup_name, sweep_name)
             touchstone_path = self.archive_dir / f"{project_name}.s1p"
-            extracted = _extract_hfss_results(hfss, setup_name, sweep_name, touchstone_path)
+            if applied.port_type == "floquet":
+                extracted = _extract_hfss_floquet_results(
+                    hfss,
+                    setup_name,
+                    sweep_name,
+                    touchstone_path,
+                    applied.port_name,
+                    applied.floquet_modes,
+                )
+            else:
+                extracted = _extract_hfss_results(hfss, setup_name, sweep_name, touchstone_path)
             run_dir = _archive_hfss_run(
                 hfss,
                 self.archive_dir,
@@ -611,8 +941,9 @@ class HfssSimulator(Simulator):
                 "project_path": str(project_path),
                 "touchstone_file": extracted["touchstone_file"],
                 "s_parameters": extracted["s_parameters"],
-                "conductor_names": conductor_names,
-                "port_name": port_name,
+                "conductor_names": applied.conductor_names,
+                "port_name": applied.port_name,
+                "port_type": applied.port_type,
                 "archive_dir": str(run_dir),
             },
         )
