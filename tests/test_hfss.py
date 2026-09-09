@@ -28,6 +28,10 @@ guidance:
      HfssSimulator.__init__) -- this is the "Simulator.run() seam with
      PyAEDT/HFSS invocation substituted by a fake for CI" the ticket calls
      for. NONE of this group is run against a real HFSS/AEDT installation.
+     This group also covers the periodic/Floquet-port unit-cell path
+     (issue #273, in its own banner-commented block below) -- same fake/
+     injection seam, exercising `geometry["periodic"]` alongside the
+     original `geometry["port"]` shape tested above it.
 """
 
 import json
@@ -640,6 +644,27 @@ def test_periodic_geometry_conductors_still_apply(tmp_path: Path):
     assert fake.material_assignments["patch"] == "copper"
 
 
+def test_periodic_geometry_with_no_conductors_meshes_the_floquet_sheet(tmp_path: Path):
+    """With no conductors supplied, the mesh assignment must fall back to
+    the Floquet excitation sheet's OWN name, as actually created by
+    _apply_floquet_boundaries_and_port -- not a name independently
+    re-derived by _apply_hfss_geometry from port_name. Exercises the
+    `conductor_names or [floquet_sheet_name]` fallback branch that
+    PERIODIC_GEOMETRY's conductors never reach."""
+    geometry = {
+        "periodic": {
+            "period_x_m": 0.01,
+            "period_y_m": 0.01,
+            "z_max_m": 0.02,
+            "floquet": {"name": "floquet1"},
+        },
+        "mesh": {"max_length_mm": 0.5},
+    }
+    _, fake = _run_against_fake(tmp_path, geometry=geometry)
+    assert len(fake.mesh.assigned) == 1
+    assert fake.mesh.assigned[0]["assignment"] == ["floquet1_sheet"]
+
+
 def test_periodic_run_produces_per_mode_reflection_not_lumped_s11(tmp_path: Path):
     """The required testable-behavior-change criterion: a full
     HfssSimulator.run(job)-equivalent call with a periodic/Floquet job
@@ -677,6 +702,12 @@ def test_periodic_touchstone_export_is_still_invoked(tmp_path: Path):
     assert len(fake.export_calls) == 1
     touchstone_path = Path(result["touchstone_file"])
     assert touchstone_path.exists()
+    # PERIODIC_GEOMETRY's floquet block omits "modes", so the default of 2
+    # (TE + TM) applies -- a genuine 2-port S-matrix, so the Touchstone
+    # file must be named ".s2p", not the lumped-port path's ".s1p" (a
+    # mismatched extension makes skrf's legacy-format port-count detection
+    # read the file wrong).
+    assert touchstone_path.suffix == ".s2p"
 
 
 def test_periodic_geometry_custom_mode_count_and_name_are_honored(tmp_path: Path):
@@ -689,6 +720,11 @@ def test_periodic_geometry_custom_mode_count_and_name_are_honored(tmp_path: Path
     assert fake.floquet_port_calls[0]["modes"] == 1
     assert set(result["s_parameters"]["modes"].keys()) == {"mode_1"}
     assert result["s_parameters"]["modes"]["mode_1"]["expression"] == "S(myport:1,myport:1)"
+    # A 1-mode Floquet port excites a single port, same as the lumped-port
+    # path -- the Touchstone extension must track the actual mode count
+    # (here 1), not be hardcoded to whatever the periodic path's default
+    # (2 modes -> ".s2p") would otherwise produce.
+    assert Path(result["touchstone_file"]).suffix == ".s1p"
 
 
 def test_periodic_geometry_custom_origin_and_z_min_are_honored(tmp_path: Path):

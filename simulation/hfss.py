@@ -406,9 +406,7 @@ class _AppliedGeometry:
     floquet_modes: int = 1
 
 
-def _apply_floquet_boundaries_and_port(
-    hfss: Any, periodic: dict[str, Any], conductor_names: list[str]
-) -> tuple[str, int]:
+def _apply_floquet_boundaries_and_port(hfss: Any, periodic: dict[str, Any]) -> tuple[str, int, str]:
     """Build the periodic unit-cell's bounding/background box, auto-assign
     its side-wall periodic ("lattice pair") boundaries, and create a
     Floquet port on a thin sheet at the top of the cell -- the periodic
@@ -416,7 +414,15 @@ def _apply_floquet_boundaries_and_port(
     from `geometry["port"]`.
 
     `periodic` shape (`geometry["periodic"]`, mutually exclusive with
-    `geometry["port"]` -- see `_apply_hfss_geometry`):
+    `geometry["port"]` -- see `_apply_hfss_geometry`). Its key vocabulary
+    (`period_x_m`/`period_y_m` plus explicit `z_min_m`/`z_max_m`/
+    `origin_m`) deliberately does not reuse simulation/palace.py's
+    analogous `geometry["unit_cell"] = {"lx_m", "ly_m", "lz_m"}` shape:
+    Palace's box has an implicit origin, so three side lengths fully
+    describe it, while HFSS's box here is built from absolute `p1_m`/
+    `p2_m` corners (see `_create_box`) and needs an explicit z-range and
+    xy origin to place it -- a genuinely richer shape, not just a
+    differently-spelled copy of Palace's:
         {
           "period_x_m": float,      # required -- unit-cell period along x
           "period_y_m": float,      # required -- unit-cell period along y
@@ -470,7 +476,12 @@ def _apply_floquet_boundaries_and_port(
     `lattice_origin`/`lattice_a_end`/`lattice_b_end` (over leaving them
     `None`) were chosen.
 
-    Returns (floquet_port_name, modes).
+    Returns (floquet_port_name, modes, sheet_name) -- `sheet_name` is
+    returned (rather than left for the caller to re-derive from
+    `floquet_port_name`) so `_apply_hfss_geometry`'s mesh-assignment
+    default can reuse the exact name this function actually created the
+    sheet under, instead of both functions independently encoding the
+    same `f"{port_name}_sheet"` naming convention.
     """
     required = ("period_x_m", "period_y_m", "z_max_m")
     missing = [f for f in required if f not in periodic]
@@ -485,13 +496,15 @@ def _apply_floquet_boundaries_and_port(
     origin_x_m, origin_y_m = float(origin_xy_m[0]), float(origin_xy_m[1])
     z_min_m = float(periodic.get("z_min_m", 0.0))
     z_max_m = float(periodic["z_max_m"])
+    x_max_m = origin_x_m + period_x_m
+    y_max_m = origin_y_m + period_y_m
 
     cell_name = periodic.get("name", "unit_cell")
     _create_box(
         hfss,
         {
             "p1_m": [origin_x_m, origin_y_m, z_min_m],
-            "p2_m": [origin_x_m + period_x_m, origin_y_m + period_y_m, z_max_m],
+            "p2_m": [x_max_m, y_max_m, z_max_m],
         },
         cell_name,
     )
@@ -506,13 +519,13 @@ def _apply_floquet_boundaries_and_port(
         hfss,
         {
             "p1_m": [origin_x_m, origin_y_m, z_max_m],
-            "p2_m": [origin_x_m + period_x_m, origin_y_m + period_y_m, z_max_m],
+            "p2_m": [x_max_m, y_max_m, z_max_m],
         },
         sheet_name,
     )
     lattice_origin = [_m_to_mm(origin_x_m), _m_to_mm(origin_y_m), _m_to_mm(z_max_m)]
-    lattice_a_end = [_m_to_mm(origin_x_m + period_x_m), _m_to_mm(origin_y_m), _m_to_mm(z_max_m)]
-    lattice_b_end = [_m_to_mm(origin_x_m), _m_to_mm(origin_y_m + period_y_m), _m_to_mm(z_max_m)]
+    lattice_a_end = [_m_to_mm(x_max_m), _m_to_mm(origin_y_m), _m_to_mm(z_max_m)]
+    lattice_b_end = [_m_to_mm(origin_x_m), _m_to_mm(y_max_m), _m_to_mm(z_max_m)]
     hfss.create_floquet_port(
         assignment=sheet_name,
         lattice_origin=lattice_origin,
@@ -524,7 +537,7 @@ def _apply_floquet_boundaries_and_port(
         deembed_distance=_m_to_mm(float(floquet.get("deembed_distance_m", 0.0))),
     )
 
-    return port_name, modes
+    return port_name, modes, sheet_name
 
 
 def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> _AppliedGeometry:
@@ -609,11 +622,11 @@ def _apply_hfss_geometry(hfss: Any, geometry: dict[str, Any]) -> _AppliedGeometr
         raise ValueError("geometry['port'] or geometry['periodic'] is required")
 
     if periodic:
-        port_name, floquet_modes = _apply_floquet_boundaries_and_port(
-            hfss, periodic, conductor_names
+        port_name, floquet_modes, floquet_sheet_name = _apply_floquet_boundaries_and_port(
+            hfss, periodic
         )
         port_type = "floquet"
-        mesh_default_targets = conductor_names or [f"{port_name}_sheet"]
+        mesh_default_targets = conductor_names or [floquet_sheet_name]
     else:
         sheet = port.get("sheet")
         if not sheet or "p1_m" not in sheet or "p2_m" not in sheet:
@@ -904,7 +917,16 @@ class HfssSimulator(Simulator):
         try:
             applied = _apply_hfss_geometry(hfss, geometry)
             _create_setup_and_solve(hfss, frequency_hz, job.get("sweep"), setup_name, sweep_name)
-            touchstone_path = self.archive_dir / f"{project_name}.s1p"
+            # Touchstone's legacy ".sNp" extension names N = the number of
+            # excitations/ports the file's S-matrix actually holds (skrf's
+            # rf.Network(...) legacy-format reader determines port count
+            # from this extension) -- a lumped-port job excites exactly one
+            # port, but a Floquet job excites `floquet_modes` of them (2 by
+            # Hfss.create_floquet_port's own default), so the extension
+            # must track applied.floquet_modes for the periodic path rather
+            # than being hardcoded to ".s1p" for both.
+            num_ports = applied.floquet_modes if applied.port_type == "floquet" else 1
+            touchstone_path = self.archive_dir / f"{project_name}.s{num_ports}p"
             if applied.port_type == "floquet":
                 extracted = _extract_hfss_floquet_results(
                     hfss,
