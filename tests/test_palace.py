@@ -41,6 +41,7 @@ import pytest
 from conftest import make_fake_executable
 
 from simulation.base import SimulatorError
+from simulation.conservation_checks import check_palace_result
 from simulation.palace import (
     BOUND_PEC_START,
     BOUND_X_MAX,
@@ -382,6 +383,85 @@ def test_generate_palace_config_floquet_ports_excitation_and_polarization():
     assert ports[1]["Excitation"] is False
 
 
+# ---------------------------------------------------------------------------
+# ground_backed: a one-port, ground-backed cell (REFLECTION_PHASE/DIFFUSIVE's
+# declared physics, issue #252 ticket 2) -- PEC on the opposite face instead
+# of a second FloquetPort. See generate_palace_config's own docstring for the
+# "ground_backed" key and the Palace config-reference citation for "PEC".
+# ---------------------------------------------------------------------------
+
+
+def test_generate_palace_config_ground_backed_emits_exactly_one_floquet_port():
+    config = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": True},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    ports = config["Boundaries"]["FloquetPort"]
+    assert len(ports) == 1
+    assert ports[0]["Index"] == 1
+    assert ports[0]["Attributes"] == [BOUND_Z_MIN]
+    assert ports[0]["Excitation"] is True
+    assert ports[0]["IncidentPolarization"] == "TE"
+
+
+def test_generate_palace_config_ground_backed_emits_pec_boundary_on_z_max():
+    config = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": True},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    assert config["Boundaries"]["PEC"] == {"Attributes": [BOUND_Z_MAX]}
+
+
+def test_generate_palace_config_ground_backed_periodic_pairs_unaffected():
+    """ground_backed only changes what sits on the z-normal faces -- the
+    x/y periodic boundary pairs (the four side faces) are untouched."""
+    config = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": True},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    pairs = config["Boundaries"]["Periodic"]["BoundaryPairs"]
+    assert len(pairs) == 2
+    assert pairs[0]["DonorAttributes"] == [BOUND_X_MIN]
+    assert pairs[0]["ReceiverAttributes"] == [BOUND_X_MAX]
+    assert pairs[1]["DonorAttributes"] == [BOUND_Y_MIN]
+    assert pairs[1]["ReceiverAttributes"] == [BOUND_Y_MAX]
+
+
+def test_generate_palace_config_default_has_no_pec_boundary():
+    """Regression: with the flag unset, no config["Boundaries"]["PEC"] key
+    is ever emitted -- only ground_backed=True introduces it."""
+    config = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert "PEC" not in config["Boundaries"]
+    assert len(config["Boundaries"]["FloquetPort"]) == 2
+
+
+def test_generate_palace_config_ground_backed_default_false_is_byte_for_byte_unchanged():
+    """The core regression this ticket asks for: omitting "ground_backed"
+    and passing it explicitly as False must produce the IDENTICAL config to
+    what this function emitted before the flag existed."""
+    config_omitted = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    config_explicit_false = generate_palace_config(
+        {**GRATING_GEOMETRY, "ground_backed": False},
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+    )
+    assert config_omitted == config_explicit_false
+    assert json.dumps(config_omitted, sort_keys=True) == json.dumps(
+        config_explicit_false, sort_keys=True
+    )
+
+
 def test_generate_palace_config_invalid_polarization_raises():
     geometry = {**GRATING_GEOMETRY, "floquet": {"polarization": "not_a_real_polarization"}}
     with pytest.raises(ValueError, match="polarization"):
@@ -585,6 +665,55 @@ def test_parse_palace_output_no_matching_header_returns_computed_false():
     result = parse_palace_output("f (GHz),SomethingElse\n1.0,2.0\n")
     assert result["computed"] is False
     assert "mode label" in result["note"]
+
+
+# ---------------------------------------------------------------------------
+# A one-port, ground-backed cell's output: no port-2 columns at all (there is
+# no second FloquetPort to report on -- see generate_palace_config's
+# "ground_backed" option). parse_palace_output/check_palace_result must run
+# cleanly on this shape (issue #252 ticket 2) exactly as they already do on
+# the two-port shape -- see tests/test_conservation_checks.py's own
+# check_palace_result fixtures for the two-port sibling of this test.
+# ---------------------------------------------------------------------------
+
+
+def _build_ground_backed_csv() -> str:
+    """A ground-backed cell's port-floquet-S.csv has only port-1 columns.
+    Full in-phase reflection (|S11|=1 at 0 degrees) is the magnetic-mirror
+    behavior CLAUDE.md's charter names (US12089385B2 [0058]): a surface that
+    "produces the same full reflection with 0 degree phase shift"."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["f (GHz)", "|S[P1(0;0)TE][1]| (dB)", "arg(S[P1(0;0)TE][1]) (deg.)"])
+    writer.writerow(["10.000000e+00", "0.0", "0.0"])
+    return buf.getvalue()
+
+
+GROUND_BACKED_CSV = _build_ground_backed_csv()
+
+
+def test_parse_palace_output_one_port_result_has_no_second_port_specular():
+    result = parse_palace_output(GROUND_BACKED_CSV)
+    assert result["computed"] is True
+    assert "S11_TE" in result["specular"]
+    assert "S21_TE" not in result["specular"]
+
+
+def test_check_palace_result_runs_on_a_one_port_ground_backed_result():
+    """check_palace_result (power balance/passivity/reciprocity) must still
+    run correctly against a one-port-shaped parsed result: full reflection
+    (|S11|^2 == 1) with no second port to sum against is a lossless,
+    perfectly balanced structure, and reciprocity has nothing to compare
+    against (no reverse-excitation data) -- neither is an error."""
+    parsed = parse_palace_output(GROUND_BACKED_CSV)
+    result = check_palace_result(parsed, lossless=True)
+    assert "power_balance" in result
+    row = result["power_balance"][0]
+    assert row["power_sum"] == pytest.approx(1.0, abs=1e-6)
+    assert row["ok"] is True
+    assert result["passivity"][0]["ok"] is True
+    assert result["reciprocity"] == []  # no reverse-excitation data present
+    assert result["all_ok"] is True
 
 
 # ---------------------------------------------------------------------------
