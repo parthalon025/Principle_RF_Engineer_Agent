@@ -260,3 +260,47 @@ because the reason it would filter on was never recorded as data.
 This is an **amendment, not a supersede** (ADR-0020): the decision — a
 structured ledger written at the proposal boundary — stands unchanged.
 It gained a distinction it was missing.
+
+### 2026-09-09 — `capability-verdict` never meant equipment; the 2026-09-08 correction's fabrication mapping contradicted ADR-0021
+
+**What the 2026-09-08 correction said:**
+
+> - **`capability-verdict`** — the configured fabrication capability
+>   cannot build it today. **Never read back as settled**; re-evaluated
+>   against the current capability on every run, per ADR-0021.
+
+**Why that was wrong, not just incomplete.** ADR-0021 decided the opposite
+of what this correction cited it for: *"A candidate the configuration
+cannot build in this pass is reported in the ranked output with its
+reason attached... not deleted from it."* Mapping `capability-verdict` — a
+`dropped` verdict, one that removes a family from the batch — onto exactly
+the case ADR-0021 says must never be removed is a direct contradiction,
+not a refinement of it. It surfaced during `/grill-with-docs` on ADR-0030,
+which separately needed `capability-verdict` to also cover a family
+excluded for exceeding its element's angular stability limit at a stated
+curvature — two different triggers sharing one label, neither of which,
+on inspection, was the fabrication-equipment case the 2026-09-08
+correction actually named.
+
+**What is true instead.** `capability-verdict` means exactly one thing: a
+family is outside its own characterized **Validity box** for what the
+requirement states — today, that's a curvature exceeding
+`S ≤ 2·θ_max·R`. It re-evaluates against the requirement's own stated
+properties, never against shop equipment. A shop not currently having the
+ink, material, or printer resolution a family needs is a **Capability
+warning** instead — a new, separate mechanism (see `CONTEXT.md`) that
+states the gap in `Requirement target` shape and never drops the
+candidate, which is what ADR-0021 required all along.
+
+**The payoff.** The equipment-change worklist this correction originally
+promised ("list every entry ever dropped as a `capability-verdict`...
+exactly what a new machine unlocks") was itself built on the
+contradiction — a machine unlocking a family it previously couldn't build
+should never have removed that family from a report in the first place.
+The real worklist is now built from unresolved Capability warnings, not
+from ledger exclusions.
+
+This is an **amendment, not a supersede** (ADR-0020): the ledger's
+structure — a family, a kept/dropped flag, a reason, a reason kind —
+stands unchanged. What changed is which situations `capability-verdict`
+may describe.

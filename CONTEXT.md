@@ -179,6 +179,27 @@ and a glossary that churns with it stops being trustworthy (see
   anchors a request for design guidance. Distinct from a Component's
   specification, which describes an existing manufactured part rather
   than a target for a new one.
+- **Requirements document**: a CDD-style artifact, one per **Design**,
+  bundling every one of that design's **Customer requirement** rows into a
+  single reviewed document — modelled on the DoD's JCIDS **Capability
+  Development Document**, the same real-world framework this project
+  already draws **Threshold/Objective** from. Produced by an interview
+  with whoever speaks for the customer, then moves through
+  `DRAFT → UNDER_REVIEW → REFINED → CONFIRMED`: a human reads it and
+  pushes back, the interviewing agent revises, and the cycle repeats until
+  the human confirms it. Every round is kept, never overwritten — the same
+  instinct that keeps an ADR's own corrections dated and appended rather
+  than silently rewriting the claim they correct. A **Requirement
+  target** and an **Intended effect** are *extracted from* a `CONFIRMED`
+  Requirements document rather than elicited as standalone answers; the
+  document is what a human actually reads and argues with, and those
+  fields are the small, structured, machine-read summary the design loop
+  operates on. The ARCHITECTURE decision may not run until a design's
+  Requirements document reaches `CONFIRMED` (ADR-0031) — you don't pick a
+  physical approach before the customer's actual ask is locked in.
+  _Avoid_: treating this as a replacement for `requirements[requirement_id]`
+  — it produces the values that dict already carries; it doesn't hold them
+  itself.
 - **Requirement target**: the structured interpretation (`value`,
   `comparator`, `unit`, optional `tolerance`) an agent proposes for one
   Customer requirement's prose, so a Success score has something to
@@ -205,10 +226,12 @@ and a glossary that churns with it stops being trustworthy (see
   physically different routes with different costs and different
   confidence.
   Established by interview with whoever speaks for the customer rather than
-  inferred silently, and then tracked exactly like a **Requirement
-  target**: provenance is always `ASSUMED`, because it is a reading of
-  someone's words and not anybody's measurement, with confirmation carried
-  on a separate status axis rather than a stronger provenance tier. Its
+  inferred silently — concretely, by producing and refining a
+  **Requirements document** — and then tracked exactly like a
+  **Requirement target**: provenance is always `ASSUMED`, because it is a
+  reading of someone's words and not anybody's measurement, with
+  confirmation carried on a separate status axis rather than a stronger
+  provenance tier. Its
   vocabulary is **open, not a closed enum** — the same reasoning as
   **Optimizer class**, stored as an open value so an approach nobody needs
   yet has room to exist.
@@ -526,7 +549,8 @@ and a glossary that churns with it stops being trustworthy (see
   `design_family` string field on the ARCHITECTURE decision, alongside the
   existing free-form `decision`/`rationale` prose, not left implicit in
   which hardwired function the loop happened to call (`_handle_architecture`,
-  #161). The name is validated against the Design family registry
+  #161). ARCHITECTURE itself may not run until the design's **Requirements
+  document** reaches `CONFIRMED` (ADR-0031). The name is validated against the Design family registry
   (`designs/design_families.py`, #109/ADR-0018): an unrecognised family is
   rejected at the ARCHITECTURE step rather than persisted as a grouping key
   nothing downstream recognises. The caller's own spelling is kept verbatim
@@ -694,18 +718,50 @@ and a glossary that churns with it stops being trustworthy (see
   call can look an entry up deterministically. The reason kind is what
   keeps a machine's verdict from hardening into a permanent one:
   `human-decision` carries forward under ADR-0026, `capability-verdict`
-  never does and is re-evaluated against the current configured
-  fabrication capability every run (ADR-0021, #108 — equipment changes,
-  so "we could not build this" must expire with the machine that could
-  not build it), and `engineering-judgment` carries forward with its
-  reasoning and stays overridable. It also makes the equipment-change
-  worklist a query: every entry dropped as a `capability-verdict` is
-  exactly what a new machine unlocks. It exists because `run_candidate_search`
+  never does and is re-evaluated every run against the requirement's own
+  stated properties — a family excluded because the requirement's
+  curvature puts it outside the family's characterized **Validity box**
+  expires the moment that curvature changes — and `engineering-judgment`
+  carries forward with its reasoning and stays overridable.
+  **`capability-verdict` is never about equipment, ink or material the
+  shop doesn't currently have loaded** — that is a **Capability warning**,
+  a different mechanism that never drops a candidate, per the charter's
+  "present equipment... shape the ranking and the warnings, never the
+  search" and ADR-0021's rule that a candidate the configuration cannot
+  build today is "reported... with its reason attached... not deleted
+  from it." An earlier version of this entry pointed `capability-verdict`
+  at "the current configured fabrication capability," citing ADR-0021 —
+  that reading contradicted the very ADR it cited, since ADR-0021
+  requires an unbuildable candidate to be reported, never dropped;
+  superseded by ADR-0025's 2026-09-09 correction.
+  It also makes the requirement-change worklist a query: every entry
+  dropped as a `capability-verdict` is exactly what relaxing that
+  requirement unlocks. It exists because `run_candidate_search`
   receives its candidates as an argument and prunes nothing: the
   narrowing happens in the LLM role that composes the list, upstream of
   every module, and is otherwise unrecorded — making a thorough night
   and a narrow one produce identical reports. No gate: a batch that
   writes nothing here still runs, and the silence is itself recorded.
+- **Capability warning**: a warning attached to a design candidate stating
+  that the currently configured **Fabrication capability**, or the
+  currently selected **Ink-property library** or **Material-property
+  library** entry, does not meet a stated need — e.g. "needs 0.2 mm
+  features; the loaded printer achieves 0.5 mm." Stated in the same
+  `value`/`comparator`/`unit` shape as a **Requirement target**, so the
+  gap is a precise, actionable spec rather than descriptive prose. **Never
+  removes the candidate from consideration** — a shop's equipment, ink or
+  material on hand is expected to change, unlike a family's own physical
+  validity box, which is why this is a wholly different mechanism from a
+  `capability-verdict` exclusion rather than a variant of one (ADR-0025's
+  2026-09-09 correction). Re-evaluated against the current configuration
+  every run, the same cadence as a `capability-verdict` entry, but a
+  Capability warning never converts into one and a `capability-verdict`
+  never converts into a Capability warning — a shortfall in what the shop
+  has loaded and a candidate being outside its own characterized validity
+  box are different facts with different owners.
+  _Avoid_: folding this into `capability-verdict` — that was tried
+  (ADR-0025's 2026-09-08 correction) and contradicted ADR-0021's own rule
+  that an unbuildable candidate is reported, not dropped.
 - **Rejection record**: the stored fact that a human refused a specific
   proposal, with who, when and the stated reason (ADR-0026). A named
   exception to "a guess never becomes settled by repetition", on
