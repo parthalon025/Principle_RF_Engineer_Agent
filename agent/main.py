@@ -2279,7 +2279,14 @@ def run_candidate_search(
 #                   straight from a distributor and reconciling it into one
 #                   components row is the same authoring concern as manually
 #                   ingesting one -- and ingest_arxiv_paper, the arxiv-doc-
-#                   builder-backed arXiv preprint fetcher, plus (issue #219)
+#                   builder-backed arXiv preprint fetcher, alongside (issue
+#                   #257) search_arxiv_papers, its sibling discovery step:
+#                   topic/keyword search over the same public arXiv API,
+#                   returning candidates only, never itself calling
+#                   ingest_document -- the same authoring bucket, since
+#                   deciding what to bring in is part of standing up the
+#                   knowledge base, even though this one tool never writes
+#                   anything -- plus (issue #219)
 #                   ingest_patent, the USPTO patent/published-application
 #                   fetcher that reuses the same skill's PDF converters; both
 #                   sit in the same authoring
