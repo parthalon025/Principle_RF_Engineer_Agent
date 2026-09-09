@@ -131,6 +131,24 @@ flowchart LR
 (`orchestration/approval.py`). The three gates are exactly the transitions whose result is
 a human judgment call rather than a `CALCULATED`/`SIMULATED` number.
 
+**Granting a gate — why a loop can get stuck at ARCHITECTURE.** No agent tool or MCP tool
+can grant one of these receipts; that is deliberate (`orchestration/approval.py`,
+`designs/release_approval.py`). A human with local access to the machine running the live
+session grants or refuses one by running the CLI directly, at a terminal:
+
+```bash
+uv run python -m orchestration.approval_cli <subcommand> ...
+```
+
+`list` / `show <id>` / `submit --state <loop-state.json> --step-input <step-input.json>
+--submitted-by <name>` / `approve <id> --approved-by <name>` / `refuse <id> --approved-by
+<name>` decide a loop-step gate (ARCHITECTURE, MEASUREMENT, REDESIGN_DECISION); the
+`-release` siblings — `list-release` / `show-release <id>` / `submit-release --design
+<design.json> --submitted-by <name>` / `approve-release <id> --approved-by <name>` /
+`refuse-release <id> --approved-by <name>` — decide a design's own `RELEASED` gate (see
+"States" in `docs/OPERATIONS.md`). Without a human running this CLI, every gated step —
+and a design's own move to `RELEASED` — simply keeps refusing.
+
 ### Around the loop
 
 | Piece | What it does | Why it is shaped that way |
