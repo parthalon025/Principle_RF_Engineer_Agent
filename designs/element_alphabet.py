@@ -149,7 +149,7 @@ from knowledge.provenance import MEASURED
 
 class InvalidSymbolAlphabetEntryError(ValueError):
     """Raised by `add_process_record`/`add_symbol_entry` when the shape
-    either was handed is wrong -- for a Process record, an empty
+    either function was handed is wrong -- for a Process record, an empty
     `machine`/`ink`/`ink_grade`/`substrate_stack`/`cure_schedule`, or a
     non-finite or negative `pass_count`/`achieved_film_thickness_m`; for a
     symbol-alphabet entry, an empty `element_family`/`symbol`, a non-finite

@@ -339,7 +339,8 @@ def test_lookup_symbol_entries_excludes_an_incidence_angle_outside_the_range():
 def test_lookup_symbol_entries_against_a_non_matching_process_returns_nothing_not_an_error():
     # The core ADR-0027 model: a process change doesn't invalidate an
     # entry, it just stops matching. No status flag, no exception -- a
-    # plain empty list, the same as any other non-matching query.
+    # plain empty list from lookup, and a plain None (never a status
+    # dict) from resolve, the same as any other non-matching query.
     entry = add_symbol_entry(**_symbol_kwargs(process_id=1))
     matches = lookup_symbol_entries(
         [entry],
@@ -350,7 +351,15 @@ def test_lookup_symbol_entries_against_a_non_matching_process_returns_nothing_no
         process_id=2,
     )
     assert matches == []
-    assert "status" not in (matches[0] if matches else {})
+    resolved = resolve_symbol_entry(
+        [entry],
+        element_family="interdigital_elc",
+        symbol="elc_finger_4",
+        frequency_hz=10.0e9,
+        incidence_angle_deg=15.0,
+        process_id=2,
+    )
+    assert resolved is None
 
 
 def test_lookup_symbol_entries_is_scoped_to_family_and_symbol():
