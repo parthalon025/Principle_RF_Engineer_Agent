@@ -49,11 +49,23 @@ import io
 import tempfile
 import zipfile
 from collections.abc import Callable
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 from knowledge.ingest import ingest_document
 from knowledge.sourcing._http import download_bytes
+
+
+class SpecNotFoundError(Exception):
+    """Raised by `lookup_3gpp_spec_status` when `spec_number` does not
+    appear as a row in the fetched DynaReport per-series table -- e.g. a
+    typo, or a spec that belongs to a different series than the one
+    derived from it. Named after this module's other "warn, never guess"
+    failure modes (`knowledge.db.DuplicateDocumentError`,
+    `geometry.unit_cell.SymbolNotFoundError`): identify exactly what is
+    missing rather than returning an empty/placeholder result."""
+
 
 # Preference order when a 3GPP zip contains more than one candidate member:
 # .docx (current specs) before legacy .doc (docling support unconfirmed).
@@ -126,4 +138,165 @@ def ingest_3gpp_spec(
         license=license,
         classification=classification,
         supersedes_document_id=supersedes_document_id,
+    )
+
+
+# --- DynaReport version/withdrawal lookup (ticket #285) --------------------
+#
+# `ingest_3gpp_spec` above requires the caller to already know 3GPP's own
+# base-36 version string and never checks whether the spec has been
+# withdrawn -- see this module's docstring for what `ingest_3gpp_spec` does
+# and does not do. `lookup_3gpp_spec_status` below is a standalone answer to
+# "what is the current version of spec X, and has it been withdrawn?",
+# fetched from 3GPP's own DynaReport per-series HTML table
+# (`https://www.3gpp.org/dynareport?code={series}-series.htm`), built the
+# same way `_spec_url` above derives `series` (text before the first "."
+# only). It does not change `ingest_3gpp_spec`'s signature or behaviour.
+#
+# THE VERSION FIELD IS ALWAYS `None`, AND THAT IS NOT A BUG. This ticket's
+# own acceptance criteria (and docs/tools/3gpp.md's "Capabilities not yet
+# used here" section, written before this function existed) both assumed
+# the per-series DynaReport table carries a current-version string per
+# spec row. Fetching the real live page during this ticket's implementation
+# (`https://www.3gpp.org/dynareport?code=38-series.htm`, 2026-09) disproves
+# that: its own `<thead>` declares exactly three columns -- "spec number",
+# "title", "notes" -- and every one of its 272 data rows' notes cell is one
+# of exactly two values, a blank `&nbsp;` or "SPECIFICATION WITHDRAWN".
+# There is no version column to parse, on this report, for any spec. A real
+# current-version number does exist on 3GPP's site, but only on the much
+# heavier, ASP.NET/RadGrid-rendered per-*spec* detail page
+# (`https://www.3gpp.org/dynareport/{spec-no-dot}.htm`, one fetch per spec,
+# not per series) -- a different report, a different URL shape, and enough
+# extra parsing surface that pulling it in here would silently turn a
+# "parse one HTML table" ticket into "scrape an ASP.NET postback widget".
+# Per this repo's "warn, never silently apply the wrong tool" convention:
+# rather than fabricate a version number this endpoint does not publish, or
+# silently drop the field, `version` is always returned as `None` with this
+# reasoning on the record. Closing the gap for real means a follow-up ticket
+# against the per-spec detail page, not stretching this one.
+class _SeriesTableParser(HTMLParser):
+    """Parses the `<table id="a3dyntab">` on a 3GPP DynaReport per-series
+    page into rows of `{"spec_number", "title", "withdrawn"}`. Handles the
+    real page's own markup quirks confirmed against a live fetch: a stray
+    unmatched `</span>` after the spec-number link (HTMLParser tolerates an
+    end tag with no matching start tag -- it is simply a no-op here), and
+    the spec number itself living inside a nested `<a>` rather than being
+    the cell's whole text (the cell also carries a leading "TS "/"TR " type
+    label)."""
+
+    _TABLE_ID = "a3dyntab"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[dict[str, Any]] = []
+        self._table_depth = 0
+        self._in_row = False
+        self._cell_index = -1
+        self._in_link = False
+        self._current_row: dict[str, Any] | None = None
+        self._current_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = dict(attrs)
+        if tag == "table":
+            if attrs_dict.get("id") == self._TABLE_ID:
+                self._table_depth = 1
+            elif self._table_depth:
+                self._table_depth += 1
+            return
+        if not self._table_depth:
+            return
+        if tag == "tr":
+            self._in_row = True
+            self._cell_index = -1
+            self._current_row = {"spec_number": "", "title": "", "withdrawn": False}
+        elif tag == "td" and self._in_row:
+            self._cell_index += 1
+            self._current_text = []
+        elif tag == "a" and self._cell_index == 0:
+            self._in_link = True
+            self._current_text = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._table_depth:
+            return
+        if tag == "table":
+            self._table_depth -= 1
+        elif tag == "a" and self._in_link:
+            self._in_link = False
+            assert self._current_row is not None  # only set inside a <tr>
+            self._current_row["spec_number"] = "".join(self._current_text).strip()
+        elif tag == "td" and self._in_row:
+            text = "".join(self._current_text).strip()
+            assert self._current_row is not None  # only set inside a <tr>
+            if self._cell_index == 1:
+                self._current_row["title"] = text
+            elif self._cell_index == 2:
+                self._current_row["withdrawn"] = "WITHDRAWN" in text.upper()
+        elif tag == "tr" and self._in_row:
+            self._in_row = False
+            if self._current_row is not None and self._current_row["spec_number"]:
+                self.rows.append(self._current_row)
+            self._current_row = None
+
+    def handle_data(self, data: str) -> None:
+        if self._in_row and self._cell_index >= 0:
+            self._current_text.append(data)
+
+
+def _parse_series_table(html_text: str) -> list[dict[str, Any]]:
+    """Pure parsing half of `lookup_3gpp_spec_status` -- "caller fetches,
+    pure function resolves" (this repo's own convention, see
+    `designs/element_alphabet.py`'s docstring for the pattern this mirrors).
+    Takes the already-decoded HTML of a DynaReport per-series page and
+    returns one dict per spec row: `spec_number`, `title`, `withdrawn`
+    (`version` is not present here -- see the section docstring above for
+    why `lookup_3gpp_spec_status` always reports it as `None`). Directly
+    unit-testable with a plain string, no network/fetch_fn involved.
+    """
+    parser = _SeriesTableParser()
+    parser.feed(html_text)
+    return parser.rows
+
+
+def lookup_3gpp_spec_status(
+    spec_number: str,
+    *,
+    fetch_fn: Callable[[str], bytes] = download_bytes,
+) -> dict[str, Any]:
+    """Look up `spec_number` (e.g. "38.101" or "38.101-1") in 3GPP's own
+    DynaReport per-series table and report its title and whether 3GPP has
+    marked it withdrawn -- e.g. TS 38.101 itself is withdrawn while its
+    five parts, 38.101-1..5, remain current.
+
+    Returns `{"spec_number", "title", "withdrawn", "version"}`. `version`
+    is always `None` -- see the section docstring above this function for
+    why the per-series report this function reads has no version column to
+    report, on the real page, for any spec.
+
+    Raises `SpecNotFoundError` if `spec_number` does not appear as a row in
+    the fetched table (a typo, or a spec whose series differs from the one
+    derived from it) -- this function never guesses or returns a
+    placeholder status.
+
+    `fetch_fn` defaults to a real HTTP GET (`knowledge.sourcing._http.
+    download_bytes`) and exists so tests can inject a stub instead of
+    hitting the network, the same seam `ingest_3gpp_spec` above uses.
+    """
+    series = spec_number.split(".", 1)[0]
+    url = f"https://www.3gpp.org/dynareport?code={series}-series.htm"
+    html_bytes = fetch_fn(url)
+    rows = _parse_series_table(html_bytes.decode("utf-8", errors="replace"))
+
+    for row in rows:
+        if row["spec_number"] == spec_number:
+            return {
+                "spec_number": spec_number,
+                "title": row["title"],
+                "withdrawn": row["withdrawn"],
+                "version": None,
+            }
+
+    raise SpecNotFoundError(
+        f"{spec_number!r} not found in the {series}-series DynaReport table fetched from {url}"
     )
