@@ -35,6 +35,26 @@ This validates this module's FFT/incident-reflected-wave/S_ij arithmetic
 against a known answer; it is NOT a claim that this synthetic data
 resembles a real openEMS run's port probe output byte-for-byte (see that
 module's honest caveat).
+
+NF2FF FAR-FIELD EXTRACTION TESTS (issue #269): two layers, mirroring the
+S-parameter tests' own split between arithmetic and plumbing. First,
+`_build_far_field_result`'s pure directivity/gain arithmetic is exercised
+directly (no subprocess) against a hand-computable isotropic-radiator
+closed form -- uniform power density in every direction integrates to a
+known total, so directivity and gain_dbi come out to exactly 0 dBi
+everywhere; this is the far-field analogue of the S-parameter tests'
+frequency-independent reflection/transmission coefficient. Second, the
+full post-processing path (locate per-face NF2FF dump files, write the
+`nf2ff` tool's own input-XML control file, run it, parse its result HDF5)
+is exercised end-to-end against a fake "nf2ff" script (the standalone
+`nf2ff` binary is a SEPARATE executable from `openEMS` itself -- see
+simulation/openems.py's module docstring) that writes a synthetic result
+HDF5 in the exact schema nf2ff.cpp's Write2HDF5() writes, again describing
+an isotropic radiator rather than real FDTD/nf2ff physics. Missing dump
+files and a malformed result HDF5 are each tested separately to confirm
+far_field falls back to its honest computed=False + note shape rather than
+a fabricated number, matching _compute_s_parameters_from_probes()'s own
+missing-data fallback discipline.
 """
 
 import math
