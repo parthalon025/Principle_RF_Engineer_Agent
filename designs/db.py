@@ -126,6 +126,7 @@ def record_decision(
     evidence: list[Any],
     design_family: str | None = None,
     considered_and_dropped: list[Any] | None = None,
+    capability_warnings: list[Any] | None = None,
     approval_required: bool = True,
 ) -> dict[str, Any]:
     """Insert a new `decision_records` row, always starting
@@ -157,6 +158,15 @@ def record_decision(
     upstream, by `orchestration.design_loop`'s step validation, before a
     decision ever reaches this write path -- this is a storage layer, not a
     second place to re-check the rule.
+
+    `capability_warnings` (issue #324; ADR-0025's 2026-09-09 correction;
+    CONTEXT.md's "Capability warning") is optional, defaulting to `[]` --
+    its own column, wholly separate from `considered_and_dropped` above (a
+    design candidate carrying a Capability warning stays `kept`; it is
+    never one of that ledger's entries). Same "only a design-loop
+    ARCHITECTURE/REDESIGN_DECISION call ever states one" shape, and stored
+    verbatim for the same reason: the shape check (issue #324) is enforced
+    upstream, by `orchestration.design_loop`'s step validation.
     """
     existing = find_decision_by_record_key(conn, record_key)
     if existing is not None:
@@ -167,9 +177,9 @@ def record_decision(
             """
             INSERT INTO decision_records
                 (design_id, record_key, decision, alternatives, rationale,
-                 evidence, design_family, considered_and_dropped, approval_required,
-                 approval_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 evidence, design_family, considered_and_dropped, capability_warnings,
+                 approval_required, approval_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -181,6 +191,7 @@ def record_decision(
                 Json(evidence),
                 design_family,
                 Json(considered_and_dropped if considered_and_dropped is not None else []),
+                Json(capability_warnings if capability_warnings is not None else []),
                 approval_required,
                 "PENDING",
             ),
@@ -315,8 +326,8 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
 
         cur.execute(
             "SELECT id, record_key, decision, alternatives, rationale, evidence, "
-            "design_family, considered_and_dropped, approval_required, approval_status, "
-            "created_at "
+            "design_family, considered_and_dropped, capability_warnings, "
+            "approval_required, approval_status, created_at "
             "FROM decision_records WHERE design_id = %s ORDER BY id",
             (design_id,),
         )

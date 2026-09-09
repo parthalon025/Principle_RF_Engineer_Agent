@@ -190,6 +190,11 @@ from designs.element_alphabet import lookup_symbol_entries as _lookup_symbol_ent
 from designs.element_alphabet import (
     reduce_response_at_frequency as _reduce_response_at_frequency,
 )
+from designs.requirement_targets import (
+    InvalidRequirementTargetError as _InvalidRequirementTargetError,
+)
+from designs.requirement_targets import TargetComparator as _TargetComparator
+from designs.requirement_targets import propose_target as _propose_target
 from designs.requirements_document import DocumentStatus as _RequirementsDocumentStatus
 from measurement.external import record_external_measurement as _record_external_measurement
 from optimization.combinatorial import (
@@ -759,6 +764,141 @@ def _validate_considered_and_dropped(
             _validate_capability_verdict_entry(entry, requirements, prefix)
 
 
+# ---------------------------------------------------------------------------
+# Capability warning (issue #324; ADR-0025's 2026-09-09 correction;
+# CONTEXT.md's "Capability warning"). A WHOLLY SEPARATE mechanism from the
+# considered_and_dropped ledger above -- deliberately its own step_input key
+# (`capability_warnings`), its own list, its own reason vocabulary (none:
+# there is no verdict, because a Capability warning never drops anything) --
+# so that "a capability-verdict entry never gains a Capability warning and
+# vice versa" (issue #324 acceptance criterion 3) holds structurally, not
+# merely by convention on a shared list.
+#
+# A design candidate that is a good fit but that the currently configured
+# Fabrication capability, Ink-property library selection, or Material-
+# property library selection cannot meet stays `kept` -- it is never
+# dropped, per the charter's "present equipment... shape the ranking and the
+# warnings, never the search" and ADR-0021's rule that an unbuildable
+# candidate is reported, never deleted. Instead it carries a
+# `capability_warnings` entry naming the `family` it is attached to, which
+# of the three capability sources fell short (`capability_kind`: one of
+# "fabrication"/"ink"/"material"), which of that source's own properties
+# (`capability_property`, e.g. "min_feature_size_mm"), the stated need in
+# the SAME `value`/`comparator`/`unit` shape a Requirement target uses (the
+# issue's own "so the gap is a precise, actionable spec rather than
+# descriptive prose"), and a free-text `reason` (e.g. "needs 0.2 mm
+# features; loaded printer achieves 0.5 mm").
+#
+# No closed-form "must actually violate" check gates this at write time,
+# unlike capability-verdict's curvature bound -- no such published bound
+# exists for shop equipment/ink/material capability in this codebase (see
+# CONTEXT.md's Fabrication capability/Ink-property library/Material-
+# property library entries), and the charter's own rule is that the
+# JUDGMENT is the model's; the code only checks FORM. What IS checked here
+# is exactly the same Requirement-target shape check
+# `designs.requirement_targets.propose_target` already enforces for a real
+# Requirement target -- reused, not re-derived, so "Stated in Requirement
+# target shape" cannot silently drift into a looser check here than it
+# means everywhere else.
+_CAPABILITY_KINDS = frozenset({"fabrication", "ink", "material"})
+
+
+def capability_warning_holds(
+    entry: dict[str, Any], capability_configuration: dict[str, Any]
+) -> bool:
+    """True if a `capability_warnings` `entry`'s stated gap still holds
+    against `capability_configuration` -- the currently configured value for
+    `entry["capability_kind"]`/`entry["capability_property"]`
+    (e.g. `{"fabrication": {"min_feature_size_mm": 0.5}}`) -- issue #324
+    acceptance criterion 2: "re-evaluated every run against the current
+    manufacturing configuration and clears automatically when the
+    configuration improves enough."
+
+    Returns `True` (the warning still applies) whenever the current value
+    cannot be confirmed to meet the entry's own stated need: a missing
+    `capability_kind`/`capability_property` in `capability_configuration`, or
+    a non-numeric current value. This is the OPPOSITE fail-safe direction
+    from `capability_verdict_holds` above, deliberately: there, missing data
+    means "no longer confirmed, stop excluding" (silently keeping an
+    unjustified exclusion is the dangerous failure); here, missing data
+    means "not yet confirmed resolved, keep warning" (silently clearing a
+    warning -- a candidate that still cannot be built looking clean -- is
+    the dangerous failure instead). Never raises.
+    """
+    if not isinstance(capability_configuration, dict):
+        return True
+    kind_config = capability_configuration.get(entry.get("capability_kind"))
+    if not isinstance(kind_config, dict):
+        return True
+    current_value = kind_config.get(entry.get("capability_property"))
+    if isinstance(current_value, bool) or not isinstance(current_value, (int, float)):
+        return True
+    try:
+        comparator = _TargetComparator(entry["comparator"])
+    except (KeyError, ValueError):
+        return True
+    needed_value = entry["value"]
+    if comparator is _TargetComparator.AT_MOST:
+        meets_need = current_value <= needed_value
+    elif comparator is _TargetComparator.AT_LEAST:
+        meets_need = current_value >= needed_value
+    else:
+        meets_need = current_value == needed_value
+    return not meets_need
+
+
+def _validate_capability_warnings(entries: Any, step_name: str) -> None:
+    """Validate an optional `capability_warnings` list on an
+    ARCHITECTURE/REDESIGN_DECISION step_input -- see this section's own
+    module comment above for the full shape. `None` (the key absent) is a
+    no-op, same "No gate" as `_validate_considered_and_dropped` -- attaching
+    a Capability warning is never required."""
+    if entries is None:
+        return
+    if not isinstance(entries, list):
+        raise DesignLoopValidationError(
+            f"{step_name} step_input['capability_warnings'] must be a list, "
+            f"got {type(entries).__name__}"
+        )
+    required = {
+        "family",
+        "capability_kind",
+        "capability_property",
+        "value",
+        "comparator",
+        "unit",
+        "reason",
+    }
+    for index, entry in enumerate(entries):
+        prefix = f"{step_name} step_input['capability_warnings'][{index}]"
+        if not isinstance(entry, dict):
+            raise DesignLoopValidationError(f"{prefix} must be a dict, got {type(entry).__name__}")
+        missing = required - entry.keys()
+        if missing:
+            raise DesignLoopValidationError(
+                f"{prefix} is missing required field(s): {sorted(missing)}"
+            )
+        for text_field in ("family", "capability_property", "reason"):
+            if not isinstance(entry[text_field], str) or not entry[text_field].strip():
+                raise DesignLoopValidationError(
+                    f"{prefix}[{text_field!r}] must be a non-empty string, "
+                    f"got {entry[text_field]!r}"
+                )
+        if entry["capability_kind"] not in _CAPABILITY_KINDS:
+            raise DesignLoopValidationError(
+                f"{prefix}['capability_kind'] must be one of {sorted(_CAPABILITY_KINDS)}, "
+                f"got {entry['capability_kind']!r}"
+            )
+        try:
+            _propose_target(
+                value=entry["value"], comparator=entry["comparator"], unit=entry["unit"]
+            )
+        except _InvalidRequirementTargetError as exc:
+            raise DesignLoopValidationError(
+                f"{prefix} is not a valid Requirement target shape (value/comparator/unit): {exc}"
+            ) from exc
+
+
 def _handle_architecture(
     _state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -792,6 +932,7 @@ def _handle_architecture(
     _validate_considered_and_dropped(
         step_input.get("considered_and_dropped"), _state.requirements, "architecture"
     )
+    _validate_capability_warnings(step_input.get("capability_warnings"), "architecture")
 
     recorded = dict(step_input)
     # `design_family` keeps the caller's own string verbatim -- a human wrote
@@ -2186,6 +2327,7 @@ def _handle_redesign_decision(
     _validate_considered_and_dropped(
         step_input.get("considered_and_dropped"), _state.requirements, "redesign_decision"
     )
+    _validate_capability_warnings(step_input.get("capability_warnings"), "redesign_decision")
     return "redesign_decision", dict(step_input), None
 
 

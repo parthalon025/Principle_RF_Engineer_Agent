@@ -45,6 +45,7 @@ from orchestration.tooling import (
     advance_design_loop_step,
     inspect_design_loop_state,
     reevaluate_capability_verdicts,
+    reevaluate_capability_warnings,
     start_new_design_loop,
 )
 from rf_tools.calculations import patch_resonant_frequency_hz
@@ -76,6 +77,23 @@ def _capability_verdict_entry(**overrides: Any) -> dict[str, Any]:
         "requirement_id": "R1",
         "validity_box_property": "curvature",
         "theta_max_deg": 45.0,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _capability_warning_entry(**overrides: Any) -> dict[str, Any]:
+    """Duplicated from tests/test_design_loop.py's own helper of the same
+    name, not imported -- see this module's docstring, "duplicated, not
+    imported"."""
+    entry = {
+        "family": "patch_antenna",
+        "capability_kind": "fabrication",
+        "capability_property": "min_feature_size_mm",
+        "value": 0.2,
+        "comparator": "AT_MOST",
+        "unit": "mm",
+        "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
     }
     entry.update(overrides)
     return entry
@@ -376,6 +394,7 @@ def _drive_to_redesign_decision(
     verification_status: str = "PASS",
     design_family: str = "patch_antenna",
     considered_and_dropped: list[dict[str, Any]] | None = None,
+    capability_warnings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Real ARCHITECTURE -> ... -> CORRELATION, leaving `state` positioned
     at REDESIGN_DECISION -- callers advance the final gated step themselves
@@ -390,7 +409,10 @@ def _drive_to_redesign_decision(
     attach a Considered-and-dropped ledger to this iteration's ARCHITECTURE
     decision -- omitted entirely (not `[]`) when the caller supplies none,
     matching `alternatives`'s own `.get(..., [])`-default convention rather
-    than asserting an empty list is what every caller wants."""
+    than asserting an empty list is what every caller wants. `capability_warnings`
+    (issue #324) does the same for a Capability warning list -- a wholly
+    separate key from `considered_and_dropped` above, so both can be
+    supplied together without either affecting the other."""
     architecture_input = {
         "decision": "rectangular microstrip patch on FR4",
         "rationale": "meets band/gain target with a simple, low-cost fabrication",
@@ -398,6 +420,8 @@ def _drive_to_redesign_decision(
     }
     if considered_and_dropped is not None:
         architecture_input["considered_and_dropped"] = considered_and_dropped
+    if capability_warnings is not None:
+        architecture_input["capability_warnings"] = capability_warnings
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE, architecture_input)
     state = advance_design_loop_step(
         state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
@@ -784,6 +808,168 @@ def test_reevaluate_capability_verdicts_skips_non_capability_verdict_entries(
 def test_reevaluate_capability_verdicts_raises_for_an_unknown_design_id():
     with pytest.raises(DesignLoopPersistenceError, match="no design found"):
         reevaluate_capability_verdicts(-1)
+
+
+# ---------------------------------------------------------------------------
+# Issue #324 (ADR-0025's 2026-09-09 correction; CONTEXT.md's "Capability
+# warning"). A WHOLLY SEPARATE mechanism from the Considered-and-dropped
+# ledger above: the `capability_warnings` key must survive the ADR-0011
+# flush on its own column, and a persisted entry must be re-evaluatable
+# against a caller-supplied CURRENT manufacturing configuration -- never
+# against this design's own `requirements` (that's capability-verdict's
+# axis, not this one).
+# ---------------------------------------------------------------------------
+
+
+def test_flush_persists_a_capability_warning_entry(cleanup_designs, tmp_path):
+    """Acceptance criterion 4: the persisted entry shape after a flush --
+    lands verbatim on the ARCHITECTURE decision_records row, in its own
+    `capability_warnings` column, alongside an empty
+    `considered_and_dropped` (this iteration's ARCHITECTURE step never
+    stated one)."""
+    state = start_new_design_loop(
+        "TOOL-CAPWARN", "Capability Warning Flush Test", "A", REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    warnings = [_capability_warning_entry()]
+    state = _drive_to_redesign_decision(state, tmp_path, capability_warnings=warnings)
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+    assert state["completed"] is True
+
+    stored = read_design(design_id)
+    decision_records = {d["record_key"].rsplit("-", 1)[-1]: d for d in stored["decision_records"]}
+    assert decision_records["architecture"]["capability_warnings"] == warnings
+    assert decision_records["architecture"]["considered_and_dropped"] == []
+    # Nothing on REDESIGN_DECISION's own step_input stated one either --
+    # same "never carries forward across decisions" shape as
+    # considered_and_dropped.
+    assert decision_records["redesign_decision"]["capability_warnings"] == []
+
+
+def test_reevaluate_capability_warnings_flips_to_resolved_once_configuration_improves(
+    cleanup_designs, tmp_path
+):
+    """Acceptance criterion 2: re-evaluated every run against the CURRENT
+    manufacturing configuration a caller supplies -- never a frozen
+    snapshot, and never against this design's own `requirements` (which
+    this test never touches)."""
+    state = start_new_design_loop(
+        "TOOL-CAPWARN-REEVAL", "Capability Warning Reevaluation Test", "A", REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    state = _drive_to_redesign_decision(
+        state, tmp_path, capability_warnings=[_capability_warning_entry()]
+    )
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    still_short = reevaluate_capability_warnings(
+        design_id, {"fabrication": {"min_feature_size_mm": 0.5}}
+    )
+    assert still_short == [
+        {
+            "record_key": f"TOOL-CAPWARN-REEVAL-{state['loop_id']}-iter1-architecture",
+            "family": "patch_antenna",
+            "capability_kind": "fabrication",
+            "capability_property": "min_feature_size_mm",
+            "status": "unresolved",
+        }
+    ]
+
+    now_resolved = reevaluate_capability_warnings(
+        design_id, {"fabrication": {"min_feature_size_mm": 0.15}}
+    )
+    assert now_resolved[0]["status"] == "resolved"
+    assert now_resolved[0]["family"] == "patch_antenna"
+
+
+def test_reevaluate_capability_warnings_raises_for_an_unknown_design_id():
+    with pytest.raises(DesignLoopPersistenceError, match="no design found"):
+        reevaluate_capability_warnings(-1, {})
+
+
+def test_capability_verdict_and_capability_warning_reevaluations_are_independent(
+    cleanup_designs, tmp_path
+):
+    """Issue #324 acceptance criterion 3: a capability-verdict entry never
+    gains a Capability warning and vice versa -- proved here against the
+    ACTUAL PERSISTED shape, on the same ARCHITECTURE decision_records row,
+    re-evaluating each mechanism through the axis that changed and
+    confirming the other one never moves."""
+    state = start_new_design_loop(
+        "TOOL-BOTH-LEDGERS",
+        "Capability Verdict and Warning Coexist Test",
+        "A",
+        CURVATURE_REQUIREMENTS,
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    state = _drive_to_redesign_decision(
+        state,
+        tmp_path,
+        considered_and_dropped=[_capability_verdict_entry()],
+        capability_warnings=[_capability_warning_entry()],
+    )
+    redesign_input = {
+        "decision": "accept the design as-is",
+        "rationale": "measured and correlated results meet the customer requirement",
+        "next_action": "accept_design",
+    }
+    _grant_and_advance(state, DesignStep.REDESIGN_DECISION, redesign_input)
+
+    # Both start "still applies".
+    assert reevaluate_capability_verdicts(design_id)[0]["status"] == "excluded"
+    stale_config = {"fabrication": {"min_feature_size_mm": 0.5}}
+    assert reevaluate_capability_warnings(design_id, stale_config)[0]["status"] == "unresolved"
+
+    # Improving the SHOP CONFIGURATION resolves the Capability warning but
+    # never touches the capability-verdict's own re-evaluation.
+    fresh_config = {"fabrication": {"min_feature_size_mm": 0.15}}
+    assert reevaluate_capability_warnings(design_id, fresh_config)[0]["status"] == "resolved"
+    assert reevaluate_capability_verdicts(design_id)[0]["status"] == "excluded"
+
+    # Relaxing the REQUIREMENT's own stated curvature flips the
+    # capability-verdict but never touches the Capability warning's own
+    # re-evaluation against the (still-short) stale configuration.
+    conn = psycopg.connect(os.environ["DATABASE_URL"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE designs SET requirements = %s WHERE id = %s",
+                (
+                    Json(
+                        {
+                            "R1": {
+                                "requirement": (
+                                    "conform to a 100 mm radius housing across a 300 mm bend"
+                                ),
+                                "curvature": {"arc_length_m": 0.05, "host_radius_m": 0.10},
+                            }
+                        }
+                    ),
+                    design_id,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert reevaluate_capability_verdicts(design_id)[0]["status"] == "reconsiderable"
+    assert reevaluate_capability_warnings(design_id, stale_config)[0]["status"] == "unresolved"
 
 
 @pytest.mark.parametrize(

@@ -556,6 +556,67 @@ def test_record_decision_persists_and_round_trips_considered_and_dropped(db_conn
     assert dr["considered_and_dropped"] == ledger
 
 
+def test_record_decision_defaults_capability_warnings_to_empty_list(db_conn):
+    """Issue #324 (ADR-0025's 2026-09-09 correction; CONTEXT.md's
+    "Capability warning") -- a wholly separate column from
+    considered_and_dropped above. A caller that never states one gets `[]`,
+    matching this column's schema default -- never NULL, so a reader can
+    always iterate it."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-CAPWARN-DEFAULT")
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-CAPWARN-DEFAULT-topology",
+        decision="Used a pi-network instead of an L-network.",
+        alternatives=[],
+        rationale="Pi-network gives an extra degree of freedom for Q.",
+        evidence=[],
+    )
+    assert row["capability_warnings"] == []
+
+
+def test_record_decision_persists_and_round_trips_capability_warnings(db_conn):
+    """Issue #324. A design-loop ARCHITECTURE/REDESIGN_DECISION flush
+    (orchestration/tooling.py) passes a real capability_warnings list; it
+    must land in the row and read back out via read_design, independently
+    of whatever considered_and_dropped carries on the same row -- this
+    function stores it verbatim, the shape check (issue #324) is enforced
+    upstream by orchestration.design_loop before a decision ever reaches
+    this call."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-CAPWARN")
+    warnings = [
+        {
+            "family": "patch_antenna",
+            "capability_kind": "fabrication",
+            "capability_property": "min_feature_size_mm",
+            "value": 0.2,
+            "comparator": "AT_MOST",
+            "unit": "mm",
+            "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+        }
+    ]
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-CAPWARN-architecture",
+        decision="checkerboard AMC absorber",
+        alternatives=[],
+        rationale="best absorption for the stated band",
+        evidence=[],
+        design_family="patch_antenna",
+        capability_warnings=warnings,
+    )
+    assert row["capability_warnings"] == warnings
+    # considered_and_dropped is untouched -- issue #324 acceptance criterion
+    # 3: the two mechanisms never affect each other.
+    assert row["considered_and_dropped"] == []
+
+    result = read_design(db_conn, design_id)
+    (dr,) = result["decision_records"]
+    assert dr["capability_warnings"] == warnings
+    assert dr["considered_and_dropped"] == []
+
+
 def test_record_decision_round_trips_alternatives_and_evidence_as_jsonb(db_conn):
     design_id = _make_design(db_conn, design_key="DES-DEC-2")
     alternatives = [

@@ -12,7 +12,12 @@ fourth, read-only query over a design's already-persisted Considered-and-
 dropped ledger, not a design-loop step tool in the sense above (it neither
 starts, advances, nor even needs an in-flight loop state, only a
 `design_id`), so it is not itself surfaced as one more agent/MCP step tool
-by this ticket -- see that function's own docstring.
+by this ticket -- see that function's own docstring. `reevaluate_capability_
+warnings` (issue #324) is its counterpart for the wholly separate Capability
+warning mechanism (CONTEXT.md), same "read-only query, not a step tool"
+shape -- see that function's own docstring for why it additionally takes a
+`capability_configuration` argument that `reevaluate_capability_verdicts`
+has no equivalent of.
 
 Each function here takes/returns plain dicts so the loop's state crosses
 the agent/MCP JSON tool boundary and back unchanged -- the caller (an
@@ -135,6 +140,7 @@ from .design_loop import (
     LoopDecision,
     advance_loop_step,
     capability_verdict_holds,
+    capability_warning_holds,
     start_design_loop,
 )
 
@@ -278,6 +284,15 @@ def _flush_target_for(
                 # `alternatives` immediately above already established for
                 # a caller who legitimately supplied none.
                 "considered_and_dropped": decision.input.get("considered_and_dropped", []),
+                # Issue #324: the Capability warning mechanism (CONTEXT.md) --
+                # a WHOLLY SEPARATE key from considered_and_dropped
+                # immediately above, already shape-validated at the step
+                # that recorded it (orchestration.design_loop's
+                # _validate_capability_warnings), so this flush only ever
+                # carries it through, same ".get(..., [])" default as
+                # `alternatives`/`considered_and_dropped` for a caller who
+                # legitimately supplied none.
+                "capability_warnings": decision.input.get("capability_warnings", []),
             },
         )
     if decision.kind == "verification_record":
@@ -711,6 +726,73 @@ def reevaluate_capability_verdicts(design_id: int) -> list[dict[str, Any]]:
                     "family": entry.get("family"),
                     "requirement_id": entry.get("requirement_id"),
                     "validity_box_property": entry.get("validity_box_property"),
+                    "status": status,
+                }
+            )
+    return results
+
+
+def reevaluate_capability_warnings(
+    design_id: int, capability_configuration: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Re-check every persisted `capability_warnings` entry for `design_id`
+    against `capability_configuration` -- issue #324 acceptance criterion 2:
+    "re-evaluated every run against the current manufacturing configuration
+    and clears automatically when the configuration improves enough." A
+    WHOLLY SEPARATE query from `reevaluate_capability_verdicts` above (issue
+    #324 acceptance criterion 3): reads a different column
+    (`capability_warnings`, never `considered_and_dropped`) and checks
+    against a different axis entirely.
+
+    Unlike `reevaluate_capability_verdicts`, which re-reads the design's own
+    `requirements` straight from the database (a per-design fact this
+    codebase already persists), `capability_configuration` is a caller-
+    supplied dict of the CURRENT shop configuration -- e.g.
+    `{"fabrication": {"min_feature_size_mm": 0.5}, "ink": {...}, "material":
+    {...}}` -- because no Fabrication capability/Ink-property library/
+    Material-property library "current selection" store exists in this
+    codebase yet (see CONTEXT.md's entries for all three; `docs/
+    fabrication-capability-and-ink-library-spec.md` is a future ticket's
+    scope, not this one's). This is the deliberate reason this function's
+    signature differs from its capability-verdict counterpart -- not an
+    oversight.
+
+    Scans every `decision_records` row this design has, same "read whatever
+    is actually there" approach as `reevaluate_capability_verdicts`.
+
+    Returns one dict per `capability_warnings` entry found, `{"record_key",
+    "family", "capability_kind", "capability_property", "status"}` where
+    `status` is `"unresolved"` (the entry's own gap still holds against
+    `capability_configuration`) or `"resolved"` (the current configuration
+    now meets the stated need). The actual check is `orchestration.
+    design_loop.capability_warning_holds` -- reused, not re-derived, same
+    "one place, not two" discipline as `reevaluate_capability_verdicts`'s
+    own reuse of `capability_verdict_holds`.
+
+    Raises `DesignLoopPersistenceError` if `design_id` names no real
+    `designs` row -- same contract as `reevaluate_capability_verdicts`.
+    """
+    conn = designs_db.get_connection()
+    try:
+        design = designs_db.read_design(conn, design_id)
+    finally:
+        conn.close()
+    if design is None:
+        raise DesignLoopPersistenceError(
+            f"reevaluate_capability_warnings: no design found for design_id={design_id!r}"
+        )
+
+    results: list[dict[str, Any]] = []
+    for row in design["decision_records"]:
+        for entry in row.get("capability_warnings") or []:
+            still_holds = capability_warning_holds(entry, capability_configuration)
+            status = "unresolved" if still_holds else "resolved"
+            results.append(
+                {
+                    "record_key": row["record_key"],
+                    "family": entry.get("family"),
+                    "capability_kind": entry.get("capability_kind"),
+                    "capability_property": entry.get("capability_property"),
                     "status": status,
                 }
             )
