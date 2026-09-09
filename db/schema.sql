@@ -278,3 +278,64 @@ CREATE TABLE IF NOT EXISTS approval_audit_log (
 
 CREATE INDEX IF NOT EXISTS approval_audit_log_loop_id_idx
 ON approval_audit_log (loop_id);
+
+-- Issue #258 ticket 2 (orchestration/approval_cli.py): the working queue
+-- behind the local, human-only loop-step approval surface.
+--
+-- WHY THIS TABLE EXISTS. orchestration/design_loop.py's own module
+-- docstring ("STATE DESIGN") is explicit that a `DesignLoopState` is a
+-- plain, caller-held dict -- "this project has no long-running server
+-- process ... DesignLoopState is a plain, JSON-serializable dataclass the
+-- CALLER holds and passes back in on each step-advancing call (like a
+-- session token), not server-side persisted state." orchestration/tooling.py
+-- only ever writes to Postgres at a REDESIGN_DECISION flush -- i.e. AFTER
+-- that same iteration's ARCHITECTURE/MEASUREMENT/REDESIGN_DECISION gates
+-- have ALL already been satisfied. The direct consequence: at the moment a
+-- loop is actually sitting at a gated step waiting on a human (the state
+-- the approval surface exists to unblock), NOTHING about that loop has ever
+-- been written to Postgres yet -- `designs.status`, `decision_records`, and
+-- `engineering_results` all stay exactly as they were before this
+-- iteration started. There is no query over the tables above that can ever
+-- find "a loop currently sitting at a gated step" -- there is nothing there
+-- to find.
+--
+-- This table is what closes that gap: a human who hits a gate (from the
+-- agent conversation, or a script) writes ONE row here, up front, carrying
+-- everything orchestration.tooling.advance_design_loop_step will need to
+-- actually complete the step later -- the full state snapshot AND the
+-- step_input being proposed -- plus the exact fingerprint_fields
+-- (`orchestration.design_loop._decision_fingerprint_fields`'s
+-- `{loop_id, iteration, step, content}`) that `request_loop_step_approval`
+-- will bind the resulting receipt to. `orchestration/approval_cli.py`'s
+-- `list_pending_approvals` reads this table directly (no join needed to
+-- express "not yet resolved"): a request row is deleted the moment it is
+-- resolved, approved or refused (see that module's docstring) -- so
+-- "currently pending" is simply "a row still here". The durable record of
+-- WHAT was decided lives in `approval_audit_log` (ticket 1) instead, which
+-- this table is never a substitute for: this table is a mutable, short-lived
+-- work queue, not an audit trail, and rows are deleted once resolved.
+--
+-- `loop_state` is the FULL state dict a caller of start_new_design_loop /
+-- advance_design_loop_step already holds (design_loop.py's DesignLoopState.
+-- to_dict(), extended with design_id/design_key/persisted_decision_count) --
+-- stored whole, not reconstructed, because that dict is the ONLY copy of
+-- this loop's history that exists anywhere outside the process that is
+-- currently holding it in memory.
+CREATE TABLE IF NOT EXISTS pending_loop_step_approvals (
+    id BIGSERIAL PRIMARY KEY,
+    design_id BIGINT REFERENCES designs(id) ON DELETE CASCADE,
+    loop_id TEXT NOT NULL,
+    iteration INTEGER NOT NULL,
+    step TEXT NOT NULL,
+    fingerprint_fields JSONB NOT NULL,
+    loop_state JSONB NOT NULL,
+    step_input JSONB NOT NULL,
+    submitted_by TEXT NOT NULL,
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS pending_loop_step_approvals_design_id_idx
+ON pending_loop_step_approvals (design_id);
+
+CREATE INDEX IF NOT EXISTS pending_loop_step_approvals_loop_id_idx
+ON pending_loop_step_approvals (loop_id);
