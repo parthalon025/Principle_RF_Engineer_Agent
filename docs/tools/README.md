@@ -29,7 +29,7 @@ starts from a real answer instead of institutional memory.
 |---|---|---|
 | [ANSYS HFSS](hfss.md) | The commercial, market-leading full-wave 3D EM solver, driven via PyAEDT on a licensed workstation only — the highest-fidelity solver available here, at a real license cost. | Native Floquet/periodic-port boundaries for metasurface unit cells, and SBR+/hybrid FEM-IE for an element mounted on an electrically large host (this repo's core vehicle/aircraft-skin scenario) — neither exposed by the adapter today. |
 | [NEC2++](nec2.md) | Free, open-source thin-wire method-of-moments solver — the cheapest, fastest cross-check for wire antennas and simple arrays. | Plane-wave excitation exists in the underlying binary but the adapter only ever emits a voltage-source excitation, blocking the direct route to a surface's reflection phase — this program's central question. |
-| [openEMS](openems.md) | Free, open-source FDTD full-wave solver (via CSXCAD) for arbitrary 3D dielectric/lossy geometry. | Far-field/gain (NF2FF) is a real openEMS capability the adapter never invokes — antenna pattern results are unavailable, only S-parameters. |
+| [openEMS](openems.md) | Free, open-source FDTD full-wave solver (via CSXCAD) for arbitrary 3D dielectric/lossy geometry. | Dispersive/anisotropic materials — CSXCAD's XML already supports per-axis tensors and openEMS supports Drude/Lorentz/Debye dispersion, but the adapter only ever emits isotropic, non-dispersive values. |
 | [OpenParEM](openparem.md) | A young, free FEM solver that produces antenna far-field gain/directivity/efficiency from the same solve as its S-parameters — a cheaper alternative to HFSS for that one number. | The adapter can't generate its own mesh or materials file; both must be hand-built outside this codebase first. |
 | [Elmer FEM](elmer.md) | A free, general multiphysics FEM suite; this repo uses only its `VectorHelmholtz` EM module. | Coupled EM+thermal multiphysics — solving electromagnetics and heat transfer on the same mesh in one run — is Elmer's actual reason for being here and is not yet built. |
 | [Palace](palace.md) | Free, open-source parallel FEM solver — the first tool here with native Floquet/periodic-port boundaries, i.e. the one built specifically to characterize a metasurface unit cell. | Embedded PEC conductor support inside the periodic unit cell is unimplemented, which blocks the most common real case (patterned metal on dielectric, not an all-dielectric grating). |
@@ -74,8 +74,8 @@ A few gaps repeat across categories, not just within one tool:
   there embedded metal conductors (the common real case) aren't supported yet. NEC2++,
   openEMS, and Elmer have no periodic-boundary path at all.
 - **Far-field/antenna pattern output** is a real capability in openEMS, HFSS, Meep, and
-  OpenParEM, but only OpenParEM's adapter currently returns it — the others report
-  S-parameters only.
+  OpenParEM. openEMS's and OpenParEM's adapters now both return it (openEMS via issue
+  #269's NF2FF wiring); HFSS and Meep's adapters still report S-parameters only.
 - **Data already fetched but discarded**: this was Mouser's pricing/availability/compliance
   fields, arriving in the one response this repo's adapter already makes but dropped before
   reaching scoring — a zero-additional-API-cost gap, unlike everything above it. Ticket #274
