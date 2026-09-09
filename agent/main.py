@@ -40,6 +40,7 @@ from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
 from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datasheet
+from knowledge.digikey import lookup_digikey_product_details as _lookup_digikey_product_details
 from knowledge.extract import extract_components as _extract_components
 from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
@@ -1928,6 +1929,34 @@ def lookup_digikey_component(part_number: str, license: str, classification: str
 
 
 @function_tool
+def lookup_digikey_product_details(part_number: str) -> dict:
+    """Look up part_number's parametric attributes and price/quantity breaks
+    via Digi-Key's ProductDetails endpoint (ticket #275) -- a narrower,
+    separate contract from lookup_digikey_component's "find and ingest a
+    datasheet PDF": this does not download or ingest anything, and takes no
+    license/classification (there is no document to file). Refuses to run
+    unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND DIGIKEY_CLIENT_ID/
+    DIGIKEY_CLIENT_SECRET are configured, reusing the same OAuth2 token and
+    X-DIGIKEY-Client-Id header lookup_digikey_component already uses -- no
+    new auth path. Returns {"status": "no_match" | "ok", ...}; on "ok",
+    "manufacturer"/"manufacturer_part_number" are Digi-Key's own report of
+    the part's identity (same reconcile_component_sources contract as
+    lookup_digikey_component), plus "parameters" (Digi-Key's raw per-
+    category parametric attribute list -- frequency range, impedance,
+    tolerance, or whatever that part's category actually names them),
+    "price_breaks"/"my_pricing" (list and contract pricing quantity breaks),
+    and "digikey_product_number"/"package"/"category"/"quantity_available"/
+    "product_status"/"discontinued"/"end_of_life"/"datasheet_url" for a
+    manufacturability check with zero additional API calls. Digi-Key's real
+    API surface is verified against its own docs and a corroborating
+    third-party client (see knowledge/digikey.py's module docstring) but
+    NOT run against the real API in this environment -- treat any result as
+    unverified end-to-end until it has been run against the real API at
+    least once."""
+    return _lookup_digikey_product_details(part_number)
+
+
+@function_tool
 def lookup_mouser_component(part_number: str, license: str, classification: str) -> dict:
     """Same contract as lookup_digikey_component, against Mouser's Search API
     (MOUSER_API_KEY). On "ok", also carries price_breaks/availability/lead_time/
@@ -2499,7 +2528,8 @@ def run_candidate_search(
 #                   knowledge-base *authoring* tools (ingest_document,
 #                   index_document, (ticket #67) lookup_digikey_component/
 #                   lookup_mouser_component/lookup_nexar_component/
-#                   reconcile_component_sources -- sourcing a datasheet
+#                   reconcile_component_sources, plus (ticket #275)
+#                   lookup_digikey_product_details -- sourcing a datasheet
 #                   straight from a distributor and reconciling it into one
 #                   components row is the same authoring concern as manually
 #                   ingesting one -- and ingest_arxiv_paper, the arxiv-doc-
@@ -2712,6 +2742,7 @@ _ALL_TOOLS = [
     search_design_records,
     extract_components,
     lookup_digikey_component,
+    lookup_digikey_product_details,
     lookup_mouser_component,
     lookup_nexar_component,
     reconcile_component_sources,
@@ -2845,6 +2876,7 @@ ROLE_SPECS: list[RoleSpec] = [
             index_document,
             search_knowledge,
             lookup_digikey_component,
+            lookup_digikey_product_details,
             lookup_mouser_component,
             lookup_nexar_component,
             reconcile_component_sources,
