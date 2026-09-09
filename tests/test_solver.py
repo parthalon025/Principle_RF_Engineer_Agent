@@ -126,7 +126,11 @@ def _state_at_analysis(design_id: int = 1, design_key: str = "SOLVER-TEST") -> d
     """A tooling-shaped state positioned at ANALYSIS, inside an approved
     architecture -- see this module's own docstring for why a synthetic
     design_id (not a real designs.service.create_design row) is legitimate
-    here."""
+    here. `requirements_document_status="CONFIRMED"` (issue #325, docs/
+    adr/0031) is passed the same way `approval` already is -- a bare
+    literal is fine here since this module's own scope is the ANALYSIS/
+    SIMULATION/OPTIMIZATION span past ARCHITECTURE, not the Requirements-
+    document gate itself (that is tests/test_design_loop.py's job)."""
     state = start_design_loop(REQUIREMENTS).to_dict()
     state["design_id"] = design_id
     state["design_key"] = design_key
@@ -136,7 +140,12 @@ def _state_at_analysis(design_id: int = 1, design_key: str = "SOLVER-TEST") -> d
     receipt = request_loop_step_approval(
         fields, approved_by="jane.engineer", approval_callback=lambda f: True
     )
-    state = advance_design_loop_step(state, _ARCHITECTURE_INPUT, approval=receipt.to_dict())
+    state = advance_design_loop_step(
+        state,
+        _ARCHITECTURE_INPUT,
+        approval=receipt.to_dict(),
+        requirements_document_status="CONFIRMED",
+    )
     assert state["current_step"] == DesignStep.ANALYSIS.value
     return state
 

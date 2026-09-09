@@ -77,6 +77,16 @@ class Nec2ppSimulator(Simulator):
 #     coefficient approx / 1 perfect), NRADL, EPSR, SIG.
 #   - EX (p.48-49): excitation -- I1=0 voltage source, I2=source segment's
 #     tag, I3=segment position within that tag's set, F1/F2=volts real/imag.
+#     I1=1 is an incident plane wave, linear polarization (I1=2/3 are
+#     right/left circular -- not emitted by this module, see issue #271):
+#     I2/I3=number of theta/phi angles, F1=first theta (deg), F2=first phi
+#     (deg), F3=eta -- the polarization angle between the theta unit vector
+#     and the E-field direction (deg), F4=theta step (deg), F5=phi step
+#     (deg). Confirmed against the ex_card() doc comment in necpp's
+#     nec_context.h (github.com/tmolteno/necpp) -- the same upstream source
+#     already cited above for the "-i"/"-o -" CLI contract -- since the
+#     locally-available NEC-2 Manual excerpt for this repo does not itself
+#     transcribe the plane-wave field list.
 #   - FR (p.52): frequency -- IFRQ(0=linear) NFRQ FMHZ DELFRQ, "Frequency in
 #     MegaHertz".
 #   - RP (p.69-72): radiation pattern request -- I1=0 normal mode, NTH, NPH,
@@ -134,8 +144,17 @@ def generate_nec2_deck(
           "ground_condition": "free_space" (default) | "perfect"
               | {"type": "finite", "epsilon_r": float, "conductivity_s_m": float},
           "excitation": {          # optional
+              "type": "voltage" (default) | "plane_wave",
+              # "voltage" fields (fed antenna, today's only behavior):
               "wire_tag": int, "segment": int,
               "voltage_real": float, "voltage_imag": float,
+              # "plane_wave" fields (incident linear-polarized illumination,
+              # for reading back a passive structure's reflection phase --
+              # see this module's header comment for the EX I1=1 field
+              # layout; right/left circular (I1=2/3) are out of scope):
+              "theta_start_deg", "theta_step_deg": float, "theta_count": int,
+              "phi_start_deg", "phi_step_deg": float, "phi_count": int,
+              "eta_deg": float,
           },
           "pattern": {             # optional
               "theta_start_deg", "theta_step_deg": float, "theta_count": int,
@@ -145,9 +164,13 @@ def generate_nec2_deck(
 
     Geometry is in meters and frequency_hz in Hz (converted to the MHz the
     FR card requires) -- both confirmed against the primary source cited in
-    this module's header comment. Excitation defaults to a 1+0j volt source
-    on the first wire's middle segment; pattern defaults to a single
-    phi=0 deg elevation cut, theta 0-180 deg in 10 deg steps.
+    this module's header comment. A "voltage" excitation (the default)
+    feeds a 1+0j volt source on the first wire's middle segment unless
+    overridden; a "plane_wave" excitation illuminates the structure with an
+    incident linear-polarized wave instead and has no feed segment to
+    default (theta/phi angle count default to 1, all angles/steps default
+    to 0 deg). Pattern defaults to a single phi=0 deg elevation cut, theta
+    0-180 deg in 10 deg steps.
     """
     wires = geometry.get("wires")
     if not wires:
@@ -210,27 +233,65 @@ def generate_nec2_deck(
     if gn_line is not None:
         lines.append(gn_line)
 
-    first_wire = wires[0]
-    default_tag = int(first_wire.get("tag", 1))
-    default_segment = max(1, math.ceil(int(first_wire["segments"]) / 2))
     excitation = geometry.get("excitation", {})
-    ex_tag = int(excitation.get("wire_tag", default_tag))
-    ex_segment = int(excitation.get("segment", default_segment))
-    v_real = excitation.get("voltage_real", 1.0)
-    v_imag = excitation.get("voltage_imag", 0.0)
-    lines.append(
-        "EX "
-        + " ".join(
-            [
-                _fmt_int(0),
-                _fmt_int(ex_tag),
-                _fmt_int(ex_segment),
-                _fmt_int(0),
-                _fmt_num(v_real),
-                _fmt_num(v_imag),
-            ]
+    excitation_type = excitation.get("type", "voltage")
+    if excitation_type == "voltage":
+        # Feed-segment defaulting only makes sense for a driven antenna --
+        # a plane wave has no feed segment, so this must not run for that
+        # path (issue #271 AC). first_wire["segments"] was already checked
+        # present by required_wire_fields above.
+        first_wire = wires[0]
+        default_tag = int(first_wire.get("tag", 1))
+        default_segment = max(1, math.ceil(int(first_wire["segments"]) / 2))
+        ex_tag = int(excitation.get("wire_tag", default_tag))
+        ex_segment = int(excitation.get("segment", default_segment))
+        v_real = excitation.get("voltage_real", 1.0)
+        v_imag = excitation.get("voltage_imag", 0.0)
+        lines.append(
+            "EX "
+            + " ".join(
+                [
+                    _fmt_int(0),
+                    _fmt_int(ex_tag),
+                    _fmt_int(ex_segment),
+                    _fmt_int(0),
+                    _fmt_num(v_real),
+                    _fmt_num(v_imag),
+                ]
+            )
         )
-    )
+    elif excitation_type == "plane_wave":
+        # Incident plane wave, linear polarization (I1=1; necpp's
+        # EXCITATION_LINEAR, see this module's header comment for the full
+        # field-layout citation). Right/left circular (I1=2/3) are out of
+        # scope for this ticket.
+        theta_start = excitation.get("theta_start_deg", 0.0)
+        phi_start = excitation.get("phi_start_deg", 0.0)
+        eta = excitation.get("eta_deg", 0.0)
+        theta_step = excitation.get("theta_step_deg", 0.0)
+        phi_step = excitation.get("phi_step_deg", 0.0)
+        theta_count = int(excitation.get("theta_count", 1))
+        phi_count = int(excitation.get("phi_count", 1))
+        lines.append(
+            "EX "
+            + " ".join(
+                [
+                    _fmt_int(1),
+                    _fmt_int(theta_count),
+                    _fmt_int(phi_count),
+                    _fmt_int(0),
+                    _fmt_num(theta_start),
+                    _fmt_num(phi_start),
+                    _fmt_num(eta),
+                    _fmt_num(theta_step),
+                    _fmt_num(phi_step),
+                ]
+            )
+        )
+    else:
+        raise ValueError(
+            f"excitation['type'] must be 'voltage' or 'plane_wave', got {excitation_type!r}"
+        )
 
     freq_mhz = frequency_hz / 1e6
     fr_fields = [_fmt_int(0), _fmt_int(1), _fmt_int(0), _fmt_int(0), _fmt_num(freq_mhz)]

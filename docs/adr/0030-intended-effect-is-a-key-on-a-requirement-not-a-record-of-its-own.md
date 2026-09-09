@@ -113,7 +113,7 @@ the requirement, not a record of its own, and it still keys the ledger.
 What changes is only the shape of the ledger entry it keys — corrected at
 ADR-0025, per ADR-0020's "amend at the ADR that owns the claim."
 
-Separately, ADR-0031 answers how `intended_effect` is actually produced:
+Separately, ADR-0034 answers how `intended_effect` is actually produced:
 via a reviewed Requirements document, not a single-shot answer. This
 ADR's own decision — a key on the requirement, not a record of its own —
-still stands; ADR-0031 only changes what fills the key in.
+still stands; ADR-0034 only changes what fills the key in.

@@ -44,6 +44,22 @@ EXCITED_GEOMETRY = {
     },
 }
 
+THERMAL_MATERIAL = {
+    "heat_conductivity_w_mk": 1.5,
+    "density_kg_m3": 2300.0,
+    "heat_capacity_j_kgk": 840.0,
+}
+
+DOMAIN_GEOMETRY_THERMAL = {
+    **DOMAIN_GEOMETRY,
+    "thermal": {**THERMAL_MATERIAL},
+}
+
+EXCITED_GEOMETRY_THERMAL = {
+    **EXCITED_GEOMETRY,
+    "thermal": {**THERMAL_MATERIAL},
+}
+
 
 def _make_fake_sh(tmp_path: Path, name: str, body: str) -> Path:
     """Write a small fake executable from a Python `body` (cross-platform --
@@ -187,6 +203,200 @@ def test_generate_elmer_sif_excitation_missing_current_density_raises():
     }
     with pytest.raises(ValueError, match="current_density_a_m2"):
         generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+
+
+# ---------------------------------------------------------------------------
+# generate_elmer_sif -- coupled EM+thermal ("geometry['thermal']"), issue #281
+# ---------------------------------------------------------------------------
+
+
+def test_generate_elmer_sif_no_thermal_key_has_no_heat_equation_block():
+    """Additive-mode guarantee (issue #281 acceptance criteria): calling the
+    existing entry points with no geometry['thermal'] key must still produce
+    an EM-only .sif with no Heat Equation solver block at all."""
+    sif = generate_elmer_sif(DOMAIN_GEOMETRY, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+    assert "Heat Equation" not in sif
+    assert "HeatSolve" not in sif
+    assert "Joule Heat" not in sif
+    assert "Calculate Div of Poynting Vector" not in sif
+
+
+def test_generate_elmer_sif_thermal_adds_heat_equation_solver_block():
+    sif = generate_elmer_sif(
+        DOMAIN_GEOMETRY_THERMAL, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh"
+    )
+    # The EM solver block(s) are still present -- additive, not a replacement.
+    assert 'Procedure = "VectorHelmholtz" "VectorHelmholtzSolver"' in sif
+    assert 'Procedure = "VectorHelmholtz" "VectorHelmholtzCalcFields"' in sif
+    # The new Heat Equation solver block, per HeatSolve.F90's own keywords.
+    assert 'Equation = "Heat Equation"' in sif
+    assert 'Variable = "Temperature"' in sif
+    assert 'Procedure = "HeatSolve" "HeatSolver"' in sif
+
+
+def test_generate_elmer_sif_thermal_adds_material_keywords():
+    sif = generate_elmer_sif(
+        DOMAIN_GEOMETRY_THERMAL, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh"
+    )
+    assert "Heat Conductivity = Real 1.5" in sif
+    assert "Density = Real 2300" in sif
+    assert "Heat Capacity = Real 840" in sif
+
+
+def test_generate_elmer_sif_thermal_wires_joule_heating_coupling_keyword():
+    """The actual behavior change this ticket is about: the EM solve's local
+    loss density must be wired into the heat solver's source term using a
+    real Elmer keyword pair (Calculate Div of Poynting Vector -> exports a
+    "Joule Heating" field; Joule Heat = Logical True on a Body Force ->
+    HeatSolve's shared assembly code picks that field up as its RHS source
+    term -- see simulation/elmer.py's module docstring for the primary-source
+    citation). This must fail against today's generate_elmer_sif() (neither
+    keyword exists yet) and pass once the coupling is built."""
+    sif = generate_elmer_sif(
+        DOMAIN_GEOMETRY_THERMAL, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh"
+    )
+    assert "Calculate Div of Poynting Vector = Logical True" in sif
+    assert "Joule Heat = Logical True" in sif
+
+
+def test_generate_elmer_sif_thermal_active_solvers_includes_heat_equation():
+    sif = generate_elmer_sif(
+        DOMAIN_GEOMETRY_THERMAL, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh"
+    )
+    assert "Active Solvers(3) = 1 2 3" in sif
+
+
+def test_generate_elmer_sif_thermal_bulk_body_gets_joule_heat_body_force():
+    """With no excitation region, the bulk body itself must be given a
+    dedicated Body Force block carrying only the Joule Heat flag (it cannot
+    reuse an excitation Body Force block that doesn't exist)."""
+    sif = generate_elmer_sif(
+        DOMAIN_GEOMETRY_THERMAL, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh"
+    )
+    assert "Body Force 1" in sif
+    assert "Body 1" in sif
+    assert "  Body Force = 1" in sif
+
+
+def test_generate_elmer_sif_thermal_with_excitation_shares_body_force_block():
+    """With an excitation region, the excitation body's existing Body Force
+    block (Current Density) gets the Joule Heat flag added to IT, and the
+    bulk body gets its OWN, separate Body Force block/index -- the impressed
+    current source must stay confined to the excitation sub-region, not leak
+    onto the bulk body."""
+    sif = generate_elmer_sif(
+        EXCITED_GEOMETRY_THERMAL, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh"
+    )
+    assert sif.count("Joule Heat = Logical True") == 2
+    assert "Body Force 1" in sif
+    assert "Body Force 2" in sif
+    assert "Current Density 3 = Real 1e+08" in sif
+    # Bulk body (Body 1) must NOT reference the excitation's current-carrying
+    # Body Force 1 block -- it gets its own Joule-heat-only block (2).
+    assert "  Body Force = 2" in sif
+
+
+def test_generate_elmer_sif_thermal_missing_heat_conductivity_raises():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {"density_kg_m3": 2300.0, "heat_capacity_j_kgk": 840.0},
+    }
+    with pytest.raises(ValueError, match="heat_conductivity_w_mk"):
+        generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+
+
+def test_generate_elmer_sif_thermal_missing_density_raises():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {"heat_conductivity_w_mk": 1.5, "heat_capacity_j_kgk": 840.0},
+    }
+    with pytest.raises(ValueError, match="density_kg_m3"):
+        generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+
+
+def test_generate_elmer_sif_thermal_missing_heat_capacity_raises():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {"heat_conductivity_w_mk": 1.5, "density_kg_m3": 2300.0},
+    }
+    with pytest.raises(ValueError, match="heat_capacity_j_kgk"):
+        generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+
+
+def test_generate_elmer_sif_thermal_fixed_temperature_face_boundary_condition():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {**THERMAL_MATERIAL, "fixed_temperature_faces_k": {"z_min": 320.0}},
+    }
+    sif = generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+    # z_min is Boundary Condition 5 (x_min,x_max,y_min,y_max,z_min,z_max order).
+    bc_block = sif.split("Boundary Condition 5")[1].split("End")[0]
+    assert "Temperature = Real 320" in bc_block
+
+
+def test_generate_elmer_sif_thermal_convective_face_boundary_condition():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {
+            **THERMAL_MATERIAL,
+            "convective_faces": {
+                "z_max": {"heat_transfer_coefficient_w_m2k": 12.0, "ambient_temperature_k": 293.0}
+            },
+        },
+    }
+    sif = generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+    bc_block = sif.split("Boundary Condition 6")[1].split("End")[0]
+    assert "Heat Transfer Coefficient = Real 12" in bc_block
+    assert "External Temperature = Real 293" in bc_block
+
+
+def test_generate_elmer_sif_thermal_unknown_fixed_temperature_face_raises():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {**THERMAL_MATERIAL, "fixed_temperature_faces_k": {"not_a_face": 300.0}},
+    }
+    with pytest.raises(ValueError, match="fixed_temperature_faces_k"):
+        generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+
+
+def test_generate_elmer_sif_thermal_unknown_convective_face_raises():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {
+            **THERMAL_MATERIAL,
+            "convective_faces": {
+                "not_a_face": {
+                    "heat_transfer_coefficient_w_m2k": 12.0,
+                    "ambient_temperature_k": 293.0,
+                }
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="convective_faces"):
+        generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+
+
+def test_generate_elmer_sif_thermal_face_in_both_fixed_and_convective_raises():
+    geometry = {
+        **DOMAIN_GEOMETRY,
+        "thermal": {
+            **THERMAL_MATERIAL,
+            "fixed_temperature_faces_k": {"z_min": 300.0},
+            "convective_faces": {
+                "z_min": {"heat_transfer_coefficient_w_m2k": 12.0, "ambient_temperature_k": 293.0}
+            },
+        },
+    }
+    with pytest.raises(ValueError, match="both"):
+        generate_elmer_sif(geometry, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh")
+
+
+def test_generate_elmer_sif_thermal_savescalars_saves_max_temperature():
+    sif = generate_elmer_sif(
+        DOMAIN_GEOMETRY_THERMAL, frequency_hz=2.45e9, mesh_dir_name="elmer_mesh"
+    )
+    assert 'Variable 1 = "Temperature"' in sif
+    assert 'Operator 1 = "max"' in sif
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +623,54 @@ def test_parse_elmer_output_names_file_without_header_is_honestly_uncomputed(tmp
 
 
 # ---------------------------------------------------------------------------
+# parse_elmer_output -- coupled EM+thermal "thermal_result" field, issue #281
+# ---------------------------------------------------------------------------
+
+_THERMAL_NAMES_FILE_TEXT = """Metadata for SaveScalars file: scalar_values.dat
+Elmer version: 26.1
+
+Variables in columns of matrix:
+   1: Line Marker
+   2: res: VectorHelmholtz
+   3: max: Temperature
+"""
+
+
+def test_parse_elmer_output_thermal_result_computed_when_max_temperature_present(
+    tmp_path: Path,
+):
+    (tmp_path / "scalar_values.dat.names").write_text(_THERMAL_NAMES_FILE_TEXT)
+    (tmp_path / "scalar_values.dat").write_text("1 1.62980066e+00 3.4512e+02\n")
+
+    result = parse_elmer_output(_ALL_DONE_STDOUT, workdir=tmp_path)
+
+    thermal = result["thermal_result"]
+    assert thermal["computed"] is True
+    assert thermal["max_temperature_k"] == pytest.approx(345.12)
+
+
+def test_parse_elmer_output_thermal_result_honestly_uncomputed_for_em_only_run(
+    tmp_path: Path,
+):
+    """An EM-only run's SaveScalars output has no "max: Temperature" column
+    -- parse_elmer_output must say so plainly (computed=False + why), never
+    fabricate a temperature."""
+    (tmp_path / "scalar_values.dat.names").write_text(_NAMES_FILE_TEXT)
+    (tmp_path / "scalar_values.dat").write_text("1 1.62980066e+00 2.32743791e-03\n")
+
+    result = parse_elmer_output(_ALL_DONE_STDOUT, workdir=tmp_path)
+
+    thermal = result["thermal_result"]
+    assert thermal["computed"] is False
+    assert "Temperature" in thermal["note"]
+
+
+def test_parse_elmer_output_thermal_result_honestly_uncomputed_with_no_workdir():
+    result = parse_elmer_output(_ALL_DONE_STDOUT)
+    assert result["thermal_result"]["computed"] is False
+
+
+# ---------------------------------------------------------------------------
 # run_elmer_simulation end to end, against fake gmsh/ElmerGrid/ElmerSolver
 # executables chained together (mirrors tests/test_nec2pp.py's
 # test_run_nec2_simulation_end_to_end_with_fake_executable).
@@ -479,6 +737,50 @@ def test_run_elmer_simulation_end_to_end_with_fake_executables(tmp_path: Path):
     assert os.path.exists(result["geo_file"])
     assert os.path.exists(result["sif_file"])
     assert os.path.exists(os.path.join(result["mesh_dir"], "mesh.header"))
+
+
+_FAKE_ELMERSOLVER_THERMAL_PY = """
+import sys
+sif_path = sys.argv[1]
+with open("scalar_values.dat.names", "w") as f:
+    f.write(
+        "Variables in columns of matrix:\\n"
+        "   1: Line Marker\\n"
+        "   2: res: energy functional\\n"
+        "   3: max: Temperature\\n"
+    )
+with open("scalar_values.dat", "w") as f:
+    f.write("1 4.2 355.6\\n")
+sys.stdout.write("*** Elmer Solver: ALL DONE ***\\n")
+sys.exit(0)
+"""
+
+
+def test_run_elmer_simulation_coupled_thermal_end_to_end_with_fake_executables(tmp_path: Path):
+    gmsh = _make_fake_py(tmp_path, "fake_gmsh.py", _FAKE_GMSH_PY)
+    elmergrid = _make_fake_py(tmp_path, "fake_elmergrid.py", _FAKE_ELMERGRID_PY)
+    elmersolver = _make_fake_py(tmp_path, "fake_elmersolver.py", _FAKE_ELMERSOLVER_THERMAL_PY)
+
+    result = run_elmer_simulation(
+        geometry=DOMAIN_GEOMETRY_THERMAL,
+        frequency_hz=2.45e9,
+        timeout_s=10,
+        gmsh_timeout_s=10,
+        elmergrid_timeout_s=10,
+        gmsh_executable=str(gmsh),
+        elmergrid_executable=str(elmergrid),
+        elmersolver_executable=str(elmersolver),
+        workdir=str(tmp_path / "run_thermal"),
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["completed_normally"] is True
+    assert result["thermal_result"]["computed"] is True
+    assert result["thermal_result"]["max_temperature_k"] == pytest.approx(355.6)
+    # A coupled .sif was actually generated with the Heat Equation block.
+    sif_text = Path(result["sif_file"]).read_text()
+    assert 'Equation = "Heat Equation"' in sif_text
+    assert "Joule Heat = Logical True" in sif_text
 
 
 def test_run_elmer_simulation_propagates_simulator_error_on_solver_failure(tmp_path: Path):
