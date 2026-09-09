@@ -84,3 +84,36 @@ left to whether the model remembers to mention them.
   model's.
 - Architecture is a judgment step and stays unscored (`success_score.py`'s
   `JUDGMENT_STEPS`). Nothing here creates a number to score.
+
+## Corrections
+
+### 2026-09-09 — the anticipated widening of `capability-verdict` didn't happen; a new mechanism did instead
+
+**What this ADR's Consequences said:**
+
+> This widens `capability-verdict` beyond fabrication. ... A family
+> dropped because the requirement's stated curvature exceeds its
+> element's angular stability... is the same shape of verdict against a
+> different capability... **ADR-0025 needs a dated amendment** under
+> ADR-0020's test.
+
+**What happened instead.** `/grill-with-docs` revisited this directly:
+equipment, ink and material availability were never a sound fit for
+`capability-verdict` at all, on ADR-0021's own rule that an unbuildable
+candidate is reported, never dropped. Rather than widen
+`capability-verdict` to cover both the curvature case and the fabrication
+case, ADR-0025's 2026-09-09 correction narrows it to the curvature case
+alone and introduces a new, separate **Capability warning** mechanism for
+equipment/ink/material shortfalls — one that never drops a candidate,
+matching the charter's "present equipment... shape the ranking and the
+warnings, never the search."
+
+This ADR's core decision is unaffected: intended effect is still a key on
+the requirement, not a record of its own, and it still keys the ledger.
+What changes is only the shape of the ledger entry it keys — corrected at
+ADR-0025, per ADR-0020's "amend at the ADR that owns the claim."
+
+Separately, ADR-0034 answers how `intended_effect` is actually produced:
+via a reviewed Requirements document, not a single-shot answer. This
+ADR's own decision — a key on the requirement, not a record of its own —
+still stands; ADR-0034 only changes what fills the key in.
