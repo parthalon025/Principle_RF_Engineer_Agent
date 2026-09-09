@@ -389,6 +389,20 @@ _DISPERSION_POLE_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _require_dispersion_fields(dispersion: dict[str, Any], context: str) -> None:
+    """Validate a `dispersion` block carries both `model` and `poles` before
+    `_dispersion_command()` is called on it (issue #277). Shared by both of
+    `generate_gprmax_input()`'s call sites -- `geometry['half_space']
+    ['dispersion']` and each `materials[idx]['dispersion']` -- so the two
+    checks (previously written out near-verbatim at each site) can't drift
+    apart. `context` names the offending field in the caller's own error
+    message, e.g. "geometry['half_space']['dispersion']" or
+    "materials[2]['dispersion']"."""
+    missing = [f for f in ("model", "poles") if f not in dispersion]
+    if missing:
+        raise ValueError(f"{context} missing required field(s): {missing}")
+
+
 def _dispersion_command(model: str, params: dict[str, Any], material_name: str) -> str:
     """Render one #add_dispersion_debye/_lorentz/_drude command attaching
     frequency-dependent behaviour to an already-declared #material of the
@@ -603,11 +617,7 @@ def generate_gprmax_input(
         )
         dispersion = half_space.get("dispersion")
         if dispersion is not None:
-            missing = [f for f in ("model", "poles") if f not in dispersion]
-            if missing:
-                raise ValueError(
-                    f"geometry['half_space']['dispersion'] missing required field(s): {missing}"
-                )
+            _require_dispersion_fields(dispersion, "geometry['half_space']['dispersion']")
             lines.append(_dispersion_command(dispersion["model"], dispersion, hs_name))
         lines.append(
             _primitive_command(
@@ -641,11 +651,7 @@ def generate_gprmax_input(
         )
         dispersion = mat.get("dispersion")
         if dispersion is not None:
-            missing_disp = [f for f in ("model", "poles") if f not in dispersion]
-            if missing_disp:
-                raise ValueError(
-                    f"materials[{idx}]['dispersion'] missing required field(s): {missing_disp}"
-                )
+            _require_dispersion_fields(dispersion, f"materials[{idx}]['dispersion']")
             lines.append(_dispersion_command(dispersion["model"], dispersion, name))
         lines.append(
             _primitive_command(mat["shape"], mat["p1_m"], mat["p2_m"], name, mat.get("radius_m"))
