@@ -71,6 +71,7 @@ calculation:
   - calculate_quarter_wave_transformer_impedance
   - calculate_l_network_match
   - synthesize_filter_prototype
+  - realize_lowpass_stepped_impedance_microstrip_filter
   - calculate_patch_effective_permittivity
   - calculate_patch_length_extension
   - calculate_patch_resonant_frequency

@@ -105,7 +105,10 @@ from rf_tools.calculations import (
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
-from rf_tools.filter_synthesis import synthesize_filter
+from rf_tools.filter_synthesis import (
+    realize_lowpass_stepped_impedance_microstrip,
+    synthesize_filter,
+)
 from rf_tools.touchstone import (
     analyze_touchstone,
     cascade_touchstone,
@@ -690,6 +693,67 @@ def synthesize_filter_prototype(
         first_element=first_element,
     )
     return {**network.to_dict(), "provenance": "CALCULATED"}
+
+
+@function_tool
+def realize_lowpass_stepped_impedance_microstrip_filter(
+    response: str,
+    order: int,
+    eps_r: float,
+    h_m: float,
+    impedance_ohm: float = 50.0,
+    ripple_db: float | None = None,
+    cutoff_hz: float | None = None,
+    z_high_ohm: float = 120.0,
+    z_low_ohm: float = 20.0,
+    first_element: str = "shunt",
+) -> dict:
+    """Synthesize a LOWPASS ladder (issue #143) and realize it as a stepped-
+    impedance ("Hi-Z, Lo-Z") microstrip layout (issue #286): each series
+    inductor becomes a short high-impedance line, each shunt capacitor a
+    short low-impedance line (Pozar, "Microwave Engineering" sec. 8.6).
+    response/order/impedance_ohm/ripple_db/cutoff_hz mean exactly what they
+    mean in synthesize_filter_prototype (band is always "lowpass" here --
+    the stepped-impedance method has no realization for highpass/bandpass/
+    bandstop, see docs/adr/0031). eps_r and h_m describe the microstrip
+    substrate (relative permittivity, thickness in metres); z_high_ohm/
+    z_low_ohm are the highest/lowest characteristic impedance the target
+    board can manufacture (default 120/20 ohm, Pozar's own example values).
+
+    Returns the ideal ladder (as synthesize_filter_prototype does) plus a
+    "sections" list, one microstrip line per branch, each with its
+    characteristic impedance, width (m), length (m), electrical length
+    (rad) and effective permittivity. Closed-form and textbook-sourced
+    throughout -- no simulator involved, `provenance: CALCULATED`. Two
+    approximations by construction: each section assumes an electrically
+    short line (accuracy degrades gracefully, not sharply, as a section's
+    electrical length grows past ~pi/4), and each width's effective
+    permittivity is the quasi-static, non-dispersive value at cutoff_hz --
+    no coupling or discontinuity reactance between adjacent sections.
+    Cross-check a result that matters against a full-wave simulator
+    (run_openems_simulation/run_hfss_simulation) or qucsator_rf's own
+    dispersive MLIN model before fabrication."""
+    network = synthesize_filter(
+        response=response,
+        band="lowpass",
+        order=order,
+        impedance_ohm=impedance_ohm,
+        ripple_db=ripple_db,
+        cutoff_hz=cutoff_hz,
+        first_element=first_element,
+    )
+    sections = realize_lowpass_stepped_impedance_microstrip(
+        network,
+        eps_r=eps_r,
+        h_m=h_m,
+        z_high_ohm=z_high_ohm,
+        z_low_ohm=z_low_ohm,
+    )
+    return {
+        "network": network.to_dict(),
+        "sections": [s.to_dict() for s in sections],
+        "provenance": "CALCULATED",
+    }
 
 
 @function_tool
@@ -2487,6 +2551,7 @@ _ALL_TOOLS = [
     calculate_quarter_wave_transformer_impedance,
     calculate_l_network_match,
     synthesize_filter_prototype,
+    realize_lowpass_stepped_impedance_microstrip_filter,
     calculate_patch_effective_permittivity,
     calculate_patch_length_extension,
     calculate_patch_resonant_frequency,
@@ -2689,8 +2754,18 @@ ROLE_SPECS: list[RoleSpec] = [
             "noise-and-distortion reasoning this role exists for), `.DISTO` "
             "(harmonic distortion), `.PZ` (pole-zero stability), and "
             "`.SENS` (DC/AC parameter sensitivity) analyses, alongside its "
-            "existing OP/AC/TRAN support. Defer system-chain-level gain/"
-            "link budgeting to the systems role."
+            "existing OP/AC/TRAN support. Also gets filter synthesis: "
+            "synthesize_filter_prototype (issue #143) turns a Butterworth/"
+            "Chebyshev lowpass/highpass/bandpass/bandstop specification "
+            "into an ideal lumped-element ladder (henries/farads), and "
+            "(issue #286) realize_lowpass_stepped_impedance_microstrip_filter "
+            "carries a LOWPASS ladder one step further into a physical "
+            "stepped-impedance ('Hi-Z, Lo-Z') microstrip layout -- narrow "
+            "high-impedance lines standing in for series inductors, wide "
+            "low-impedance lines for shunt capacitors (Pozar sec. 8.6); "
+            "highpass/bandpass/bandstop physical realization is still open "
+            "(see docs/adr/0031). Defer system-chain-level gain/link "
+            "budgeting to the systems role."
         ),
         tools=[
             calculate_vswr,
@@ -2718,6 +2793,7 @@ ROLE_SPECS: list[RoleSpec] = [
             calculate_quarter_wave_transformer_impedance,
             calculate_l_network_match,
             synthesize_filter_prototype,
+            realize_lowpass_stepped_impedance_microstrip_filter,
             run_qucs_simulation,
             run_ltspice_simulation,
             run_ngspice_simulation,

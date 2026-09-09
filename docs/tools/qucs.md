@@ -126,7 +126,21 @@ frequency-selective surfaces, absorbers:
 - **Filter synthesis wizard** — Qucs-S's Tools → Filter Synthesis
   generates a filter schematic (LC, ladder, stepped-impedance, microstrip,
   active) from a target response [7][8]; this repo hand-builds R/L/C/TLIN
-  netlists in Python instead of driving this synthesis directly.
+  netlists in Python instead of driving this synthesis directly. Confirmed
+  GUI-only at the source level while resolving issue #286: the wizard is a
+  separate binary, `qucsfilter`, built from `qucs-filter/qucsfilter.h` in
+  `ra3xdh/qucs_s`. That header declares one class, `QucsFilter`, inheriting
+  `QMainWindow` — every public member is a constructor/destructor, every
+  other member is a `QComboBox`/`QLineEdit`/`QLabel` widget, and the actual
+  synthesis routine (`QString *calculateFilter(struct tFilter *)`) is
+  **private**, wired straight to those widgets with no library target or
+  documented API of its own; the man page's SYNOPSIS is `qucsfilter
+  [OPTION]...` with no OPTIONS section and no batch/headless mode. There is
+  no scriptable equivalent to drive from `simulation/qucs.py` — see
+  `docs/adr/0031-filter-physical-realization-is-a-closed-form-stepped-impedance-extension.md`,
+  which instead added closed-form microstrip-realization formulas directly
+  to `rf_tools/filter_synthesis.py`/`rf_tools/calculations.py` for the
+  lowpass case.
 - **qucsator_rf's own dispersive microstrip/MLIN and other real
   transmission-line models** (coaxial, coplanar, waveguide, substrate-aware)
   [4] — the adapter's `TLIN` is an ideal, non-dispersive line, so any real

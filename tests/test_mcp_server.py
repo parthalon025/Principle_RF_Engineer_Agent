@@ -52,6 +52,10 @@ from rf_tools.calculations import (
     y_to_s,
     z_to_s,
 )
+from rf_tools.filter_synthesis import (
+    realize_lowpass_stepped_impedance_microstrip,
+    synthesize_filter,
+)
 
 # A generic, well-behaved two-port S-parameter matrix (unconditionally
 # stable amplifier-like response) reused across every S/Z/Y/ABCD/stability
@@ -165,6 +169,10 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # issue #257-T2 adds 1 more (search_arxiv_papers, arXiv topic/keyword
     # discovery search wired onto the tool surface): 86 + 1 = 87.
+    #
+    # issue #286 adds 1 more (realize_lowpass_stepped_impedance_microstrip_
+    # filter, the stepped-impedance microstrip physical realization of a
+    # synthesized lowpass ladder): 87 + 1 = 88.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -196,6 +204,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 3  # issue #215: ingest_3gpp_spec, ingest_etsi_standard, ingest_fcc_rule
         + 1  # issue #219: ingest_patent
         + 1  # issue #257-T2: search_arxiv_papers
+        + 1  # issue #286: realize_lowpass_stepped_impedance_microstrip_filter
     )
     assert len(registered_names) == expected
 
@@ -690,6 +699,35 @@ def test_calculate_l_network_match_calls_through():
     want = set(expected)
     for gx, gb in got:
         assert any(gx == pytest.approx(wx) and gb == pytest.approx(wb) for wx, wb in want)
+    assert result["provenance"] == "CALCULATED"
+
+
+# ---------------------------------------------------------------------------
+# Filter physical realization (issue #286)
+# ---------------------------------------------------------------------------
+
+
+def test_realize_lowpass_stepped_impedance_microstrip_filter_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "realize_lowpass_stepped_impedance_microstrip_filter" in registered_names
+
+
+def test_realize_lowpass_stepped_impedance_microstrip_filter_calls_through():
+    result = server.realize_lowpass_stepped_impedance_microstrip_filter(
+        response="butterworth",
+        order=3,
+        eps_r=4.4,
+        h_m=0.0016,
+        cutoff_hz=1e9,
+        z_high_ohm=100.0,
+        z_low_ohm=20.0,
+    )
+    network = synthesize_filter(response="butterworth", band="lowpass", order=3, cutoff_hz=1e9)
+    sections = realize_lowpass_stepped_impedance_microstrip(
+        network, eps_r=4.4, h_m=0.0016, z_high_ohm=100.0, z_low_ohm=20.0
+    )
+    assert result["network"] == network.to_dict()
+    assert result["sections"] == [s.to_dict() for s in sections]
     assert result["provenance"] == "CALCULATED"
 
 
