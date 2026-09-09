@@ -893,21 +893,30 @@ def run_hfss_simulation(
 
 @mcp.tool()
 def run_openparem_simulation(
-    mesh_file: str,
     ports: dict,
+    mesh_file: str | None = None,
+    geometry: dict | None = None,
     project: dict | None = None,
     project_name: str = "openparem_project",
+    materials: list[dict] | None = None,
     mpi_processes: int | None = None,
     timeout_s: int = 3600,
+    gmsh_executable: str | None = None,
+    gmsh_timeout_s: int = 600,
 ) -> dict:
-    """Simulate a structure with OpenParEM3D (full-wave FEM): given an already-meshed
-    Gmsh msh22 `mesh_file` (mesh generation is out of scope -- see simulation/
-    openparem.py's module docstring SCOPE; produce one via FreeCAD+gmsh first) and
+    """Simulate a structure with OpenParEM3D (full-wave FEM): given EITHER an
+    already-meshed Gmsh msh22 `mesh_file` OR a `geometry` dict (this repo's own
+    primitive-dict shape -- issue #278; meshed internally via
+    simulation.elmer.generate_gmsh_geo_script + simulation.openparem.
+    run_openparem_gmsh_meshing, forcing OpenParEM3D's required msh22 format) and
     structured `ports` geometry (Path/Boundary/Port definitions -- see
     simulation.openparem.generate_openparem_ports_file for the full shape), generate
     the `.proj` project-control file (frequency plan, mesh/refinement settings,
     reference impedance, Touchstone format -- see simulation.openparem.
     generate_openparem_project_config for the full `project` shape) plus the ports
+    file and (when `materials` is given, in place of a pre-existing materials
+    library on disk -- see simulation.openparem.generate_openparem_materials_file/
+    openparem_materials_from_property_entries for the input shapes) a materials
     file, run OpenParEM3D, and parse S-parameters AND antenna far-field gain/
     directivity/radiation-efficiency from the SAME FEM solve -- no separate tool or
     manual post-processing step. Set `project["far_field"] = {"quantity": "G"}` (or
@@ -915,19 +924,24 @@ def run_openparem_simulation(
     when `ports["boundaries"]` includes a `type="radiation"` boundary. Returns
     "SIMULATED" provenance with `s_parameters`/`far_field` each honestly flagged
     computed=True/False (never fabricated) plus a `touchstone_file` key when a
-    single-port renormalized Touchstone was written. `.proj`/ports-file format and
-    CLI invocation verified against OpenParEM's own primary GitHub source and its
-    official Installation Manual PDF (see simulation/openparem.py's module docstring
-    for the full citation list) but NOT against a real OpenParEM3D binary -- none is
-    installed in this environment. OpenParEM is also considerably younger and less
-    battle-tested than NEC2++/openEMS/HFSS (initial release Sept. 2024)."""
+    single-port renormalized Touchstone was written. `.proj`/ports-file/materials-file
+    format and CLI invocation verified against OpenParEM's own primary GitHub source
+    and its official Installation Manual/Users Manual PDFs (see simulation/
+    openparem.py's module docstring for the full citation list) but NOT against a
+    real OpenParEM3D (or gmsh) binary -- none is installed in this environment.
+    OpenParEM is also considerably younger and less battle-tested than
+    NEC2++/openEMS/HFSS (initial release Sept. 2024)."""
     return _run_openparem_simulation(
         mesh_file=mesh_file,
+        geometry=geometry,
         ports=ports,
         project=project,
         project_name=project_name,
+        materials=materials,
         mpi_processes=mpi_processes,
         timeout_s=timeout_s,
+        gmsh_executable=gmsh_executable,
+        gmsh_timeout_s=gmsh_timeout_s,
     )
 
 

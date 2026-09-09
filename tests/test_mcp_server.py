@@ -1587,6 +1587,84 @@ def test_run_openparem_simulation_calls_through(tmp_path: Path, monkeypatch):
     assert result["far_field"]["entries"][0]["gain_dbi"] == pytest.approx(5.23)
 
 
+_FAKE_GMSH_FOR_OPENPAREM_MCP_TEST = """
+import sys
+args = sys.argv[1:]
+out = args[args.index("-o") + 1]
+with open(out, "w") as f:
+    f.write("$MeshFormat\\n2.2 0 8\\n$EndMeshFormat\\n")
+sys.exit(0)
+"""
+
+
+def test_run_openparem_simulation_with_geometry_and_materials_calls_through(
+    tmp_path: Path, monkeypatch
+):
+    """issue #278: the MCP wrapper exposes `geometry` (meshed internally via a
+    real gmsh call, faked out here) and `materials` (a generated local
+    materials file) as alternatives to a pre-supplied mesh_file/materials
+    library, matching run_elmer_simulation's own geometry-first convention."""
+    openparem_script = _write_fake_openparem3d(tmp_path, "cube")
+    monkeypatch.setenv("OPENPAREM3D_BIN", str(openparem_script))
+    gmsh_script = make_fake_executable(
+        tmp_path, _FAKE_GMSH_FOR_OPENPAREM_MCP_TEST, name="fake_gmsh_openparem"
+    )
+
+    ports = {
+        "paths": [
+            {
+                "name": "port",
+                "points": [[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 0.001, 0.0]],
+                "closed": True,
+            },
+            {
+                "name": "front",
+                "points": [
+                    [-0.1, -0.1, -0.1],
+                    [0.1, -0.1, -0.1],
+                    [0.1, -0.1, 0.1],
+                    [-0.1, -0.1, 0.1],
+                ],
+                "closed": True,
+            },
+        ],
+        "boundaries": [{"name": "front", "type": "radiation", "path": "+front"}],
+        "ports": [
+            {
+                "name": "in",
+                "path": "+port",
+                "modes": [{"sport": 1, "integration_path": {"type": "voltage", "path": "+port"}}],
+            }
+        ],
+    }
+    result = server.run_openparem_simulation(
+        ports=ports,
+        geometry={"domain": {"p1_m": [0.0, 0.0, 0.0], "p2_m": [0.02, 0.02, 0.01]}},
+        project={"frequency_plan": {"point": [{"frequency_hz": 2.45e9}]}},
+        project_name="cube",
+        materials=[
+            {
+                "name": "FR4",
+                "relative_permittivity": 4.3,
+                "loss_tangent": 0.025,
+                "frequency_hz": "any",
+                "citations": ["test fixture citation"],
+            }
+        ],
+        timeout_s=10,
+        gmsh_executable=str(gmsh_script),
+        gmsh_timeout_s=10,
+    )
+
+    assert result["provenance"] == "SIMULATED"
+    assert result["status"] == "COMPLETED"
+    assert Path(result["msh_file"]).exists()
+    assert Path(result["materials_file"]).exists()
+    project_text = Path(result["project_file"]).read_text()
+    assert "mesh.file                       cube.msh" in project_text
+    assert "materials.local.name" in project_text
+
+
 # ---------------------------------------------------------------------------
 # Elmer FEM VectorHelmholtz simulation (issue #64)
 #
