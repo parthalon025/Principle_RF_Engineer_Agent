@@ -29,6 +29,7 @@ from knowledge.index import index_document as _index_document
 from knowledge.ingest import ingest_document as _ingest_document
 from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
 from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
+from knowledge.nexar import lookup_nexar_part_data as _lookup_nexar_part_data
 from knowledge.read import read_document as _read_document
 from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
@@ -1915,6 +1916,25 @@ def lookup_nexar_component(part_number: str, license: str, classification: str) 
     (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). NOT run against the real API
     in this environment -- see knowledge/nexar.py's module docstring."""
     return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
+
+
+@mcp.tool()
+def lookup_nexar_part_data(part_number: str) -> dict:
+    """Search Nexar's GraphQL API (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET) for
+    part_number's multi-distributor pricing/availability and parametric specs in one query
+    -- ticket #276, the capability that distinguishes Nexar's cross-distributor aggregation
+    from lookup_digikey_component/lookup_mouser_component/lookup_nexar_component, which only
+    confirm a part exists and fetch its datasheet. Use this to screen a candidate component
+    against an RF requirement or compare stock/price across distributors before committing
+    to that part. Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND
+    NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET are configured. Returns structured data only --
+    never downloads or ingests a document. On "ok", carries "specs" (list of {"name",
+    "value", "display_value", "units"}) and "offers" (list of {"seller", "stock_level",
+    "price_breaks"}, one entry per distributor offer) alongside the usual manufacturer/
+    manufacturer_part_number/datasheet_url identity; both lists are [] rather than absent
+    when Nexar reports neither. NOT run against the real API in this environment -- see
+    knowledge/nexar.py's module docstring."""
+    return _lookup_nexar_part_data(part_number)
 
 
 @mcp.tool()
