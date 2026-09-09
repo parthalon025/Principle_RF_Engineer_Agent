@@ -686,6 +686,20 @@ def test_antenna_role_gets_freecad_curved_geometry_tool():
     assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["verification"])
 
 
+def test_antenna_role_gets_freecad_fem_mesh_geometry_tool():
+    # issue #288: FEM-workbench meshing of the same curved solid sits beside
+    # its generate_freecad_curved_geometry sibling -- same antenna-geometry-
+    # generator family, same role -- so the design loop can actually reach
+    # it; a function that exists in geometry/freecad_curved.py but is never
+    # wired onto a tool surface is unreachable to every role, this one
+    # included.
+    assert "run_freecad_fem_mesh_geometry" in _tool_names(ROLES["antenna"])
+    assert "run_freecad_fem_mesh_geometry" not in _tool_names(ROLES["systems"])
+    assert "run_freecad_fem_mesh_geometry" not in _tool_names(ROLES["microwave"])
+    assert "run_freecad_fem_mesh_geometry" not in _tool_names(ROLES["test"])
+    assert "run_freecad_fem_mesh_geometry" not in _tool_names(ROLES["verification"])
+
+
 def test_test_role_gets_new_touchstone_tools():
     names = _tool_names(ROLES["test"])
     assert "interpolate_touchstone_file" in names

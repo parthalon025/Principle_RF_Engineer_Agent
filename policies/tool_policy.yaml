@@ -121,6 +121,12 @@ simulation_auto:
   # licensing/workstation-confinement gate of its own -- see geometry/
   # freecad_curved.py.
   - generate_freecad_curved_geometry
+  # run_freecad_fem_mesh_geometry (issue #288) shares the exact same threat
+  # model as generate_freecad_curved_geometry above -- same local workdir,
+  # same locally-installed FreeCAD (plus gmsh) binary, no network, no
+  # credential -- it just also drives FreeCAD's FEM workbench meshing API
+  # against the same curved solid rather than stopping at STEP export.
+  - run_freecad_fem_mesh_geometry
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

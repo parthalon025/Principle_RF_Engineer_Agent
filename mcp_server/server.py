@@ -19,6 +19,9 @@ from designs.service import record_engineering_result as _record_engineering_res
 from designs.service import update_design_status as _update_design_status
 from designs.service import verify_requirement as _verify_requirement
 from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
+from geometry.freecad_curved import (
+    run_freecad_fem_mesh_geometry as _run_freecad_fem_mesh_geometry,
+)
 from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
@@ -771,11 +774,19 @@ def run_nec2_simulation(geometry: dict, frequency_hz: float, timeout_s: int = 60
     ground_condition "free_space"/"perfect"/finite-ground dict, optional excitation and
     pattern-sweep overrides -- see simulation.nec2pp.generate_nec2_deck for the full
     shape), run it via nec2++, and parse impedance/radiation-pattern/gain from the
-    output. Returns "SIMULATED" provenance. Deck/output format verified against the
-    primary NEC-2 documentation (see simulation/nec2pp.py's module docstring for the
-    citation) but NOT against a real nec2++ binary -- none is installed in this
-    environment; treat any result as unverified end-to-end until it has been run
-    against the real tool at least once."""
+    output. `excitation["type"]` defaults to "voltage" (a fed source on one wire's
+    segment, today's default behavior). Set it to "plane_wave" instead (issue #271) to
+    illuminate the structure with an incident linear-polarized wave and read back its
+    reflection phase -- the magnetic-mirror question (does a bounce come back at 0deg
+    or 180deg) this whole program exists to answer for a passive reflecting surface,
+    as opposed to a fed antenna's own radiated pattern. A "plane_wave" excitation has
+    no feed segment to default; its own theta/phi angle-sweep and polarization fields
+    are documented in generate_nec2_deck's docstring (right/left circular polarization
+    is out of scope). Returns "SIMULATED" provenance. Deck/output format verified
+    against the primary NEC-2 documentation (see simulation/nec2pp.py's module
+    docstring for the citation) but NOT against a real nec2++ binary -- none is
+    installed in this environment; treat any result as unverified end-to-end until it
+    has been run against the real tool at least once."""
     return _run_nec2_simulation(geometry=geometry, frequency_hz=frequency_hz, timeout_s=timeout_s)
 
 
@@ -848,7 +859,15 @@ def run_gprmax_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: i
     run_openems_simulation when the antenna's host surface is a real lossy dielectric half-
     space (soil, concrete, a vehicle hull) rather than free space or an idealized ground
     plane -- NEC2++'s ground models can't represent that, and openEMS's adapter has no
-    explicit ground-half-space workflow either. Returns "SIMULATED" provenance.
+    explicit ground-half-space workflow either. The ground half-space and any material
+    body can carry an optional "dispersion" dict (issue #277: {"model": "debye" |
+    "lorentz" | "drude", "poles": [{...}, ...]}) to make that material's permittivity
+    frequency-dependent instead of the constant value its own epsilon_r/
+    conductivity_s_m give -- real absorber/ferrite substrates are dispersive by
+    nature, not flat across the band. See simulation.gprmax.generate_gprmax_input for
+    each model's exact per-pole field names (delta_epsilon_r/tau_s for Debye;
+    delta_epsilon_r/omega_hz/delta_hz for Lorentz; omega_hz/gamma_hz for Drude).
+    Omitting "dispersion" behaves exactly as before. Returns "SIMULATED" provenance.
     IMPORTANT: this adapter deliberately does NOT use gprMax's bundled antenna-model
     library (GSSI/MALA) -- those are calibrated replicas of specific commercial GPR
     antenna hardware, not stand-ins for this repo's own antenna designs (see
@@ -1043,6 +1062,50 @@ def generate_freecad_curved_geometry(
         curvature=curvature,
         timeout_s=timeout_s,
         executable=executable,
+    )
+
+
+@mcp.tool()
+def run_freecad_fem_mesh_geometry(
+    primitives: list[dict],
+    curvature: dict,
+    workdir: str | None = None,
+    executable: str | None = None,
+    timeout_s: int = 600,
+    name_prefix: str = "cell",
+    mesh_max_size_m: float | None = None,
+) -> dict:
+    """Same curved-solid build as generate_freecad_curved_geometry (issue #288), but
+    instead of stopping at a STEP export, drives FreeCAD's own FEM workbench meshing
+    API (GmshTools) against that solid and returns a real mesh -- for a curved-array
+    design that needs to go into a real FEM/mesh-based solver (Elmer, OpenParEM)
+    rather than just a STEP file for review or a different CAD tool. A SEPARATE tool
+    from generate_freecad_curved_geometry (not a flag on it), so that tool's existing
+    STEP-only default behavior is completely unaffected by this one's existence.
+    `mesh_max_size_m` caps the target mesh element size (Gmsh's own
+    CharacteristicLengthMax); omit it for Gmsh's own default sizing. Returns
+    "SIMULATED" provenance and `freecad["mesh"]` with `mesh_ok`/`mesh_file` (an
+    absolute path)/`node_count`/`element_counts`/`gmsh_exit_code`/`gmsh_stderr`/
+    `note` -- `mesh_ok=False` with an explanatory `note` (never a fabricated result)
+    if gmsh isn't installed on the machine FreeCADCmd itself runs on, or if the
+    per-object solid build failed first. Raises only for a subprocess-level
+    FreeCADCmd failure (nonzero exit, timeout, executable not found) -- matching
+    generate_freecad_curved_geometry's own contract; a meshing failure INSIDE a
+    successfully-run FreeCADCmd process is reported honestly in the result instead.
+    FreeCADCmd's headless invocation and every FreeCAD/GmshTools Python API call used
+    were verified directly against FreeCAD's own source on GitHub (see geometry/
+    freecad_curved.py's module docstring "FEM WORKBENCH MESHING" section for the full
+    citation list) but NOT against a real FreeCADCmd+Gmsh binary -- neither is
+    installed in this environment; treat any mesh result as unverified end-to-end
+    until it has been run against the real tools at least once."""
+    return _run_freecad_fem_mesh_geometry(
+        primitives=primitives,
+        curvature=curvature,
+        workdir=workdir,
+        executable=executable,
+        timeout_s=timeout_s,
+        name_prefix=name_prefix,
+        mesh_max_size_m=mesh_max_size_m,
     )
 
 

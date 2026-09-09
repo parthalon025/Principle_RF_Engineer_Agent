@@ -195,6 +195,11 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # ticket #276 adds 1 more (lookup_nexar_part_data, Nexar's cross-
     # distributor pricing/availability + parametric specs query): 93 + 1 = 94.
+    #
+    # issue #288 adds 1 more (run_freecad_fem_mesh_geometry, FreeCAD's own
+    # FEM workbench meshing of the curved solid generate_freecad_curved_
+    # geometry already builds, closing the "implemented but never wired
+    # onto a tool surface" gap this exact function had): 94 + 1 = 95.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -233,6 +238,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #275: lookup_digikey_product_details
         + 1  # issue #280: search_uspto_patents
         + 1  # ticket #276: lookup_nexar_part_data
+        + 1  # issue #288: run_freecad_fem_mesh_geometry
     )
     assert len(registered_names) == expected
 
@@ -700,6 +706,11 @@ def test_run_gprmax_simulation_is_registered():
 def test_generate_freecad_curved_geometry_is_registered():
     registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert "generate_freecad_curved_geometry" in registered_names
+
+
+def test_run_freecad_fem_mesh_geometry_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "run_freecad_fem_mesh_geometry" in registered_names
 
 
 def test_every_registered_tool_is_categorized_in_tool_policy():
