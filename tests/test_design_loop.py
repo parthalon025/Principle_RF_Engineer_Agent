@@ -57,6 +57,7 @@ from orchestration.design_loop import (
     DesignLoopValidationError,
     DesignStep,
     LoopDecision,
+    _optimizer_class_for,
     _simulation_adapter_for,
     advance_loop_step,
     start_design_loop,
@@ -2056,3 +2057,186 @@ def test_the_ground_backed_family_pays_nothing_for_the_two_port_machinery(monkey
     assert result["absorption"] == pytest.approx([0.8, 0.99])
     assert result["transmittance"] is None
     assert result["energy_balance_violations"] == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #255 ticket 1: OPTIMIZATION dispatches on the family's declared
+# optimizer_class (designs/design_families.py), mirroring the
+# _registry_family_of_record seam ANALYSIS (#239) and SIMULATION (#229)
+# already use -- rather than the single, unconditional patch-length search
+# this step ran before. A pure prefactor: no family in this tree today
+# declares anything other than None, so every one of them must keep routing
+# to exactly the search it always ran. The one new capability this ticket
+# adds is a safety net: a family that DOES declare something this loop has
+# no path for (COMBINATORIAL today; a hypothetical third value later) must
+# fail loudly rather than silently receive the continuous patch-length
+# search -- the same "wrong tool applied silently" defect issues #239/#241
+# already removed for ANALYSIS/SIMULATION, one step over. The real
+# COMBINATORIAL symbol-placement search itself is separate, later work
+# (issue #255's own scope) -- not built here.
+# ---------------------------------------------------------------------------
+
+
+def _at_optimization(family: str) -> DesignLoopState:
+    """An iteration whose ARCHITECTURE named `family`, positioned at
+    OPTIMIZATION without running ANALYSIS/SIMULATION for real -- these tests
+    are about the optimizer_class dispatch, not about those steps' own
+    behaviour (mirrors `_at_simulation` above)."""
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input(family))
+    return _advance_to(state, DesignStep.OPTIMIZATION)
+
+
+_OPTIMIZATION_PATCH_INPUT = {
+    "eps_r": 4.4,
+    "w_m": 0.03,
+    "h_m": 0.0016,
+    "target_frequency_hz": 2.45e9,
+    "length_lower_m": 0.02,
+    "length_upper_m": 0.04,
+    "method": "sweep",
+    "n_evaluations": 5,
+}
+
+
+def test_optimizer_class_for_reads_none_for_a_family_that_declares_nothing():
+    """PATCH declares no optimizer_class at all in designs/design_families.py
+    today. Unlike an unsettled simulation_adapter, that is a legitimate,
+    un-raising answer here -- not a missing-declaration error (ADR-0018:
+    the field is open, unset until a family opts in)."""
+    state = _at_optimization("PATCH")
+    assert _optimizer_class_for(state) is None
+
+
+def test_optimizer_class_for_reads_an_explicitly_declared_value(monkeypatch):
+    """The helper reads whatever the registry entry declares -- proven with
+    a fake family so this test does not depend on any real family having
+    opted into COMBINATORIAL yet (none has)."""
+    combinatorial = _dc_replace(design_families_module.PATCH, optimizer_class="COMBINATORIAL")
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: combinatorial)
+    state = _at_optimization("PATCH")
+    assert _optimizer_class_for(state) == "COMBINATORIAL"
+
+
+def test_no_architecture_decision_means_there_is_no_optimizer_class_to_read():
+    """Mirrors test_no_architecture_decision_means_there_is_no_adapter_to_
+    read: with no ARCHITECTURE decision, no family has been named, so there
+    is nothing to read optimizer_class off -- reported, not guessed past."""
+    state = start_design_loop(REQUIREMENTS)
+    with pytest.raises(DesignLoopValidationError, match="design_family"):
+        _optimizer_class_for(state)
+
+
+def test_optimization_routes_patch_to_the_unchanged_patch_length_search(monkeypatch):
+    """The core "byte-for-byte unchanged" claim: PATCH's optimizer_class is
+    unset (None) in the real registry, and OPTIMIZATION must still call
+    optimize_patch_length_for_target_frequency with EXACTLY the same
+    keyword arguments -- and hand its result straight through -- as it did
+    before this ticket's dispatch existed."""
+    captured = {}
+
+    def fake_optimize(**kwargs):
+        captured.update(kwargs)
+        return {"achieved_frequency_hz": 2.451e9, "provenance": "CALCULATED"}
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", fake_optimize
+    )
+    state = _at_optimization("PATCH")
+    new_state = advance_loop_step(state, dict(_OPTIMIZATION_PATCH_INPUT))
+
+    assert captured == {
+        "eps_r": 4.4,
+        "w_m": 0.03,
+        "h_m": 0.0016,
+        "target_frequency_hz": 2.45e9,
+        "length_lower_m": 0.02,
+        "length_upper_m": 0.04,
+        "method": "sweep",
+        "n_evaluations": 5,
+    }
+    decision = new_state.decisions[-1]
+    assert decision.step == DesignStep.OPTIMIZATION.value
+    assert decision.kind == "optimization"
+    assert decision.result == {"achieved_frequency_hz": 2.451e9, "provenance": "CALCULATED"}
+    assert decision.provenance == "CALCULATED"
+
+
+def test_optimization_routes_an_explicitly_continuous_family_the_same_way(monkeypatch):
+    """optimizer_class == "CONTINUOUS" (stated explicitly, not merely
+    unset) must route to the identical patch-length search -- proving the
+    dispatch reads the DECLARED value, never the family's name, the same
+    "read the declaration, not the label" rule #239/#229 already applied to
+    ANALYSIS/SIMULATION."""
+    continuous = _dc_replace(design_families_module.PATCH, optimizer_class="CONTINUOUS")
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: continuous)
+
+    def fake_optimize(**kwargs):
+        return {"achieved_frequency_hz": 2.451e9, "provenance": "CALCULATED"}
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", fake_optimize
+    )
+    state = _at_optimization("PATCH")
+    new_state = advance_loop_step(state, dict(_OPTIMIZATION_PATCH_INPUT))
+    assert new_state.decisions[-1].result["achieved_frequency_hz"] == pytest.approx(2.451e9)
+
+
+def test_optimization_refuses_a_combinatorial_family_instead_of_guessing(monkeypatch):
+    """This ticket does NOT implement the combinatorial symbol-placement
+    search (issue #255's own scope: separate, later work, blocked on the
+    Element/Coding-Alphabet library). What it must never do is silently run
+    the continuous patch-length search against a family whose whole design
+    method is "which pre-characterised tile goes in which grid square" --
+    the exact "wrong tool applied silently" defect issues #239/#241 already
+    removed for ANALYSIS/SIMULATION. This is the chosen safety net: raise,
+    naming the family and the missing search, rather than pass a Tier B
+    family through to a search that does not apply to it."""
+    combinatorial = _dc_replace(
+        design_families_module.REFLECTION_PHASE, optimizer_class="COMBINATORIAL"
+    )
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: combinatorial)
+
+    def exploding_patch_search(**kwargs):
+        raise AssertionError("the patch-length search must never run for a COMBINATORIAL family")
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", exploding_patch_search
+    )
+    state = _at_optimization("REFLECTION_PHASE")
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(state, {})
+    message = str(exc.value)
+    assert "REFLECTION_PHASE" in message
+    assert "COMBINATORIAL" in message
+    assert state.current_step == DesignStep.OPTIMIZATION.value
+    assert all(d.step != DesignStep.OPTIMIZATION.value for d in state.decisions)
+
+
+def test_optimization_refuses_an_unrecognised_optimizer_class(monkeypatch):
+    """ADR-0018 leaves optimizer_class open for a THIRD value (e.g.
+    ML-direct inverse design) to arrive later. Issue #255 user story 4:
+    that must fail loudly at OPTIMIZATION, naming the family and the
+    unhandled value, rather than falling through to the patch-length
+    search."""
+    ml_direct = _dc_replace(
+        design_families_module.PATCH, optimizer_class="ML_DIRECT_INVERSE_DESIGN"
+    )
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: ml_direct)
+
+    def exploding_patch_search(**kwargs):
+        raise AssertionError(
+            "the patch-length search must never run for an unhandled optimizer_class"
+        )
+
+    monkeypatch.setattr(
+        design_loop_module, "_optimize_patch_length_for_target_frequency", exploding_patch_search
+    )
+    state = _at_optimization("PATCH")
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(state, {})
+    message = str(exc.value)
+    assert "PATCH" in message
+    assert "ML_DIRECT_INVERSE_DESIGN" in message
+    assert state.current_step == DesignStep.OPTIMIZATION.value
+    assert all(d.step != DesignStep.OPTIMIZATION.value for d in state.decisions)
