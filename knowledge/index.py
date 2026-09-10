@@ -73,7 +73,7 @@ def index_document(
         document = db.get_document(conn, document_id)
         if document is None:
             raise ValueError(f"No document with id={document_id}")
-        classification = Classification(document["metadata"]["classification"])
+        classification = Classification(document["classification"])
 
         # Enforces the floor (raises for SENSITIVE/RESTRICTED + EXTERNAL)
         # before any chunk is touched.

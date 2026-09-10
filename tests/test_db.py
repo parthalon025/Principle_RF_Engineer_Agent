@@ -1,3 +1,4 @@
+import psycopg
 import pytest
 
 from knowledge.db import (
@@ -87,6 +88,47 @@ def test_insert_document_never_infers_supersession_from_title(db_conn):
     row2 = insert_document(db_conn, doc2, authority_rank=20)
 
     assert row2["supersedes_document_id"] is None
+
+
+def test_insert_document_writes_classification_as_a_real_column(db_conn):
+    """Issue #407: classification must be a real, queryable `documents`
+    column -- not only a key buried inside the `metadata` JSONB blob."""
+    draft = _draft(checksum_sha256="c1" * 32, classification=Classification.RESTRICTED)
+    row = insert_document(db_conn, draft, authority_rank=20)
+
+    assert row["classification"] == "RESTRICTED"
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT classification FROM documents WHERE id = %s", (row["id"],))
+        (stored,) = cur.fetchone()
+    assert stored == "RESTRICTED"
+
+
+def test_documents_classification_column_rejects_null_at_the_database_level(db_conn):
+    """ADR-0001's 'mandatory, no default' guarantee must be enforced by the
+    database itself, not only by `ingest_document`'s parameter signature --
+    proven here with a raw INSERT that bypasses `insert_document` entirely,
+    exactly the bypass ADR-0001's guarantee needs to survive (issue #407)."""
+    with pytest.raises(psycopg.errors.NotNullViolation):
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO documents (title, source_type, license, checksum_sha256, "
+                "classification) VALUES (%s, %s, %s, %s, %s)",
+                ("Bogus Doc", "datasheet", "cc-by-4.0", "d1" * 32, None),
+            )
+
+
+def test_documents_classification_column_rejects_out_of_vocabulary_value(db_conn):
+    """Same bypass as above, but with a value outside the closed vocabulary
+    `knowledge/models.py`'s `Classification` enum defines -- the CHECK
+    constraint, not just NOT NULL, must reject it (issue #407)."""
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO documents (title, source_type, license, checksum_sha256, "
+                "classification) VALUES (%s, %s, %s, %s, %s)",
+                ("Bogus Doc", "datasheet", "cc-by-4.0", "d2" * 32, "TOP_SECRET"),
+            )
 
 
 def test_insert_document_rejects_nonexistent_supersession_target(db_conn):
