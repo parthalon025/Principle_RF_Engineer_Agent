@@ -587,3 +587,15 @@ ALTER TABLE components DROP CONSTRAINT IF EXISTS components_manufacturer_part_nu
 ALTER TABLE components
     ADD CONSTRAINT components_manufacturer_part_number_key
     UNIQUE NULLS NOT DISTINCT (manufacturer, part_number);
+
+-- Issue #369. CONTEXT.md documents, as an already-holding rule, that a
+-- released design gets a new revision rather than being edited back into
+-- engineering -- but `design_key` alone was UNIQUE, so the database could
+-- never actually hold two revisions of the same design_key. Drop-then-add
+-- under a new constraint name, matching issue #367's identical fix to
+-- components' constraint -- safe to re-run against both a fresh container
+-- and an already-initialized database.
+ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_key;
+ALTER TABLE designs
+    ADD CONSTRAINT designs_design_key_revision_key
+    UNIQUE (design_key, revision);

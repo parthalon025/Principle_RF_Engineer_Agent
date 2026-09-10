@@ -3,6 +3,7 @@ from psycopg.types.json import Json
 
 from designs.db import (
     DanglingComponentReferenceError,
+    DesignKeyRevisionCollisionError,
     RecordKeyCollisionError,
     UnknownDesignError,
     UnknownVerificationItemError,
@@ -65,6 +66,61 @@ def test_create_design_creates_row_in_draft_status(db_conn):
     assert row["name"] == "Test Design"
     assert row["revision"] == "A"
     assert row["status"] == "DRAFT"
+
+
+def test_create_design_rejects_design_key_revision_collision_and_points_at_existing_row(db_conn):
+    first = create_design(
+        db_conn,
+        design_key="DES-COLLIDE-1",
+        name="First Attempt",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+
+    with pytest.raises(DesignKeyRevisionCollisionError) as exc_info:
+        create_design(
+            db_conn,
+            design_key="DES-COLLIDE-1",
+            name="Second Attempt, Same Key And Revision",
+            revision="A",
+            requirements={},
+            architecture={},
+        )
+    assert exc_info.value.design_key == "DES-COLLIDE-1"
+    assert exc_info.value.revision == "A"
+    assert exc_info.value.existing["id"] == first["id"]
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM designs WHERE design_key = %s AND revision = %s",
+            ("DES-COLLIDE-1", "A"),
+        )
+        (count,) = cur.fetchone()
+    assert count == 1
+
+
+def test_create_design_allows_a_different_revision_under_the_same_design_key(db_conn):
+    first = create_design(
+        db_conn,
+        design_key="DES-COLLIDE-2",
+        name="Revision A",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    second = create_design(
+        db_conn,
+        design_key="DES-COLLIDE-2",
+        name="Revision B",
+        revision="B",
+        requirements={},
+        architecture={},
+    )
+
+    assert first["id"] != second["id"]
+    assert first["design_key"] == second["design_key"] == "DES-COLLIDE-2"
+    assert {first["revision"], second["revision"]} == {"A", "B"}
 
 
 def test_create_design_with_empty_requirements_creates_no_verification_items(db_conn):
