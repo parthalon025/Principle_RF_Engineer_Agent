@@ -744,3 +744,17 @@ CREATE TABLE IF NOT EXISTS design_component_refs (
 -- instead of a full-table JSON scan.
 CREATE INDEX IF NOT EXISTS design_component_refs_component_id_idx
 ON design_component_refs (component_id);
+
+-- Issue #401: knowledge/db.py's insert_document enforced "can't supersede
+-- an already-superseded document" purely with a SELECT-then-check inside
+-- its own transaction -- the exact check-then-insert race that
+-- documents_checksum_sha256_key above was already added to close for
+-- checksums, left open here. Two concurrent ingests both declaring
+-- `supersedes_document_id` for the same target could each pass the SELECT
+-- (neither sees the other's not-yet-committed UPDATE) and both insert,
+-- leaving that target claimed as superseded by two different rows and
+-- breaking ADR-0002's linear revision chain. Partial index (the column is
+-- nullable) backs the guarantee at the database level; insert_document
+-- catches the resulting UniqueViolation and raises InvalidSupersessionError.
+CREATE UNIQUE INDEX IF NOT EXISTS documents_supersedes_document_id_key
+ON documents (supersedes_document_id) WHERE supersedes_document_id IS NOT NULL;

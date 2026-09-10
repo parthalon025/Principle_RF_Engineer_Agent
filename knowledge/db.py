@@ -88,7 +88,12 @@ def insert_document(
       is raised; otherwise its status flips to SUPERSEDED and the new row's
       `supersedes_document_id` links to it, both in one transaction
       (ADR-0002). This is a human-declared claim, never inferred from title
-      or any other metadata matching.
+      or any other metadata matching. The same up-front-check-then-insert
+      race applies here as for checksums above: two concurrent inserts can
+      both see the target as ACTIVE before either commits. The database's
+      own `documents_supersedes_document_id_key` partial unique index
+      (issue #401) is the backstop -- caught below and reported as
+      `InvalidSupersessionError`, not misread as a duplicate checksum.
     - `draft.supersedes_document_id` unset -> a plain new ACTIVE row, no
       supersession, regardless of whether its title matches anything else
       already stored.
@@ -149,7 +154,12 @@ def insert_document(
                         "UPDATE documents SET status = %s WHERE id = %s",
                         (DocumentStatus.SUPERSEDED.value, supersedes_id),
                     )
-    except psycopg.errors.UniqueViolation:
+    except psycopg.errors.UniqueViolation as exc:
+        if exc.diag.constraint_name == "documents_supersedes_document_id_key":
+            raise InvalidSupersessionError(
+                draft.supersedes_document_id,
+                "already claimed as superseded by another document",
+            ) from None
         existing = find_document_by_checksum(conn, draft.checksum_sha256)
         assert existing is not None
         raise DuplicateDocumentError(existing["id"], existing) from None

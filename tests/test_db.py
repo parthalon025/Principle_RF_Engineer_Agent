@@ -149,6 +149,66 @@ def test_insert_document_rejects_superseding_a_superseded_document(db_conn):
         insert_document(db_conn, rev_c, authority_rank=20)
 
 
+def test_documents_supersedes_document_id_has_unique_index(db_conn):
+    """Issue #401: the database itself must refuse two documents both
+    claiming to supersede the same target, independent of insert_document's
+    own check-then-insert -- proven here with two raw INSERTs that bypass
+    insert_document entirely (so the target's status is never touched),
+    the same "prove the real constraint, not just the app-level check"
+    pattern documents_checksum_sha256_key already established."""
+    target = insert_document(db_conn, _draft(checksum_sha256="2" * 64), authority_rank=20)
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO documents (title, source_type, checksum_sha256, supersedes_document_id)
+            VALUES (%s, %s, %s, %s)
+            """,
+            ("Racing revision B", SourceType.DATASHEET.value, "aa" * 32, target["id"]),
+        )
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with db_conn.transaction():
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO documents (
+                        title, source_type, checksum_sha256, supersedes_document_id
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    ("Racing revision C", SourceType.DATASHEET.value, "bb" * 32, target["id"]),
+                )
+
+
+def test_insert_document_reports_supersession_race_not_duplicate_checksum(db_conn):
+    """If two inserts still manage to race past insert_document's own
+    "is this target already SUPERSEDED" check (issue #401's UNIQUE index
+    is the backstop for exactly that race), insert_document must surface
+    InvalidSupersessionError -- not misread the resulting UniqueViolation as
+    a duplicate checksum (DuplicateDocumentError) and not crash on its own
+    `assert existing is not None` when no such checksum exists. The
+    conflicting row is inserted directly via raw SQL, bypassing
+    insert_document, so the target's status is never actually flipped to
+    SUPERSEDED -- exactly the DB state a genuine race leaves mid-flight,
+    and the one case insert_document's status check alone cannot catch."""
+    target = insert_document(db_conn, _draft(checksum_sha256="9" * 64), authority_rank=20)
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO documents (title, source_type, checksum_sha256, supersedes_document_id)
+            VALUES (%s, %s, %s, %s)
+            """,
+            ("Racing revision", SourceType.DATASHEET.value, "cc" * 32, target["id"]),
+        )
+
+    draft = _draft(checksum_sha256="dd" * 32, supersedes_document_id=target["id"])
+    with pytest.raises(InvalidSupersessionError) as exc_info:
+        insert_document(db_conn, draft, authority_rank=20)
+    assert exc_info.value.document_id == target["id"]
+
+
 def test_insert_document_rejects_source_type_mismatch_on_supersession(db_conn):
     standard = _draft(
         checksum_sha256="7" * 64, source_type=SourceType.STANDARD, title="Some Standard"
