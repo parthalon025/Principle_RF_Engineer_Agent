@@ -84,7 +84,7 @@ def download_bytes(
         try:
             with urllib.request.urlopen(request, timeout=timeout_s) as response:  # noqa: S310
                 return response.read()
-        except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        except urllib.error.URLError as exc:  # HTTPError is a URLError subclass
             if attempt >= max_retries or not _is_transient(exc):
                 raise
             time.sleep(_DEFAULT_BACKOFF_BASE_S * (2**attempt))
