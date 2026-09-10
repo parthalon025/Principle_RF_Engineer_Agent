@@ -75,6 +75,13 @@ MODULE SHAPE. Two layers, same pure/I-O seam `designs.validation`/
     entry, called only from `designs.requirements_document.
     extract_requirement_fields` once a Requirements document reaches
     `CONFIRMED` (docs/adr/0034) -- never as a standalone tool argument.
+    Issue #228 extends `propose_intended_effect`'s return shape with
+    `status`/`reason`/`confirmed_by`/`confirmed_at`, mirroring
+    `target_status`'s own four fields on `propose_target`'s return exactly
+    (see `IntentStatus`) -- without adding `confirm_intent`/
+    `mark_intent_none` counterparts to `confirm_target`/`mark_unscoreable`,
+    which issue #228's own resolution ruled out as a second, tool-callable
+    path around the Requirements document's review gate.
   - Thin I/O wrappers (`propose_requirement_target`,
     `mark_requirement_unscoreable`, `confirm_requirement_target`) -- these
     are what `agent/main.py`/`mcp_server/server.py` actually wire up as
@@ -159,6 +166,56 @@ class TargetStatus(StrEnum):
     PROPOSED = "PROPOSED"
     CONFIRMED = "CONFIRMED"
     UNSCOREABLE = "UNSCOREABLE"
+
+
+class IntentStatus(StrEnum):
+    """Lifecycle status of one requirement's intended effect, carried as
+    `intended_effect["status"]` (issue #228's addition to ADR-0030's shape)
+    -- `TargetStatus`'s three-state vocabulary, mirrored for the sibling
+    key `attach_intent` attaches. Named `status`, not `intent_status`
+    unlike `TargetStatus`'s own `target_status` -- that name exists
+    specifically so `target_status` never collides with an I/O wrapper's
+    own top-level `status` key (see `TargetStatus`'s docstring), and no
+    such wrapper exists for `intended_effect`: issue #228's own resolution
+    settled that `propose_intended_effect`/`attach_intent` are called only
+    from `designs.requirements_document.extract_requirement_fields`, never
+    from a standalone tool wrapper of their own, so that collision never
+    arises here. This module's Shape section (issue #228) specifies the
+    key as `status` directly, and this class mirrors that literally.
+
+    - `PROPOSED`: `propose_intended_effect`'s output -- an as-yet-unconfirmed
+      reading of the customer's prose.
+    - `CONFIRMED`: legal per the vocabulary (mirrors `TargetStatus.CONFIRMED`)
+      but produced by no function in this module. ADR-0034 settled that a
+      Requirements document reaching `CONFIRMED` already *is* the
+      confirmation event for the fields it describes; issue #228's
+      resolution explicitly ruled out adding a standalone `confirm_intent`
+      mirroring `confirm_target` -- a second, tool-callable path that would
+      let an agent vouch for an intended effect without going through that
+      same document-review gate (the same "live inconsistency" the
+      resolution names for `target`). This value stays part of the
+      vocabulary for whatever later, document-scoped mechanism threads a
+      human confirmer's identity through `extract_requirement_fields`, not
+      for a per-field confirm call.
+    - `NONE`: the analogue of `TargetStatus.UNSCOREABLE` -- ADR-0030's "a
+      bend radius, a mass budget or a cure ceiling asks nothing of the
+      wave", now with a `reason` recorded, same as `UNSCOREABLE`. Built
+      directly as a literal `{"effect": None, "status": "NONE", ...,
+      "reason": <why>}` dict by whoever drafts a Requirements document's
+      per-requirement entry -- not through a dedicated `mark_intent_none`
+      function, which issue #228's resolution ruled out for the same
+      "second, tool-callable path around the document-review gate" reason
+      as `confirm_intent`, while still requiring `NONE` to be *settable*
+      while the document is being drafted, before it is ever confirmed.
+      Distinguishing this deliberate "asked, and the answer is nothing"
+      from "not yet asked at all" (no `intended_effect` key on the
+      requirement entry whatsoever) is this status's whole reason to
+      exist.
+    """
+
+    PROPOSED = "PROPOSED"
+    CONFIRMED = "CONFIRMED"
+    NONE = "NONE"
 
 
 class InvalidRequirementTargetError(ValueError):
@@ -375,10 +432,32 @@ def propose_intended_effect(effect: str) -> dict[str, Any]:
     (ADR-0030's "having none is a legal answer") -- that case is simply
     never calling this function for that requirement, the same way a
     requirement entry with no `target` key yet is legal before
-    `propose_target` is ever called for it.
+    `propose_target` is ever called for it. When a document-drafting
+    process needs to record that absence *deliberately* (asked, and the
+    prose asks nothing of the wave) rather than leaving it merely unasked,
+    it builds an `IntentStatus.NONE`-status dict directly instead of
+    calling this function -- see `IntentStatus`'s own docstring for why
+    that is a literal, not a dedicated `mark_intent_none` call (issue #228).
+
+    Also returns `status="PROPOSED"` and `reason`/`confirmed_by`/
+    `confirmed_at` all `None` (issue #228's addition to this shape,
+    mirroring `target_status`/`reason`/`confirmed_by`/`confirmed_at` on
+    `propose_target`'s own return exactly -- see `IntentStatus`). This
+    function has no way to know whether a human has vouched for the
+    reading it was handed, only that it is *shaped* like a legitimate
+    effect -- the identical reasoning `propose_target`'s own docstring
+    gives for why its result is unconfirmed, never something a caller can
+    skip a confirmation step for.
     """
     resolved_effect = _require_nonempty_string("effect", effect)
-    return {"effect": resolved_effect, "provenance": ASSUMED}
+    return {
+        "effect": resolved_effect,
+        "status": IntentStatus.PROPOSED.value,
+        "provenance": ASSUMED,
+        "reason": None,
+        "confirmed_by": None,
+        "confirmed_at": None,
+    }
 
 
 def attach_target(

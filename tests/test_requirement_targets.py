@@ -42,6 +42,7 @@ import pytest
 from dotenv import load_dotenv
 
 from designs.requirement_targets import (
+    IntentStatus,
     InvalidRequirementTargetError,
     TargetComparator,
     TargetStatus,
@@ -305,6 +306,33 @@ def test_propose_intended_effect_rejects_empty_effect():
 def test_propose_intended_effect_rejects_whitespace_only_effect():
     with pytest.raises(InvalidRequirementTargetError, match="effect"):
         propose_intended_effect("   ")
+
+
+# ---------------------------------------------------------------------------
+# intended_effect's status/reason/confirmed_by/confirmed_at (issue #228) --
+# mirrors target_status's own shape on propose_target's return exactly.
+# ---------------------------------------------------------------------------
+
+
+def test_propose_intended_effect_status_defaults_to_proposed():
+    intended_effect = propose_intended_effect("absorb the wave")
+    assert intended_effect["status"] == "PROPOSED"
+
+
+def test_propose_intended_effect_reason_confirmed_by_confirmed_at_start_none():
+    # propose_intended_effect has no way to know whether a human has
+    # vouched for the reading it was handed -- the same reasoning
+    # propose_target's own docstring gives for target_status="PROPOSED" --
+    # so reason/confirmed_by/confirmed_at all start unset, exactly like
+    # propose_target's own return shape.
+    intended_effect = propose_intended_effect("absorb the wave")
+    assert intended_effect["reason"] is None
+    assert intended_effect["confirmed_by"] is None
+    assert intended_effect["confirmed_at"] is None
+
+
+def test_intent_status_covers_the_three_lifecycle_states():
+    assert {s.value for s in IntentStatus} == {"PROPOSED", "CONFIRMED", "NONE"}
 
 
 def test_attach_intent_preserves_the_original_prose_and_any_target():

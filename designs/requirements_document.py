@@ -92,6 +92,16 @@ carries no `intended_effect` key is left without one -- ADR-0030's "having
 none is a legal answer" (a bend radius, a mass budget or a cure ceiling
 asks nothing of the wave).
 
+That absent-key case ("not yet asked") is distinct from an `intended_effect`
+entry whose `status` (issue #228; `designs.requirement_targets.IntentStatus`)
+is explicitly `NONE` ("asked, and the prose asks nothing of the wave") --
+this module does not construct either shape itself, it only carries
+whatever `propose_intended_effect` (for `PROPOSED`) or a document-drafting
+process's own literal (for `NONE`) already put on the document's entry
+straight through to the design's own `requirements` column, unchanged, the
+same pass-through treatment `target_status`/`reason`/`confirmed_by`/
+`confirmed_at` already get for `target`.
+
 NOT WIRED AS AN AGENT/MCP TOOL HERE. Issue #321's acceptance criteria stop
 at "build the document and its lifecycle"; wiring `create_requirements_document`/
 `transition_requirements_document` into `agent/main.py`/`mcp_server/server.py`
@@ -421,7 +431,16 @@ def extract_requirement_fields(
     already carries `provenance="ASSUMED"` from `propose_target`/
     `mark_unscoreable`/`propose_intended_effect`, and nothing here upgrades
     it, regardless of how many review rounds produced this revision
-    (docs/adr/0030, docs/adr/0034).
+    (docs/adr/0030, docs/adr/0034). The same is true of `intended_effect`'s
+    `status`/`reason`/`confirmed_by`/`confirmed_at` (issue #228): whatever
+    values were already on the document's entry -- `PROPOSED` with all
+    three `None` from `propose_intended_effect`, or an explicit `NONE` with
+    a `reason` built directly while the document was drafted -- pass
+    through `attach_intent` unchanged. This function does not promote a
+    `PROPOSED` intended effect to `CONFIRMED` just because the document
+    around it reached `CONFIRMED` -- the same "document review IS the
+    confirmation, but there is no per-field confirm step" resolution issue
+    #228 gives for why no `confirm_intent` exists to do that promotion.
 
     Pure and DB-free, exactly like `attach_target`/`attach_intent`
     themselves (never mutates `requirements` or `document`);

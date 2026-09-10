@@ -30,7 +30,13 @@ from __future__ import annotations
 
 import pytest
 
-from designs.requirement_targets import mark_unscoreable, propose_intended_effect, propose_target
+from designs.requirement_targets import (
+    ASSUMED,
+    IntentStatus,
+    mark_unscoreable,
+    propose_intended_effect,
+    propose_target,
+)
 from designs.requirements_document import (
     LEGAL_TRANSITIONS,
     TERMINAL_STATUSES,
@@ -58,6 +64,30 @@ def _proposed_with_intent(value: float, effect: str) -> dict:
     and the intended effect together (issue #323, docs/adr/0030)."""
     target = propose_target(value=value, comparator="EQUALS", unit="Hz")
     target["intended_effect"] = propose_intended_effect(effect)
+    return target
+
+
+def _proposed_with_none_intent(value: float, reason: str) -> dict:
+    """A `propose_target` shape carrying a `NONE`-status `intended_effect`
+    (issue #228) -- "asked, and the prose asks nothing of the wave"
+    (ADR-0030's "having none is a legal answer"), built directly as a
+    literal dict rather than through a dedicated `mark_intent_none`
+    function. Issue #228's resolution ruled that function out for the same
+    reason `confirm_intent` was ruled out (a second, tool-callable path
+    around the Requirements document's own review gate) while still
+    requiring `NONE` to be settable while a document is being drafted, so
+    this is exactly how an interviewing agent would compose that entry
+    before the document is ever confirmed -- see
+    designs.requirement_targets.IntentStatus's own docstring."""
+    target = propose_target(value=value, comparator="EQUALS", unit="Hz")
+    target["intended_effect"] = {
+        "effect": None,
+        "status": IntentStatus.NONE.value,
+        "provenance": ASSUMED,
+        "reason": reason,
+        "confirmed_by": None,
+        "confirmed_at": None,
+    }
     return target
 
 
@@ -493,3 +523,68 @@ def test_extract_requirement_fields_does_not_mutate_its_inputs():
     extract_requirement_fields(requirements, confirmed)
     assert "target" not in requirements["req-1"]
     assert "intended_effect" not in requirements["req-1"]
+
+
+# ---------------------------------------------------------------------------
+# intended_effect's status/reason/confirmed_by/confirmed_at (issue #228) --
+# populated from a CONFIRMED document via extract_requirement_fields, and
+# NONE (asked, and the answer is nothing) must read differently from a
+# requirement no one has stated an intended_effect for at all yet.
+# ---------------------------------------------------------------------------
+
+
+def test_extract_requirement_fields_carries_the_new_status_lifecycle_fields():
+    """status/reason/confirmed_by/confirmed_at all survive extraction
+    unchanged from whatever propose_intended_effect produced --
+    extract_requirement_fields copies the document's intended_effect
+    sub-dict through attach_intent as-is, the same pass-through treatment
+    target's own target_status/reason/confirmed_by/confirmed_at already
+    get (test_extract_requirement_fields_writes_target_and_intended_effect
+    already shows target_status stays "PROPOSED" post-extraction)."""
+    requirement_targets = {"req-1": _proposed_with_intent(2.4e9, "behave as a magnetic mirror")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"}, narrative="v1", requirement_targets=requirement_targets
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "some prose"}}
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    intended_effect = updated["req-1"]["intended_effect"]
+    assert intended_effect["status"] == "PROPOSED"
+    assert intended_effect["reason"] is None
+    assert intended_effect["confirmed_by"] is None
+    assert intended_effect["confirmed_at"] is None
+
+
+def test_extract_requirement_fields_distinguishes_none_from_not_yet_asked():
+    """issue #228 acceptance criterion: `NONE` (asked, and the customer's
+    prose asks nothing of the wave -- ADR-0030's "having none is a legal
+    answer") must be distinguishable after extraction from a requirement no
+    one has stated an intended_effect for at all yet. The former carries an
+    explicit status="NONE" + reason; the latter simply has no
+    `intended_effect` key at all, exactly like
+    test_extract_requirement_fields_leaves_a_requirement_without_a_stated_effect
+    already shows for a document entry with no `intended_effect` key."""
+    requirement_targets = {
+        "req-1": _proposed_with_none_intent(5.0, "bend radius asks nothing of the wave"),
+        "req-2": _proposed(1.5),  # no intended_effect key at all -- "not yet asked"
+    }
+    document = draft_requirements_document(
+        requirement_ids={"req-1", "req-2"},
+        narrative="bend radius <= 5 mm; VSWR <= 1.5, effect not yet discussed",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1", "req-2"})
+
+    requirements = {
+        "req-1": {"requirement": "bend radius <= 5 mm"},
+        "req-2": {"requirement": "VSWR <= 1.5"},
+    }
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    assert updated["req-1"]["intended_effect"]["status"] == "NONE"
+    assert updated["req-1"]["intended_effect"]["effect"] is None
+    assert updated["req-1"]["intended_effect"]["reason"] == "bend radius asks nothing of the wave"
+    assert updated["req-1"]["intended_effect"]["provenance"] == "ASSUMED"
+    assert "intended_effect" not in updated["req-2"]
