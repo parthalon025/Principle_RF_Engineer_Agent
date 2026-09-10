@@ -403,6 +403,126 @@ def test_a_simulation_naming_no_function_is_refused_not_filed_as_nec2():
         _tool_name_for(decision)
 
 
+# ---------------------------------------------------------------------------
+# Issue #400: decision.input must not be silently dropped from a
+# calculation/simulation/optimization/measurement/correlation decision's
+# persisted engineering_results.value -- for every one of those five kinds,
+# not just the combinatorial-optimization case the issue was filed against
+# (a combinatorial OPTIMIZATION step's decision.input carries the exact
+# symbol_entries/process_id/frequency_hz query that resolved each matched
+# symbol_alphabet_entries row -- see optimization/combinatorial.py's
+# SymbolOption.entry_id and CombinatorialPlacementResult.entry_id_layout
+# for the other half of this same issue). Exercised as a pure unit test
+# directly against the private _flush_target_for, the same "reach for the
+# private function directly" precedent test_external_measurement_is_
+# recorded_as_record_external_measurement above already sets for this
+# module: _flush_target_for only BUILDS a _FlushTarget, it never executes
+# designs_db.record_engineering_result against a real connection, so no
+# database is needed either way.
+# ---------------------------------------------------------------------------
+
+
+def _engineering_result_decision(
+    step: DesignStep, kind: str, step_input: dict[str, Any], result: dict[str, Any]
+) -> Any:
+    from orchestration.design_loop import LoopDecision
+
+    return LoopDecision(
+        step=step.value,
+        kind=kind,
+        input=step_input,
+        result=result,
+        provenance="CALCULATED",
+        approved_by=None,
+        recorded_at=0.0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("step", "kind"),
+    [
+        (DesignStep.ANALYSIS, "calculation"),
+        (DesignStep.SIMULATION, "simulation"),
+        (DesignStep.OPTIMIZATION, "optimization"),
+        (DesignStep.MEASUREMENT, "measurement"),
+        (DesignStep.CORRELATION, "correlation"),
+    ],
+)
+def test_flush_target_for_folds_decision_input_into_engineering_result_value(step, kind):
+    """Before this fix, _flush_target_for's ENGINEERING_RESULT_KINDS branch
+    persisted only decision.result -- decision.input was silently dropped
+    at the flush boundary, for every one of these five decision kinds."""
+    from orchestration.tooling import _flush_target_for
+
+    decision = _engineering_result_decision(
+        step,
+        kind,
+        step_input={"process_id": 7, "note": "resolved against real inputs"},
+        # Issue #334 (merged after this test was written): ANALYSIS and
+        # SIMULATION dispatch per design family and no longer fall back to
+        # a per-step table name, so a decision of either kind must state
+        # which function actually ran. The value itself is irrelevant to
+        # what this test checks (decision.input riding along); it only
+        # needs to be present so _tool_name_for doesn't raise.
+        result={"achieved_value": 42.0, "function": f"{kind}_function"},
+    )
+
+    target = _flush_target_for(
+        decision,
+        design_id=1,
+        design_key="X",
+        loop_id="loop-1",
+        iteration=1,
+        design_family=None,
+        design_family_canonical=None,
+    )
+
+    assert target is not None
+    value = target.kwargs["value"]
+    # The result's own field(s) must still be reachable at the TOP level --
+    # orchestration/solver.py's _prior_best_from_design reads a persisted
+    # row's value this way for ANALYSIS/SIMULATION/OPTIMIZATION, and this
+    # shape must not silently move underneath it.
+    assert value["achieved_value"] == 42.0
+    # ... and decision.input, previously dropped entirely, now rides along.
+    assert value["input"] == {"process_id": 7, "note": "resolved against real inputs"}
+
+
+def test_flush_target_for_engineering_result_value_keeps_the_scored_field_readable():
+    """A more pointed version of the "top-level, not nested" guarantee
+    above, against ANALYSIS's real scored field name
+    (orchestration/score_fields.py's own `resonant_frequency_hz`/Hz entry):
+    proves the field orchestration.solver._score_step/_prior_best_from_
+    design reads is still directly readable on the flushed value after
+    decision.input is folded in -- i.e. that folding it in never shadows
+    the field actually being scored."""
+    from orchestration.tooling import _flush_target_for
+
+    decision = _engineering_result_decision(
+        DesignStep.ANALYSIS,
+        "calculation",
+        step_input={"target_frequency_hz": 2.45e9},
+        # "function" required since issue #334 (merged after this test was
+        # written): ANALYSIS dispatches per design family and no longer
+        # falls back to a per-step table name.
+        result={"resonant_frequency_hz": 2.451e9, "function": "patch_resonant_frequency_hz"},
+    )
+
+    target = _flush_target_for(
+        decision,
+        design_id=1,
+        design_key="X",
+        loop_id="loop-1",
+        iteration=1,
+        design_family=None,
+        design_family_canonical=None,
+    )
+
+    value = target.kwargs["value"]
+    assert value["resonant_frequency_hz"] == pytest.approx(2.451e9)
+    assert value["input"]["target_frequency_hz"] == pytest.approx(2.45e9)
+
+
 def test_inspect_design_loop_state_passes_through_design_fields(cleanup_designs):
     state = start_new_design_loop("TOOL-2", "Inspect Test", "A", REQUIREMENTS)
     cleanup_designs.append(state["design_id"])

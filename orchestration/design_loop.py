@@ -2002,7 +2002,22 @@ def _combinatorial_candidate_options(
             achieved_value = _reduce_response_at_frequency(
                 entry["response"], frequency_hz, response_field
             )
-            options.append(_SymbolOption(symbol_id=symbol, achieved_value=achieved_value))
+            # entry_id (issue #400): the matched row's own `id`, when it has
+            # one -- a REAL `designs.element_alphabet.fetch_symbol_entries`
+            # row always does (it's the table's own `BIGSERIAL PRIMARY
+            # KEY`, via `SELECT *`). `.get`, not `entry["id"]`: a hand-built
+            # fixture entry (a test's own `symbol_entries`, standing in for
+            # the not-yet-existing Element/Coding-Alphabet library
+            # lookup -- see this function's own docstring) may omit `id`
+            # entirely, and `None` here is the honest "not resolved against
+            # a real row" reading `SymbolOption.entry_id`'s own docstring
+            # already documents, not a reason to raise on a well-formed but
+            # id-less caller-supplied entry.
+            options.append(
+                _SymbolOption(
+                    symbol_id=symbol, achieved_value=achieved_value, entry_id=entry.get("id")
+                )
+            )
     return options
 
 
@@ -2029,13 +2044,22 @@ def _combinatorial_result_to_dict(result: Any) -> dict[str, Any]:
             "i": i,
             "j": j,
             "candidates": [
-                {"symbol_id": option.symbol_id, "achieved_value": option.achieved_value}
+                {
+                    "symbol_id": option.symbol_id,
+                    "achieved_value": option.achieved_value,
+                    # entry_id (issue #400): the matched symbol_alphabet_
+                    # entries.id this option resolved from, so a candidate
+                    # that was AVAILABLE at (i, j) but not chosen is still
+                    # traceable to its own measured row, not just the
+                    # winning cell's own entry_id_layout entry below.
+                    "entry_id": option.entry_id,
+                }
                 for option in options
             ],
         }
         # Row-major, j-outer/i-inner -- the SAME grid-walk order
         # optimization.combinatorial's own `positions = [(i, j) for j in
-        # range(n_rows) for i in range(n_cols)]` and `_layout_from_choices`'s
+        # range(n_rows) for i in range(n_cols)]` and `_grid_from_choices`'s
         # `layout[j][i]` already use, so this debug/audit snapshot's order
         # agrees with every other grid walk this feature touches (each
         # entry is still self-describing via its own "i"/"j" fields either
@@ -2057,6 +2081,14 @@ def _combinatorial_result_to_dict(result: Any) -> dict[str, Any]:
         "function": "combinatorial_symbol_placement",
         "method": result.method,
         "layout": result.layout,
+        # entry_id_layout (issue #400): the SAME [j][i] shape as "layout"
+        # above, naming which measured symbol_alphabet_entries row -- and
+        # therefore which process/machine/ink -- backed the WINNING choice
+        # at each cell. A bare symbol_id in "layout" cannot answer that on
+        # its own: several entries can share one symbol/band/incidence-
+        # angle-range/process (ADR-0027 point 4's "two runs are still two
+        # distinct rows" rule).
+        "entry_id_layout": result.entry_id_layout,
         "achieved_error": result.achieved_error,
         "evaluations": result.evaluations,
         "target": result.target,

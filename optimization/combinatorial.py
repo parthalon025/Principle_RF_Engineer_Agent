@@ -17,25 +17,27 @@ Delta_phi_max unlike-neighbour phase-coupling budget (CONTEXT.md:
 `Delta_phi_max`) that `geometry.unit_cell.block_size_from_sizing_rule`
 already derives elsewhere in this project from the same requirement.
 
-BLOCKED ON THE ELEMENT/CODING-ALPHABET LIBRARY (issue #256): this module
-never fetches candidate symbols itself. `candidates` is a plain argument the
-caller supplies -- in production, sourced from a real Element/
-Coding-Alphabet library lookup ("which characterised symbols exist for this
-family/band/process, inside this array's declared incidence-angle range");
-no such persistent store exists in this tree yet (CONTEXT.md: Element/
-Coding-Alphabet library; ADR-0027 is explicit that only a PRINTED AND
-MEASURED shape is a letter). Every test in
-tests/test_combinatorial_optimizer.py supplies its own small, hand-built
-FAKE `candidates` dict for exactly this reason -- this module is fully
-buildable and testable without that library existing, the same "caller
-fetches, this function only resolves" seam
+THIS MODULE STILL NEVER FETCHES CANDIDATE SYMBOLS ITSELF (issue #256):
+`candidates` is a plain argument the caller supplies -- in production,
+`orchestration.design_loop._optimize_combinatorial_symbol_placement`/
+`_combinatorial_candidate_options` is that caller, resolving it via
+`designs.element_alphabet.lookup_symbol_entries` against the real,
+persistent Element/Coding-Alphabet library (CONTEXT.md: Element/
+Coding-Alphabet library; `symbol_alphabet_entries`/`process_records`,
+db/schema.sql) that issue #256 has since built -- ADR-0027 is explicit that
+only a PRINTED AND MEASURED shape is a letter. Every test in
+tests/test_optimization.py's own combinatorial section supplies its own
+small, hand-built FAKE `candidates` dict instead, for exactly the same
+"caller fetches, this function only resolves" seam
 `designs.material_properties.resolve_material_property` and
 `geometry.unit_cell.generate_coded_unit_cell_array`'s own `symbol_library`
-argument already use for their own accumulate-once-and-reuse libraries. A
-placement this module returns is only as real as the `candidates` it was
-given; until a real alphabet-library lookup backs that argument, every
-placement is built from symbols that are -- by this project's own admission
-rule -- not yet letters at all (see this module's docstring; nothing here
+argument already use for their own accumulate-once-and-reuse libraries --
+this module remains fully buildable and testable without a live alphabet
+lookup on hand, but no longer because none exists in this tree. A placement
+this module returns is only as real as the `candidates` it was given; a
+caller-supplied option built from a hand-picked or fictitious symbol (not a
+real alphabet-library lookup) is still, by this project's own admission
+rule, not a letter at all (see this module's docstring; nothing here
 loosens that).
 
 HOW THE SEARCH WORKS: each grid position's symbol choice is encoded as an
@@ -125,10 +127,25 @@ class SymbolOption:
     phase specifically, only that lower `abs(achieved_value - target)` is
     better and that `delta_phi_max_deg` bounds how far apart two
     neighbours' `achieved_value`s may be.
+    `entry_id`: the matched `symbol_alphabet_entries.id` (db/schema.sql)
+    this candidate resolved from, when a real caller resolved it against
+    the Element/Coding-Alphabet library (issue #400) --
+    `orchestration.design_loop._combinatorial_candidate_options` is that
+    caller in production, populating this from the matched row's own `id`.
+    `None` is the honest default for a hand-built option (every fixture in
+    this module's own tests) with no backing database row to point at.
+    `symbol_id` ALONE cannot disambiguate between several measured entries
+    sharing the same family/symbol/band/incidence-angle-range/process --
+    ADR-0027 point 4's own worked example is exactly this: "two runs on
+    nominally identical settings are still two distinct,
+    independently-referenceable letters," never merged. `entry_id` is what
+    lets a later reader answer "which measured process (machine/ink/cure)
+    backed this exact cell", not merely "which symbol".
     """
 
     symbol_id: str
     achieved_value: float
+    entry_id: int | None = None
 
 
 class EmptyCandidateShelfError(ValueError):
@@ -169,6 +186,19 @@ class CombinatorialPlacementResult:
       `geometry.unit_cell.generate_coded_unit_cell_array`'s own `layout`
       argument shape, so it plugs directly into that function with no
       reshaping step in between (issue #255 User Story 16).
+    - `entry_id_layout`: the SAME `[j][i]` grid, but each cell holds the
+      winning `SymbolOption.entry_id` placed there instead of its
+      `symbol_id` (issue #400) -- `None` at a cell whose winning option
+      never carried a real `entry_id` (a hand-built test fixture). This is
+      what lets a later query answer "which specific measured
+      `symbol_alphabet_entries` row -- and therefore which process/
+      machine/ink -- backed cell (i, j)", which `layout` alone cannot: two
+      entries can share a `symbol_id` (ADR-0027 point 4). Defaults to
+      `None` (not computed) rather than a same-shaped grid of `None`s, so a
+      caller building a `CombinatorialPlacementResult` directly (this
+      module's own tests' `test_combinatorial_result_to_dict_orders_
+      candidate_snapshot_row_major`-style fakes) is not forced to supply
+      it just to exercise an unrelated field.
     - `achieved_error`: the winning placement's own raw (unpenalised) error
       against `target` -- see `_placement_error` for exactly what this
       aggregates.
@@ -212,6 +242,7 @@ class CombinatorialPlacementResult:
     candidate_snapshot: dict[Position, list[SymbolOption]]
     delta_phi_max_deg: float
     random_seed: int | None
+    entry_id_layout: list[list[int | None]] | None = None
     warnings: list[str] = field(default_factory=list)
     objective_name: str | None = None
     provenance: str = "CALCULATED"
@@ -272,13 +303,16 @@ def _neighbour_violation(
     return violation
 
 
-def _layout_from_choices(
-    choices: dict[Position, SymbolOption], n_cols: int, n_rows: int
-) -> list[list[str]]:
-    """Build a `layout[j][i]` grid of symbol ids from a resolved
-    per-position `SymbolOption` choice -- exactly
-    `generate_coded_unit_cell_array`'s own `layout` shape."""
-    return [[choices[(i, j)].symbol_id for i in range(n_cols)] for j in range(n_rows)]
+def _grid_from_choices(
+    choices: dict[Position, SymbolOption], n_cols: int, n_rows: int, attr: str
+) -> list[list[Any]]:
+    """Build a `[j][i]` grid of one `SymbolOption` attribute from a resolved
+    per-position choice. `attr="symbol_id"` is exactly
+    `generate_coded_unit_cell_array`'s own `layout` shape; `attr="entry_id"`
+    is `CombinatorialPlacementResult.entry_id_layout` (issue #400) -- that
+    field's own docstring explains why a bare symbol id cannot answer
+    "which measured process backed this cell" on its own."""
+    return [[getattr(choices[(i, j)], attr) for i in range(n_cols)] for j in range(n_rows)]
 
 
 def combinatorial_symbol_placement(
@@ -396,7 +430,8 @@ def combinatorial_symbol_placement(
         # see optimization/base.py's validate_parameters). Build and score
         # the single possible placement directly.
         raw_error, feasible = _score(fixed_choices)
-        layout = _layout_from_choices(fixed_choices, n_cols, n_rows)
+        layout = _grid_from_choices(fixed_choices, n_cols, n_rows, "symbol_id")
+        entry_id_layout = _grid_from_choices(fixed_choices, n_cols, n_rows, "entry_id")
         evaluations = [{"layout": layout, "error": raw_error, "feasible": feasible}]
         if not feasible:
             warnings.append(
@@ -413,6 +448,7 @@ def combinatorial_symbol_placement(
             candidate_snapshot=candidate_snapshot,
             delta_phi_max_deg=delta_phi_max_deg,
             random_seed=random_seed,
+            entry_id_layout=entry_id_layout,
             warnings=warnings,
             objective_name=objective_name,
         )
@@ -455,14 +491,15 @@ def combinatorial_symbol_placement(
         raw_error, feasible = _score(choices)
         evaluations.append(
             {
-                "layout": _layout_from_choices(choices, n_cols, n_rows),
+                "layout": _grid_from_choices(choices, n_cols, n_rows, "symbol_id"),
                 "error": raw_error,
                 "feasible": feasible,
             }
         )
 
     best_choices = _decode(ga_result.best_parameters)
-    best_layout = _layout_from_choices(best_choices, n_cols, n_rows)
+    best_layout = _grid_from_choices(best_choices, n_cols, n_rows, "symbol_id")
+    best_entry_id_layout = _grid_from_choices(best_choices, n_cols, n_rows, "entry_id")
     best_error, best_feasible = _score(best_choices)
 
     if not best_feasible:
@@ -482,6 +519,7 @@ def combinatorial_symbol_placement(
         candidate_snapshot=candidate_snapshot,
         delta_phi_max_deg=delta_phi_max_deg,
         random_seed=random_seed,
+        entry_id_layout=best_entry_id_layout,
         warnings=warnings,
         objective_name=objective_name,
     )

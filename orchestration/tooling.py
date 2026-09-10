@@ -407,7 +407,29 @@ def _flush_target_for(
             {
                 "design_id": design_id,
                 "tool_name": _tool_name_for(decision),
-                "value": decision.result,
+                # decision.result's own fields spread at the TOP level, plus
+                # decision.input carried along under an "input" key (issue
+                # #400) -- NOT nested as {"result": ..., "input": ...}:
+                # orchestration/solver.py's _prior_best_from_design reads a
+                # prior persisted row's value back and indexes straight
+                # into it for the scored field (e.g.
+                # value["resonant_frequency_hz"]), so nesting decision.
+                # result under a "result" key would silently break that
+                # reader for every row this flush writes. Before this fix,
+                # decision.input was dropped here for every calculation/
+                # simulation/optimization/measurement/correlation decision,
+                # not just the combinatorial-optimization case issue #400
+                # was filed against -- e.g. the resolved symbol_entries a
+                # combinatorial OPTIMIZATION step matched against
+                # (decision.input["symbol_entries"]) never reached the
+                # persisted row, even though optimization.combinatorial.
+                # SymbolOption.entry_id/CombinatorialPlacementResult.
+                # entry_id_layout (this same issue) already name WHICH
+                # matched entry backed each cell. Safe to spread
+                # unguarded: no step handler in orchestration/design_loop.py
+                # returns a result dict with an "input" key of its own
+                # (grep confirms it).
+                "value": {**decision.result, "input": decision.input},
                 "provenance": decision.provenance,
             },
         )
