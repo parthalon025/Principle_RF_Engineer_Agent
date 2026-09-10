@@ -1,20 +1,20 @@
 """Tests for agent/mcp_roles.py -- the MCP-native role/tool-filter
 construction (issue #318, ADR-0032).
 
-This is a NEW module, built entirely alongside agent/main.py's existing
-@function_tool/ROLES construction -- see agent/mcp_roles.py's own module
-docstring for the full rationale. `tests/test_agent_roles.py` stays scoped
-to `agent.main`'s existing construction (its own module docstring says so
-explicitly); this file is the equivalent coverage for the new one, matching
-this repo's one-test-file-per-module convention.
+See agent/mcp_roles.py's own module docstring for the full rationale.
+`tests/test_agent_roles.py` stays scoped to `agent.main`'s own construction;
+this file is the equivalent coverage for this one, matching this repo's
+one-test-file-per-module convention.
 
 Two kinds of proof are used here, deliberately:
 
-1. Plain, synchronous, no-I/O tests that the new construction's per-role
-   `create_static_tool_filter` allow-lists are DERIVED from (not a second,
-   hand-typed copy of) agent/main.py's current `ROLES[key].tools`/
-   `_PRINCIPAL_DIRECT_TOOLS` -- the literal wording of issue #318's own
-   acceptance criteria.
+1. Plain, synchronous, no-I/O tests of where each role's per-role
+   `create_static_tool_filter` allow-list comes from: `MIGRATED_ROLE_TOOL_
+   NAMES` for principal/systems/verification, whose `@function_tool`
+   wrappers are gone; still DERIVED from (not a second, hand-typed copy of)
+   agent/main.py's `ROLES[key].tools` for microwave/antenna/test, whose
+   wrappers remain -- the literal wording of issue #318's own acceptance
+   criteria, for as long as those two surfaces both exist for a role.
 2. A REAL MCP-protocol round trip (spawning `mcp_server/server.py` as a
    genuine subprocess, exactly like `tests/test_mcp_server_protocol.py`
    already does for the unfiltered server) proving the filter isn't just a
@@ -32,8 +32,9 @@ import sys
 import pytest
 from agents import Agent, RunContextWrapper
 
-from agent.main import _PRINCIPAL_DIRECT_TOOLS, ROLE_SPECS, ROLES
+from agent.main import ROLE_SPECS, ROLES
 from agent.mcp_roles import (
+    MIGRATED_ROLE_TOOL_NAMES,
     ROLE_KEYS,
     ROLE_MCP_TOOL_FILTERS,
     MissingProvenanceTrackingContextError,
@@ -43,8 +44,12 @@ from agent.mcp_roles import (
     build_role_mcp_server,
     provenance_integrity_guardrail,
 )
+from mcp_server.server import mcp as mcp_server
 
 _SPECIALIST_KEYS = ["systems", "microwave", "antenna", "test", "verification"]
+# The specialists whose tools agent/main.py still wraps, so their filter is
+# still derived from ROLE_SPECS rather than owned here.
+_OLD_PATH_SPECIALIST_KEYS = ["microwave", "antenna", "test"]
 _ROLE_SPECS_BY_KEY = {spec.key: spec for spec in ROLE_SPECS}
 
 
@@ -73,45 +78,45 @@ def test_every_role_has_a_static_allow_list_filter():
         assert len(tool_filter["allowed_tool_names"]) > 0, f"role {role_key!r} has no tools"
 
 
-def test_principal_filter_matches_principal_direct_tools_exactly():
-    # The ticket's own headline regression: the principal's filter must be
-    # sourced from _PRINCIPAL_DIRECT_TOOLS (16 tools -- issue #327 added
-    # search_literature_for_capability_warning as the 16th, principal-
-    # exclusive since it fires on a capability_warnings entry the design
-    # loop itself produced), never from ROLE_SPECS's own dead
-    # `principal.tools = _ALL_TOOLS` entry (89 tools) -- getting this wrong
+@pytest.mark.parametrize("role_key", sorted(MIGRATED_ROLE_TOOL_NAMES))
+def test_migrated_role_filter_is_this_modules_own_list(role_key):
+    allowed = ROLE_MCP_TOOL_FILTERS[role_key]["allowed_tool_names"]
+    assert list(allowed) == list(MIGRATED_ROLE_TOOL_NAMES[role_key])
+
+
+def test_principal_filter_is_the_scoped_sixteen_not_every_tool():
+    # The ticket's own headline regression: giving the principal every tool
     # reproduces the already-fixed 91-tool-principal reliability bug (see
-    # agent/main.py's _PRINCIPAL_DIRECT_TOOLS comment).
+    # MIGRATED_ROLE_TOOL_NAMES's own comment). 16 tools -- issue #327 added
+    # search_literature_for_capability_warning as the 16th, principal-
+    # exclusive since it fires on a capability_warnings entry the design loop
+    # itself produced.
     principal_allowed = set(ROLE_MCP_TOOL_FILTERS["principal"]["allowed_tool_names"])
-    expected = {tool.name for tool in _PRINCIPAL_DIRECT_TOOLS}
-    assert principal_allowed == expected
     assert len(principal_allowed) == 16
+    registered = {tool.name for tool in asyncio.run(mcp_server.list_tools())}
+    assert principal_allowed < registered
 
 
-def test_principal_filter_does_not_match_role_specs_dead_entry():
-    # ROLE_SPECS's own "principal" entry still carries the dead
-    # `tools=list(_ALL_TOOLS)` assignment (agent/main.py never reads it back
-    # for the real ROLES["principal"] Agent -- that gets overwritten right
-    # after ROLES is built, using _PRINCIPAL_DIRECT_TOOLS instead). Confirm
-    # the new construction's filter deliberately does NOT match that dead,
-    # much-larger entry, so a future refactor that accidentally re-sources
-    # this from ROLE_SPECS instead of _PRINCIPAL_DIRECT_TOOLS fails loudly
-    # here.
-    dead_entry_names = {tool.name for tool in _ROLE_SPECS_BY_KEY["principal"].tools}
-    principal_allowed = set(ROLE_MCP_TOOL_FILTERS["principal"]["allowed_tool_names"])
-    assert len(dead_entry_names) > len(principal_allowed)
-    assert principal_allowed != dead_entry_names
-    assert principal_allowed < dead_entry_names  # every principal-direct tool is also in _ALL_TOOLS
+@pytest.mark.parametrize("role_key", sorted(MIGRATED_ROLE_TOOL_NAMES))
+def test_migrated_role_filter_is_not_sourced_from_role_specs(role_key):
+    # A migrated role's RoleSpec carries no tools at all now, so a future
+    # refactor that quietly re-sourced these filters from ROLE_SPECS would
+    # hand that role an EMPTY allow-list -- a live role that can call
+    # nothing, with no import error to announce it. This is the check that
+    # would catch that.
+    assert _ROLE_SPECS_BY_KEY[role_key].tools == []
+    assert ROLES[role_key].tools == []
+    assert ROLE_MCP_TOOL_FILTERS[role_key]["allowed_tool_names"]
 
 
-@pytest.mark.parametrize("role_key", _SPECIALIST_KEYS)
+@pytest.mark.parametrize("role_key", _OLD_PATH_SPECIALIST_KEYS)
 def test_specialist_filter_matches_role_specs_tools_exactly(role_key):
     allowed = set(ROLE_MCP_TOOL_FILTERS[role_key]["allowed_tool_names"])
     expected = {tool.name for tool in _ROLE_SPECS_BY_KEY[role_key].tools}
     assert allowed == expected
 
 
-@pytest.mark.parametrize("role_key", _SPECIALIST_KEYS)
+@pytest.mark.parametrize("role_key", _OLD_PATH_SPECIALIST_KEYS)
 def test_specialist_filter_matches_the_live_roles_dict_tools(role_key):
     # Belt-and-suspenders: also compare against agent.main.ROLES[key].tools
     # directly (the actual constructed Agent's tool list), not only

@@ -156,7 +156,9 @@ from conftest import (
     make_fake_executable,
 )
 
+import agent.main as agent_main
 from orchestration.design_loop import start_design_loop
+from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 
 # Finding 3 (module docstring above) is confirmed Windows-specific, not a
 # general mcp/anyio defect -- see the tests that reference this constant for
@@ -250,9 +252,15 @@ def test_plain_schema_tool_agrees_on_the_computed_value():
     assert _decode_mcp_tool_output(new_raw) == pytest.approx(old_raw)
 
 
-def test_design_loop_state_tool_agrees_on_the_full_state(tmp_path: Path):
+def test_design_loop_state_tool_has_only_the_new_path_left_and_it_works(tmp_path: Path):
     """inspect_design_loop_state: a strict_mode=False tool (its `state`
-    param is a free-form dict) on the "principal" role's direct tools.
+    param is a free-form dict) on the "principal" role. There is no OLD path
+    left to compare against -- the principal reaches every tool it holds
+    over MCP, so this tool's `agent/main.py` wrapper was deleted and the
+    server's implementation is the only one. What is still worth asserting
+    is that the surviving path returns what the underlying function returns,
+    and that the OLD one really is gone rather than merely unused.
+
     Built with no `design_id` (orchestration.design_loop.start_design_loop
     is the pure, no-database constructor `start_new_design_loop`/
     `start_design_loop`'s tool wrapper itself calls after creating a real
@@ -261,13 +269,13 @@ def test_design_loop_state_tool_agrees_on_the_full_state(tmp_path: Path):
     this never touches the database" behavior)."""
     state = start_design_loop({"gain_dbi": {"threshold": 5.0, "unit": "dBi"}}).to_dict()
 
-    old_raw = invoke_agent_tool("inspect_design_loop_state", state=state)
+    wrapped = {t.name for role in agent_main.ROLES.values() for t in role.tools}
+    assert "inspect_design_loop_state" not in wrapped
+
     new_raw = invoke_role_mcp_tool("principal", "inspect_design_loop_state", state=state)
 
-    assert isinstance(old_raw, dict)
     assert isinstance(new_raw, dict) and new_raw.get("type") == "text"
-
-    assert _decode_mcp_tool_output(new_raw) == old_raw
+    assert _decode_mcp_tool_output(new_raw) == _inspect_design_loop_state(state)
 
 
 def _write_fake_nec2pp_exit_0(tmp_path: Path) -> Path:

@@ -163,11 +163,15 @@ and a design's own move to `RELEASED` — simply keeps refusing.
 
 ## The agent surface
 
-The same capabilities are reachable two ways: as **agent tools** (`agent/main.py`) and over
-**MCP** (`mcp_server/server.py`, stdio). Both are governed by `policies/tool_policy.yaml`.
+Every capability is registered over **MCP** (`mcp_server/server.py`, stdio). A subset is also
+wrapped as directly-attached **agent tools** in `agent/main.py` — the ones the microwave,
+antenna and test roles need, because those roles run external solvers and a solver call over
+the MCP stdio transport hangs on native Windows ([#372][i372]). Both surfaces are governed by
+`policies/tool_policy.yaml`.
 
-`agent/main.py` splits the work across six roles, each scoped to only the tools its
-discipline needs:
+The work splits across six roles, each scoped to only the tools its discipline needs. The
+principal, systems and verification roles are built in `agent/mcp_roles.py` and reach every
+tool they hold over MCP; the other three are built in `agent/main.py`:
 
 | Role | Focus |
 |---|---|
@@ -560,6 +564,7 @@ Issues live in [this repo's GitHub Issues][issues], with the label vocabulary
 <!-- link definitions -->
 [uv]: https://docs.astral.sh/uv/
 [i99]: https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/99
+[i372]: https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/372
 [issues]: https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues
 [adr3]: docs/adr/0003-no-review-gate-for-component-extraction.md
 [adr4]: docs/adr/0004-self-hosted-backend-for-restricted-data.md

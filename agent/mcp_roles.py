@@ -15,21 +15,20 @@ provenance-integrity guardrail a working home in the new shape -- WITHOUT
 touching a single line of `agent/main.py`'s own construction.
 
 `agent/main.py`'s `run()` now drives this construction live for principal,
-systems and verification. microwave, antenna and test stay on
+systems and verification, and this module owns those three roles' tool-name
+lists outright -- their `@function_tool` wrappers are deleted, so there is no
+second copy left to agree with. microwave, antenna and test stay on
 `agent/main.py`'s own `ROLES` construction, because they hold every
 subprocess-shelling tool, and those hang indefinitely over this transport on
-native Windows (see `tests/test_mcp_tool_call_parity.py`'s module docstring).
-`agent/main.py`'s 87+ `@function_tool` wrappers are all still in place, and
-still the only construction microwave/antenna/test use.
+native Windows (see `tests/test_mcp_tool_call_parity.py`'s module docstring);
+their allow-lists are still derived from `ROLE_SPECS`, not re-typed, since
+both surfaces genuinely still exist for them.
 
-What is proven by test: each role's `create_static_tool_filter` allow-list is
-BYTE-FOR-BYTE the same tool-name set `agent/main.py` already grants that
-role today (derived from the same source objects, not hand-copied --
-copying the list a second time here would just recreate the exact
-two-places-must-agree problem ADR-0032 exists to eliminate), including a
-real MCP-protocol round trip proving the filter actually restricts
-`tools/list` to that set over the wire (not just as a config literal); and
-the provenance guardrail fires under exactly the same condition
+What is proven by test: a real MCP-protocol round trip per role showing the
+filter actually restricts `tools/list` to that role's exact set over the
+wire (not just as a config literal) -- which is also what catches a name in
+`MIGRATED_ROLE_TOOL_NAMES` that no longer exists server-side; and the
+provenance guardrail firing under exactly the same condition
 `agent/main.py`'s `_assert_calculated_provenance_is_tool_backed` does today.
 
 WHY A PRINCIPAL CAN MIX OLD-STYLE AND NEW-STYLE HANDOFF TARGETS: read
@@ -68,20 +67,18 @@ from agents.lifecycle import AgentHooks
 from agents.mcp import MCPServerStdio, ToolFilterStatic, create_static_tool_filter
 from agents.mcp.server import MCPServerStdioParams
 
-# These five names are module-private to agent/main.py (leading underscore
+# These four names are module-private to agent/main.py (leading underscore
 # applied by that module's own author) rather than the "import a public name
 # and re-alias it _locally" pattern used elsewhere in this repo (e.g.
 # `from designs.service import create_design as _create_design`). Reaching
 # into them directly is deliberate: they ARE the single source of truth this
 # ticket exists to reuse rather than re-derive (see this module's own
-# docstring, "derived from the same source objects, not hand-copied"), and
-# `agent/main.py` cannot be touched to re-export them publicly without
+# docstring), and `agent/main.py` cannot be touched to re-export them without
 # violating issue #318's own scope. The failure mode if agent/main.py ever
 # renames one of these is loud, not silent: this import raises `ImportError`
 # at collection/import time, well before any test assertion runs -- there is
 # no linter warning, but there is also no way to miss it.
 from agent.main import (
-    _PRINCIPAL_DIRECT_TOOLS,
     _SPEC_BY_KEY,
     SYSTEM_PROMPT,
     _local_reasoning_output_tail,
@@ -101,31 +98,105 @@ ROLE_KEYS: tuple[str, ...] = (
     "verification",
 )
 
+# The roles that reach every tool they hold over this construction and
+# nothing else, so this module -- not `agent/main.py`'s `RoleSpec.tools` --
+# is where their tool-name list lives. Names, not `FunctionTool` objects:
+# `agent/main.py` no longer wraps most of these, and a name is all
+# `create_static_tool_filter` and `mcp_server/server.py` ever needed.
+# `tests/test_mcp_roles.py` spawns the real server per role and asserts the
+# wire-level `tools/list` response equals the list below, so a typo or a
+# name that stops existing server-side fails loudly rather than silently
+# narrowing that role's reach.
+MIGRATED_ROLE_TOOL_NAMES: dict[str, tuple[str, ...]] = {
+    # Design-record management, the design-iteration loop, and the two search
+    # tools this role shares with others. Deliberately small: giving one
+    # agent dozens of granular calculation/simulation tools at once
+    # measurably degrades tool-selection reliability on a local model
+    # (confirmed by this repo's own testing -- a 1-tool agent called
+    # correctly every time, an 86-tool principal never called a real tool at
+    # all, and a 21-tool specialist hallucinated a tool name absent from its
+    # own schema), matching Anthropic's own "fewer, higher-leverage tools"
+    # guidance. Everything else stays reachable through a
+    # `route_to_<role>_role` handoff.
+    "principal": (
+        "create_design",
+        "read_design",
+        "record_decision",
+        "verify_requirement",
+        "advance_design_status",
+        "propose_requirement_target",
+        "mark_requirement_unscoreable",
+        "confirm_requirement_target",
+        "search_knowledge",
+        "search_design_records",
+        "start_design_loop",
+        "advance_design_loop_step",
+        "inspect_design_loop_state",
+        "compile_lab_test_plan",
+        "run_candidate_search",
+        "search_literature_for_capability_warning",
+    ),
+    "systems": (
+        "calculate_wavelength",
+        "calculate_vswr",
+        "calculate_return_loss",
+        "calculate_cascade_gain",
+        "calculate_noise_figure",
+        "convert_db_to_linear",
+        "convert_linear_to_db",
+        "calculate_free_space_path_loss",
+        "calculate_link_budget_margin",
+        "calculate_cascade_output_ip3",
+        "calculate_oip3_from_iip3",
+        "calculate_iip3_from_oip3",
+        "calculate_third_order_intermod_output",
+        "calculate_third_order_intermod_dbc",
+        "ingest_document",
+        "ingest_arxiv_paper",
+        "search_arxiv_papers",
+        "ingest_3gpp_spec",
+        "lookup_3gpp_spec_status",
+        "ingest_etsi_standard",
+        "ingest_etsi_ipr_declaration",
+        "ingest_fcc_rule",
+        "search_fcc_rules",
+        "ingest_patent",
+        "search_uspto_patents",
+        "index_document",
+        "search_knowledge",
+        "lookup_digikey_component",
+        "lookup_digikey_product_details",
+        "lookup_mouser_component",
+        "lookup_nexar_component",
+        "lookup_nexar_part_data",
+        "reconcile_component_sources",
+        "search_ink_product",
+    ),
+    "verification": (
+        "read_document",
+        "search_knowledge",
+        "search_design_records",
+        "extract_components",
+    ),
+}
+
 
 def _allowed_tool_names_for_role(role_key: str) -> list[str]:
-    """The exact tool-name allow-list for one role, DERIVED from
-    `agent/main.py`'s current construction rather than a second, hand-typed
-    copy of it: `_PRINCIPAL_DIRECT_TOOLS` for the principal, never
-    `ROLE_SPECS`'s own dead `principal.tools = list(_ALL_TOOLS)` entry (89
-    tools) -- using that dead entry here would silently reproduce the
-    already-fixed 91-tool-principal reliability bug this repo's own testing
-    found (see `agent/main.py`'s `_PRINCIPAL_DIRECT_TOOLS` comment and
-    `tests/test_agent_roles.py::test_principal_role_is_scoped_not_broad`).
-    Every specialist's allow-list comes from `ROLE_SPECS[key].tools`
-    (`_SPEC_BY_KEY[key].tools`) directly -- the same list `agent/main.py`'s
-    own `ROLES[key] = Agent(..., tools=list(_SPEC_BY_KEY[key].tools))`
-    already builds each specialist Agent from.
+    """The exact tool-name allow-list for one role.
+
+    A migrated role's list comes from `MIGRATED_ROLE_TOOL_NAMES` above,
+    which owns it outright. Every other role's still comes from
+    `ROLE_SPECS[key].tools` (`_SPEC_BY_KEY[key].tools`) -- the same list
+    `agent/main.py`'s own `ROLES[key] = Agent(..., tools=list(...))` builds
+    that specialist Agent from, so the two can't drift while both exist.
     """
-    if role_key == "principal":
-        return [tool.name for tool in _PRINCIPAL_DIRECT_TOOLS]
+    if role_key in MIGRATED_ROLE_TOOL_NAMES:
+        return list(MIGRATED_ROLE_TOOL_NAMES[role_key])
     return [tool.name for tool in _SPEC_BY_KEY[role_key].tools]
 
 
 # One `create_static_tool_filter(allowed_tool_names=[...])` per role --
-# issue #318's own acceptance criteria, sourced from `_allowed_tool_names_for_role`
-# above rather than hand-copied. `tests/test_mcp_roles.py` verifies each of
-# these matches `agent/main.py`'s current `ROLES[key].tools`/
-# `_PRINCIPAL_DIRECT_TOOLS` name-for-name.
+# issue #318's own acceptance criteria.
 ROLE_MCP_TOOL_FILTERS: dict[str, ToolFilterStatic] = {
     role_key: create_static_tool_filter(allowed_tool_names=_allowed_tool_names_for_role(role_key))
     for role_key in ROLE_KEYS

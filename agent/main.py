@@ -1,7 +1,6 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from agents import (
@@ -22,58 +21,14 @@ from agents.models.default_models import get_default_model_settings
 from dotenv import load_dotenv
 from openai.types.shared import Reasoning
 
-from designs.requirement_targets import confirm_requirement_target as _confirm_requirement_target
-from designs.requirement_targets import (
-    mark_requirement_unscoreable as _mark_requirement_unscoreable,
-)
-from designs.requirement_targets import (
-    propose_requirement_target as _propose_requirement_target,
-)
-from designs.service import coerce_release_approval as _coerce_release_approval
-from designs.service import create_design as _create_design
-from designs.service import read_design as _read_design
-from designs.service import record_decision as _record_decision
 from designs.service import record_engineering_result as _record_engineering_result
-from designs.service import update_design_status as _update_design_status
-from designs.service import verify_requirement as _verify_requirement
 from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
-from knowledge.component_resolution import (
-    reconcile_components_from_matches as _reconcile_components_from_matches,
-)
-from knowledge.digikey import lookup_digikey_datasheet as _lookup_digikey_datasheet
-from knowledge.digikey import lookup_digikey_product_details as _lookup_digikey_product_details
-from knowledge.extract import extract_components as _extract_components
-from knowledge.index import index_document as _index_document
-from knowledge.ingest import ingest_document as _ingest_document
-from knowledge.ink_lookup import search_ink_product as _search_ink_product
-from knowledge.literature_search import (
-    search_literature_for_capability_warning as _search_literature_for_capability_warning,
-)
-from knowledge.mouser import lookup_mouser_datasheet as _lookup_mouser_datasheet
-from knowledge.nexar import lookup_nexar_datasheet as _lookup_nexar_datasheet
-from knowledge.nexar import lookup_nexar_part_data as _lookup_nexar_part_data
-from knowledge.read import read_document as _read_document
-from knowledge.search import search_design_records as _search_design_records
 from knowledge.search import search_knowledge as _search_knowledge
-from knowledge.sourcing.arxiv import ingest_arxiv_paper as _ingest_arxiv_paper
-from knowledge.sourcing.arxiv import search_arxiv_papers as _search_arxiv_papers
-from knowledge.sourcing.etsi import ingest_etsi_ipr_declaration as _ingest_etsi_ipr_declaration
-from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standard
-from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
-from knowledge.sourcing.fcc_ecfr import search_fcc_rules as _search_fcc_rules
-from knowledge.sourcing.patent import ingest_patent as _ingest_patent
-from knowledge.sourcing.patent import search_uspto_patents as _search_uspto_patents
-from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
-from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
 from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
 from orchestration.policy import assert_all_tools_categorized, category_for
-from orchestration.solver import run_candidate_search as _run_candidate_search
-from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
-from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
-from orchestration.tooling import start_new_design_loop as _start_new_design_loop
 from rf_tools.calculations import (
     abcd_to_s,
     aperture_gain,
@@ -83,13 +38,11 @@ from rf_tools.calculations import (
     curvature_shifted_resonant_frequency_hz,
     db_to_linear,
     fractional_bandwidth_from_q,
-    free_space_path_loss_db,
     friis_noise_factor,
     iip3_from_oip3_db,
     input_stability_circle,
     l_network_match,
     linear_to_db,
-    link_budget_margin_db,
     maxwell_garnett_effective_permeability,
     noise_factor_to_db,
     oip3_from_iip3_db,
@@ -528,38 +481,6 @@ def convert_abcd_to_s(abcd_params: list[list[complex]], z0: float = 50.0) -> dic
     Same matrix convention as convert_s_to_z."""
     s = abcd_to_s(abcd_params, z0)
     return {"s_params": _complex_matrix_to_strings(s), "provenance": "CALCULATED"}
-
-
-@function_tool
-def calculate_free_space_path_loss(distance_km: float, freq_mhz: float) -> dict:
-    """Calculate free-space path loss (FSPL) in dB for a distance in km and frequency
-    in MHz."""
-    return {
-        "path_loss_db": free_space_path_loss_db(distance_km, freq_mhz),
-        "provenance": "CALCULATED",
-    }
-
-
-@function_tool
-def calculate_link_budget_margin(
-    tx_power_dbm: float,
-    tx_antenna_gain_db: float,
-    path_loss_db: float,
-    rx_antenna_gain_db: float,
-    rx_sensitivity_dbm: float,
-    other_losses_db: float = 0.0,
-) -> dict:
-    """Calculate link margin in dB: how far received power sits above receiver
-    sensitivity, given transmit power/gain, path loss, receive gain/sensitivity."""
-    margin = link_budget_margin_db(
-        tx_power_dbm,
-        tx_antenna_gain_db,
-        path_loss_db,
-        rx_antenna_gain_db,
-        rx_sensitivity_dbm,
-        other_losses_db,
-    )
-    return {"margin_db": margin, "provenance": "CALCULATED"}
 
 
 @function_tool
@@ -1582,414 +1503,6 @@ def run_meep_simulation(
 
 
 @function_tool
-def ingest_document(
-    file_path: str,
-    source_type: str,
-    license: str,
-    classification: str,
-    supersedes_document_id: int | None = None,
-    author: str | None = None,
-    revision: str | None = None,
-) -> dict:
-    """Parse a document PDF via docling, chunk it, and store it in the knowledge base.
-    source_type, license, and classification are all mandatory. source_type must be one
-    of: datasheet, application_note, standard, textbook, paper, patent, partner_research,
-    design_record -- it is fixed at ingest time and sets the document's default provenance
-    and authority rank, so a wrong value permanently mis-ranks everything retrieved from
-    it. Note patent: its numbers are citable evidence but rank below a peer-reviewed paper
-    (a patent office does not check that a stated number reproduces), and its claim text is
-    legal boundary-setting, never design guidance. Note partner_research (ADR-0029):
-    unpublished technical work received from an outside research partner -- use this, not
-    paper (which would overclaim peer review, outranking even a granted patent) or
-    design_record (which claims a document as this team's own authorship); it ranks between
-    patent and design_record and gets no structured component extraction, same as
-    paper/patent. Pass supersedes_document_id to declare this upload a newer revision of
-    that document (never inferred from title); omit it for a plain new, independent
-    document. author/revision are stored as-is on the document (both optional) -- for a
-    partner_research document, author should identify the partner/author, since a partner
-    source is not much use without knowing whose work it is."""
-    return _ingest_document(
-        file_path=file_path,
-        source_type=source_type,
-        license=license,
-        classification=classification,
-        supersedes_document_id=supersedes_document_id,
-        author=author,
-        revision=revision,
-    )
-
-
-@function_tool
-def ingest_arxiv_paper(
-    arxiv_id: str,
-    license: str,
-    classification: str,
-    supersedes_document_id: int | None = None,
-) -> dict:
-    """Fetch and convert an arXiv preprint (e.g. "2401.01234", or the older
-    "cond-mat/0207270" form) into the knowledge base as source_type='paper'.
-    Uses the arxiv-doc-builder skill to fetch LaTeX source (preferred) + PDF and
-    convert to Markdown via pandoc -- preserving math/structure far better than
-    feeding a raw PDF to docling -- falling back to naive PDF text extraction
-    when no LaTeX source exists. Automatically pulls title/authors/publication
-    date/DOI/journal/categories/abstract from arXiv's own record into the
-    stored document. license must be the reuse terms that actually apply to
-    this specific paper (arXiv's default license does not itself grant
-    downstream reuse beyond citation/summary; check for an author-chosen CC0/
-    CC-BY license). authority_rank is always overridden below the peer-
-    reviewed 'paper' default, since arXiv preprints are not peer-reviewed --
-    only a "superficial" moderator check. Pass supersedes_document_id to
-    declare this upload a newer revision of that document (never inferred)."""
-    return _ingest_arxiv_paper(
-        arxiv_id,
-        license=license,
-        classification=classification,
-        supersedes_document_id=supersedes_document_id,
-    )
-
-
-@function_tool
-def search_arxiv_papers(query: str, max_results: int = 10) -> list:
-    """Search arXiv by topic/keyword (issue #257) and return a ranked list of
-    candidates for review -- NOT documents in the corpus. Each candidate carries
-    id/title/published/abstract; use "search precedent before inventing" (CLAUDE.md)
-    to judge relevance before spending an ingestion pass on it. Pass a chosen
-    candidate's id straight to ingest_arxiv_paper unchanged, along with the license/
-    classification ADR-0001 requires for that specific paper -- this tool never calls
-    ingest_document itself, so finding a paper here never counts as trusting it.
-    query is arXiv's search_query syntax (a bare keyword string, e.g. "conformal
-    metamaterial absorber", or field-prefixed, e.g. "abs:magnetic mirror AND
-    cat:physics.app-ph") searched over titles/abstracts/authors/categories -- not
-    ingest_arxiv_paper's id_list-style fetch by already-known identifier. A topic
-    with no matches returns [] (a real "nobody has published this" result); an
-    unreachable arXiv API raises instead of returning an empty list, so the two
-    cases are never confused."""
-    return _search_arxiv_papers(query, max_results=max_results)
-
-
-# strict_mode=False: `capability_warning` is a free-form dict (one
-# `capability_warnings` entry -- see orchestration/design_loop.py's
-# `_validate_capability_warnings`, whose `family`/`capability_property`/
-# `reason` values are open text, not a fixed enum) -- same open-schema
-# reason as create_design's requirements/architecture above.
-@function_tool(strict_mode=False)
-def search_literature_for_capability_warning(
-    capability_warning: dict, material_or_ink_name: str
-) -> dict:
-    """Search this project's own knowledge base, then arXiv, for a citable measured
-    value for material_or_ink_name's capability_property -- the gap named by one
-    Capability-warning entry (issue #327, ADR-0033) -- fires only for a Material-/
-    Ink-property library miss that already carries a Capability warning (issue
-    #324). capability_warning is one entry from a capability_warnings list -- only
-    capability_kind/capability_property are read; capability_warning's own "family"
-    names the DESIGN family this warning is attached to (e.g. "patch_antenna"), NOT
-    a material/ink product name, so material_or_ink_name (e.g. "FR4", "MXene ink")
-    must be supplied separately -- you already know it from the design's own
-    context. Raises if capability_kind is not "material" or "ink" ("fabrication"
-    gaps have no literature-search equivalent -- ADR-0033). Returns candidates
-    (title/identifier/excerpt, local-knowledge matches first, then arXiv) when any
-    exist; when nothing citable is found, found=False and message says so plainly
-    rather than approximating a number. Never calls ingest_document and never
-    writes a Material-property/Ink-property library entry -- finding a source and
-    trusting it as evidence stay two separate, deliberate steps; a human still
-    confirms and adds any entry."""
-    return _search_literature_for_capability_warning(capability_warning, material_or_ink_name)
-
-
-@function_tool
-def ingest_3gpp_spec(
-    spec_number: str,
-    version: str,
-    license: str,
-    classification: str,
-    supersedes_document_id: int | None = None,
-) -> dict:
-    """Download a 3GPP specification from 3GPP's own open FTP archive (no
-    registration/credential needed) and ingest it into the knowledge base as
-    source_type='standard'. Fetch-by-identifier only, not search -- you must
-    already know the identifier:
-    spec_number: the spec's own number, e.g. "38.331" (or a multi-part spec
-    like "38.521-1", dash kept intact).
-    version: 3GPP's own version string exactly as it appears in the archive
-    filename, e.g. "h00" -- not a bare revision letter or a guess.
-    3GPP specs are free to download but are NOT public domain -- copyright is
-    jointly held by the 3GPP Organizational Partners and each document
-    carries its own reproduction-restriction notice. license must be the
-    reuse terms that actually apply; this tool does not assume a default.
-    Extracts the single .docx/.doc member from the downloaded zip (preferring
-    .docx). A legacy pre-2020ish .doc spec docling can't parse still stores
-    the document row with extraction_status="failed" rather than raising --
-    expect zero chunks in that case. Pass supersedes_document_id to declare
-    this upload a newer revision of that document (never inferred from
-    title); omit it for a plain new, independent document."""
-    return _ingest_3gpp_spec(
-        spec_number,
-        version,
-        license=license,
-        classification=classification,
-        supersedes_document_id=supersedes_document_id,
-    )
-
-
-@function_tool
-def lookup_3gpp_spec_status(spec_number: str) -> dict:
-    """Look up spec_number (e.g. "38.101", or a multi-part spec like
-    "38.101-1") in 3GPP's own DynaReport per-series table (3gpp.org's free,
-    no-login HTML database of every spec's status back to 1999; series
-    derived the same way ingest_3gpp_spec derives it -- text before the
-    first "." only) and report its title and whether 3GPP has marked it
-    withdrawn. Run this before ingest_3gpp_spec to catch a withdrawn spec
-    before downloading and ingesting it -- e.g. TS 38.101 itself is
-    withdrawn while its five parts, 38.101-1..5, remain current.
-    Returns {"spec_number", "title", "withdrawn", "version"}. version is
-    always None: the real per-series page this reads has no version
-    column at all (confirmed against a live fetch) -- see
-    knowledge/sourcing/threegpp.py's module docstring for where a real
-    version string does live on 3GPP's site and why fetching it is out of
-    scope here. Raises if spec_number is not a row in the fetched table --
-    a typo, or a spec whose series differs from the one derived from it --
-    naming every spec number the table DID contain, rather than returning
-    a placeholder status."""
-    return _lookup_3gpp_spec_status(spec_number)
-
-
-@function_tool
-def ingest_etsi_standard(
-    document_url: str,
-    license: str,
-    classification: str,
-    supersedes_document_id: int | None = None,
-) -> dict:
-    """Download an ETSI standard PDF and ingest it into the knowledge base as
-    source_type='standard'. Fetch-by-identifier only, not search -- and
-    unlike ingest_3gpp_spec/ingest_fcc_rule, the identifier here is a full
-    URL, not a bare document number: ETSI's per-document "deliver" path
-    (document-type folder, a grouped numeric-range folder, the document-
-    number folder, a version folder, then the filename) is not mechanically
-    derivable from a bare standard number alone, and no confirmed public
-    search API exists to script that lookup -- only ETSI's own human-facing
-    standards-search UI (https://www.etsi.org/standards-search) resolves a
-    document number to its deliver path today.
-    document_url: the full deliverable URL, e.g. "https://www.etsi.org/
-    deliver/etsi_ts/119600_119699/119612/02.02.01_60/ts_119612v020201p.pdf"
-    -- must be an https://www.etsi.org/deliver/... URL (no registration
-    needed to fetch it), obtained however you already found it (e.g. from
-    the standards-search UI or a citation).
-    ETSI standards are free to download but carry ETSI's own copyright and
-    (F)RAND patent terms, same internal-use posture as 3GPP. license must be
-    the reuse terms that actually apply; this tool does not assume a
-    default. Pass supersedes_document_id to declare this upload a newer
-    revision of that document (never inferred from title); omit it for a
-    plain new, independent document."""
-    return _ingest_etsi_standard(
-        document_url,
-        license=license,
-        classification=classification,
-        supersedes_document_id=supersedes_document_id,
-    )
-
-
-@function_tool
-def ingest_etsi_ipr_declaration(
-    document_url: str,
-    declared_against_document_id: int,
-    license: str,
-    classification: str,
-) -> dict:
-    """Download an ETSI IPR/(F)RAND-declaration document from the SR 000 314
-    register and ingest it into the knowledge base as source_type='standard'
-    -- the same source type ingest_etsi_standard uses for every ETSI
-    deliverable, since a licensing declaration is still an ETSI document.
-    Plain language: a company that believes it holds a patent essential to
-    building to a standard declares it here and promises (F)RAND terms --
-    fair, reasonable, and non-discriminatory licensing, not a free grant --
-    so a design that leans on a standard with a declaration on file may
-    still cost something to license before it can be built.
-    Fetch-by-identifier only, not search: document_url must be a specific
-    declaration's own page, e.g. "https://ipr.etsi.org/IPRDetails.aspx?
-    IPRD_ID=198&IPRD_TYPE_ID=2&MODE=2" -- confirmed live during this
-    ticket's research as a stable, unauthenticated, no-session-required URL
-    (Google's own crawler has this exact URL indexed with no sessionkey
-    parameter). ipr.etsi.org is a distinct subdomain from www.etsi.org, and
-    like the standards-search UI, has no confirmed scriptable search API --
-    obtain the URL from https://ipr.etsi.org/ (the human-facing search
-    form) however you already found it.
-    declared_against_document_id: the documents.id (from a prior
-    ingest_etsi_standard call) of the standard this declaration was filed
-    against -- stored as extra_metadata so the declaration stays traceably
-    linked to the standard it constrains, never inferred or guessed.
-    ETSI's IPR declarations are free to view but carry the same copyright/
-    (F)RAND posture as its standards; license must be the reuse terms that
-    actually apply, this tool does not assume a default."""
-    return _ingest_etsi_ipr_declaration(
-        document_url,
-        declared_against_document_id=declared_against_document_id,
-        license=license,
-        classification=classification,
-    )
-
-
-@function_tool
-def ingest_fcc_rule(
-    part: int,
-    license: str,
-    classification: str,
-    title: int = 47,
-    supersedes_document_id: int | None = None,
-) -> dict:
-    """Fetch FCC rule text via eCFR's public versioner API (no
-    authentication) and ingest it into the knowledge base as
-    source_type='standard'. Fetch-by-identifier only -- you must already
-    know the part number; use search_fcc_rules first if you only have a
-    plain-English topic (e.g. "EIRP" or "spurious emissions") and need to
-    find which part covers it.
-    part: the CFR part number, e.g. 15 for the Part 15 unlicensed-device
-    rules, or 97 for the Part 97 amateur-radio rules.
-    title: the CFR title number, default 47 (Telecommunication) -- pass a
-    different title only if you genuinely need rule text outside Title 47.
-    Always resolves the current edition date from eCFR's own titles.json
-    first (an arbitrary caller-supplied date can 404 against eCFR's
-    versioner), then flattens the fetched Federal-Register XML to plain text
-    locally before ingesting (docling does not support that XML DTD).
-    eCFR content is public domain as a work of the U.S. Government -- the
-    strongest license status of any source this package ingests -- but is
-    explicitly not the official legal edition (GPO's Federal Register
-    printing is authoritative); flag that distinction if a result is ever
-    used for formal regulatory sign-off. license must still be the reuse
-    terms that actually apply; this tool does not assume a default. Pass
-    supersedes_document_id to declare this upload a newer revision of that
-    document (never inferred from title); omit it for a plain new,
-    independent document."""
-    return _ingest_fcc_rule(
-        part,
-        license=license,
-        classification=classification,
-        title=title,
-        supersedes_document_id=supersedes_document_id,
-    )
-
-
-@function_tool
-def search_fcc_rules(query: str, max_results: int = 10) -> list:
-    """Search eCFR's full-text Search Service by topic/keyword (issue #279)
-    and return a ranked list of Title-47 candidates for review -- NOT
-    documents in the corpus. Each candidate carries part/title/section/
-    heading/full_text_excerpt; use "search precedent before inventing"
-    (CLAUDE.md) to judge relevance before spending an ingestion pass on it.
-    Pass a chosen candidate's part straight to ingest_fcc_rule unchanged
-    (same title=47 default), along with the license/classification
-    ADR-0001 requires for that specific rule -- this tool never calls
-    ingest_document itself, so finding a rule here never counts as trusting
-    it. query is a full-text search over every CFR title's rule text (e.g.
-    "EIRP" or "spurious emissions") -- not ingest_fcc_rule's fetch-by-
-    already-known-part-number. Non-Title-47 hits are filtered out before
-    they reach you, since ingest_fcc_rule only ever fetches Title 47. A
-    topic with no matches returns [] (a real "no Title 47 rule mentions
-    this" result); an unreachable eCFR API raises instead of returning an
-    empty list, so the two cases are never confused."""
-    return _search_fcc_rules(query, max_results=max_results)
-
-
-@function_tool
-def ingest_patent(
-    patent_number: str,
-    license: str,
-    classification: str,
-    supersedes_document_id: int | None = None,
-    render_page_images: bool = True,
-) -> dict:
-    """Fetch a US patent document from the USPTO and ingest it as
-    source_type='patent'. Takes either a granted patent number ("US12089385B2",
-    "US 12,089,385 B2", "12089385") or the pre-grant publication number of the
-    same application ("US 2022/0192066 A1", "20220192066") -- the same invention
-    published at two moments, and often worth ingesting both, since they differ
-    a lot in how readable the file is. This tool CANNOT look one number up from
-    the other (that needs a keyed lookup-by-number call this project has not
-    built), and it does NOT itself search -- use search_uspto_patents (issue
-    #280) for "find patents about X", then call this once per number the search
-    turns up.
-    How the file is read depends on what is in it, not on which number you gave.
-    Every USPTO PDF measured so far is a scan -- a photograph of the page, with
-    no machine-readable text -- so the usual path is: hand the PDF to the normal
-    ingest pipeline, whose OCR transcribes it, and render every page to an image
-    so a drawing can be read by eye (this project's load-bearing numbers live in
-    the figures). A PDF that does have real text instead gets converted to
-    Markdown two columns at a time, the way a patent is printed, with the front-
-    page bibliographic fields (title, inventors, assignee, dates, application
-    number) parsed into its header. Fields the front page did not yield come back
-    empty rather than guessed. Set render_page_images=False to skip the image
-    rendering (it is a few hundred files for a long patent, and needs poppler
-    installed; if it fails the document is still ingested and the reason is
-    recorded). authority_rank is NOT overridden here: source_type='patent'
-    already defaults below a peer-reviewed paper, because a patent office checks
-    novelty and candor, not whether a stated number reproduces. Treat a patent's
-    CLAIMS as legal boundary-setting, never as design guidance -- cite numbers
-    from its worked examples. license must be the terms that actually apply
-    (US patent documents carry no USPTO copyright claim, but an individual
-    document can contain third-party copyrighted material with a notice on it).
-    Pass supersedes_document_id to declare this a newer revision of a stored
-    document (never inferred -- a grant does not automatically supersede its own
-    earlier publication unless you say so)."""
-    return _ingest_patent(
-        patent_number,
-        license=license,
-        classification=classification,
-        supersedes_document_id=supersedes_document_id,
-        render_page_images=render_page_images,
-    )
-
-
-@function_tool
-def search_uspto_patents(query: str, max_results: int = 10) -> list:
-    """Search the USPTO Open Data Portal (ODP) by topic/full-text (issue #280)
-    and return a ranked list of candidates for review -- NOT documents in the
-    corpus. Each candidate carries number/title/date/snippet (snippet is always
-    None: ODP's search response is bibliographic metadata -- title, dates,
-    applicant/inventor -- not a text excerpt of the matched document; see
-    knowledge/sourcing/patent.py's module docstring). Use "search precedent
-    before inventing" (CLAUDE.md) to judge relevance before spending an
-    ingestion pass on it. Pass a chosen candidate's number straight to
-    ingest_patent unchanged (it already round-trips through
-    normalize_patent_number, so it is never rejected as an implausible number)
-    along with the license/classification ADR-0001 requires for that specific
-    document -- this tool never calls ingest_document or ingest_patent itself,
-    so finding a patent here never counts as trusting it. Refuses to run unless
-    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND USPTO_ODP_API_KEY is configured (see
-    .env.example) -- unlike ingest_patent above, this places a real,
-    credentialed call to a third party (ODP requires a free USPTO.gov account
-    with a linked, ID.me-verified identity, confirmed live this ticket: a
-    request with no key is refused with HTTP 401 before ODP even reads the
-    query). ODP's own request/response shape is corroborated from multiple
-    independent working API clients but NOT run against the real API in this
-    environment -- treat any result as unverified end-to-end until it has been
-    run against the real API at least once. A topic with no matches returns []
-    (a real "nobody has filed this" result); a missing credential or an
-    unreachable API raises instead of returning an empty list, so the two cases
-    are never confused."""
-    return _search_uspto_patents(query, max_results=max_results)
-
-
-@function_tool
-def index_document(document_id: int, requested_backend: str | None = None) -> dict:
-    """Embed a stored document's chunks and write the vectors to the knowledge base.
-    SENSITIVE/RESTRICTED documents always use the self-hosted backend, with no
-    fallback to the external API; requesting "external" for one raises. PUBLIC/
-    INTERNAL documents honor an explicit requested_backend ("local"/"external") or
-    fall back to the configured default, and fall back from local to external if
-    the self-hosted backend is briefly unreachable."""
-    return _index_document(document_id=document_id, requested_backend=requested_backend)
-
-
-@function_tool
-def read_document(document_id: int) -> dict:
-    """Fetch a stored document's full metadata (title, source_type, license, classification,
-    authority_rank, status, revision, supersedes_document_id, publication date, author) plus
-    its chunks (content, page number, section) in order. Returns a not-found result rather
-    than raising if document_id doesn't exist."""
-    return _read_document(document_id)
-
-
-@function_tool
 def search_knowledge(query_text: str, document_id: int | None = None, limit: int = 20) -> list:
     """Search the knowledge base for query_text and return one ranked list of chunk
     matches, each tagged with its match_type ("semantic_external", "semantic_local",
@@ -1998,401 +1511,6 @@ def search_knowledge(query_text: str, document_id: int | None = None, limit: int
     authority_rank first, then each match's own native score -- never a single
     blended score across match types."""
     return _search_knowledge(query_text=query_text, document_id=document_id, limit=limit)
-
-
-@function_tool
-def search_design_records(query_text: str, document_id: int | None = None, limit: int = 20) -> list:
-    """Search for prior design/decision records relevant to query_text -- e.g. by
-    component, frequency band, or design pattern -- so you can find precedent before
-    proposing a new design instead of starting from nothing. A thin wrapper around
-    search_knowledge scoped to source_type="design_record" documents (internally-authored
-    design notes and decision write-ups); same ranking and match_type semantics."""
-    return _search_design_records(query_text=query_text, document_id=document_id, limit=limit)
-
-
-@function_tool
-def extract_components(document_id: int, requested_backend: str | None = None) -> dict:
-    """Extract structured component specifications from a stored datasheet/application_note
-    and upsert a components row per part, keyed by (manufacturer, part_number). Runs
-    automatically, no confirmation step. Each specification field carries its own
-    provenance (MANUFACTURER-SPECIFIED/INFERRED/UNKNOWN) and, if it fails its category's
-    physical-plausibility bound, a validation_error. SENSITIVE/RESTRICTED documents always
-    use the self-hosted backend, with no fallback to the external API; requesting
-    "external" for one raises. A non-datasheet/application_note document is a no-op."""
-    return _extract_components(document_id=document_id, requested_backend=requested_backend)
-
-
-@function_tool
-def lookup_digikey_component(part_number: str, license: str, classification: str) -> dict:
-    """Search Digi-Key's Product Information API v4 for part_number, download its
-    datasheet PDF, and ingest it into the knowledge base (source_type='datasheet') via
-    ingest_document, unchanged. Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true
-    AND DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET are configured (see .env.example) --
-    this places a real, credentialed call to a third party. Returns {"status": "no_match"
-    | "no_datasheet" | "ok", ...}; on "ok", "manufacturer"/"manufacturer_part_number" are
-    Digi-Key's own report of the part's identity, for reconcile_component_sources to
-    cross-check against Mouser's/Nexar's hit for the same part. Digi-Key's real API
-    surface is verified against its own docs (see knowledge/digikey.py's module
-    docstring) but NOT run against the real API in this environment -- treat any result
-    as unverified end-to-end until it has been run against the real API at least once."""
-    return _lookup_digikey_datasheet(part_number, license=license, classification=classification)
-
-
-@function_tool
-def lookup_digikey_product_details(part_number: str) -> dict:
-    """Look up part_number's parametric attributes and price/quantity breaks
-    via Digi-Key's ProductDetails endpoint (ticket #275) -- a narrower,
-    separate contract from lookup_digikey_component's "find and ingest a
-    datasheet PDF": this does not download or ingest anything, and takes no
-    license/classification (there is no document to file). Refuses to run
-    unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND DIGIKEY_CLIENT_ID/
-    DIGIKEY_CLIENT_SECRET are configured, reusing the same OAuth2 token and
-    X-DIGIKEY-Client-Id header lookup_digikey_component already uses -- no
-    new auth path. Returns {"status": "no_match" | "ok", ...}; on "ok",
-    "manufacturer"/"manufacturer_part_number" are Digi-Key's own report of
-    the part's identity (same reconcile_component_sources contract as
-    lookup_digikey_component), plus "parameters" (Digi-Key's raw per-
-    category parametric attribute list -- frequency range, impedance,
-    tolerance, or whatever that part's category actually names them),
-    "price_breaks"/"my_pricing" (list and contract pricing quantity breaks),
-    and "digikey_product_number"/"package"/"category"/"quantity_available"/
-    "product_status"/"discontinued"/"end_of_life"/"datasheet_url" for a
-    manufacturability check with zero additional API calls. Digi-Key's real
-    API surface is verified against its own docs and a corroborating
-    third-party client (see knowledge/digikey.py's module docstring) but
-    NOT run against the real API in this environment -- treat any result as
-    unverified end-to-end until it has been run against the real API at
-    least once."""
-    return _lookup_digikey_product_details(part_number)
-
-
-@function_tool
-def lookup_mouser_component(part_number: str, license: str, classification: str) -> dict:
-    """Same contract as lookup_digikey_component, against Mouser's Search API
-    (MOUSER_API_KEY). On "ok", also carries price_breaks/availability/lead_time/
-    lifecycle_status/is_discontinued/suggested_replacement/rohs_status/reach_svhc/
-    product_compliance/trade_compliance -- so a manufacturability or export-
-    compliance check needs no second call. Refuses to run unless
-    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND MOUSER_API_KEY is configured. Mouser's real
-    API surface is corroborated from third-party integrations (see
-    knowledge/mouser.py's module docstring's honest caveat -- Mouser's own Swagger
-    spec sits behind a login wall) but NOT run against the real API in this
-    environment."""
-    return _lookup_mouser_datasheet(part_number, license=license, classification=classification)
-
-
-@function_tool
-def lookup_nexar_component(part_number: str, license: str, classification: str) -> dict:
-    """Same contract as lookup_digikey_component, against Nexar's GraphQL API
-    (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET). Refuses to run unless
-    ALLOW_EXTERNAL_NETWORK_TOOLS=true AND those credentials are configured. Nexar's
-    free "Evaluation" tier caps around 1,000 matched parts. Nexar's real API surface is
-    verified against its own docs (see knowledge/nexar.py's module docstring) but NOT
-    run against the real API in this environment."""
-    return _lookup_nexar_datasheet(part_number, license=license, classification=classification)
-
-
-@function_tool
-def search_ink_product(query: str) -> dict:
-    """Search Digi-Key, then Mouser, for a real, purchasable ink/adhesive product
-    matching query -- e.g. a query assembled from an unresolved ink-related
-    Capability warning's own family/capability_property/reason fields (CONTEXT.md's
-    Capability warning: a candidate stays kept but carries a warning when the
-    currently selected Ink-property library entry doesn't meet a stated need).
-    Returns {"status": "ok", "distributor": "digikey" | "mouser", "manufacturer": ...,
-    "manufacturer_part_number": ..., "datasheet_url": ...} on a match, or
-    {"status": "no_match", "queried": query, "checked": ["digikey", "mouser"]} when
-    neither distributor offers a usable citation -- never a guessed or approximated
-    value. Never calls ingest_document and never writes to the Ink-property library
-    itself: a found product is a citation for a human to review and, if they choose,
-    cite when they add their own library entry -- the same "search and cite, never
-    auto-populate" posture as search_arxiv_papers. Refuses to run unless
-    ALLOW_EXTERNAL_NETWORK_TOOLS=true, the same self-gate lookup_digikey_component/
-    lookup_mouser_component already enforce."""
-    return _search_ink_product(query)
-
-
-@function_tool
-def lookup_nexar_part_data(part_number: str) -> dict:
-    """Search Nexar's GraphQL API (Octopart data; NEXAR_CLIENT_ID/NEXAR_CLIENT_SECRET) for
-    part_number's multi-distributor pricing/availability and parametric specs in one query
-    -- ticket #276, the capability that distinguishes Nexar's cross-distributor aggregation
-    from lookup_digikey_component/lookup_mouser_component/lookup_nexar_component, which only
-    confirm a part exists and fetch its datasheet. Use this to screen a candidate component
-    against an RF requirement (e.g. an impedance or frequency-range threshold) or to compare
-    stock/price across distributors, BEFORE committing to that part -- lookup_nexar_component
-    remains the tool for actually fetching and ingesting its datasheet as cited evidence.
-    Refuses to run unless ALLOW_EXTERNAL_NETWORK_TOOLS=true AND NEXAR_CLIENT_ID/
-    NEXAR_CLIENT_SECRET are configured. Returns structured data only -- unlike the other
-    lookup_*_component tools, it never downloads or ingests a document. On "ok", carries
-    "specs" (list of {"name", "value", "display_value", "units"} parametric attributes) and
-    "offers" (list of {"seller", "stock_level", "price_breaks"}, one entry per distributor
-    offer) alongside the usual manufacturer/manufacturer_part_number/datasheet_url identity;
-    both lists are [] rather than absent when Nexar reports neither. NOT run against the
-    real API in this environment -- see knowledge/nexar.py's module docstring."""
-    return _lookup_nexar_part_data(part_number)
-
-
-@function_tool(strict_mode=False)  # `matches` (a list of open-shaped distributor-hit
-# dicts) and `datasheet_document_ids` (an open string-keyed map) don't fit the SDK's
-# strict-schema requirement -- same rationale as create_design's `requirements`/
-# `architecture` below.
-def reconcile_component_sources(
-    matches: list[dict],
-    category: str,
-    datasheet_document_ids: dict[str, int] | None = None,
-) -> dict:
-    """Reconcile two or three distributor lookups (lookup_digikey_component/
-    lookup_mouser_component/lookup_nexar_component results for the SAME queried part
-    number) into ONE components row instead of a duplicate per distributor --
-    CONTEXT.md's Component identity, (manufacturer, part_number) with package/tape-
-    and-reel suffix included, decides what counts as "the same part." Each entry in
-    matches needs at least "distributor" and "manufacturer_part_number" (as returned
-    by the lookup_* tools -- pass those results' fields straight through, do not
-    reformat them). datasheet_document_ids optionally maps distributor name -> the
-    document_id its ingest produced, so the resulting row links back to a real
-    ingested datasheet; omitted or a group with no entry preserves whatever
-    datasheet_document_id (and specifications) the row already had, rather than
-    wiping either. category must be one of this repo's ten RF component categories
-    (amplifier, filter, mixer, attenuator, coupler_splitter, circulator_isolator,
-    switch, antenna, connector_cable, passive_component) -- never guessed from a
-    distributor's own, differently-shaped catalog taxonomy. Runs automatically, no
-    confirmation step, same posture as extract_components."""
-    return _reconcile_components_from_matches(
-        matches=matches, category=category, datasheet_document_ids=datasheet_document_ids
-    )
-
-
-# strict_mode=False: `requirements`/`architecture` are genuinely free-form
-# JSON (arbitrary requirement_id keys; architecture shape isn't fixed by
-# this ticket) -- the SDK's default strict-schema mode rejects an open
-# `dict` parameter outright (`additionalProperties` must be false), which
-# a fixed schema can't express here without inventing structure this
-# ticket doesn't define.
-@function_tool(strict_mode=False)
-def create_design(
-    design_key: str,
-    name: str,
-    revision: str,
-    requirements: dict,
-    architecture: dict,
-) -> dict:
-    """Start a new design: a designs row with design_key, name, revision,
-    requirements, and architecture, starting in DRAFT status. requirements
-    must be a dict keyed by requirement_id, each value carrying a
-    'requirement' text field; one verification_items row is auto-created
-    per key, all starting NOT VERIFIED, so no stated requirement can end up
-    with no verification row. Every component_id referenced anywhere in
-    architecture must already exist in components -- a dangling reference
-    is rejected with a structured error naming the offending block, never
-    silently written."""
-    return _create_design(
-        design_key=design_key,
-        name=name,
-        revision=revision,
-        requirements=requirements,
-        architecture=architecture,
-    )
-
-
-@function_tool
-def read_design(design_id: int) -> dict:
-    """Fetch a stored design's full payload: design_key, name, revision, status,
-    requirements, architecture (every component_id resolved inline to its
-    manufacturer/part_number, not left as a bare id), and all engineering_results,
-    decision_records (with approval_status), and verification_items rows. Returns
-    a not-found result rather than raising if design_id doesn't exist."""
-    return _read_design(design_id)
-
-
-# strict_mode=False: `alternatives`/`evidence` are free-form JSON lists
-# (each entry's shape isn't fixed by this ticket), same reasoning as
-# create_design's requirements/architecture above.
-@function_tool(strict_mode=False)
-def record_decision(
-    design_id: int,
-    record_key: str,
-    decision: str,
-    alternatives: list,
-    rationale: str,
-    evidence: list,
-    design_family: str | None = None,
-    approval_required: bool = True,
-) -> dict:
-    """Log a judgment-laden design choice -- a decision between real
-    alternatives, distinct from a mechanical calculation -- with its
-    rationale and evidence. Always an explicit agent judgment call, never
-    triggered automatically by an architecture change. record_key follows
-    '{design_key}-{slug}' and must be globally unique; reusing one is
-    rejected with a structured error pointing at the existing record,
-    never silently overwritten. Every new decision starts
-    approval_status='PENDING' -- this does not yet block anything (no
-    manufacturing_release tool or review UI exists). design_family (issue
-    #167) is optional -- which design family (absorber, reflection-phase
-    steering surface, patch antenna, ...) this decision was made about;
-    leave unset for a decision that isn't about a design family at all."""
-    return _record_decision(
-        design_id=design_id,
-        record_key=record_key,
-        decision=decision,
-        alternatives=alternatives,
-        rationale=rationale,
-        evidence=evidence,
-        design_family=design_family,
-        approval_required=approval_required,
-    )
-
-
-# strict_mode=False: `approval` is a free-form dict (a
-# DesignReleaseApprovalReceipt.to_dict() output) -- same rationale as
-# advance_design_loop_step's own `approval` parameter above.
-@function_tool(strict_mode=False)
-def advance_design_status(design_id: int, status: str, approval: dict | None = None) -> dict:
-    """Advance a design through docs/OPERATIONS.md's lifecycle (issue #145):
-    DRAFT -> ANALYSIS -> SIMULATION -> OPTIMIZATION -> VERIFICATION ->
-    CONDITIONAL-PASS/PASS/FAIL/BLOCKED -> RELEASED.
-
-    Only legal next steps are accepted. A design cannot skip a stage, cannot
-    jump straight to RELEASED, and cannot move at all once RELEASED (a released
-    design gets a new revision instead). Work in progress can go BLOCKED from
-    any stage, and FAIL/BLOCKED/CONDITIONAL-PASS return to ANALYSIS for rework.
-    A refusal comes back tagged illegal_transition with a legal_next list
-    naming what IS reachable from here.
-
-    RELEASED additionally requires a signed human-approval receipt (issue
-    #258): pass it as `approval`, a `DesignReleaseApprovalReceipt.to_dict()`
-    output minted by a human through this codebase's separate, human-only
-    release-approval CLI (its `approve-release` subcommand) -- NOT
-    something this tool, or the agent calling it, can fabricate itself;
-    nothing here calls `request_design_release_approval`, and that CLI
-    module is not reachable from this tool surface at all. A release
-    attempt with no `approval` (or an invalid, forged, or wrong-design/
-    wrong-revision one) still returns release_not_approved, exactly as
-    before this tool accepted the parameter at all -- a design must never
-    reach RELEASED autonomously (docs/adr/0007; docs/BUILD_PLAN.md's
-    Phase 12).
-
-    This is the explicit path, for design work tracked outside the opt-in
-    design loop (ADR-0010). The loop persists its own status at each iteration
-    boundary (ADR-0011) and does not go through here."""
-    return _update_design_status(
-        design_id=design_id, status=status, approval=_coerce_release_approval(approval)
-    )
-
-
-# strict_mode=False: `expected`/`actual` are free-form JSON evidence values
-# (a number, a dict of measured quantities, whatever the verification
-# method produced) -- same open-schema reason as `create_design` above.
-@function_tool(strict_mode=False)
-def verify_requirement(
-    design_id: int,
-    requirement_id: str,
-    method: str,
-    status: str,
-    expected: Any = None,
-    actual: Any = None,
-    evidence_uri: str | None = None,
-    notes: str | None = None,
-) -> dict:
-    """Explicitly record verification of one requirement on a design:
-    updates its verification_items row (auto-created by create_design) with
-    method, status, expected, actual, evidence_uri, and notes. status must
-    be one of NOT VERIFIED/PASS/FAIL/MARGINAL. Verification is always this
-    explicit call -- never inferred by matching an engineering_results name
-    against a requirement_id, since a wrong automatic guess would produce a
-    silently wrong verification. A requirement_id with no matching row on
-    this design_id is rejected with a structured error rather than
-    creating a stray row. Folding a FAIL into any approval/release gate is
-    out of scope here; this only records the status."""
-    return _verify_requirement(
-        design_id=design_id,
-        requirement_id=requirement_id,
-        method=method,
-        status=status,
-        expected=expected,
-        actual=actual,
-        evidence_uri=evidence_uri,
-        notes=notes,
-    )
-
-
-@function_tool
-def propose_requirement_target(
-    design_id: int,
-    requirement_id: str,
-    value: float,
-    comparator: str,
-    unit: str,
-    tolerance: float | None = None,
-) -> dict:
-    """Propose a structured requirement target for one of a design's
-    requirements, interpreted from that requirement's own prose (issue #92).
-    YOU (the calling agent) read the requirement's prose yourself and decide
-    what value/comparator/unit/tolerance it means -- this tool does not read
-    prose or call any model itself; it only validates the shape of what you
-    propose, tags it ASSUMED (never a stronger provenance -- it is your
-    reading of prose, not the customer's own stated number), and stores it
-    on the design next to that requirement's original prose text (which is
-    left untouched). comparator must be one of: EQUALS (a point target to
-    hit, e.g. resonant frequency = 2.45 GHz), AT_LEAST (a minimum bound,
-    e.g. gain >= 5 dBi), or AT_MOST (a maximum bound, e.g. VSWR <= 2.0).
-    tolerance is optional and must be >= 0 if given. If the prose yields no
-    defensible numeric target at all, call mark_requirement_unscoreable
-    instead of guessing a value here. Calling this again for the same
-    requirement_id corrects/replaces whatever target (proposed or
-    confirmed) was there before -- nothing is scored against a target until
-    a human calls confirm_requirement_target on it."""
-    return _propose_requirement_target(
-        design_id=design_id,
-        requirement_id=requirement_id,
-        value=value,
-        comparator=comparator,
-        unit=unit,
-        tolerance=tolerance,
-    )
-
-
-@function_tool
-def mark_requirement_unscoreable(
-    design_id: int,
-    requirement_id: str,
-    reason: str,
-) -> dict:
-    """Record that one of a design's requirements has prose with no
-    defensible numeric target to propose (issue #92) -- e.g. a purely
-    qualitative statement with no comparable value, comparator, or unit.
-    reason must explain why, in enough detail for a human reader to agree
-    or disagree with the call. Never invents a placeholder number: use this
-    instead of propose_requirement_target whenever you cannot honestly
-    defend a value/comparator/unit reading of the prose."""
-    return _mark_requirement_unscoreable(
-        design_id=design_id,
-        requirement_id=requirement_id,
-        reason=reason,
-    )
-
-
-@function_tool
-def confirm_requirement_target(
-    design_id: int,
-    requirement_id: str,
-    confirmed_by: str,
-) -> dict:
-    """Confirm the currently-proposed target on one of a design's
-    requirements (issue #92) -- records that it was confirmed and by whom
-    (confirmed_by), so a later reader can see a human vouched that the
-    proposed reading matches what the customer meant. Only a target with
-    status PROPOSED can be confirmed here: an UNSCOREABLE target has no
-    number to confirm, and an already-CONFIRMED target should be corrected
-    via propose_requirement_target (which resets it to PROPOSED) rather
-    than re-confirmed, so a stale confirmation is never silently
-    overwritten. Nothing should be scored against a target that has not
-    been confirmed."""
-    return _confirm_requirement_target(
-        design_id=design_id,
-        requirement_id=requirement_id,
-        confirmed_by=confirmed_by,
-    )
 
 
 @function_tool
@@ -2428,151 +1546,6 @@ def optimize_patch_length_for_target_frequency(
     )
 
 
-# ---------------------------------------------------------------------------
-# Controlled autonomous design-iteration loop (issue #46, Phase 12 -- the
-# final ticket of the 23-ticket build-out). Three focused tools, per this
-# ticket's own scope guidance -- start a loop, advance it one step, inspect
-# its state -- added to the "principal" role only (this is a cross-cutting
-# orchestration concern spanning every specialist's domain, not any one
-# specialist's own scope). See orchestration/design_loop.py and
-# orchestration/tooling.py for the state machine and approval-gate design.
-#
-# advance_design_loop_step's `approval` is REQUIRED whenever the loop's
-# current step is ARCHITECTURE, MEASUREMENT, or REDESIGN_DECISION (every
-# step that isn't a pure Phase 1 calculation or Phase 6-8 simulation run --
-# orchestration/design_loop.py's GATED_STEPS) -- a receipt from a prior,
-# separate call to orchestration.approval.request_loop_step_approval() for
-# THIS EXACT loop/iteration/step/step_input combination. That function is
-# deliberately NOT wired up as a fourth tool here (see
-# orchestration/tooling.py's module docstring): it always raises without a
-# real human-facing approval_callback, which no agent/MCP tool boundary in
-# this project can supply. There is no code path from this loop to a
-# manufacturing-release action -- see tests/test_design_loop.py's
-# test_no_manufacturing_release_step_exists and its sibling tests.
-#
-# advance_design_loop_step's `requirements_document_status` is ALSO
-# required (equal to "CONFIRMED") whenever the current step is ARCHITECTURE
-# (issue #325, docs/adr/0034) -- one more precondition on that SAME gate,
-# not a second one. designs.requirements_document.read_requirements_document
-# (issue #321) is not wired up as a tool here either, for the same "no
-# real workflow to call it from" reason as request_loop_step_approval
-# above; a separate ticket owns that wiring.
-#
-# start_design_loop now creates a real `designs` row backing the loop
-# (docs/adr/0011), and advance_design_loop_step's REDESIGN_DECISION
-# transition flushes that iteration's decisions to the database -- see
-# orchestration/tooling.py's module docstring for the persistence design,
-# including the DesignLoopPersistenceError a failed flush raises.
-# ---------------------------------------------------------------------------
-
-
-@function_tool(strict_mode=False)  # `requirements` is a free-form dict --
-# same rationale as run_nec2_simulation's geometry parameter above.
-def start_design_loop(design_key: str, name: str, revision: str, requirements: dict) -> dict:
-    """Start a new controlled design-iteration loop, backed by a real
-    `designs` row created in `DRAFT` status (docs/adr/0011).
-
-    `design_key`, `name`, and `revision` are exactly `designs.service.
-    create_design`'s own fields for that row. `requirements` must be in
-    that same function's shape -- a dict keyed by `requirement_id`, each
-    value a dict carrying a non-empty string `requirement` field (e.g.
-    `{"gain_req": {"requirement": "Gain >= 5 dBi over 2.4-2.5 GHz"}}`) --
-    NOT the older free-form "customer requirement" shape (frequency band,
-    gain/VSWR/bandwidth target, form factor, host-surface curvature,
-    platform -- CONTEXT.md's "Customer requirement"); those descriptive
-    details can still be carried as extra keys on each requirement, or as
-    prose inside its `requirement` text, since only the `requirement`
-    field itself is checked. A rejected `requirements` shape raises
-    DesignLoopPersistenceError naming the problem, and no loop is started.
-
-    Returns the new loop's state, positioned at the ARCHITECTURE step and
-    additionally carrying `design_id` -- hold onto this dict and pass it
-    back into advance_design_loop_step for every subsequent call; it is
-    the whole loop's session token (this project has no long-running
-    server process, so the state dict itself is still not persisted
-    server-side -- only the loop's history, once flushed at an iteration
-    boundary, is)."""
-    return _start_new_design_loop(design_key, name, revision, requirements)
-
-
-@function_tool(strict_mode=False)  # `state`/`step_input`/`approval` are
-# free-form dicts whose shape depends on which of the loop's nine steps is
-# current -- same rationale as run_nec2_simulation's geometry parameter
-# above.
-def advance_design_loop_step(
-    state: dict,
-    step_input: dict,
-    approval: dict | None = None,
-    requirements_document_status: str | None = None,
-) -> dict:
-    """Advance a design-iteration loop from its current step to the next
-    one: requirements -> architecture -> analysis -> simulation ->
-    optimization -> verification -> measurement -> correlation -> redesign
-    (docs/BUILD_PLAN.md's Phase 12). `state` is a prior call's returned
-    loop state. `step_input` is step-specific -- see
-    orchestration/design_loop.py's per-step handlers for exactly what each
-    current_step expects (e.g. ARCHITECTURE wants "decision"/"rationale"/
-    "design_family"; ANALYSIS wants the patch_resonant_frequency_hz
-    inputs eps_r/w_m/h_m/l_m; SIMULATION wants the same geometry/
-    frequency_hz run_nec2_simulation itself takes, PLUS
-    reference_impedance_ohms -- the impedance SIMULATION's own derived
-    vswr/return_loss_db are scored against, stated explicitly every call,
-    never assumed to be 50 ohms (issue #101)).
-
-    `approval` is REQUIRED whenever the loop is currently at ARCHITECTURE,
-    MEASUREMENT, or REDESIGN_DECISION -- every step that is not a pure
-    calculation or simulation run. Without a valid one (bound to this exact
-    loop/iteration/step/step_input combination), this raises and the loop
-    does not advance; there is no way to skip a gated step from this tool.
-    Check the returned state's "pending_approval" key (also available from
-    inspect_design_loop_state) to see, at any point, whether the loop is
-    currently blocked on an approval and which step it's blocked at.
-
-    `requirements_document_status` is ALSO REQUIRED (equal to `"CONFIRMED"`)
-    whenever the loop is currently at ARCHITECTURE (issue #325, docs/adr/
-    0031): the design's Requirements document must be confirmed before a
-    physical approach may be chosen -- you don't pick a mechanism before
-    the customer's actual ask is locked in. Nothing in this tool surface
-    can read that status yet (issue #321's `read_requirements_document` is
-    not wired as a tool here); until that lands, whoever drives this loop
-    must already know the design's Requirements-document status by some
-    other means.
-
-    A REDESIGN_DECISION transition additionally flushes that iteration's
-    decisions to the database and advances the backing design's status
-    (docs/adr/0011). If that flush fails, this raises
-    DesignLoopPersistenceError instead of returning: the `state` the
-    caller already holds remains the only valid state, exactly as if the
-    step had never advanced."""
-    return _advance_design_loop_step(
-        state,
-        step_input,
-        approval=approval,
-        requirements_document_status=requirements_document_status,
-    )
-
-
-@function_tool(strict_mode=False)  # `state` is a free-form dict (the loop's
-# own session-token shape) -- same rationale as run_nec2_simulation's
-# geometry parameter above.
-def inspect_design_loop_state(state: dict) -> dict:
-    """Return a design-iteration loop's current state -- current step,
-    every decision recorded so far with its own provenance, and whether an
-    approval is currently pending (and for which step). Safe to call at any
-    point mid-loop, not just at completion; does not mutate or advance the
-    loop.
-
-    When `state` carries a `design_id`, this opens a real database
-    connection and substitutes `requirements` with a fresh read of the
-    persisted `designs.requirements` column (issue #100), so a target
-    proposed or confirmed via `designs.requirement_targets` after `state`
-    was captured is reflected here without the caller re-reading the
-    design themselves -- everything else is passed through unchanged,
-    read-only. Without a `design_id`, this never touches the database and
-    `requirements` is returned exactly as given."""
-    return _inspect_design_loop_state(state)
-
-
 @function_tool(strict_mode=False)  # `state` is a free-form dict (the loop's
 # own session-token shape) -- same rationale as run_nec2_simulation's
 # geometry parameter above.
@@ -2599,272 +1572,23 @@ def compile_lab_test_plan(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-
-
-@function_tool(strict_mode=False)  # `state`/`candidates`/`score_specs` are
-# free-form dicts/lists -- same rationale as run_nec2_simulation's geometry
-# parameter above.
-def run_candidate_search(
-    state: dict,
-    candidates: list,
-    score_specs: dict,
-    evaluation_budget: int | None = None,
-    plateau_window: int = 5,
-    plateau_epsilon: float = 0.5,
-    target_satisfaction_threshold: float = 100.0,
-) -> dict:
-    """The candidate solver (issue #95, docs/adr/0014): drive a batch of
-    proposed candidate parameter sets through a design loop's ungated
-    ANALYSIS -> SIMULATION -> OPTIMIZATION span, scoring each scoreable
-    step against a stated requirement target, candidate after candidate,
-    stopping on target satisfaction, a score plateau, or the evaluation
-    budget -- see orchestration/solver.py's module docstring for the full
-    design (every design question this ticket posed is answered there, at
-    length).
-
-    `state` must already be positioned past ARCHITECTURE (inside an
-    approved architecture) and must be a tooling-shaped state dict (from
-    start_design_loop or a prior advance_design_loop_step call, carrying
-    design_id) -- never a bare design_loop-layer state. `candidates` is a
-    non-empty list of dicts, each supplying the fields the driven steps
-    need (e.g. eps_r/w_m/h_m/l_m for ANALYSIS, geometry/frequency_hz/
-    reference_impedance_ohms for SIMULATION, target_frequency_hz/
-    length_lower_m/length_upper_m for OPTIMIZATION). `score_specs` names
-    which steps to score and against what target (a
-    designs.requirement_targets PROPOSED/CONFIRMED target),
-    keyed by step name ("analysis"/"simulation"/"optimization").
-
-    This tool NEVER constructs, forges, or accepts an approval receipt,
-    and never calls request_loop_step_approval -- every step it drives is,
-    by construction, outside GATED_STEPS. If the state handed in is
-    already sitting at a gated step (ARCHITECTURE/MEASUREMENT/
-    REDESIGN_DECISION), this returns normally with
-    stop_reason="gated_step_pending_approval" and the loop's own
-    pending_approval report -- it never raises to signal this, and it
-    never attempts anything. Reaching VERIFICATION/CORRELATION/
-    REQUIREMENTS similarly halts with stop_reason="out_of_scope_step" (not
-    gated, just outside this tool's driven span). See
-    orchestration/solver.py's SolverError for malformed-call errors (bad
-    state/candidates/score_specs shape) versus a single candidate's own
-    drive failing, which is recorded on that candidate's trail entry and
-    never aborts the rest of the batch.
-
-    A stop_reason="score_plateau" result is not the same signal as
-    target_satisfaction or evaluation_budget: it means the running-best
-    overall_score_percent stopped improving by more than plateau_epsilon
-    across the last plateau_window candidates -- it does NOT mean this
-    architecture's OPTIMIZATION is exhausted. Read a plateau stop as a cue
-    to construct and submit ONE more batch that is deliberately different
-    from the one that just plateaued -- built on a different region of the
-    parameter space, or a different construction/proposal strategy, never
-    a near-identical resubmission with minor tweaks -- before concluding
-    parameter-level search is exhausted for this architecture. Only after
-    that second, deliberately-different batch also plateaus should the
-    caller move on to compile_lab_test_plan or a REDESIGN_DECISION for
-    this architecture.
-
-    Returns a report dict: stop_reason/stop_detail naming exactly why the
-    search stopped, an ordered `trail` (one entry per candidate actually
-    evaluated, each carrying its own per-step score trail -- visible as
-    evaluated, not only the final winner), and best_candidate_state -- the
-    winning candidate's own tooling-shaped state dict, ready to hand
-    straight back into advance_design_loop_step to continue the design
-    (its ANALYSIS/SIMULATION/OPTIMIZATION decisions persist at the
-    existing REDESIGN_DECISION flush once that continuation reaches it,
-    docs/adr/0011 -- this tool itself never flushes anything, since it
-    never reaches REDESIGN_DECISION)."""
-    return _run_candidate_search(
-        state,
-        candidates,
-        score_specs,
-        evaluation_budget=evaluation_budget,
-        plateau_window=plateau_window,
-        plateau_epsilon=plateau_epsilon,
-        target_satisfaction_threshold=target_satisfaction_threshold,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Specialist roles (issue #34) + principal delegation/synthesis (issue #35).
+# WHY THIS FILE STILL HOLDS TOOLS AT ALL, AND ONLY THESE: every tool this
+# file wraps is also registered, independently, in `mcp_server/server.py`
+# (ADR-0032's single-registration destination). The duplicates that survive
+# here are the ones microwave/antenna/test still need as `FunctionTool`s,
+# because those three roles shell out to external solvers and every such tool
+# hangs indefinitely over the MCP stdio transport on native Windows (see
+# `tests/test_mcp_tool_call_parity.py`'s module docstring). principal,
+# systems and verification hold no such tool and run entirely over
+# `agent/mcp_roles.py`'s MCP-routed construction, so their wrappers are gone
+# and `agent/mcp_roles.py` owns their tool-name lists outright -- a role
+# whose `RoleSpec.tools` is empty below is migrated, not broken.
 #
-# The single generalist agent is split into six named roles, each scoped to a
-# tool subset appropriate to its domain. `run()` below still drives the whole
-# conversation through the "principal" role, same as before the split -- but
-# the principal can now delegate a sub-question to any one specialist role
-# and get its result back to synthesize into one answer (see "Principal
-# delegation" below, after ROLES is built).
-#
-# Rationale for the tool split, by role:
-#
-#   - principal:   the coordinating/generalist role. Gets every currently
-#                   wired tool -- it is the one role expected to reach across
-#                   domains, so scoping it down would just recreate the
-#                   single-agent behavior under a different name.
-#   - systems:      link-level/systems-engineering concerns. Gets the
-#                   cascaded gain/noise-figure/link-budget/IP3 tools,
-#                   wavelength/electrical-size bookkeeping, the dB<->linear
-#                   unit converters those calculations lean on, plus the
-#                   knowledge-base *authoring* tools (ingest_document,
-#                   index_document, (ticket #67) lookup_digikey_component/
-#                   lookup_mouser_component/lookup_nexar_component/
-#                   reconcile_component_sources, plus (ticket #275)
-#                   lookup_digikey_product_details -- sourcing a datasheet
-#                   straight from a distributor and reconciling it into one
-#                   components row is the same authoring concern as manually
-#                   ingesting one -- plus (ticket #276) lookup_nexar_part_data,
-#                   Nexar's cross-distributor pricing/availability + parametric
-#                   specs query, grouped alongside lookup_nexar_component since
-#                   it's the same distributor-sourcing concern even though it
-#                   never itself ingests a document -- and ingest_arxiv_paper,
-#                   the arxiv-doc-builder-backed arXiv preprint fetcher,
-#                   alongside (issue #257) search_arxiv_papers, its sibling
-#                   discovery step:
-#                   topic/keyword search over the same public arXiv API,
-#                   returning candidates only, never itself calling
-#                   ingest_document -- the same authoring bucket, since
-#                   deciding what to bring in is part of standing up the
-#                   knowledge base, even though this one tool never writes
-#                   anything -- plus (issue #219)
-#                   ingest_patent, the USPTO patent/published-application
-#                   fetcher that reuses the same skill's PDF converters; both
-#                   sit in the same authoring
-#                   bucket as ingest_document since it's the same "bring an
-#                   external document into the knowledge base" action, just
-#                   with its own fetch+convert step ahead of it -- and (issue
-#                   #215) ingest_3gpp_spec/ingest_etsi_standard/
-#                   ingest_fcc_rule, the 3GPP/ETSI/FCC-eCFR standards-body
-#                   fetchers, same authoring bucket again: each is a thin,
-#                   fetch-by-identifier client with its own extraction step
-#                   ahead of ingest_document, exactly the ingest_arxiv_paper
-#                   shape) -- alongside (issue #279) search_fcc_rules,
-#                   ingest_fcc_rule's own discovery-search sibling: a
-#                   topic/keyword full-text search over eCFR's Search
-#                   Service, same "candidates only, never itself calling
-#                   ingest_document" shape as search_arxiv_papers above --
-#                   and (issue #219) ingest_patent, the USPTO
-#                   grant/publication fetcher, same bucket and same
-#                   unauthenticated-endpoint posture as those four, plus
-#                   (issue #326) search_ink_product: fired only once an
-#                   ink-related Capability warning already names a gap,
-#                   this searches the SAME Digi-Key/Mouser APIs
-#                   lookup_digikey_component/lookup_mouser_component reach,
-#                   but never downloads or ingests anything -- a citation
-#                   (product name + datasheet URL) for a human to review,
-#                   the same "search and cite, never auto-populate" shape
-#                   search_arxiv_papers already has, since standing up the
-#                   knowledge base for
-#                   the team is systems-level work. Shares the cascaded-IP3/
-#                   IM3 tools with microwave -- linearity budgeting is both a
-#                   chain-level (systems) and single-stage (microwave)
-#                   concern, same overlap already established for
-#                   calculate_noise_figure. Does NOT get analyze_touchstone_
-#                   file or the S/Z/Y/ABCD/stability/matching tools
-#                   (device/network-level, not a systems-level concern) or
-#                   the knowledge *auditing* tools (read_document/
-#                   extract_components -- verification's job, see below).
-#                   Also (issue #280) search_uspto_patents, ingest_patent's sibling
-#                   discovery step: full-text topic search against the USPTO Open Data
-#                   Portal, returning candidates only, never itself calling ingest_document
-#                   or ingest_patent -- the same "search precedent before inventing"
-#                   discipline search_arxiv_papers already applies, credentialed this
-#                   time (require_external_network_tools_enabled, a real USPTO.gov/ID.me
-#                   account), so it sits in approval_self_gated rather than
-#                   ingestion_auto in policies/tool_policy.yaml.
-#   - microwave:    passive/active RF component and network analysis. Gets
-#                   VSWR, return loss, noise figure, Touchstone analysis, the
-#                   S/Z/Y/ABCD two-port parameter conversions, stability
-#                   (K-factor, Delta, stability circles), impedance-matching
-#                   synthesis (quarter-wave, L-network), and (shared with
-#                   systems, see above) the IP3/IM3 tools. Does NOT get
-#                   calculate_cascade_gain (a system-chain concern, not a
-#                   single component/network concern), link budget, or the
-#                   knowledge-authoring tools.
-#   - antenna:      antenna-specific. Gets wavelength (electrical size),
-#                   VSWR/return loss (antenna input match), Touchstone
-#                   analysis (antenna port measurements), the Phase 1
-#                   antenna-synthesis tools (patch effective permittivity/
-#                   length extension/resonant frequency, fractional-
-#                   bandwidth<->Q, curvature-shifted resonant frequency,
-#                   Maxwell-Garnett metamaterial permeability, aperture
-#                   gain), the dB<->linear unit converters aperture gain
-#                   composes with, (issue #38) run_nec2_simulation --
-#                   simulating a wire-antenna structure's impedance/pattern/
-#                   gain is squarely antenna-element work -- and (issue #39)
-#                   run_openems_simulation, the FDTD counterpart for
-#                   conformal/curved or metamaterial geometry NEC2++'s wire
-#                   method-of-moments can't adequately model, and (issue
-#                   #63) run_gprmax_simulation, the ground-coupled/lossy-
-#                   half-space FDTD counterpart for when the host surface
-#                   is a real lossy dielectric (soil, concrete, a vehicle
-#                   hull) neither NEC2++'s ground models nor openEMS's
-#                   adapter can represent, and (issue #66)
-#                   generate_freecad_curved_geometry, mapping a flat unit-cell/
-#                   array layout onto a curved host surface (cylinder/sphere) --
-#                   the geometry-prep step for a real conformal antenna, feeding
-#                   straight into run_openems_simulation's/run_palace_simulation's
-#                   own geometry dict, and (issue
-#                   #41) optimize_patch_length_for_target_frequency --
-#                   searching patch length against a target resonant
-#                   frequency via the generic optimization/ package's
-#                   parameter sweep/grid search/Bayesian optimization is
-#                   antenna-synthesis work, the same family as the Phase 1
-#                   patch-resonant-frequency tool it composes with. Does
-#                   NOT get calculate_noise_figure or calculate_cascade_gain
-#                   (receiver-chain concerns, not the antenna element
-#                   itself) or the S/Z/Y/ABCD/stability/matching tools
-#                   (microwave's job).
-#   - test:         verification/measurement-adjacent. Gets Touchstone
-#                   analysis (the measured-network artifact) plus the new
-#                   Touchstone capabilities that are squarely test-engineering
-#                   work -- interpolation onto a target grid, fixture
-#                   de-embedding, network cascading, and quantified
-#                   measured-vs-predicted comparison -- plus VSWR, return
-#                   loss, and cascade gain for comparing a measured chain
-#                   against its predicted/spec values, plus (issue #38, #39,
-#                   #63) run_nec2_simulation, run_openems_simulation, and
-#                   run_gprmax_simulation --
-#                   generating a SIMULATED-provenance reference result is
-#                   itself something a measured result gets validated
-#                   against, plus (issue #94) compile_lab_test_plan --
-#                   deciding what to measure, by what method, and what to
-#                   expect before a prototype leaves for the bench is
-#                   squarely this role's own "prepare for/validate against
-#                   measurement" domain, and it is read-only (no database
-#                   write, no loop-state mutation, no approval receipt), so
-#                   granting it needs no new gate this role doesn't already
-#                   operate under -- a deliberate widening of the "design-
-#                   loop tools are principal-only" precedent
-#                   propose_requirement_target/mark_requirement_unscoreable/
-#                   confirm_requirement_target (issue #92) set, justified
-#                   because those three WRITE a design's stored target (a
-#                   design-tracking mutation, principal's job) while this
-#                   one only reads already-recorded loop state back out.
-#                   Does NOT get any knowledge-
-#                   authoring or knowledge-auditing tool -- test validates
-#                   hardware against a spec, it doesn't ingest or extract
-#                   documents.
-#   - verification: knowledge/provenance-checking, per the ticket's own
-#                   frame. Gets the knowledge-base *auditing* tools
-#                   (read_document, extract_components) that check what's
-#                   already in the knowledge base against its source and
-#                   provenance, plus (issue #37) search_design_records --
-#                   looking up whether a prior design/decision record exists
-#                   for a given precedent is itself a knowledge-audit
-#                   question, same family as read_document/extract_components,
-#                   not an authoring action. Does NOT get ingest_document/
-#                   index_document (authoring is systems' job -- verification
-#                   checks the result, it doesn't add to the store) or any
-#                   calculation tool (verification audits documented/
-#                   extracted claims and their provenance, it does not
-#                   itself run RF arithmetic).
-#
-#   search_knowledge is shared by every role: literature lookup is useful
-#   regardless of domain, and giving every role its own copy of the same
-#   tool object is the intended (not accidental) overlap the ticket calls
-#   out as fine. search_design_records (issue #37) is scoped more narrowly
-#   than search_knowledge -- it is a knowledge-audit tool (see verification,
-#   above), so it is only on the principal (which gets every tool) and
-#   verification, not every specialist.
+# A tool shared between a migrated role and one of the three still on the old
+# path (search_knowledge, compile_lab_test_plan, the cascade/IP3 family) keeps
+# its wrapper here for the old-path role's sake, and is served to the migrated
+# role over MCP like everything else -- the two surfaces are not a fallback
+# pair, they are two callers of the same underlying function.
 # ---------------------------------------------------------------------------
 
 _ALL_TOOLS = [
@@ -2882,8 +1606,6 @@ _ALL_TOOLS = [
     convert_y_to_s,
     convert_s_to_abcd,
     convert_abcd_to_s,
-    calculate_free_space_path_loss,
-    calculate_link_budget_margin,
     calculate_cascade_output_ip3,
     calculate_oip3_from_iip3,
     calculate_iip3_from_oip3,
@@ -2926,44 +1648,9 @@ _ALL_TOOLS = [
     run_palace_simulation,
     run_meep_simulation,
     generate_freecad_curved_geometry,
-    ingest_document,
-    ingest_arxiv_paper,
-    search_arxiv_papers,
-    search_literature_for_capability_warning,
-    ingest_3gpp_spec,
-    lookup_3gpp_spec_status,
-    ingest_etsi_standard,
-    ingest_etsi_ipr_declaration,
-    ingest_fcc_rule,
-    search_fcc_rules,
-    ingest_patent,
-    search_uspto_patents,
-    index_document,
-    read_document,
     search_knowledge,
-    search_design_records,
-    extract_components,
-    lookup_digikey_component,
-    lookup_digikey_product_details,
-    lookup_mouser_component,
-    lookup_nexar_component,
-    lookup_nexar_part_data,
-    reconcile_component_sources,
-    search_ink_product,
-    create_design,
-    read_design,
-    record_decision,
-    verify_requirement,
-    advance_design_status,
-    propose_requirement_target,
-    mark_requirement_unscoreable,
-    confirm_requirement_target,
     optimize_patch_length_for_target_frequency,
-    start_design_loop,
-    advance_design_loop_step,
-    inspect_design_loop_state,
     compile_lab_test_plan,
-    run_candidate_search,
 ]
 
 assert_all_tools_categorized([tool.name for tool in _ALL_TOOLS])
@@ -2972,7 +1659,13 @@ assert_all_tools_categorized([tool.name for tool in _ALL_TOOLS])
 @dataclass(frozen=True)
 class RoleSpec:
     """One specialist role: its display name, tool subset, and the domain
-    note appended to the shared system prompt explaining that scope."""
+    note appended to the shared system prompt explaining that scope.
+
+    `tools` is empty for a role whose tool-name list `agent/mcp_roles.py`
+    owns instead (principal, systems, verification). Their `display_name`/
+    `domain_note` stay here because `agent.mcp_roles.build_role_agent` reads
+    them for every role, migrated or not -- only the tool data moved.
+    """
 
     key: str
     display_name: str
@@ -3033,7 +1726,6 @@ ROLE_SPECS: list[RoleSpec] = [
             "never writes a library entry itself; a human still confirms and adds "
             "one."
         ),
-        tools=list(_ALL_TOOLS),
     ),
     RoleSpec(
         key="systems",
@@ -3071,42 +1763,6 @@ ROLE_SPECS: list[RoleSpec] = [
             "S-parameter detail to the microwave role and document auditing to "
             "the verification role."
         ),
-        tools=[
-            calculate_wavelength,
-            calculate_vswr,
-            calculate_return_loss,
-            calculate_cascade_gain,
-            calculate_noise_figure,
-            convert_db_to_linear,
-            convert_linear_to_db,
-            calculate_free_space_path_loss,
-            calculate_link_budget_margin,
-            calculate_cascade_output_ip3,
-            calculate_oip3_from_iip3,
-            calculate_iip3_from_oip3,
-            calculate_third_order_intermod_output,
-            calculate_third_order_intermod_dbc,
-            ingest_document,
-            ingest_arxiv_paper,
-            search_arxiv_papers,
-            ingest_3gpp_spec,
-            lookup_3gpp_spec_status,
-            ingest_etsi_standard,
-            ingest_etsi_ipr_declaration,
-            ingest_fcc_rule,
-            search_fcc_rules,
-            ingest_patent,
-            search_uspto_patents,
-            index_document,
-            search_knowledge,
-            lookup_digikey_component,
-            lookup_digikey_product_details,
-            lookup_mouser_component,
-            lookup_nexar_component,
-            lookup_nexar_part_data,
-            reconcile_component_sources,
-            search_ink_product,
-        ],
     ),
     RoleSpec(
         key="microwave",
@@ -3401,12 +2057,6 @@ ROLE_SPECS: list[RoleSpec] = [
             "not add new documents to the knowledge base -- you audit what is "
             "already there."
         ),
-        tools=[
-            read_document,
-            search_knowledge,
-            search_design_records,
-            extract_components,
-        ],
     ),
 ]
 
@@ -3416,6 +2066,13 @@ _SPECIALIST_KEYS = [key for key in _SPEC_BY_KEY if key != "principal"]
 # Build the five specialist agents first (systems, microwave, antenna, test,
 # verification). None of them delegate further -- only the principal role
 # gets delegation tools, below -- so this is a plain, non-circular build.
+#
+# systems and verification come out of this with no tools, and the principal
+# below with none either: `run()` reaches all three through
+# `agent.mcp_roles.build_role_agent`, never through these objects. They stay
+# as the constructible registry the test suite and any remaining importer
+# expect. Wiring one of them into a live run would give that role an agent
+# with nothing to call -- reach for `build_role_agent(key)` instead.
 ROLES: dict[str, Agent] = {
     key: Agent(
         name=_SPEC_BY_KEY[key].display_name,
@@ -3547,49 +2204,6 @@ SPECIALIST_HANDOFFS: dict[str, Handoff] = {
     key: _build_role_handoff(key, ROLES[key]) for key in _SPECIALIST_KEYS
 }
 
-# The principal's own DIRECT tools -- deliberately NOT `_ALL_TOOLS`. Giving
-# one agent 86+ granular calculation/simulation tools at once measurably
-# degrades tool-selection reliability on a local model (confirmed by this
-# repo's own testing: a 1-tool agent called correctly every time, an
-# 86-tool principal never called a real tool at all, and a 21-tool
-# specialist hallucinated a tool name that doesn't exist anywhere in its
-# schema). This mirrors both Anthropic's own tool-design guidance ("fewer,
-# higher-leverage tools beat many overlapping ones") and DeepSeek Harness's
-# production tool registry, which stays explicitly *scoped* per agent even
-# at thousands-of-plugins scale -- neither exposes everything to every
-# agent. The specialist calculation/simulation tools are still fully
-# reachable, just through a `route_to_<role>_role` handoff rather than
-# directly -- nothing lost, only routed through a smaller, more reliable
-# per-call tool surface. Kept here: the design-record tools and the
-# design-iteration-loop tools that are genuinely principal-exclusive
-# (no specialist role holds them -- see _ALL_TOOLS/RoleSpec history),
-# plus the two search tools this role already shared with others.
-_PRINCIPAL_DIRECT_TOOLS = [
-    # Design-record management (principal-exclusive; no specialist has these)
-    create_design,
-    read_design,
-    record_decision,
-    verify_requirement,
-    advance_design_status,
-    propose_requirement_target,
-    mark_requirement_unscoreable,
-    confirm_requirement_target,
-    # Knowledge lookup (shared with every role / with verification)
-    search_knowledge,
-    search_design_records,
-    # Design-iteration loop (principal-exclusive, issue #46/#94/#95)
-    start_design_loop,
-    advance_design_loop_step,
-    inspect_design_loop_state,
-    compile_lab_test_plan,
-    run_candidate_search,
-    # Capability-warning literature search (principal-exclusive, issue #327/
-    # ADR-0033): fires on a capability_warnings entry the design loop itself
-    # produced, so it belongs beside the loop tools above, not the systems
-    # role's general-purpose search_arxiv_papers.
-    search_literature_for_capability_warning,
-]
-
 _PRINCIPAL_ROUTING_INSTRUCTIONS = (
     "\n\n## Routing to a specialist\n\n"
     "For ANY RF calculation, simulation, or domain-specific analysis, "
@@ -3616,7 +2230,6 @@ ROLES["principal"] = Agent(
         f"{_PRINCIPAL_ROUTING_INSTRUCTIONS}"
         f"{_local_reasoning_output_tail()}"
     ),
-    tools=list(_PRINCIPAL_DIRECT_TOOLS),
     handoffs=list(SPECIALIST_HANDOFFS.values()),
 )
 
