@@ -458,7 +458,13 @@ def test_flush_target_for_folds_decision_input_into_engineering_result_value(ste
         step,
         kind,
         step_input={"process_id": 7, "note": "resolved against real inputs"},
-        result={"achieved_value": 42.0},
+        # Issue #334 (merged after this test was written): ANALYSIS and
+        # SIMULATION dispatch per design family and no longer fall back to
+        # a per-step table name, so a decision of either kind must state
+        # which function actually ran. The value itself is irrelevant to
+        # what this test checks (decision.input riding along); it only
+        # needs to be present so _tool_name_for doesn't raise.
+        result={"achieved_value": 42.0, "function": f"{kind}_function"},
     )
 
     target = _flush_target_for(
@@ -496,7 +502,10 @@ def test_flush_target_for_engineering_result_value_keeps_the_scored_field_readab
         DesignStep.ANALYSIS,
         "calculation",
         step_input={"target_frequency_hz": 2.45e9},
-        result={"resonant_frequency_hz": 2.451e9},
+        # "function" required since issue #334 (merged after this test was
+        # written): ANALYSIS dispatches per design family and no longer
+        # falls back to a per-step table name.
+        result={"resonant_frequency_hz": 2.451e9, "function": "patch_resonant_frequency_hz"},
     )
 
     target = _flush_target_for(
