@@ -59,12 +59,12 @@ def create_design(
     architecture: dict[str, Any],
 ) -> dict[str, Any]:
     """Start a new design in `DRAFT` status. See `designs.db.create_design`
-    for the full write-path contract (`requirements` shape check,
-    `architecture`'s `component_id` existence check, auto-created
-    `verification_items`). A rejected write returns a structured
-    `status`-tagged result instead of raising, so the caller -- human or
-    agent -- gets a message it can act on rather than a stack trace; a
-    write that fails for any other reason still raises.
+    for the full write-path contract (`(design_key, revision)` collision
+    handling, `requirements` shape check, `architecture`'s `component_id`
+    existence check, auto-created `verification_items`). A rejected write
+    returns a structured `status`-tagged result instead of raising, so the
+    caller -- human or agent -- gets a message it can act on rather than a
+    stack trace; a write that fails for any other reason still raises.
     """
     conn = db.get_connection()
     try:
@@ -77,6 +77,16 @@ def create_design(
                 requirements=requirements,
                 architecture=architecture,
             )
+        except db.DesignKeyRevisionCollisionError as exc:
+            conn.rollback()
+            return {
+                "status": "design_key_revision_collision",
+                "existing_design_id": exc.existing["id"],
+                "message": (
+                    f"design_key {exc.design_key!r} revision {exc.revision!r} is "
+                    f"already in use by design_id={exc.existing['id']}."
+                ),
+            }
         except InvalidRequirementsError as exc:
             conn.rollback()
             return {"status": "invalid_requirements", "message": str(exc)}

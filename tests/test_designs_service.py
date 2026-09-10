@@ -48,6 +48,32 @@ def test_create_design_returns_created_status_and_design_id(cleanup_designs):
     assert result["design_status"] == "DRAFT"
 
 
+def test_create_design_with_reused_design_key_and_revision_returns_structured_error(
+    cleanup_designs,
+):
+    first = create_design(
+        design_key="SVC-DES-COLLIDE-1",
+        name="First Attempt",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    cleanup_designs.append(first["design_id"])
+
+    result = create_design(
+        design_key="SVC-DES-COLLIDE-1",
+        name="Second Attempt, Same Key And Revision",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+
+    assert result["status"] == "design_key_revision_collision"
+    assert result["existing_design_id"] == first["design_id"]
+    assert "SVC-DES-COLLIDE-1" in result["message"]
+    assert "A" in result["message"]
+
+
 def test_create_design_with_dangling_component_id_returns_structured_error(cleanup_designs):
     result = create_design(
         design_key="SVC-DES-2",

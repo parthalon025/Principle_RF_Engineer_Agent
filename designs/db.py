@@ -202,6 +202,40 @@ def record_decision(
     return row
 
 
+class DesignKeyRevisionCollisionError(Exception):
+    """Raised by `create_design` when `(design_key, revision)` is already in
+    use. Carries the existing row so the caller can point at it instead of
+    crashing on the database's own `UNIQUE(design_key, revision)` constraint
+    -- the same dedup-and-point-back shape as `record_decision`'s
+    `RecordKeyCollisionError` and `knowledge.db.insert_document`'s
+    `DuplicateDocumentError`. A *different* `revision` under an
+    already-used `design_key` is not a collision -- CONTEXT.md's own rule
+    that a released design gets a new revision depends on that pair, not
+    `design_key` alone, being the identity key."""
+
+    def __init__(self, design_key: str, revision: str, existing: dict[str, Any]):
+        self.design_key = design_key
+        self.revision = revision
+        self.existing = existing
+        super().__init__(
+            f"design_key {design_key!r} revision {revision!r} already in use (id={existing['id']})"
+        )
+
+
+def find_design_by_key_and_revision(
+    conn: psycopg.Connection, design_key: str, revision: str
+) -> dict[str, Any] | None:
+    """Return the `designs` row for this exact `(design_key, revision)`
+    pair, if any -- that pair is unique (`db/schema.sql`), so at most one
+    row can ever match."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT * FROM designs WHERE design_key = %s AND revision = %s",
+            (design_key, revision),
+        )
+        return cur.fetchone()
+
+
 def create_design(
     conn: psycopg.Connection,
     design_key: str,
@@ -213,6 +247,12 @@ def create_design(
     """Insert a new `designs` row in `DRAFT` status, plus one
     `verification_items` row per `requirements` key (all `NOT VERIFIED`).
 
+    - `(design_key, revision)` is globally unique. Reusing an exact pair
+      already in use raises `DesignKeyRevisionCollisionError` carrying the
+      existing row -- never silently overwritten, never a raw database
+      exception -- mirroring `record_decision`'s `record_key` handling. A
+      different `revision` under the same `design_key` is a different,
+      independent row, not a collision.
     - `requirements` is shape-checked by
       `designs.validation.validate_requirements` before anything touches
       the database -- a dict keyed by `requirement_id`, each value
@@ -235,8 +275,16 @@ def create_design(
       -- e.g. `architecture` with no `component_id` refs never queries
       `components` at all. Plain sequential statements avoid depending on
       that invariant and match this module's own contract: the caller
-      owns the transaction boundary, not `create_design`.)
+      owns the transaction boundary, not `create_design`. For the same
+      reason, the `(design_key, revision)` collision check below is a
+      pre-check only, not also a caught `UniqueViolation` around the
+      INSERT -- catching it here would leave the caller's transaction
+      poisoned with no savepoint to recover to.)
     """
+    existing = find_design_by_key_and_revision(conn, design_key, revision)
+    if existing is not None:
+        raise DesignKeyRevisionCollisionError(design_key, revision, existing)
+
     validate_requirements(requirements)
 
     offending = _find_dangling_component_refs(conn, architecture)
