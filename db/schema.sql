@@ -593,23 +593,12 @@ ALTER TABLE components
 -- engineering -- but `design_key` alone was UNIQUE, so the database could
 -- never actually hold two revisions of the same design_key. Drop-then-add
 -- under a new constraint name, matching issue #367's identical fix to
--- components' constraint. ALTER TABLE has no `ADD CONSTRAINT IF NOT EXISTS`,
--- so this file's usual idempotent-ALTER style is approximated with a
--- DO block that swallows the "already exists" case, matching the
--- verification_items unique constraint pattern elsewhere in this file.
-DO $$$$ BEGIN
-    ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_key;
-    ALTER TABLE designs
-        ADD CONSTRAINT designs_design_key_revision_key
-        UNIQUE (design_key, revision);
-EXCEPTION
-    -- A named UNIQUE constraint backs itself with a same-named index, so a
-    -- second run collides on that index (duplicate_table, 42P07) rather
-    -- than on the constraint name itself (duplicate_object, 42710) --
-    -- both are caught so this stays idempotent regardless of which one
-    -- fires.
-    WHEN duplicate_table OR duplicate_object THEN NULL;
-END $$$$;
+-- components' constraint -- safe to re-run against both a fresh container
+-- and an already-initialized database.
+ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_key;
+ALTER TABLE designs
+    ADD CONSTRAINT designs_design_key_revision_key
+    UNIQUE (design_key, revision);
 
 -- Issue #398: a design's revision history should be traceable through the
 -- database via a real link (supersedes_design_id), mirroring the pattern

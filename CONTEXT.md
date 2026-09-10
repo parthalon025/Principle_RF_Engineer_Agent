@@ -773,6 +773,32 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: folding this into `capability-verdict` — that was tried
   (ADR-0025's 2026-09-08 correction) and contradicted ADR-0021's own rule
   that an unbuildable candidate is reported, not dropped.
+- **Field bundle**: the self-describing directory written after a SIMULATION
+  step, holding the mesh the solver actually solved on, the complex fields it
+  returned, and a manifest carrying that result's **Provenance**, its
+  **Validity box**, any **Capability warnings**, and its **Claim limits**. It
+  is the one seam every renderer reads, so nothing downstream reaches into a
+  solver's own working files. Distinct from an **Engineering result**, which
+  records the scalars a run reported: the bundle records what the solver was
+  *given* and what it *computed*, which is what makes a picture checkable
+  against it rather than merely captioned.
+  _Avoid_: export, dump — both name it as a copy of solver output, where the
+  load-bearing content is the manifest saying what that output may be shown as.
+- **Claim limit**: a machine-readable statement that a **Field bundle**'s
+  contents do not support one specific claim — that it is a finished part
+  rather than one periodic cell, a measured result, a converged mesh, an
+  arbitrary printed outline, or a solver path that has ever been run against a
+  real binary. Populated by the exporter from facts it can establish and never
+  hand-written per run, so every renderer inherits the same limits; a renderer
+  that cannot honour one must refuse to render rather than render without it.
+  Distinct from a **Capability warning** (the shop cannot build this today) and
+  from a `capability-verdict` (the requirement falls outside a family's
+  **Validity box**) — those two are about a candidate, while a Claim limit is
+  only about what may be shown or said about a result, and so never adds,
+  drops or ranks anything.
+  _Avoid_: refusal — a **Rejection record** already stores "the refusal" in the
+  sense of a human declining a proposal, and a Claim limit is a fact about what
+  the evidence supports, not a decision anyone made.
 - **Rejection record**: the stored fact that a human refused a specific
   proposal, with who, when and the stated reason (ADR-0026). A named
   exception to "a guess never becomes settled by repetition", on
