@@ -751,6 +751,37 @@ this list.
     Fixed at the claim in `example3-frequency-discrepancy.md` §2.4 per
     ADR-0024. Full account: `example3-cited-absorber-papers.md`.
 
+46. **377 Ω/sq is the Salisbury target, not what a thin resonant absorber
+    cell wants.** An early comment on #128 derived 377 Ω/sq (free-space
+    impedance) as *the* target sheet resistance and found ACI SC1502
+    carbon lands on it at 15.9 µm — arithmetically correct, but for the
+    wrong cell. 377 Ω/sq is what a **resistive sheet a quarter-wavelength
+    above the mirror** wants (Salisbury/Dällenbach), and #128's own body
+    had already ruled that geometry out — the patent's 0.87–2.0 mm skin
+    cannot fit a ~4.3–7.5 mm quarter-wave standoff. A **thin resonant**
+    cell concentrates the current instead, and wants only **≈11–90 Ω/sq**
+    of ohmic loss across the legal spacer-thickness range — a window
+    nothing Voltera sells lands on directly (silver/MXene ~0.1–0.25 Ω/sq,
+    carbon 250–1000 Ω/sq at printable thickness), which is exactly why the
+    resolution moved the tunable variable to element aspect ratio rather
+    than ink choice or thickness. Fixed at the claim in issue #128's
+    resolution comment, per ADR-0033.
+
+47. **Substrate loss on silicone: "a rounding error" (2.2–5.3%) →
+    20–36%.** #128's prototype first modelled the FSS grid capacitance as
+    lossless, which cannot show the dielectric's own contribution to the
+    cell's total dissipation, and reported substrate loss as
+    2.2–5.3% of the budget — small enough to read as noise. Once Costa's
+    dielectric-resistor term `R_D` (adopted with the rest of Costa's model
+    per #111) was included, silicone's real contribution is **20–36%**;
+    Kapton 2.5–4.4%, RO4350B 0.8–1.4%, LCP 0.5–0.9%. The premise of
+    #128/ADR-0033 survives — the printed pattern still carries 64–80% of
+    the loss even on silicone, so the pattern remains the primary,
+    searchable mechanism — but on a lossy substrate the loss is genuinely
+    **shared**, not negligible, and choosing silicone over a low-loss
+    substrate buys up to a third of the budget for free. Fixed at the
+    claim in issue #128's resolution comment, per ADR-0033.
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter

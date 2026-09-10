@@ -1,7 +1,7 @@
 # Every threshold traces back to the requirement
 
 **Date:** 2026-09-04
-**Serves:** [#110](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/110), [#112](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/112), [#115](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/115), part of [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104).
+**Serves:** [#110](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/110), [#112](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/112), [#115](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/115), [#128](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/128), part of [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104).
 **Question:** Which numbers in this loop are the customer's, which are physics', and which are ours — and what happens when we confuse them?
 
 ---
@@ -74,6 +74,18 @@ MIL-STD-961E, IPC-2223, ITAR and the JCIDS vocabulary feel like external constan
 This is the correct reason **#115 is still open**. `R = 3T` versus IPC-2223's 6× rule is not a physics question and not a materials question — the patent asserts one, the flex-circuit industry asserts the other, and the patent's is **twice as permissive**, so inheriting it silently approves parts bent twice as tight as IPC allows. Someone has to *state* which governs. That statement is an **A**.
 
 **C-numbers are still valuable** — they are how published work is compared to published work, and abandoning them would make the literature unusable. The rule is only that they do not gate.
+
+### A third axis: what a number is *for*, not just where it came from
+
+Issue [#128](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/128)'s prototype tagged every check in its bench against three labels — **LIMIT**, **SPEC**, **DESIGN** — after catching itself treating a customer's own budget as if it were physics. That tagging is this document's A/B/C distinction, read off a live prototype, plus one genuinely new thing:
+
+| Tag | Maps to | Meaning |
+|---|---|---|
+| **LIMIT** | **B1 + B2** | Immovable: feature floor, skin depth, Rozanov's bound. No requirement can argue with it. |
+| **SPEC** | **A** | The customer's ask — e.g. the patent's own 0.87–2.00 mm total-thickness budget. Real, but it is *theirs*, not physics'. |
+| **DESIGN** | *(new — not a threshold at all)* | **The candidate's own committed value** — a chosen gap, a chosen bridge length. Not a limit, not a requirement: an output the loop produced, which must satisfy every LIMIT and every SPEC but is neither. |
+
+DESIGN does not extend the A/B/C list — it answers a different question. A/B/C classifies *thresholds a candidate is checked against*; DESIGN is *the thing being checked*. The finding that forced this split: #128's bench was failing the plain carbon square against the patent's 0.87–2.00 mm SPEC as though it were a LIMIT, and *"the plain carbon square that 'failed' reaches 100% absorption the moment a customer allows 3.6 mm"* — the same design, unchanged, passes once the number it was checked against is correctly read as theirs rather than physics'.
 
 ---
 
