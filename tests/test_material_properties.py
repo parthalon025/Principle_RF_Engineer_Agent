@@ -346,11 +346,70 @@ def test_add_family_bracket_accepts_a_known_family_case_insensitively():
         max_citation="b",
         unit="unitless",
     )
-    # The literal spelling given is preserved on the returned/stored row --
-    # only the *validity check* is case-insensitive, matching how
-    # designs.design_families.get_design_family validates without silently
-    # rewriting what a caller passed in.
-    assert bracket["family"] == "Generic Polymer"
+    # Unlike orchestration.design_loop's design_family (ADR-0037: kept in the
+    # caller's own spelling because it is a decision record of what a human/
+    # agent typed), `family` here is this table's lookup key
+    # (db/schema.sql's UNIQUE(family, property)), so the CANONICAL spelling
+    # is what gets stored -- not the caller's literal casing. Storing the
+    # raw text would let "Generic Polymer" and "generic polymer" file as two
+    # disconnected brackets that can never find each other, reproducing
+    # issue #404's own failure mode on the casing axis instead of the
+    # spelling axis (see the two tests below).
+    assert bracket["family"] == "generic polymer"
+
+
+def test_add_family_bracket_canonicalizes_regardless_of_the_caller_s_casing():
+    # Two callers citing the SAME family under different casing must land on
+    # the SAME canonical spelling, not two independently-cased strings.
+    from_title_case = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    from_upper_case = add_family_bracket(
+        family="GENERIC POLYMER",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    assert from_title_case["family"] == from_upper_case["family"] == "generic polymer"
+
+
+def test_resolve_material_property_finds_a_bracket_cited_under_different_casing():
+    # The bracket is filed under "Generic Polymer"; a later caller asks
+    # under a differently-cased spelling of the SAME registered family
+    # ("generic polymer"). Before issue #404's casing fix, comparing raw
+    # strings here would have raised a false family/property mismatch, or
+    # (via fetch_family_bracket's exact-match SQL) never found the row at
+    # all -- exactly the "no lookup will ever find it" failure issue #404
+    # was opened to close.
+    bracket = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="citation A",
+        max_value=6.0,
+        max_citation="citation B",
+        unit="unitless",
+    )
+    result = resolve_material_property(
+        [],
+        material="unobtainium foam",
+        property_name="eps_r",
+        frequency_hz=9.5e9,
+        family="generic polymer",
+        family_bracket=bracket,
+    )
+    assert result["status"] == "family_fallback"
+    assert result["low"] == 2.0
+    assert result["high"] == 6.0
 
 
 # ---------------------------------------------------------------------------
