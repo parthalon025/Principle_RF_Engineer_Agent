@@ -17,13 +17,18 @@ from knowledge.models import ChunkDraft, Classification, DocumentDraft, SourceTy
 def _insert_raw_document(cur, title: str, checksum: str, supersedes_id: int) -> None:
     """Insert a document row via raw SQL, bypassing `insert_document` and its
     own check-then-insert entirely -- used to simulate a concurrent racing
-    insert that lands after `insert_document`'s own SELECT has already run."""
+    insert that lands after `insert_document`'s own SELECT has already run.
+
+    Supplies `classification` explicitly (issue #407 made the column
+    `NOT NULL` after this helper was first written) -- irrelevant to what
+    this helper exists to race, so a fixed `PUBLIC` value is fine."""
     cur.execute(
         """
-        INSERT INTO documents (title, source_type, checksum_sha256, supersedes_document_id)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO documents (title, source_type, checksum_sha256, supersedes_document_id,
+                                classification)
+        VALUES (%s, %s, %s, %s, %s)
         """,
-        (title, SourceType.DATASHEET.value, checksum, supersedes_id),
+        (title, SourceType.DATASHEET.value, checksum, supersedes_id, Classification.PUBLIC.value),
     )
 
 
