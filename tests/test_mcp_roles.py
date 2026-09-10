@@ -97,6 +97,82 @@ def test_principal_filter_is_the_scoped_sixteen_not_every_tool():
     assert principal_allowed < registered
 
 
+_EXPECTED_MIGRATED_ROLE_TOOL_NAMES: dict[str, frozenset[str]] = {
+    "principal": frozenset(
+        {
+            "create_design",
+            "read_design",
+            "record_decision",
+            "verify_requirement",
+            "advance_design_status",
+            "propose_requirement_target",
+            "mark_requirement_unscoreable",
+            "confirm_requirement_target",
+            "search_knowledge",
+            "search_design_records",
+            "start_design_loop",
+            "advance_design_loop_step",
+            "inspect_design_loop_state",
+            "compile_lab_test_plan",
+            "run_candidate_search",
+            "search_literature_for_capability_warning",
+        }
+    ),
+    "systems": frozenset(
+        {
+            "calculate_wavelength",
+            "calculate_vswr",
+            "calculate_return_loss",
+            "calculate_cascade_gain",
+            "calculate_noise_figure",
+            "convert_db_to_linear",
+            "convert_linear_to_db",
+            "calculate_free_space_path_loss",
+            "calculate_link_budget_margin",
+            "calculate_cascade_output_ip3",
+            "calculate_oip3_from_iip3",
+            "calculate_iip3_from_oip3",
+            "calculate_third_order_intermod_output",
+            "calculate_third_order_intermod_dbc",
+            "ingest_document",
+            "ingest_arxiv_paper",
+            "search_arxiv_papers",
+            "ingest_3gpp_spec",
+            "lookup_3gpp_spec_status",
+            "ingest_etsi_standard",
+            "ingest_etsi_ipr_declaration",
+            "ingest_fcc_rule",
+            "search_fcc_rules",
+            "ingest_patent",
+            "search_uspto_patents",
+            "index_document",
+            "search_knowledge",
+            "lookup_digikey_component",
+            "lookup_digikey_product_details",
+            "lookup_mouser_component",
+            "lookup_nexar_component",
+            "lookup_nexar_part_data",
+            "reconcile_component_sources",
+            "search_ink_product",
+        }
+    ),
+    "verification": frozenset(
+        {"read_document", "search_knowledge", "search_design_records", "extract_components"}
+    ),
+}
+
+
+@pytest.mark.parametrize("role_key", sorted(MIGRATED_ROLE_TOOL_NAMES))
+def test_migrated_role_tool_names_matches_the_pinned_pre_branch_contents(role_key):
+    # MIGRATED_ROLE_TOOL_NAMES has no surviving in-tree source to diff
+    # against (issue #376 deleted the RoleSpec.tools lists it was derived
+    # from), so the other tests here -- which check it's internally
+    # consistent with itself and with the live server -- would not notice a
+    # future edit that dropped or swapped an entry as long as both sides of
+    # that comparison changed together. This pins the actual names.
+    assert set(MIGRATED_ROLE_TOOL_NAMES[role_key]) == _EXPECTED_MIGRATED_ROLE_TOOL_NAMES[role_key]
+
+
 @pytest.mark.parametrize("role_key", sorted(MIGRATED_ROLE_TOOL_NAMES))
 def test_migrated_role_filter_is_not_sourced_from_role_specs(role_key):
     # A migrated role's RoleSpec carries no tools at all now, so a future
