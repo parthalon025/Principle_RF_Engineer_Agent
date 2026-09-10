@@ -309,10 +309,12 @@ class DesignLoopValidationError(ValueError):
     convention of a domain-specific ValueError subclass."""
 
 
-class DesignLoopStateVersionError(OrchestrationError):
+class DesignLoopStateVersionError(ValueError):
     """Raised when a stored DesignLoopState snapshot's version doesn't match
     what the current code expects. This prevents silent data loss when the
-    schema changes while a human-approval request is still pending."""
+    schema changes while a human-approval request is still pending. A ValueError
+    subclass (like DesignLoopValidationError), as this is a data deserialization
+    error, not an approval-gate failure."""
 
 
 @dataclass(frozen=True)
@@ -507,13 +509,13 @@ class DesignLoopState:
     def from_dict(data: dict[str, Any]) -> DesignLoopState:
         # Check version explicitly to provide a clear error if schema changes
         version = data.get("version")
-        if version is None or version != DesignLoopState.CURRENT_STATE_VERSION:
+        if version != DesignLoopState.CURRENT_STATE_VERSION:
             raise DesignLoopStateVersionError(
                 f"DesignLoopState snapshot has version={version!r}, but this code "
                 f"expects version={DesignLoopState.CURRENT_STATE_VERSION}. A schema "
                 "change may have occurred while this approval was pending. "
-                "Cannot safely deserialize. Contact support or check the CHANGELOG "
-                "for migration instructions."
+                "Either start a new design loop (orchestration.design_loop."
+                "start_design_loop) or use the code version that created this snapshot."
             )
         decisions = [LoopDecision.from_dict(d) for d in data.get("decisions", [])]
         return DesignLoopState(
