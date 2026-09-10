@@ -47,6 +47,7 @@ from verification.simulator_reference_cases import (
     ExpectedValue,
     PassBand,
     QuantityKind,
+    ReferenceCase,
     literature_expected_value,
     score_reference_case,
 )
@@ -243,6 +244,65 @@ def test_a_transmission_error_never_hides_behind_a_reflection_one():
     assert score.outcome is CaseOutcome.FAIL
     assert score.reflection == ()
     assert [d.name for d in score.transmission] == ["refraction_efficiency"]
+
+
+def test_two_quantities_sharing_a_name_are_still_filed_on_opposite_sides():
+    """A discrepancy must carry its own reflection/transmission label.
+
+    Nothing in the four cases today names two quantities the same, so this is
+    a guard rather than a bug report -- but the bucketing used to be rebuilt
+    after the fact from a `{name: kind}` dict, and a shared name would have
+    collapsed two entries into one and filed a transmission miss under
+    reflection. That is precisely the mix-up the separate buckets exist to
+    prevent, so the label travels with the discrepancy instead.
+
+    *In plain terms: if two published numbers ever end up with the same
+    label, the score must still know which side of the surface each one came
+    from.*
+    """
+    band = PassBand(
+        digitization_error=0.5,
+        digitization_basis="read to a fifth of a five decibel division on the published figure",
+    )
+    case = ReferenceCase(
+        case_id="synthetic-colliding-names",
+        description="two quantities, one name, opposite sides of the surface",
+        frequency_hz=10e9,
+        geometry={},
+        solver="CIRCUIT",
+        expected=(
+            literature_expected_value(
+                name="loss_db",
+                value=-1.0,
+                unit="dB",
+                citation="arXiv:x",
+                kind=QuantityKind.REFLECTION,
+                band=band,
+                rationale="synthetic",
+                result_key="reflection_db",
+            ),
+            literature_expected_value(
+                name="loss_db",
+                value=-1.0,
+                unit="dB",
+                citation="arXiv:x",
+                kind=QuantityKind.TRANSMISSION,
+                band=band,
+                rationale="synthetic",
+                result_key="transmission_db",
+            ),
+        ),
+    )
+
+    score = score_reference_case(
+        case,
+        {"reflection_db": -9.0, "transmission_db": -9.0, "provenance": "SIMULATED"},
+    )
+    assert score.outcome is CaseOutcome.FAIL
+    assert len(score.reflection) == 1
+    assert len(score.transmission) == 1
+    assert score.reflection[0].kind is QuantityKind.REFLECTION
+    assert score.transmission[0].kind is QuantityKind.TRANSMISSION
 
 
 def test_the_score_exposes_no_combined_figure_of_merit():
@@ -509,6 +569,25 @@ def test_the_circuit_reconstruction_uses_the_papers_own_published_c_and_l():
 #: `verification/fss_bandpass_circuit_check.py` against the committed
 #: `rf_tools/transmissive_absorber.py` ABCD primitives. If these stop
 #: matching, the model moved -- not the paper.
+#:
+#: THESE TWO NUMBERS ARE ALSO QUOTED AS PROSE IN FOUR PLACES, and prose does
+#: not re-derive itself. This assertion is the only thing that will notice
+#: the ABCD primitives changing underneath them, so when it fails, the fix
+#: is not just to re-transcribe the constants -- these have to be walked
+#: too, or the repo starts telling a reader a result it no longer produces:
+#:
+#:   * `verification/fss_bandpass_circuit_check.py` -- module docstring and
+#:     `main()`'s closing explanation ("about -0.39 dB", "1.3 dB too shallow")
+#:   * `verification/simulator_reference_cases.py` -- module docstring and
+#:     the case's own description and tolerance rationale
+#:   * `verification/README.md` -- the executed-case section
+#:   * `docs/literature-validation-cases.md` -- the results table and the
+#:     write-up of the finding
+#:
+#: The narrative is duplicated on purpose (issue #386 asks each of those to
+#: stand on its own for a reader who opens only that file); what is NOT
+#: acceptable is for it to drift, and this comment is the trail from the one
+#: executable copy to the four inert ones.
 CIRCUIT_S21_DB_AT_10GHZ = -0.3931
 CIRCUIT_S21_DB_AT_20GHZ = -15.6923
 

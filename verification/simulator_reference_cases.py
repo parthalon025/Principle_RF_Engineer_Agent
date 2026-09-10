@@ -177,6 +177,28 @@ class Comparison(StrEnum):
     back-reflected", "15-20 dB rejection in the stop-band". Forcing a bound
     into a two-sided band rejects correct answers on the permitted side of
     it, which is its own species of false verdict.
+
+    NOT the same vocabulary as `designs.requirement_targets.TargetComparator`,
+    and deliberately not imported from it, though the two are siblings and a
+    reader who finds one should know about the other. Two reasons, either one
+    sufficient:
+
+      * That module opens a database. It imports `psycopg` and `designs.db`
+        at module scope, so borrowing its enum would give this file -- which
+        today needs nothing but `math` and the standard library, and is
+        imported by tests that run with no Postgres anywhere -- a hard
+        dependency on a live schema in order to state that a paper said
+        "at least 95%".
+      * The point case means different things. `TargetComparator.EQUALS` is
+        a target a *customer* wants hit, scored by proximity to it;
+        `WITHIN` is a *published* number met inside a band this module
+        derives from digitization error and the paper's own published gap
+        (`PassBand`). Spelling them the same word would invite scoring one
+        by the other's rule.
+
+    *In plain terms: the other enum records what somebody asked for, this one
+    records what somebody measured. They read alike and are checked
+    differently, so they stay apart.*
     """
 
     WITHIN = "within"
@@ -425,6 +447,15 @@ class Discrepancy:
     actual: float | None
     unit: str
     citation: str
+    #: Which side of the surface the missed quantity describes, carried
+    #: straight off the `ExpectedValue` this was built from rather than
+    #: looked up again afterwards. A later lookup would have to key on
+    #: `name`, and two quantities in one case sharing a name would then
+    #: silently misfile one of them into the wrong bucket -- which is
+    #: exactly the reflection-against-transmission mix-up `CaseScore` exists
+    #: to make impossible. Defaults to `OTHER` so the closed-form cases,
+    #: which never classify, keep behaving as they did.
+    kind: QuantityKind = QuantityKind.OTHER
 
     def __str__(self) -> str:
         got = "missing from the result" if self.actual is None else f"{self.actual:.4g}"
@@ -1846,6 +1877,7 @@ def check_reference_case(case: ReferenceCase, result: dict[str, Any]) -> tuple[D
                     actual=actual,
                     unit=expected.unit,
                     citation=expected.citation,
+                    kind=expected.kind,
                 )
             )
     return tuple(problems)
@@ -1911,9 +1943,8 @@ def score_reference_case(
         )
 
     by_kind: dict[QuantityKind, list[Discrepancy]] = {kind: [] for kind in QuantityKind}
-    kind_of = {expected.name: expected.kind for expected in case.expected}
     for problem in check_reference_case(case, result):
-        by_kind[kind_of[problem.name]].append(problem)
+        by_kind[problem.kind].append(problem)
 
     outcome = CaseOutcome.PASS if not any(by_kind.values()) else CaseOutcome.FAIL
     return CaseScore(

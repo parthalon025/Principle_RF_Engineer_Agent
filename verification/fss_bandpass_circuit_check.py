@@ -68,6 +68,8 @@ order, the passivity, the executed numbers -- are asserted in
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from rf_tools.transmissive_absorber import (
@@ -99,6 +101,67 @@ def _layers() -> list[dict[str, Any]]:
     return list(BANDPASS_FSS_SILVER_PASTE.geometry["layers"])
 
 
+def _omega(frequency_hz: float) -> float:
+    return 2 * math.pi * frequency_hz
+
+
+@dataclass(frozen=True)
+class _LayerKind:
+    """Everything this script knows about one kind of layer, held together.
+
+    The reconstruction's layers are plain dicts tagged with a `kind` string,
+    and three different questions get asked of that tag: what ABCD matrix the
+    layer contributes, whether it counts toward the dielectric thickness, and
+    how it prints. Answering each with its own `if kind == ...` chain means
+    three edits to add a fourth kind and three places for them to disagree --
+    and the printing chain in particular used to end in a bare `else`, so an
+    unrecognised layer would have been described as an inductor rather than
+    rejected. One key, one entry, one place to be wrong.
+
+    ON THE PHYSICS, since it is easy to skim past in a table: a capacitive
+    FSS layer is a shunt susceptance jwC across the line, an inductive one is
+    1/(jwL). Both are LOSSLESS, and that is not an oversight -- see the module
+    docstring and the case's own recorded assumption. The paste's real loss
+    cannot be reconstructed from what the paper publishes, so it is left out
+    visibly rather than approximated by a number nobody could cite. The
+    `(LOSSLESS)` each description carries is there so a reader of the printed
+    output cannot miss it either.
+    """
+
+    is_dielectric: bool
+    abcd: Callable[[dict[str, Any], float], Any]
+    describe: Callable[[dict[str, Any]], str]
+
+
+_LAYER_KINDS: dict[str, _LayerKind] = {
+    "dielectric": _LayerKind(
+        is_dielectric=True,
+        abcd=lambda layer, hz: dielectric_slab_abcd(
+            hz, layer["eps_r"], layer["tan_delta"], layer["thickness_m"]
+        ),
+        describe=lambda layer: f"{layer['thickness_m'] * 1e3:.2f} mm ABS, eps_r {layer['eps_r']}",
+    ),
+    "shunt_capacitance": _LayerKind(
+        is_dielectric=False,
+        abcd=lambda layer, hz: shunt_sheet_abcd(1j * _omega(hz) * layer["farads"]),
+        describe=lambda layer: f"shunt {layer['farads'] * 1e15:.0f} fF  (LOSSLESS)",
+    ),
+    "shunt_inductance": _LayerKind(
+        is_dielectric=False,
+        abcd=lambda layer, hz: shunt_sheet_abcd(1 / (1j * _omega(hz) * layer["henries"])),
+        describe=lambda layer: f"shunt {layer['henries'] * 1e9:.2f} nH  (LOSSLESS)",
+    ),
+}
+
+
+def _layer_kind(layer: dict[str, Any]) -> _LayerKind:
+    """The single lookup, so an unrecognised kind fails loudly and in one place."""
+    kind = layer["kind"]
+    if kind not in _LAYER_KINDS:
+        raise ValueError(f"unknown layer kind {kind!r} in the reconstruction")
+    return _LAYER_KINDS[kind]
+
+
 def layer_stack_thickness_m() -> float:
     """Total dielectric thickness of the reconstruction, in metres.
 
@@ -107,30 +170,7 @@ def layer_stack_thickness_m() -> float:
     reveal, because a stack of the wrong thickness still produces a perfectly
     plausible band-pass somewhere else.
     """
-    return sum(layer["thickness_m"] for layer in _layers() if layer["kind"] == "dielectric")
-
-
-def _layer_abcd(layer: dict[str, Any], frequency_hz: float) -> Any:
-    """One layer of the reconstruction, as an ABCD matrix.
-
-    A capacitive FSS layer is a shunt susceptance jwC across the line; an
-    inductive one is 1/(jwL). Both are LOSSLESS here, and that is not an
-    oversight -- see the module docstring and the case's own recorded
-    assumption. The paste's real loss cannot be reconstructed from what the
-    paper publishes, so it is left out visibly rather than approximated by a
-    number nobody could cite.
-    """
-    kind = layer["kind"]
-    omega = 2 * math.pi * frequency_hz
-    if kind == "dielectric":
-        return dielectric_slab_abcd(
-            frequency_hz, layer["eps_r"], layer["tan_delta"], layer["thickness_m"]
-        )
-    if kind == "shunt_capacitance":
-        return shunt_sheet_abcd(1j * omega * layer["farads"])
-    if kind == "shunt_inductance":
-        return shunt_sheet_abcd(1 / (1j * omega * layer["henries"]))
-    raise ValueError(f"unknown layer kind {kind!r} in the reconstruction")
+    return sum(layer["thickness_m"] for layer in _layers() if _layer_kind(layer).is_dielectric)
 
 
 def circuit_reading(frequency_hz: float) -> dict[str, float]:
@@ -142,7 +182,7 @@ def circuit_reading(frequency_hz: float) -> dict[str, float]:
     different object, and the arithmetic would solve it just as happily.
     """
     geometry = BANDPASS_FSS_SILVER_PASTE.geometry
-    matrices = [_layer_abcd(layer, frequency_hz) for layer in _layers()]
+    matrices = [_layer_kind(layer).abcd(layer, frequency_hz) for layer in _layers()]
     s11, s21 = s_parameters(
         cascade(*matrices),
         geometry["port_impedance_ohm"],
@@ -218,12 +258,7 @@ def main() -> int:
 
     print("\n  --- the reconstruction, in the order the wave meets it ---")
     for layer in _layers():
-        if layer["kind"] == "dielectric":
-            detail = f"{layer['thickness_m'] * 1e3:.2f} mm ABS, eps_r {layer['eps_r']}"
-        elif layer["kind"] == "shunt_capacitance":
-            detail = f"shunt {layer['farads'] * 1e15:.0f} fF  (LOSSLESS)"
-        else:
-            detail = f"shunt {layer['henries'] * 1e9:.2f} nH  (LOSSLESS)"
+        detail = _layer_kind(layer).describe(layer)
         print(f"    {detail:<34}{layer['role']}")
     print(f"    {f'{layer_stack_thickness_m() * 1e3:.2f} mm':<34}total dielectric thickness")
 
