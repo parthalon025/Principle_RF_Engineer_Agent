@@ -189,12 +189,6 @@ def _engineering_decision(
     )
 
 
-def _measurement_decision(result: dict[str, Any]) -> Any:
-    return _engineering_decision(
-        DesignStep.MEASUREMENT, "measurement", result, provenance="MEASURED"
-    )
-
-
 def test_external_measurement_is_recorded_as_record_external_measurement():
     """A MEASUREMENT decision's evidence -- a Touchstone file an engineer
     measured elsewhere and carried back (ticket #90: the only MEASUREMENT
@@ -202,12 +196,15 @@ def test_external_measurement_is_recorded_as_record_external_measurement():
     produced it."""
     from orchestration.tooling import _tool_name_for
 
-    decision = _measurement_decision(
+    decision = _engineering_decision(
+        DesignStep.MEASUREMENT,
+        "measurement",
         {
             "touchstone_file": "/tmp/dut.s2p",
             "provenance": "MEASURED",
             "source": "external_test_iteration",
-        }
+        },
+        provenance="MEASURED",
     )
     assert _tool_name_for(decision) == "record_external_measurement"
 
