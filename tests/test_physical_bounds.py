@@ -18,7 +18,9 @@ from designs.design_families import (
     ABSORBER,
     ABSORBER_TRANSMISSIVE,
     DIFFUSIVE,
+    FREQUENCY_AXIS,
     NO_PHYSICAL_BOUND,
+    NO_POSTPROCESS_PHASE_READ_DIRECTLY,
     PATCH,
     POLARIZATION_CONVERTER,
     REFLECTION_PHASE,
@@ -275,6 +277,8 @@ def test_a_design_family_refuses_to_construct_with_disagreeing_flags():
             simulation_adapter=UnsettledSimulationAdapter(
                 reason="a test fixture, not a real family"
             ),
+            postprocess=NO_POSTPROCESS_PHASE_READ_DIRECTLY,
+            sweep_axes=(FREQUENCY_AXIS,),
             requires_ground_plane=True,
             port_count=2,
         )
@@ -288,6 +292,8 @@ def test_a_design_family_refuses_to_construct_with_disagreeing_flags():
             simulation_adapter=UnsettledSimulationAdapter(
                 reason="a test fixture, not a real family"
             ),
+            postprocess=NO_POSTPROCESS_PHASE_READ_DIRECTLY,
+            sweep_axes=(FREQUENCY_AXIS,),
             requires_ground_plane=False,
             port_count=1,
         )

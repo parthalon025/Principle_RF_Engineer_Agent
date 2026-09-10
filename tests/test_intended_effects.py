@@ -256,6 +256,21 @@ def test_effects_without_family_reports_the_transmitted_radome_gap():
 
 
 def test_the_gap_report_is_exactly_the_three_known_gaps_today():
+    """Still three, and two of them are now stale in ONE direction only.
+
+    ADR-0050 registered BANDPASS_FSS for `transmitted` and SHIELD for
+    `shielded against` in designs/design_families.py. This library has not yet
+    been pointed at them -- `TRANSMITTED.families` and
+    `SHIELDED_AGAINST.families` are still empty tuples -- so both effects
+    still appear here. The registry-side truth is asserted from the other
+    direction in `test_every_registered_design_family_is_claimed_by_some_
+    effect` above, whose docstring carries the two-line fix.
+
+    Deliberately NOT weakened to a subset check while that is outstanding: an
+    exact set is what makes both halves of the wiring visible at once, and a
+    subset check would pass silently whether the gap were real or merely
+    unwired.
+    """
     gapped = {gap.effect for gap in effects_without_family()}
     assert gapped == {"transmitted", "shielded against", "low infrared emissivity"}
 
@@ -309,15 +324,40 @@ def test_one_family_can_serve_two_effects():
 def test_every_registered_design_family_is_claimed_by_some_effect():
     """The gap in the other direction.
 
-    PATCH is the one unclaimed family and that is a finding, not an oversight:
-    a patch antenna radiates a wave rather than doing something to an arriving
-    one, and "radiated" is not among CONTEXT.md's seven either.
+    THE TRIPWIRE FIRED, EXACTLY AS DESIGNED. This assertion used to read
+    `== (PATCH,)` and was written to fail the day a seventh design family was
+    registered without being wired in here. ADR-0050 registered two --
+    BANDPASS_FSS (for `transmitted`) and SHIELD (for `shielded against`) --
+    and this test failed on the spot rather than leaving two families no
+    intended effect could reach. That is the mechanism working, so the list is
+    updated rather than the test weakened.
 
-    This assertion fails loudly the day a SEVENTH design family is registered
-    without being wired into designs/intended_effects.py -- which would
-    otherwise leave a family no intended effect can reach.
+    Each of the three names below is unclaimed for a DIFFERENT reason, and the
+    difference matters:
+
+      * PATCH -- a finding, not an oversight. A patch antenna radiates a wave
+        rather than doing something to an arriving one, and "radiated" is not
+        among CONTEXT.md's seven.
+      * BANDPASS_FSS and SHIELD -- WORK OUTSTANDING, not a finding. Both
+        exist precisely to serve an effect this library already holds
+        (`transmitted`, `shielded against`), and both are still listed here
+        only because `TRANSMITTED.families` and `SHIELDED_AGAINST.families` in
+        designs/intended_effects.py are still empty tuples. ADR-0050 could not
+        close that half: the two modules have separate owners and the family
+        registry landed first. Until they are wired, `effects_without_family()`
+        below still reports those two effects as gapped even though the
+        registry now serves them -- the two modules disagree, and the
+        disagreement is stated here rather than hidden.
+
+    Wiring them is a two-line change (add the family names to those two
+    profiles' `families` tuples) plus removing them from this list and from
+    `test_the_gap_report_is_exactly_the_three_known_gaps_today`.
     """
-    assert families_without_effect() == (design_families.PATCH.name,)
+    assert families_without_effect() == (
+        design_families.BANDPASS_FSS.name,
+        design_families.PATCH.name,
+        design_families.SHIELD.name,
+    )
 
 
 # ---------------------------------------------------------------------------
