@@ -1,3 +1,4 @@
+import psycopg
 import pytest
 from psycopg.types.json import Json
 
@@ -8,6 +9,7 @@ from designs.db import (
     UnknownDesignError,
     UnknownVerificationItemError,
     create_design,
+    find_designs_referencing_component,
     read_design,
     read_engineering_results_for_scoring,
     record_decision,
@@ -231,6 +233,120 @@ def test_create_design_reports_multiple_offending_blocks(db_conn):
         )
     offending_blocks = {o["block"] for o in exc_info.value.offending}
     assert offending_blocks == {"lna", "mixer"}
+
+
+# ---------------------------------------------------------------------------
+# design_component_refs (issue #395 / #392): the real, database-enforced
+# link between a design and the components its architecture references --
+# `create_design` populates it in the same transaction as the
+# `designs`/`architecture` write (reusing the same `component_id` list
+# `_find_dangling_component_refs` already validates above), Postgres itself
+# refuses to let a referenced `components` row be deleted out from under a
+# live design, and `find_designs_referencing_component` is the "which
+# designs use component X" reverse lookup.
+# ---------------------------------------------------------------------------
+
+
+def test_create_design_with_component_ref_creates_matching_design_component_refs_row(db_conn):
+    component_id = _make_component(db_conn, part_number="ACM-AMP-REFTBL")
+    design = create_design(
+        db_conn,
+        design_key="DES-REFTBL-1",
+        name="Ref Table Design",
+        revision="A",
+        requirements={},
+        architecture={"lna": {"component_id": component_id}},
+    )
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT design_id, component_id, block FROM design_component_refs WHERE design_id = %s",
+            (design["id"],),
+        )
+        rows = cur.fetchall()
+
+    assert rows == [(design["id"], component_id, "lna")]
+
+
+def test_create_design_with_empty_architecture_creates_no_design_component_refs(db_conn):
+    design_id = _make_design(db_conn, design_key="DES-REFTBL-2")
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM design_component_refs WHERE design_id = %s", (design_id,))
+        (count,) = cur.fetchone()
+    assert count == 0
+
+
+def test_deleting_a_referenced_component_raises_foreign_key_violation(db_conn):
+    """Issue #395/#392 acceptance criterion: the FK is real, not just
+    application-layer bookkeeping -- proven live against the constraint,
+    not mocked (mirroring tests/test_element_alphabet.py's
+    test_insert_symbol_entry_fails_loudly_against_a_nonexistent_process for
+    a different FK, same reasoning)."""
+    component_id = _make_component(db_conn, part_number="ACM-AMP-DELPROTECT")
+    create_design(
+        db_conn,
+        design_key="DES-REFTBL-DEL",
+        name="Delete Protection Design",
+        revision="A",
+        requirements={},
+        architecture={"lna": {"component_id": component_id}},
+    )
+
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with db_conn.cursor() as cur:
+            cur.execute("DELETE FROM components WHERE id = %s", (component_id,))
+    db_conn.rollback()
+
+
+def test_find_designs_referencing_component_returns_empty_for_unreferenced_component(db_conn):
+    component_id = _make_component(db_conn, part_number="ACM-AMP-NOREF")
+    assert find_designs_referencing_component(db_conn, component_id) == []
+
+
+def test_find_designs_referencing_component_returns_the_one_referencing_design(db_conn):
+    component_id = _make_component(db_conn, part_number="ACM-AMP-ONEREF")
+    design = create_design(
+        db_conn,
+        design_key="DES-REFTBL-ONE",
+        name="One Referencing Design",
+        revision="A",
+        requirements={},
+        architecture={"lna": {"component_id": component_id}},
+    )
+
+    result = find_designs_referencing_component(db_conn, component_id)
+
+    assert result == [
+        {"id": design["id"], "design_key": "DES-REFTBL-ONE", "revision": "A", "block": "lna"}
+    ]
+
+
+def test_find_designs_referencing_component_returns_multiple_referencing_designs(db_conn):
+    component_id = _make_component(db_conn, part_number="ACM-AMP-TWOREF")
+    first = create_design(
+        db_conn,
+        design_key="DES-REFTBL-TWO-A",
+        name="First Referencing Design",
+        revision="A",
+        requirements={},
+        architecture={"lna": {"component_id": component_id}},
+    )
+    second = create_design(
+        db_conn,
+        design_key="DES-REFTBL-TWO-B",
+        name="Second Referencing Design",
+        revision="A",
+        requirements={},
+        architecture={"mixer": {"component_id": component_id}},
+    )
+
+    result = find_designs_referencing_component(db_conn, component_id)
+
+    assert {(row["id"], row["design_key"], row["revision"], row["block"]) for row in result} == {
+        (first["id"], "DES-REFTBL-TWO-A", "A", "lna"),
+        (second["id"], "DES-REFTBL-TWO-B", "A", "mixer"),
+    }
 
 
 def _make_design(db_conn, design_key="ER-DES"):
