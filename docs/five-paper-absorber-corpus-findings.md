@@ -2,7 +2,9 @@
 
 **Research date:** 2026-09-07
 **Map:** [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104)
-**Tickets touched:** #187 (decisively), #110, #128, #129, #130/#138, #111/#190, #105/#148
+**Tickets touched:** ~~#187 (decisively)~~ **#187 (partly, and §1's headline ruling on it was
+wrong — corrected 2026-09-10, see the box in §1)**, #110, #128, #129, #130/#138, #111/#190,
+#105/#148
 
 ## What this is, and how much weight it carries
 
@@ -39,21 +41,75 @@ makes them evidence about **physics**, not off-topic material. The analytical un
 the **validity box** — what a mechanism depends on, over what frequency range it holds, and how
 it rescales.
 
+> **But read that table as a coverage statement too.** Five papers, none of them microwave. That
+> is fine for the physics findings in §2–§6, which are about mechanisms and rescale. It is fatal
+> for a claim about *what the microwave literature does or does not contain* — which is exactly
+> the claim §1 originally made, and exactly why it was wrong. The corrected §1 and the fourth
+> process failure in §7 record it. First-hand read of the paper this corpus missed:
+> [`ozden-broadband-supercell-primary-source.md`](./ozden-broadband-supercell-primary-source.md).
+
 ---
 
 ## 1. #187 — the ticket this corpus was supposed to settle
 
-**Ruling: the published record does not contain the experiment #187 asks for.** In five papers
-across five orders of magnitude of frequency, nobody builds *laterally detuned coplanar
-resonators over a single uniform spacer height with no added loss material* and reports the
-bandwidth against a control. The absence is the finding. `CONFIDENCE: HIGH.`
+> ### CORRECTED 2026-09-10 — the ruling below was wrong, and the root cause is worse than one missed paper
+>
+> This section originally ruled, at `CONFIDENCE: HIGH`, that **"the published record does not
+> contain the experiment #187 asks for ... The absence is the finding."** That claim is false as
+> stated, and it was never entitled to be made.
+>
+> **The root cause: none of the five papers is a microwave paper.** Read the corpus table above —
+> P1 is 380–2300 nm, P2 is 10.90–22.91 µm, P3 is a review with no structures, P4 is 400–3500 nm,
+> P5 is 500–2000 nm. #187 is an X-band question (8–12 GHz). **A `HIGH`-confidence claim about
+> "the published record" for an X-band question was drawn from a corpus that never searched the
+> band**, and the §7 rule this document already states — *"a claim of the form 'X is not in the
+> repo' must name the commit it was checked at"* — has an obvious analogue that was not applied:
+> a claim of the form *"X is not in the literature"* must name the band, database and query it was
+> checked against. This one named none of them.
+>
+> **The experiment exists and has since 2016.** Ozden, Yucedag & Kocer, *"Metamaterial based
+> broadband RF absorber at X-band"*, *AEÜ* **70**:1062–1070 (2016),
+> doi [10.1016/j.aeue.2016.05.002](https://doi.org/10.1016/j.aeue.2016.05.002) — laterally detuned,
+> differently sized coplanar resonators on **one** 0.75 mm FR4 spacer over **one** continuous
+> copper ground plane, **no lumped resistors and no resistive film**, with N swept 12 → 16,
+> fabricated and measured on a VNA against a control. That is #187's geometry, variable and
+> control. Read first-hand in
+> [`ozden-broadband-supercell-primary-source.md`](./ozden-broadband-supercell-primary-source.md).
+>
+> **What it found, and it is two answers to two questions.** On **width** it agrees with the
+> repo's bench: *"increasing the number of unit cell in super cell does not change frequency
+> bandwidth"* — and the 12-letter tile measured **wider** than the 16-letter tile (2.73 vs
+> 2.55 GHz at 80 %). On **depth** it disagrees sharply: *"this increment improves the absorption
+> level"*, and a figure read gives a worst-in-band absorptivity of **0.27 (1 letter) → 0.69 (12)
+> → 0.79 (16)** over a matched 2.44 GHz window. The likely reconciliation — a hypothesis, not a
+> finding — is that Ozden's conductor is loss-free copper (RF surface resistance 26.1 mΩ/sq)
+> against this programme's 25–50 Ω/sq printed letters, so his baseline is two sharp peaks with a
+> 0.27 hole to fill and the repo's is already loss-broadened to 22.1 % with no hole. §6 of that
+> document sets out the test that would settle it.
+>
+> **What survives from the original ruling**, rescoped: *within these five papers*, nobody runs
+> the experiment — which is now an unremarkable statement about five optical and infrared papers
+> rather than a finding about the literature. The rescoped table below replaces the original one.
+> `CONFIDENCE: HIGH` that these five are silent on it; **no confidence claim about "the published
+> record" is made here at all**, because this corpus cannot support one.
+>
+> Everything else in this document is unaffected — §2 through §6 rest on the papers' own physics,
+> not on a claim about what was never published.
 
-**Anyone citing these papers as showing that a super-cell does or does not buy bandwidth is
-citing a paper that never ran the test.**
+**Rescoped ruling: these five papers do not contain the experiment #187 asks for, and they were
+never the right place to look for it.** In five papers spanning 380 nm to 22.91 µm — optical and
+infrared, not one at microwave — nobody builds *laterally detuned coplanar resonators over a
+single uniform spacer height with no added loss material* and reports the bandwidth against a
+control. `CONFIDENCE: HIGH about these five papers. No claim is made about the literature.`
 
-**But the record leans.** Four independent groups all wanted broad bands, all had the
-shared-spacer geometry available, and none reached for lateral detuning. Every broadband result
-in the corpus is carried by **loss** or by **vertical height variety**.
+**Anyone citing these five papers as showing that a super-cell does or does not buy bandwidth is
+citing a paper that never ran the test.** The paper that *did* run it is Ozden *et al.* (2016) —
+see the correction above.
+
+**Within the corpus, the record still leans — but it is now a much weaker signal.** Four groups
+here all wanted broad bands, all had the shared-spacer geometry available, and none reached for
+lateral detuning. Every broadband result *in this corpus* is carried by **loss** or by **vertical
+height variety**.
 
 The sharpest datum is **P4**: the group already had four coplanar resonators in one cell over
 one spacer at conserved 31.11 % areal fill, and when they wanted 1170 nm of bandwidth they left
@@ -63,11 +119,12 @@ near-controlled decline to detune. `LITERATURE-SUPPORTED.`
 
 | Question | Ruling | Confidence |
 |---|---|---|
-| Does the record show a super-cell buying bandwidth by lateral detuning? | **No — it shows neither way. The test is absent.** | HIGH |
-| Does it show lateral detuning is *not* a first-class mechanism? | **Indirectly yes**, by revealed preference across four groups — an argument from practice, not physics | MEDIUM-HIGH |
-| Is the repo's 0.7 pp result (22.1 % → 22.8 %) contradicted? | **No. It stands.** | HIGH |
-| Is the repo's *mechanism* ("one spacer = one inductance") confirmed? | **No — neither confirmed nor refuted. Open.** | HIGH that it is open |
-| Can #187 be closed with "the skin is too thin anyway"? | **No.** The super-cell sits at ~48.5 % of the Rozanov ceiling for the *thinnest* skin in budget | HIGH |
+| Do these five papers show a super-cell buying bandwidth by lateral detuning? | **No — they show neither way. The test is absent from *this corpus*.** | HIGH about these five |
+| Does the *literature* contain the test? | **Yes. Ozden *et al.* (2016), X-band, fabricated and measured** — [primary-source read](./ozden-broadband-supercell-primary-source.md) | HIGH |
+| ~~Does it show lateral detuning is *not* a first-class mechanism? **Indirectly yes**, by revealed preference across four groups~~ | **FALLS, 2026-09-10.** The four-group revealed preference was an argument from silence, and the silence was an artefact of an all-optical corpus. Ozden's own Introduction names **five further groups** reaching for lateral detuning — Lee & Lee [20], Kollatou *et al.* [21], Park *et al.* [22], Gu *et al.* [23] (>80 % over 2.35 GHz in X-band), Ghosh *et al.* [24], reference numbers verified against the printed reference list. **At microwave, lateral detuning is a small but real literature, not a road not taken.** | ~~MEDIUM-HIGH~~ → withdrawn |
+| Is the repo's 0.7 pp result (22.1 % → 22.8 %) contradicted? | **No. It stands** — and Ozden's *measured* N-sweep agrees with it on width | HIGH |
+| Is the repo's *mechanism* ("one spacer = one inductance") confirmed? | **No — neither confirmed nor refuted. Open.** Ozden is consistent with it and with a competing loss-regime explanation | HIGH that it is open |
+| Can #187 be closed with "the skin is too thin anyway"? | **No.** The super-cell sits at ~48.5 % of the Rozanov ceiling for the *thinnest* skin in budget. Independently: the #187 bench extracts **25.7 %** of its Rozanov budget on 1.5 mm against Ozden's measured **46.1 %** on 0.75 mm, so the bench design has ~1.8× more headroom against the same physics | HIGH |
 
 ### 1.1 The one cheap, actionable challenge
 
@@ -87,6 +144,15 @@ patch, it tested the wrong element class.
 > step. `CONFIDENCE: MEDIUM-HIGH that the gap is real; LOW that P1 predicts the outcome` — P1
 > offers no circuit extraction, no fitted L or C, no equivalent-circuit figure. Its inductance
 > claim is prose beside field plots, not a derivation.
+
+**Status, 2026-09-10.** Part **(a)** is **done and came out negative**:
+`docs/supercell-ring-inductance-bench.md` ran it and found element self-inductance *narrows* the
+band and *deepens* the detuning penalty, so the ring hypothesis fails and #187's finding extends
+from patch to ring letters. Part **(b)** — resistive loading dialled in first, scored on minimax —
+is **still open, and is now the highest-value open item on #187**, because a published X-band
+result at near-zero conductor loss (Ozden, 26.1 mΩ/sq) shows a large minimax gain from lateral
+detuning where this programme's 25–50 Ω/sq letters show none. The concrete sweep is in
+[`ozden-broadband-supercell-primary-source.md`](./ozden-broadband-supercell-primary-source.md) §7.
 
 ---
 
@@ -213,7 +279,7 @@ exactly once in the article and is never justified, so the honest fabrication st
 
 ## 7. Process failures in this analysis, recorded because they cost real cycles
 
-Three, all the same shape: **a claim about a tree, made from the wrong tree.**
+Four, all the same shape: **a claim about a tree, made from the wrong tree.**
 
 1. **A brief built from an issue body rather than the documents it points at.** The commissioning
    context for the first workflow omitted `docs/voltera-multilayer-capability.md` — listed in
@@ -231,9 +297,25 @@ Three, all the same shape: **a claim about a tree, made from the wrong tree.**
    corroborating evidence."* They were not; they were correct for the tree they ran against. The
    critic's *recommendations* stand — restore the struck claim, do not write a false correction —
    but its stated cause is wrong.
+4. **Added 2026-09-10 — §1's `HIGH`-confidence claim about "the published record" was made from
+   an all-optical corpus.** Five papers at 380–2300 nm, 10.90–22.91 µm, 400–3500 nm and
+   500–2000 nm plus one review, and none at microwave, were used to rule that an **X-band**
+   experiment does not exist in the literature. It does — Ozden *et al.* (2016), fabricated and
+   measured. Ninety-one agents, five analytical lenses, three-vote adversarial refutation and a
+   completeness critic all ran **inside** the corpus and none of them asked whether the corpus
+   covered the band the question was about. **Adversarial review of the contents cannot catch a
+   defect in the selection.**
 
-**Rule this yields:** a claim of the form *"X is not in the repo"* must name the commit it was
-checked at, and be re-checked against `origin/main` before being recorded.
+**Two rules this yields:**
+
+1. A claim of the form *"X is not in the repo"* must name the commit it was checked at, and be
+   re-checked against `origin/main` before being recorded.
+2. A claim of the form *"X is not in the literature"* must name **the band, the databases and the
+   queries** it was checked against — and it may not be graded above the coverage of the corpus
+   that produced it. A survey confined to one band supports a claim about that band and nothing
+   wider. The provenance ladder has no rung for this, which is exactly why the `CONFIDENCE` tag
+   exists; it was set from how thoroughly the papers were read rather than from whether they were
+   the right papers.
 
 ---
 
@@ -241,11 +323,15 @@ checked at, and be re-checked against `origin/main` before being recorded.
 
 | | Action | Why now |
 |---|---|---|
-| 1 | **Re-run the #187 super-cell bench with ring elements** carrying per-element self-inductance | The only cheap test that could move a ticket the literature cannot settle (§1.1) |
+| 1 | **Re-run the #128/#187 circuit bench with Ozden's stack** — 0.75 mm, ε_r 3.6, tan δ 0.03, dual-resonance cell, 12–16 letters, lateral scale factors — sweeping sheet resistance from 26 mΩ/sq to printed-trace values | Supersedes the ring-element recommendation below. It looks for the **one number** that would explain the repo's null: the R_s at which Ozden's ~+50 pp minimax gain collapses to the bench's +0.7 pp. [Details](./ozden-broadband-supercell-primary-source.md) §7 |
+| 1b | ~~**Re-run the #187 super-cell bench with ring elements** carrying per-element self-inductance~~ | ~~The only cheap test that could move a ticket the literature cannot settle (§1.1)~~ — **DONE 2026-09-07**, `docs/supercell-ring-inductance-bench.md`: the ring hypothesis failed. Also, "a ticket the literature cannot settle" was wrong; see the §1 correction |
 | 2 | **Record the 3.6–34.5 GHz absorber window** as a property of the thickness budget | It bounds which requirements the loop can serve at all (§2) |
 | 3 | **Correct `T1-planar-route.md`'s empty-window claim** before anything cites it | Live contamination; the repo already knows better (§7.1) |
 | 4 | **Do not cite P1's absorption figures** | Rozanov-violating by 2.67–4.63× (§6) |
 | 5 | Carry the **407 / 1,695 Ω/sq** overlay thresholds into any multispectral scoping | Turns a hand-wave into a design rule (§4) |
+| 6 | **Bound the super-cell by tile size, not letter count.** Ozden's 16-letter tile is ~0.90 λ × 0.93 λ across, and he attributes the flat N-sweep to *"super cell size which is electrically comparable with working wavelength"* | A ceiling on ADR-0040's composition that is independent of the loss argument — every letter added grows the tile. [Details](./ozden-broadband-supercell-primary-source.md) §1.3 |
 
 **Not recommended:** treating any figure here as validating #110's minimax rule. The corpus
-cannot produce a minimax (§5).
+cannot produce a minimax (§5). *(Ozden's figures can — a matched-window minimax of 0.27 → 0.69 →
+0.79 for 1 → 12 → 16 letters — but that is a figure read from a different paper, outside this
+corpus, and is recorded as `INFERRED` there rather than imported here.)*
