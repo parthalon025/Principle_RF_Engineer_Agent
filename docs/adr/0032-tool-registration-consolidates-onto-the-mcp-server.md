@@ -63,7 +63,10 @@ guarded against it.
   in `agent/main.py` and the `ROLES`-construction code go away; nothing in
   this ADR claims that work is done. A tracking issue for the migration
   itself should be filed separately and scoped/staged rather than attempted
-  in one pass.
+  in one pass. (Corrected below: a fresh recount during #320 found 96
+  wrappers, not 87+ -- tool counts drift fast under concurrent development in
+  this repo; treat any count in this document as the count on the date next
+  to it, not a current fact.)
 - **Needs a live behavior check before it ships**, not just a passing test
   suite. Today's tool call is a direct in-process Python call; after this
   change it routes through the Agents SDK's MCP client/transport layer.
@@ -142,3 +145,66 @@ here. The upstream `mcp`/`anyio` limitation itself — third-party, not
 this repo's code, and a distinct piece of work from #320's "delete the
 old path" scope — is tracked separately as #372, so it has a home that
 does not depend on either #319 or #320 staying open.
+
+### 2026-09-09 — #320's own investigation: a narrower contract was considered and NOT attempted; two new prerequisite gaps found
+
+While scoping down #320 to "move only the roles with zero Windows-hanging
+tools onto the new construction, leave the rest on the old path until #372
+resolves," a fresh, from-scratch recount and two further findings changed
+the plan again, before any code was touched:
+
+1. **Tool count correction:** 96 tools total, not 87-89 (both numbers
+   appear earlier in this repo's history — see #316's own note about
+   snapshot-timing drift under concurrent development). Treat every count
+   in this document as dated, not current.
+2. **#372's own tool list is incomplete.** `simulation/openparem.py` calls
+   `subprocess.run()` directly (confirmed by reading the file), the same
+   code shape as the 12 tools #372 already names — `run_openparem_
+   simulation` is a 13th Windows-hang-affected tool #372 should add,
+   likely omitted because OpenParEM was added to this repo after #372's
+   list was written.
+3. **Role/tool overlap makes "~84 tools move" unreachable as scoped.** Of
+   the 96 tools, the three roles with zero risky tools (systems,
+   verification, principal's own direct tools) share extensive tool
+   overlap with the three roles that must stay on the old path
+   (microwave holds 4 of the 13 risky tools, antenna holds 9, test holds
+   all 13) — `calculate_wavelength`, `search_knowledge`,
+   `compile_lab_test_plan`, and the cascade-gain/noise-figure/IP3 family
+   are examples of tools every role needs. Only 37 of the 96 tools are
+   used EXCLUSIVELY by the three clean roles; the other 59 (including all
+   13 risky ones) must keep their `agent/main.py` wrapper regardless,
+   because the roles staying on the old path still need those exact
+   `FunctionTool` objects. A tools=[...] + mcp_servers=[...] hybrid Agent
+   (confirmed technically supported by the installed SDK — `Agent.
+   get_all_tools()` merges both sources) could reach closer to the
+   original ~84-tool estimate by attaching only each mixed role's own
+   risky tools directly while routing the rest through MCP, but this adds
+   real complexity and was not attempted in the same pass.
+4. **The larger, actually-blocking gap: `build_role_agent()` has never
+   been run live.** Every existing test that connects an MCP-routed
+   `Agent`'s server either just lists tools or calls `tool.
+   on_invoke_tool()` directly — none calls `Runner.run()`/`run_sync()` on
+   one, and `MCPServerStdio` does not auto-connect (confirmed directly
+   against `agents/mcp/server.py`: `list_tools()` raises if `self.session`
+   is `None`, and no `.connect()` call exists anywhere in `Agent.
+   get_mcp_tools()`'s call chain). Wiring even one role's *live production*
+   traffic onto the new construction requires solving connection-lifecycle
+   management (sync/async boundary in `agent/main.py`'s `run()`, when to
+   connect, what a mid-conversation handoff to a not-yet-connected role
+   does) that does not exist anywhere in this repo yet, and needs the same
+   live-model verification this repo already required for the
+   `.as_tool()` → `handoffs=[...]` redesign (see `agent/main.py`'s own
+   routing-section comment) before it can be trusted with real traffic —
+   not just a passing test suite.
+
+**The Decision is still unaffected** — `mcp_server/server.py` remains the
+sole intended registration surface, and both findings above are
+prerequisites to reaching it, not disputes of the direction. Finding 4 is
+now tracked as issue #377 (blocking), and the narrowed wrapper-deletion
+work (finding 3) as issue #376 (blocked by #377) — #320 itself closes out
+this pass with the fresh tool-registration audit only (96/96/96, zero
+registration gaps found between `agent/main.py`'s wrapper layer,
+`mcp_server/server.py`'s registrations, and each role's assignment) and no
+code changes to `agent/main.py` or `agent/mcp_roles.py`.
+
+**Raised by:** issue #320's own investigation, 2026-09-09.
