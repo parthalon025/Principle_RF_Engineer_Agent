@@ -512,7 +512,27 @@ def test_no_substrate_seed_claims_MEASURED_provenance():
     # The shortlist tags several rows MEASURED, meaning "somebody measured
     # this." CONTEXT.md reserves MEASURED for what this programme measured
     # itself, and ENTRY_PROVENANCE_VALUES does not admit it at all.
-    assert all(e["provenance"] != "MEASURED" for e in SUBSTRATE_SEED_ENTRIES)
+    #
+    # Asserting `provenance != "MEASURED"` over the seed list CANNOT FAIL --
+    # add_entry raises at import for anything outside ENTRY_PROVENANCE_VALUES,
+    # so the list could never have contained one. That is a guarantee worth
+    # proving rather than restating, so the constructor is exercised directly.
+    with pytest.raises(InvalidMaterialPropertyError, match="provenance"):
+        add_entry(
+            material="Anything",
+            property_name="eps_r",
+            frequency_low_hz=1.0e10,
+            frequency_high_hz=1.0e10,
+            value=1.0,
+            unit="unitless",
+            provenance="MEASURED",
+            citation="a real measurement someone else made",
+        )
+
+    # What CAN drift is the data: an unsourced value slipping into a list whose
+    # every row is supposed to carry a citation.
+    assert all(e["provenance"] != "ASSUMED" for e in SUBSTRATE_SEED_ENTRIES)
+    assert all(e["citation"] for e in SUBSTRATE_SEED_ENTRIES)
 
 
 def test_every_substrate_seed_records_its_method_even_when_it_is_unknown():
@@ -560,9 +580,26 @@ def test_PET_is_entered_at_its_datasheet_band_so_an_x_band_lookup_misses():
 _IN_BAND_HZ = (2.0e9, 1.0e10, 2.8e10, 5.0e10)
 
 
-def test_datasheet_entries_all_carry_a_method_and_none_claim_measured():
+def test_datasheet_entries_all_carry_a_method_and_a_document_citation():
+    """Every entry in this batch came off a vendor datasheet, so each must be
+    MANUFACTURER-SPECIFIED and each citation must name a *document*, not only the
+    sweep that found it.
+
+    This replaces an earlier `provenance != "MEASURED"` assertion that could never
+    fail: MEASURED is not in ENTRY_PROVENANCE_VALUES, so `add_entry` raises at
+    import time for it and the test only restated a guarantee the constructor
+    already enforces. What can genuinely drift is the data -- someone adding an
+    ASSUMED value, or a citation that names the research pass and no document.
+    """
     assert all(e["method"] for e in DATASHEET_SEED_ENTRIES)
-    assert all(e["provenance"] != "MEASURED" for e in DATASHEET_SEED_ENTRIES)
+    assert all(e["provenance"] == "MANUFACTURER-SPECIFIED" for e in DATASHEET_SEED_ENTRIES)
+
+    for entry in DATASHEET_SEED_ENTRIES:
+        document = entry["citation"].split(", via ")[0].strip()
+        assert document, f"{entry['material']}: citation is only a sweep reference"
+        assert document != entry["citation"].strip(), (
+            f"{entry['material']}: citation names no document before the sweep reference"
+        )
 
 
 def test_datasheet_out_of_band_traps_are_unreachable_in_band():
@@ -654,3 +691,49 @@ def test_datasheet_process_and_design_dk_are_both_stored_and_distinguishable():
 
     at_40ghz = resolve_material_property(DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 4.0e10)
     assert at_40ghz["low"] == at_40ghz["high"] == 3.55
+
+
+def test_ro4350b_process_and_design_dk_behave_like_ro4003c():
+    """RO4350B got the same Process/Design Dk split as RO4003C but had no test
+    of its own. Both laminates must behave identically: a caller at 10 GHz sees
+    the spread between the two published quantities, and a caller at 40 GHz gets
+    only the Design Dk, which is the one valid there."""
+    at_10ghz = resolve_material_property(SUBSTRATE_SEED_ENTRIES, "Rogers RO4350B", "eps_r", 1.0e10)
+    assert at_10ghz["low"] == 3.48
+    assert at_10ghz["high"] == 3.66
+    methods = " ".join(e["method"] for e in at_10ghz["entries"])
+    assert "Process Dk" in methods and "Design Dk" in methods
+
+    at_40ghz = resolve_material_property(SUBSTRATE_SEED_ENTRIES, "Rogers RO4350B", "eps_r", 4.0e10)
+    assert at_40ghz["low"] == at_40ghz["high"] == 3.66
+
+    # tan_delta is published at two points and must not span between them.
+    assert (
+        resolve_material_property(SUBSTRATE_SEED_ENTRIES, "Rogers RO4350B", "tan_delta", 5.0e9)[
+            "status"
+        ]
+        == "no_data"
+    )
+
+
+def test_ro4350b_new_entries_do_not_cite_a_document_that_lacks_their_values():
+    """Regression guard on a real defect found in review.
+
+    The Design Dk (3.66) and the 2.5 GHz tan_delta (0.0031) were originally
+    cited to `docs/xband-absorber-substrate-shortlist.md`, which records only
+    this laminate's Process Dk (3.48) and its 10 GHz tan_delta (0.0037). Citing
+    a document that does not contain the value is precisely the failure this
+    library exists to prevent -- ADR-0015's "the library never parses a document
+    itself, only cites it" is worthless if the cited document is the wrong one.
+    """
+    values_absent_from_the_shortlist = {3.66, 0.0031}
+    for entry in SUBSTRATE_SEED_ENTRIES:
+        if entry["material"] != "Rogers RO4350B":
+            continue
+        if entry["value"] not in values_absent_from_the_shortlist:
+            continue
+        assert "xband-absorber-substrate-shortlist" not in entry["citation"], (
+            f"RO4350B {entry['property']}={entry['value']} cites the shortlist, "
+            "which does not contain that value"
+        )
+        assert "datasheet" in entry["citation"].lower()
