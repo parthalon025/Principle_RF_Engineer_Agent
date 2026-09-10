@@ -1131,6 +1131,109 @@ def test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration(
     assert _row("iter2", "redesign_decision")["design_family"] == "microstrip_patch"
 
 
+def test_flush_persists_design_family_canonical_alongside_the_raw_spelling(
+    cleanup_designs, tmp_path
+):
+    """Issue #408 (ADR-0037). `_handle_architecture` (design_loop.py) has
+    always computed a registry-resolved canonical name alongside the
+    caller's raw `design_family` string (`design_family_registry
+    .canonical_name`) -- this test proves that value actually reaches
+    Postgres, not just design_loop.py's in-memory state, and that a query
+    grouping by the canonical field merges two differently-spelled runs of
+    the same family while grouping by the raw field would not.
+
+    WHY "patch_antenna" / "PATCH" RATHER THAN THE ISSUE'S OWN LITERAL PAIRING.
+    Issue #408's acceptance criteria illustrate this with "design_family=
+    'PATCH'" and "registry canonical name ... patch_antenna" -- but
+    designs/design_families.py's actual registry (_REGISTRY, keyed by
+    `fam.name`) defines the PATCH family with `name="PATCH"` (uppercase) and
+    lists `"PATCH_ANTENNA"` only as an _ALIASES entry pointing AT it, never
+    the other way around: every real `get_design_family` call resolves to
+    canonical_name="PATCH", regardless of which of "PATCH"/"patch_antenna"/
+    "microstrip_patch" the caller wrote. So this test states the two
+    spellings against the registry's real, verifiable behavior instead of
+    the issue's (reversed) illustrative pairing: iteration 1's ARCHITECTURE
+    step states the lowercase alias "patch_antenna" (already used by
+    _drive_to_redesign_decision's own default and by
+    test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration
+    above), iteration 2 states the literal uppercase spelling "PATCH" the
+    issue names -- both resolve to the SAME canonical_name="PATCH", which is
+    exactly the cross-run-grouping behavior #150/#151 and this test exist to
+    prove.
+    """
+    state = start_new_design_loop(
+        "TOOL-FAMILY-CANON", "Design Family Canonical Test", "A", REQUIREMENTS
+    )
+    cleanup_designs.append(state["design_id"])
+    design_id = state["design_id"]
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="patch_antenna")
+    iterate_input = {
+        "decision": "abandon this patch variant, try another patch geometry instead",
+        "rationale": "the first geometry cannot meet the gain target",
+        "next_action": "iterate",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, iterate_input)
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="PATCH")
+    accept_input = {
+        "decision": "accept the second patch geometry",
+        "rationale": "meets the gain requirement with margin",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, accept_input)
+
+    stored = read_design(design_id)
+    by_record_key = {d["record_key"]: d for d in stored["decision_records"]}
+
+    def _row(iteration_marker: str, kind_marker: str) -> dict[str, Any]:
+        matches = [
+            row
+            for key, row in by_record_key.items()
+            if iteration_marker in key and kind_marker in key
+        ]
+        assert len(matches) == 1, f"expected exactly one {iteration_marker}-{kind_marker} row"
+        return matches[0]
+
+    # Both values persist, distinctly, on the row that stated them: the raw
+    # spelling verbatim (never rewritten to match the registry), and the
+    # registry's canonical name alongside it.
+    iter1_architecture = _row("iter1", "architecture")
+    assert iter1_architecture["design_family"] == "patch_antenna"
+    assert iter1_architecture["design_family_canonical"] == "PATCH"
+
+    iter2_architecture = _row("iter2", "architecture")
+    assert iter2_architecture["design_family"] == "PATCH"
+    assert iter2_architecture["design_family_canonical"] == "PATCH"
+
+    # The DESIGN_FAMILY CARRY-FORWARD reconciliation (_flush_decisions)
+    # applies to the canonical field the same way it already does for the
+    # raw one: each iteration's redesign_decision row (which never states
+    # either field itself) carries forward that SAME iteration's own
+    # ARCHITECTURE values, not a stale value from the other iteration.
+    assert _row("iter1", "redesign_decision")["design_family"] == "patch_antenna"
+    assert _row("iter1", "redesign_decision")["design_family_canonical"] == "PATCH"
+    assert _row("iter2", "redesign_decision")["design_family"] == "PATCH"
+    assert _row("iter2", "redesign_decision")["design_family_canonical"] == "PATCH"
+
+    # The acceptance criteria's real point: grouping by the RAW field
+    # fragments this design's two architecture_decision rows into two
+    # separate buckets (different spellings, "patch_antenna" vs "PATCH")
+    # even though they are the same family -- exactly the failure mode
+    # ADR-0037 exists to fix. Grouping by the CANONICAL field instead
+    # correctly merges them into one.
+    architecture_rows = [iter1_architecture, iter2_architecture]
+    by_raw_family: dict[str, list[dict[str, Any]]] = {}
+    by_canonical_family: dict[str, list[dict[str, Any]]] = {}
+    for row in architecture_rows:
+        by_raw_family.setdefault(row["design_family"], []).append(row)
+        by_canonical_family.setdefault(row["design_family_canonical"], []).append(row)
+
+    assert len(by_raw_family) == 2  # "patch_antenna" and "PATCH" fragment apart
+    assert len(by_canonical_family) == 1  # both group under canonical "PATCH"
+    assert len(by_canonical_family["PATCH"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # Fail-loud, all-or-nothing flush (docs/adr/0011).
 # ---------------------------------------------------------------------------

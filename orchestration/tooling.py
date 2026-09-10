@@ -239,6 +239,7 @@ def _flush_target_for(
     loop_id: str,
     iteration: int,
     design_family: str | None,
+    design_family_canonical: str | None,
 ) -> _FlushTarget | None:
     """The designs.db call one LoopDecision translates to, or None for a
     decision kind with nothing to persist (`requirements` -- it already
@@ -253,6 +254,11 @@ def _flush_target_for(
     only the architecture_decision/redesign_decision branch below actually
     uses it) so this function stays a straight decision-in/target-out
     mapping, matching every other branch here.
+
+    `design_family_canonical` (issue #408; ADR-0037) is `design_family`'s
+    companion, computed and carried forward by `_flush_decisions` the exact
+    same way -- see that function's own "DESIGN_FAMILY CARRY-FORWARD"
+    comment, which now covers both fields.
     """
     record_key = f"{design_key}-{loop_id}-iter{iteration}-{decision.step}"
 
@@ -275,6 +281,7 @@ def _flush_target_for(
                 "rationale": decision.input["rationale"],
                 "evidence": [],
                 "design_family": design_family,
+                "design_family_canonical": design_family_canonical,
                 # Issue #322: the Considered-and-dropped ledger (ADR-0025),
                 # already validated (reason_kind="capability-verdict"'s
                 # issue #322 narrowing included) at the step that recorded
@@ -388,15 +395,46 @@ def _flush_decisions(
     explicit change, not merely "no change"), that value wins over the
     carried-forward one for every decision recorded after it, same as an
     architecture_decision would.
+
+    ISSUE #408 (ADR-0037) extends this SAME carry-forward to
+    `design_family_canonical`. `_handle_architecture` (design_loop.py)
+    stashes the registry's resolved name at
+    `recorded["design_family_registry"]["canonical_name"]`, where `recorded`
+    is that handler's `result` -- NOT its `input` (`advance_loop_step`
+    stamps `LoopDecision.input` from the caller's own raw `step_input`
+    unmodified; `design_family_registry` is a value `_handle_architecture`
+    computes and echoes back, which is why it lands on `result` instead,
+    same as every other handler's computed fields). So this reads
+    `decision.result`, not `decision.input`, unlike the `design_family`
+    carry-forward immediately above (a raw field the caller supplied, and
+    therefore already present on `input`). `design_family_registry` is
+    never present on a redesign_decision's `result` for the same reason
+    `design_family` itself isn't on its `input`
+    (`_handle_redesign_decision` doesn't ask for or compute either).
+    Tracking it as its own running value, updated only when an
+    architecture_decision's result actually carries the registry payload,
+    keeps the two fields moving together without re-deriving the canonical
+    name here: this loop only ever forwards what `_handle_architecture`
+    already computed.
     """
     targets: list[_FlushTarget] = []
     current_design_family: str | None = None
+    current_design_family_canonical: str | None = None
     for decision in decisions:
         stated_family = decision.input.get("design_family")
         if stated_family is not None:
             current_design_family = stated_family
+        registry = decision.result.get("design_family_registry")
+        if isinstance(registry, dict) and registry.get("canonical_name") is not None:
+            current_design_family_canonical = registry["canonical_name"]
         target = _flush_target_for(
-            decision, design_id, design_key, loop_id, iteration, current_design_family
+            decision,
+            design_id,
+            design_key,
+            loop_id,
+            iteration,
+            current_design_family,
+            current_design_family_canonical,
         )
         if target is not None:
             targets.append(target)
