@@ -145,15 +145,30 @@ from .design_loop import (
 )
 
 # LoopDecision.step (a DesignStep value) -> the real function name that
-# produced its result, for engineering_results.tool_name -- see
-# design_loop.py's own module docstring for which Phase 1/6/9/11 function
-# each step calls. Deliberately NOT reusing designs/provenance.py's
-# tool-name table: these are the design loop's own internal function
-# names (patch_resonant_frequency_hz, run_nec2_simulation, ...), a
-# different vocabulary than the ~65 agent/MCP tool names that table maps,
-# and provenance for every one of these is passed explicitly from the
-# loop's own already-computed LoopDecision.provenance (docs/adr/0011),
-# never looked up from this table.
+# produced its result, for engineering_results.tool_name -- but ONLY for
+# the steps whose dispatch genuinely cannot vary. Deliberately NOT reusing
+# designs/provenance.py's tool-name table: these are the design loop's own
+# internal function names (record_external_measurement,
+# correlate_simulation_measurement, ...), a different vocabulary than the
+# ~65 agent/MCP tool names that table maps, and provenance for every one of
+# these is passed explicitly from the loop's own already-computed
+# LoopDecision.provenance (docs/adr/0011), never looked up from this table.
+#
+# ISSUE #334: ANALYSIS, SIMULATION and OPTIMIZATION ARE NOT IN THIS TABLE,
+# because each of them dispatches per design family and so has no single
+# answer. `orchestration/design_loop.py`'s `_handle_simulation` (#229/#241)
+# runs Meep for ABSORBER, Palace for REFLECTION_PHASE/DIFFUSIVE and NEC2
+# for PATCH; `_handle_analysis` (#239) picks a different closed form per
+# family; `_handle_optimization` (#255/#267) chooses between the continuous
+# patch-length search and the combinatorial symbol placement. This table
+# used to answer for all three anyway -- every SIMULATION row said
+# "run_nec2_simulation" and every ANALYSIS row said
+# "patch_resonant_frequency_hz", whatever had actually run. In plain terms:
+# the database recorded the name of an instrument that never touched the
+# measurement, so anything counting results per solver (the cross-run
+# simulator-trust ledger scoped in #150, say) counted Meep and Palace runs
+# as NEC2. `_tool_name_for` reads the answer off the result instead; see
+# its own docstring.
 #
 # MEASUREMENT maps to record_external_measurement (issue #89/ADR-0013).
 # Issue #89 briefly needed a result-inspecting discriminator here, because
@@ -161,10 +176,18 @@ from .design_loop import (
 # externally-obtained Touchstone file and the step alone no longer said
 # which. Ticket #90 removed the instrument-control package, making the
 # external path the ONLY one _handle_measurement can take, so a straight
-# per-step lookup is once again sufficient.
+# per-step lookup is once again sufficient. CORRELATION likewise has a
+# single handler with a single call in it.
+#
+# OPTIMIZATION is the one dispatching step that keeps an entry, and it is a
+# NARROW fallback, not a default for the step: the continuous patch-length
+# search (`optimization.rf_objectives.
+# optimize_patch_length_for_target_frequency` -- what an unset or
+# "CONTINUOUS" optimizer_class runs) is the one path here whose result
+# states no `function` of its own, because its `method` field names the
+# SEARCH ("parameter_sweep"/"grid_search"/"bayesian_optimize"), not the tool.
+# The combinatorial path states its own function and overrides this.
 _STEP_TO_TOOL_NAME: dict[str, str] = {
-    DesignStep.ANALYSIS.value: "patch_resonant_frequency_hz",
-    DesignStep.SIMULATION.value: "run_nec2_simulation",
     DesignStep.OPTIMIZATION.value: "optimize_patch_length_for_target_frequency",
     DesignStep.MEASUREMENT.value: "record_external_measurement",
     DesignStep.CORRELATION.value: "correlate_simulation_measurement",
@@ -173,8 +196,61 @@ _STEP_TO_TOOL_NAME: dict[str, str] = {
 
 def _tool_name_for(decision: LoopDecision) -> str:
     """The real function name that produced `decision`'s result, for
-    `engineering_results.tool_name` -- a straight per-step lookup."""
-    return _STEP_TO_TOOL_NAME[decision.step]
+    `engineering_results.tool_name` (issue #334).
+
+    Read off the RESULT first -- `decision.result["function"]`, which every
+    family-dispatching handler in `orchestration/design_loop.py` already
+    records (`run_meep_simulation`, `run_palace_simulation`,
+    `run_nec2_simulation`, `absorber_band_response`,
+    `transmissive_absorber_band_response`, `patch_resonant_frequency_hz`,
+    `combinatorial_symbol_placement`). The dispatching step itself is the
+    only thing that knows which solver or closed form it reached for, so
+    the flush asks it rather than re-deriving the answer from the step's
+    name -- which is what it used to do, and what filed every Meep and
+    Palace run under NEC2's name (see _STEP_TO_TOOL_NAME above).
+
+    Falls back to the per-step table only for the steps listed there, whose
+    dispatch cannot vary. A step that is neither in the table nor states its
+    own `function` raises `DesignLoopPersistenceError` rather than guessing:
+    that combination means a new per-family path was wired into
+    design_loop.py without saying what it ran, the same "the flush mapping
+    was never updated" bug `_flush_target_for`'s unknown-kind branch already
+    fails loud for. Guessing is exactly the defect this function was fixed
+    for, and a wrong `tool_name` is unrecoverable once committed, whereas
+    this raise happens while `_flush_decisions` is still computing targets
+    -- before it opens a connection -- so nothing is half-written and the
+    caller's pre-call state stays the only valid one (docs/adr/0011).
+
+    The one honest way an ordinary run can reach that raise is a state dict
+    recorded by a revision that predates this fix and flushed by one that
+    has it: a pre-#334 SIMULATION decision is a NEC2 run whose result never
+    stated its function (every Meep/Palace result has carried the key since
+    #229/#252). Such a state is held by its caller as JSON -- on disk via
+    `orchestration/approval_cli.py`'s `--state`/`--out`, or in a
+    `pending_approvals` row -- so the message below names the repair: add
+    the key to the held decision rather than re-driving the loop. Inferring
+    "no function stated" back to "must have been NEC2" is not done here,
+    however historically true it happens to be: that inference IS the
+    defect's shape, and the next path to forget the key would inherit it."""
+    result = decision.result if isinstance(decision.result, dict) else {}
+    stated = result.get("function")
+    if isinstance(stated, str) and stated.strip():
+        return stated
+    table_name = _STEP_TO_TOOL_NAME.get(decision.step)
+    if table_name is not None:
+        return table_name
+    raise DesignLoopPersistenceError(
+        f"no tool name known for a {decision.step!r} decision: its result states no "
+        "'function', and this step dispatches per design family (a different solver "
+        "or closed form per family), so there is no single per-step name to fall back "
+        "on. Nothing has been written -- this raise happens before the flush opens its "
+        "connection, so the caller's pre-call state is still the only valid one. "
+        "Either the orchestration/design_loop.py handler that produced this result "
+        'does not record the function it ran (add e.g. "function": '
+        '"run_meep_simulation" there), or this decision was recorded before issue '
+        "#334 and the held state can be repaired by adding that key to it. Filing it "
+        "under another solver's name is the defect #334 removed."
+    )
 
 
 # LoopDecision.kind values that carry a computed result, bound for
