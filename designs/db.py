@@ -674,8 +674,13 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
     Each decision record's `capability_warnings` (issue #397) is
     reconstructed from `capability_warning_entries` rather than read
     straight off the `decision_records` column -- see that table's own
-    schema comment and `record_decision`'s docstring for why. Everything
-    else about this function's output is unchanged.
+    schema comment and `record_decision`'s docstring for why. The
+    reconstruction itself is delegated to `read_capability_warning_entries`
+    below (this function's other direct-table caller is
+    `orchestration.tooling.reevaluate_capability_warnings`) rather than a
+    second inline query against the same table, so a future column change
+    to `capability_warning_entries` has one query to update, not two.
+    Everything else about this function's output is unchanged.
     """
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM designs WHERE id = %s", (design_id,))
@@ -708,26 +713,26 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
         # replace it here with the equivalent list read back from
         # `capability_warning_entries`, so this function's OUTPUT shape is
         # unchanged even though the underlying storage moved to its own
-        # table. Skipped entirely when there are no decision_records rows to
-        # join against (an empty `ANY(%s)` array parameter is legal SQL but
-        # pointless to send).
-        capability_warnings_by_decision_id: dict[int, list[dict[str, Any]]] = {}
-        decision_record_ids = [row["id"] for row in decision_records]
-        if decision_record_ids:
-            cur.execute(
-                "SELECT decision_record_id, family, capability_kind, capability_property, "
-                "value, comparator, unit, reason "
-                "FROM capability_warning_entries "
-                "WHERE decision_record_id = ANY(%s) ORDER BY id",
-                (decision_record_ids,),
-            )
-            for entry_row in cur.fetchall():
-                decision_record_id = entry_row.pop("decision_record_id")
-                capability_warnings_by_decision_id.setdefault(decision_record_id, []).append(
-                    entry_row
-                )
+        # table. Reuses `read_capability_warning_entries` below rather than
+        # a second inline query against the same table -- its flat,
+        # `record_key`-tagged rows are grouped back onto each decision
+        # record here by that same `record_key` (every `decision_records`
+        # row already carries one) instead of by id, and `record_key` is
+        # dropped per entry since a decision record's own
+        # `capability_warnings` list has never carried its parent's key
+        # redundantly. Skipped entirely when there are no decision_records
+        # rows for this design -- `capability_warning_entries` is FK'd to
+        # `decision_records`, so there could be no entries either.
+        capability_warnings_by_record_key: dict[str, list[dict[str, Any]]] = {}
+        if decision_records:
+            for entry in read_capability_warning_entries(conn, design_id) or []:
+                entry = dict(entry)
+                record_key = entry.pop("record_key")
+                capability_warnings_by_record_key.setdefault(record_key, []).append(entry)
         for row in decision_records:
-            row["capability_warnings"] = capability_warnings_by_decision_id.get(row["id"], [])
+            row["capability_warnings"] = capability_warnings_by_record_key.get(
+                row["record_key"], []
+            )
 
         cur.execute(
             "SELECT id, requirement_id, requirement, method, expected, actual, status, "
@@ -771,7 +776,10 @@ def read_capability_warning_entries(
     reevaluate_capability_warnings` (issue #397) queries, replacing that
     function's old approach of calling `read_design` and looping over each
     decision record's aggregated (JSON) `capability_warnings` list in
-    Python.
+    Python. `read_design` above is this function's other caller: it groups
+    these same rows back onto each decision record by `record_key`, so the
+    one query here is the only place either caller's SQL touches
+    `capability_warning_entries`.
 
     Returns `None` if no `designs` row matches `design_id` at all -- mirrors
     `read_design`'s own not-found signal, so a caller (`reevaluate_
