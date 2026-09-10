@@ -440,6 +440,35 @@ def test_state_round_trips_through_to_dict_and_from_dict():
     assert restored.to_dict() == as_dict
 
 
+def test_from_dict_raises_named_error_on_missing_version():
+    """An old-shaped DesignLoopState dict missing the version field should
+    fail with a clear, named error (not a bare KeyError) when from_dict
+    attempts to load it. This proves that schema changes are caught
+    explicitly rather than silently collapsing into undiagnosable
+    KeyErrors."""
+    state = start_design_loop(REQUIREMENTS)
+    old_shaped_dict = state.to_dict()
+    # Simulate an old snapshot missing the version key
+    del old_shaped_dict["version"]
+
+    # Should raise DesignLoopStateVersionError, not bare KeyError
+    with pytest.raises(design_loop_module.DesignLoopStateVersionError):
+        DesignLoopState.from_dict(old_shaped_dict)
+
+
+def test_from_dict_raises_named_error_on_mismatched_version():
+    """A DesignLoopState dict with a mismatched version should fail with a
+    clear, named error (not a bare KeyError or silent truncation)."""
+    state = start_design_loop(REQUIREMENTS)
+    new_dict = state.to_dict()
+    # Simulate a future version
+    new_dict["version"] = 999
+
+    # Should raise DesignLoopStateVersionError, not silently accept it
+    with pytest.raises(design_loop_module.DesignLoopStateVersionError):
+        DesignLoopState.from_dict(new_dict)
+
+
 def test_advance_loop_step_never_mutates_the_passed_in_state():
     state = start_design_loop(REQUIREMENTS)
     before = state.to_dict()
