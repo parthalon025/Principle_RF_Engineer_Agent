@@ -111,6 +111,20 @@ treatment CONTEXT.md's Fabrication capability gives a failed capability
 check. #127's rejected alternative ("silently excluding a candidate with
 no data") is exactly the failure mode this refuses to reproduce.
 
+MATERIAL / FAMILY VOCABULARY (issue #404). `material` and `family` used to
+be checked only for being non-empty strings, so a typo when citing a new
+entry (or filing a Family fallback bracket) silently created a row no
+lookup would ever find -- `resolve_material_property` would just report
+`status="no_data"`, indistinguishable from a genuine absence of data.
+`designs/material_families.py` is the fix, mirroring
+`designs/design_families.py`'s registry pattern but split by how open each
+vocabulary actually is: `family` is a small, closed set of broad categories
+(ADR-0015 names them), so `add_family_bracket` REJECTS one this registry
+doesn't hold; `material` is deliberately open-ended (CONTEXT.md: "a
+growing... record, not a fixed reference table"), so `add_entry` only WARNS
+on one it doesn't yet recognize -- see that module's own docstring for why
+the two are not treated the same way.
+
 MODULE SHAPE. Two layers, the same pure/I-O seam
 `designs/requirement_targets.py` already establishes for this package:
 
@@ -150,6 +164,11 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from designs.material_families import (
+    is_known_material_family,
+    known_material_family_names,
+    warn_if_unknown_material,
+)
 from designs.requirement_targets import ASSUMED
 from knowledge.provenance import LITERATURE_SUPPORTED, MANUFACTURER_SPECIFIED
 
@@ -168,10 +187,15 @@ class InvalidMaterialPropertyError(ValueError):
     or inverted frequency band, a `provenance` outside
     `ENTRY_PROVENANCE_VALUES`, a missing `citation` for a
     `MANUFACTURER-SPECIFIED`/`LITERATURE-SUPPORTED` entry, a missing `note`
-    for an `ASSUMED` entry, an inverted family bracket, or a set of matching
-    entries that disagree on unit. Named and raised the same way
-    `designs.requirement_targets.InvalidRequirementTargetError` is -- naming
-    exactly what's wrong rather than a bare `TypeError`/`KeyError`."""
+    for an `ASSUMED` entry, an inverted family bracket, an unrecognized
+    `family` (`designs.material_families.is_known_material_family`; issue
+    #404), or a set of matching entries that disagree on unit. Named and
+    raised the same way `designs.requirement_targets.InvalidRequirementTargetError`
+    is -- naming exactly what's wrong rather than a bare `TypeError`/`KeyError`.
+
+    Note that an unrecognized `material` (as opposed to `family`) does NOT
+    raise this -- see `designs.material_families`'s module docstring for why
+    the two are enforced differently."""
 
 
 def _require_nonempty_string(field_name: str, value: Any) -> str:
@@ -234,6 +258,12 @@ def add_entry(
     resolved_material = _require_nonempty_string("material", material)
     resolved_property = _require_nonempty_string("property_name", property_name)
     resolved_unit = _require_nonempty_string("unit", unit)
+
+    # Issue #404: an unrecognized material never blocks the entry -- the
+    # Material-property library is deliberately a growing record, not a
+    # fixed reference table (CONTEXT.md) -- but it warns, since this is also
+    # exactly what a typo of an already-cited material looks like.
+    warn_if_unknown_material(resolved_material)
 
     low = _require_nonnegative_finite_number("frequency_low_hz", frequency_low_hz)
     high = _require_nonnegative_finite_number("frequency_high_hz", frequency_high_hz)
@@ -303,8 +333,25 @@ def add_family_bracket(
     cited -- a bracket is never a single borrowed point value, and never an
     uncited number (see this module's docstring's "FAMILY FALLBACK
     BRACKET" section). `max_value` must be `>= min_value`.
+
+    `family` must be one of `designs.material_families.known_material_family_names()`
+    (case-insensitively), unlike `material` on `add_entry` -- unlike a
+    specific material, the family vocabulary for a fallback bracket is a
+    small, closed set of broad categories (ADR-0015: "generic polymer,
+    generic conductor, etc."), so an unrecognized one raises rather than
+    warns: a bracket filed under a misspelled family is one
+    `resolve_material_property` will never find for the correctly-spelled
+    family a later caller asks for (issue #404).
     """
     resolved_family = _require_nonempty_string("family", family)
+    if not is_known_material_family(resolved_family):
+        raise InvalidMaterialPropertyError(
+            f"family must be one of {known_material_family_names()}, got "
+            f"{resolved_family!r} -- an unrecognized family creates a Family "
+            "fallback bracket resolve_material_property will never find "
+            "(issue #404). Register a new broad category in "
+            "designs/material_families.py once it is genuinely needed."
+        )
     resolved_property = _require_nonempty_string("property_name", property_name)
     resolved_unit = _require_nonempty_string("unit", unit)
     resolved_min_citation = _require_nonempty_string("min_citation", min_citation)
