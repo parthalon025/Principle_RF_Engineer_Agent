@@ -606,3 +606,13 @@ ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_key;
 ALTER TABLE designs
     ADD CONSTRAINT designs_design_key_revision_key
     UNIQUE (design_key, revision);
+
+-- Issue #398: a design's revision history should be traceable through the
+-- database via a real link (supersedes_design_id), mirroring the pattern
+-- `documents.supersedes_document_id` already uses for the same "what did this
+-- follow" question. Nullable -- a design with no predecessor (the first in a
+-- family, or an independent design) has none. Added via ALTER TABLE ADD COLUMN
+-- IF NOT EXISTS, matching the convention already used in this file for
+-- extending tables that predate the column (see `documents.status` /
+-- `documents.supersedes_document_id` above).
+ALTER TABLE designs ADD COLUMN IF NOT EXISTS supersedes_design_id BIGINT REFERENCES designs(id);
