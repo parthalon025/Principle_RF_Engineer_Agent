@@ -97,7 +97,9 @@ first dot; only that first dot is dropped; a multi-part spec's own dash,
 e.g. `38.521-1`, stays intact — both covered by dedicated tests), downloads
 via `fetch_fn` (defaults to the shared
 `knowledge.sourcing._http.download_bytes`: stdlib `urllib`, 60 s timeout,
-no credentials), then `_extract_primary_document` picks exactly one zip
+no credentials, retries a transient network error or HTTP 5xx up to 3 times
+with exponential backoff -- a 4xx fails immediately, no retry (issue #405)),
+then `_extract_primary_document` picks exactly one zip
 member — `.docx` over legacy `.doc`, largest file when several share a
 suffix — before handing it unchanged to
 `knowledge.ingest.ingest_document(source_type="standard", ...)`. `license`
