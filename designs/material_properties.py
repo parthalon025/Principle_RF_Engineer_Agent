@@ -898,6 +898,34 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         "Disagrees with FR4_SEED_ENTRIES (0.025, 0.02, 0.024) by up to 47%",
     ),
     # 7. Rogers RO4350B
+    #
+    # ROGERS PUBLISHES TWO DIFFERENT PERMITTIVITIES FOR THIS ONE LAMINATE, and
+    # which one a caller wants depends on the geometry being modelled. Both are
+    # entered here, distinguished by their `method`, because storing only one of
+    # them silently answers a question the caller did not ask:
+    #
+    #   - PROCESS Dk (3.48) is measured on the bare laminate clamped in a
+    #     stripline fixture (IPC-TM-650 2.5.5.5). It is a factory
+    #     quality-control number for incoming material.
+    #   - DESIGN Dk (3.66) is extracted by building and measuring real
+    #     microstrip transmission lines -- a printed pattern on one face with
+    #     air on the other, which is exactly this project's own unit-cell
+    #     geometry (a printed element over a substrate, per ADR-0017's printed
+    #     reflector default). It is the number a solver should be fed.
+    #
+    # The gap is ~5%, which is not noise: at 40 GHz it moves a predicted
+    # resonance by roughly 1-1.4 GHz, enough to walk a narrowband Ka-band
+    # element off its target. Before this entry existed the library held only
+    # the Process number, so every lookup returned the wrong quantity for a
+    # printed design.
+    #
+    # A THICKNESS CAVEAT THAT NEITHER ENTRY CAN CARRY: Rogers states Design Dk
+    # falls by about 0.1 as core thickness drops from 0.020" to 0.004", and
+    # that 4-mil RO4350B has a Process Dk of 3.33 rather than 3.48. A thin core
+    # is the likely choice for a conformal part, and for it BOTH values below
+    # are wrong. The library has no thickness field (see this module's
+    # docstring), so that cannot be expressed here -- it is recorded in the
+    # note instead rather than left for a caller to rediscover.
     add_entry(
         material="Rogers RO4350B",
         property_name="eps_r",
@@ -907,7 +935,46 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         uncertainty=0.05,
         unit="unitless",
         provenance=MANUFACTURER_SPECIFIED,
-        method="datasheet, 10 GHz / 23 degrees C",
+        method="datasheet Process Dk, IPC-TM-650 2.5.5.5 clamped stripline, 10 GHz / 23 degrees C",
+        note="PROCESS Dk -- a bare-laminate incoming-QC number, NOT the value to feed a solver "
+        "for a printed pattern with air above it. Use the Design Dk entry (3.66) for that. "
+        "For 4-mil core Rogers publishes 3.33, not 3.48",
+        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+    ),
+    add_entry(
+        material="Rogers RO4350B",
+        property_name="eps_r",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=40.0e9,
+        value=3.66,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet Design Dk, extracted from measured microstrip transmission lines, "
+        "8-40 GHz",
+        note="DESIGN Dk -- the value for a printed pattern on one face with air on the other, "
+        "which is this project's own unit-cell geometry. ~5% above the Process Dk (3.48); at "
+        "40 GHz that difference moves a predicted resonance by roughly 1-1.4 GHz. Design Dk "
+        "falls by about 0.1 from 0.020\" to 0.004\" core, and the library has no thickness "
+        "field, so a thin-core part needs this checked against the datasheet directly",
+        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+    ),
+    # Loss tangent is entered at BOTH published test frequencies rather than
+    # only the 10 GHz one. tan_delta disperses far more strongly than eps_r,
+    # so a single point invites a caller to reuse it across the whole 2-50 GHz
+    # design band -- exactly the extrapolation this module's "WHY AN ENTRY'S
+    # FREQUENCY IS A BAND" section exists to prevent. Two points at least make
+    # the slope visible.
+    add_entry(
+        material="Rogers RO4350B",
+        property_name="tan_delta",
+        frequency_low_hz=2.5e9,
+        frequency_high_hz=2.5e9,
+        value=0.0031,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 2.5 GHz / 23 degrees C",
+        note="Second published point, entered alongside the 10 GHz value (0.0037) so the "
+        "frequency dependence is visible rather than inferred",
         citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
     ),
     add_entry(
