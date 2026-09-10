@@ -580,9 +580,9 @@ def test_datasheet_out_of_band_traps_are_unreachable_in_band():
 
     # ... but the value IS recorded, at its own frequency, so it is not lost.
     assert (
-        resolve_material_property(
-            DATASHEET_SEED_ENTRIES, "DuPont Kapton HN", "tan_delta", 1.0e3
-        )["status"]
+        resolve_material_property(DATASHEET_SEED_ENTRIES, "DuPont Kapton HN", "tan_delta", 1.0e3)[
+            "status"
+        ]
         == "material_entries"
     )
 
@@ -600,9 +600,9 @@ def test_datasheet_pyralux_returns_its_in_band_value_and_hides_its_1mhz_one():
     # 20 GHz sits outside both published points, so nothing is returned rather
     # than the 1 MHz value being stretched to cover it.
     assert (
-        resolve_material_property(
-            DATASHEET_SEED_ENTRIES, "DuPont Pyralux LF", "eps_r", 2.0e10
-        )["status"]
+        resolve_material_property(DATASHEET_SEED_ENTRIES, "DuPont Pyralux LF", "eps_r", 2.0e10)[
+            "status"
+        ]
         == "no_data"
     )
 
@@ -612,11 +612,7 @@ def test_datasheet_ink_conductivities_are_dc_keyed_and_never_answer_an_rf_query(
     is a DC bench measurement. Keying them at DC records the evidence while
     making it impossible to return for an in-band question."""
     inks = sorted(
-        {
-            e["material"]
-            for e in DATASHEET_SEED_ENTRIES
-            if e["property"] == "conductivity_s_per_m"
-        }
+        {e["material"] for e in DATASHEET_SEED_ENTRIES if e["property"] == "conductivity_s_per_m"}
     )
     assert inks, "expected at least one ink conductivity entry"
 
@@ -628,9 +624,7 @@ def test_datasheet_ink_conductivities_are_dc_keyed_and_never_answer_an_rf_query(
                 )["status"]
                 == "no_data"
             )
-        at_dc = resolve_material_property(
-            DATASHEET_SEED_ENTRIES, ink, "conductivity_s_per_m", 0.0
-        )
+        at_dc = resolve_material_property(DATASHEET_SEED_ENTRIES, ink, "conductivity_s_per_m", 0.0)
         assert at_dc["status"] == "material_entries"
         # A conductivity without its cure schedule is not a number.
         assert all("Cure" in e["note"] for e in at_dc["entries"])
@@ -644,9 +638,7 @@ def test_datasheet_multi_point_laminate_does_not_interpolate_between_points():
     )
     assert on_point["status"] == "material_entries"
 
-    between = resolve_material_property(
-        DATASHEET_SEED_ENTRIES, "Isola Astra MT77", "eps_r", 1.2e10
-    )
+    between = resolve_material_property(DATASHEET_SEED_ENTRIES, "Isola Astra MT77", "eps_r", 1.2e10)
     assert between["status"] == "no_data"
 
 
@@ -654,15 +646,11 @@ def test_datasheet_process_and_design_dk_are_both_stored_and_distinguishable():
     """Rogers publishes two permittivities for one laminate. At 10 GHz both
     match, and the caller must see the spread rather than inherit whichever
     was stored first; at 40 GHz only the Design Dk is valid."""
-    at_10ghz = resolve_material_property(
-        DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 1.0e10
-    )
+    at_10ghz = resolve_material_property(DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 1.0e10)
     assert at_10ghz["low"] == 3.38
     assert at_10ghz["high"] == 3.55
     methods = " ".join(e["method"] for e in at_10ghz["entries"])
     assert "Process Dk" in methods and "Design Dk" in methods
 
-    at_40ghz = resolve_material_property(
-        DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 4.0e10
-    )
+    at_40ghz = resolve_material_property(DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 4.0e10)
     assert at_40ghz["low"] == at_40ghz["high"] == 3.55

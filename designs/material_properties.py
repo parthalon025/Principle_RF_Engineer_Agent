@@ -954,7 +954,7 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         note="DESIGN Dk -- the value for a printed pattern on one face with air on the other, "
         "which is this project's own unit-cell geometry. ~5% above the Process Dk (3.48); at "
         "40 GHz that difference moves a predicted resonance by roughly 1-1.4 GHz. Design Dk "
-        "falls by about 0.1 from 0.020\" to 0.004\" core, and the library has no thickness "
+        'falls by about 0.1 from 0.020" to 0.004" core, and the library has no thickness '
         "field, so a thin-core part needs this checked against the datasheet directly",
         citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
     ),
