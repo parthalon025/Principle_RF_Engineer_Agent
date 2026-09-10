@@ -127,7 +127,7 @@ def _state_at_analysis(design_id: int = 1, design_key: str = "SOLVER-TEST") -> d
     architecture -- see this module's own docstring for why a synthetic
     design_id (not a real designs.service.create_design row) is legitimate
     here. `requirements_document_status="CONFIRMED"` (issue #325, docs/
-    adr/0031) is passed the same way `approval` already is -- a bare
+    adr/0034) is passed the same way `approval` already is -- a bare
     literal is fine here since this module's own scope is the ANALYSIS/
     SIMULATION/OPTIMIZATION span past ARCHITECTURE, not the Requirements-
     document gate itself (that is tests/test_design_loop.py's job)."""

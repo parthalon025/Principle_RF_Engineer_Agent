@@ -94,7 +94,7 @@ ARCHITECTURE_STEP_INPUT = {
 
 def _confirm_requirements_document_for(design_id: int) -> None:
     """Create and confirm a minimal Requirements document for `design_id`
-    (issue #325, docs/adr/0031). `decide_pending_approval` now reads this
+    (issue #325, docs/adr/0034). `decide_pending_approval` now reads this
     design's Requirements-document status directly off Postgres before
     advancing a pending ARCHITECTURE request (orchestration/approval_cli.py's
     own docstring on `decide_pending_approval`), so every test in this file

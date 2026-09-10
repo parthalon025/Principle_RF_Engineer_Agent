@@ -2451,7 +2451,7 @@ def optimize_patch_length_for_target_frequency(
 #
 # advance_design_loop_step's `requirements_document_status` is ALSO
 # required (equal to "CONFIRMED") whenever the current step is ARCHITECTURE
-# (issue #325, docs/adr/0031) -- one more precondition on that SAME gate,
+# (issue #325, docs/adr/0034) -- one more precondition on that SAME gate,
 # not a second one. designs.requirements_document.read_requirements_document
 # (issue #321) is not wired up as a tool here either, for the same "no
 # real workflow to call it from" reason as request_loop_step_approval

@@ -74,7 +74,7 @@ MODULE SHAPE. Two layers, same pure/I-O seam `designs.validation`/
     key ADR-0030 puts "beside `requirement` and `target`" on a requirement
     entry, called only from `designs.requirements_document.
     extract_requirement_fields` once a Requirements document reaches
-    `CONFIRMED` (docs/adr/0031) -- never as a standalone tool argument.
+    `CONFIRMED` (docs/adr/0034) -- never as a standalone tool argument.
   - Thin I/O wrappers (`propose_requirement_target`,
     `mark_requirement_unscoreable`, `confirm_requirement_target`) -- these
     are what `agent/main.py`/`mcp_server/server.py` actually wire up as
@@ -364,7 +364,7 @@ def propose_intended_effect(effect: str) -> dict[str, Any]:
 
     Always returns `provenance="ASSUMED"` -- per ADR-0030's own reasoning
     (restated in CONTEXT.md's Intended effect entry): a Requirements
-    document (docs/adr/0031) reaching `CONFIRMED` is a trust signal about
+    document (docs/adr/0034) reaching `CONFIRMED` is a trust signal about
     the reading, never a stronger kind of evidence, so there is no
     stronger provenance tier to promote to -- the identical "WHY
     PROVENANCE STAYS ASSUMED" reasoning this module's own docstring

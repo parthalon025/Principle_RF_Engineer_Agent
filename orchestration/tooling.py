@@ -30,7 +30,7 @@ no longer exactly DesignLoopState.to_dict(): it also carries `design_id`
 extending the dict this way doesn't require design_loop.py to know
 anything about either field.
 
-REQUIREMENTS-DOCUMENT GATE (issue #325, docs/adr/0031). `advance_design_
+REQUIREMENTS-DOCUMENT GATE (issue #325, docs/adr/0034). `advance_design_
 loop_step`'s `requirements_document_status` parameter is a straight pass-
 through to `design_loop.advance_loop_step`'s own parameter of the same
 name -- this module adds no database read for it (design_loop.py's own
@@ -577,7 +577,7 @@ def advance_design_loop_step(
 
     `requirements_document_status` is REQUIRED (equal to `"CONFIRMED"`)
     whenever the loop's current step is ARCHITECTURE (issue #325, docs/
-    adr/0031) -- the caller's own freshest read of `designs.
+    adr/0034) -- the caller's own freshest read of `designs.
     requirements_document.read_requirements_document(design_id)`'s
     `document_status`. Passed straight through to `design_loop.
     advance_loop_step` unchanged; this module does not read that row

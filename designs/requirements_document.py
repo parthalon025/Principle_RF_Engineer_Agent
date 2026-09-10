@@ -1,7 +1,7 @@
 """The Requirements document: a CDD-style artifact, one per Design (issue
-#321; CONTEXT.md: Requirements document; docs/adr/0031, docs/adr/0030).
+#321; CONTEXT.md: Requirements document; docs/adr/0034, docs/adr/0030).
 
-ADR-0031 settled that requirement intake produces a written, human-reviewable
+ADR-0034 settled that requirement intake produces a written, human-reviewable
 document -- modelled on the DoD's JCIDS Capability Development Document, the
 same real-world framework this project already draws Threshold/Objective
 from -- that a human reads, pushes back on, and confirms *before* a
@@ -25,7 +25,7 @@ rather than overloading that one for a second, unrelated status type.
 `designs/requirement_targets.py` is reused directly, not duplicated: a
 document's per-requirement entries are validated as the exact
 `propose_target`/`mark_unscoreable` shapes that module already defines
-(`target_status` in `PROPOSED`/`UNSCOREABLE`) -- the same values ADR-0031
+(`target_status` in `PROPOSED`/`UNSCOREABLE`) -- the same values ADR-0034
 says get extracted later, once the document is `CONFIRMED`.
 
 MODULE SHAPE. The same pure/I-O seam `designs/requirement_targets.py`
@@ -70,13 +70,13 @@ reviewer can read back.
 DOCUMENT CONTENT: A NARRATIVE PLUS PER-REQUIREMENT TARGETS, COVERING EVERY
 REQUIREMENT ROW. `narrative` is the single capability-description/
 intended-effect prose for the whole design (CDD-style: one document bundles
-every one of a design's Customer requirement rows, per ADR-0031's "one
+every one of a design's Customer requirement rows, per ADR-0034's "one
 document per Design, not one per Customer requirement"). `requirement_targets`
 is a dict keyed by `requirement_id`, one entry per Customer requirement row
 already recorded on the design (`designs.requirements`) -- validated for
 exact coverage (no requirement left out, no stray id that doesn't exist) by
 `_validate_requirement_targets` below, since a CDD that omits one of the
-system's own KPPs is not the bundled document ADR-0031 describes.
+system's own KPPs is not the bundled document ADR-0034 describes.
 
 EACH ENTRY MAY ALSO CARRY THE REQUIREMENT'S INTENDED EFFECT (issue #323).
 `_validate_requirement_targets` only requires a `propose_target`/
@@ -133,7 +133,7 @@ _DOCUMENT_TARGET_STATUSES = frozenset({TargetStatus.PROPOSED.value, TargetStatus
 
 class DocumentStatus(StrEnum):
     """Lifecycle status of a Requirements document (CONTEXT.md: Requirements
-    document; docs/adr/0031). Not `designs.models.DesignStatus` -- a
+    document; docs/adr/0034). Not `designs.models.DesignStatus` -- a
     document's review cycle and a design's engineering lifecycle are two
     different things tracked on two different rows.
 
@@ -153,7 +153,7 @@ class DocumentStatus(StrEnum):
 
 _S = DocumentStatus
 
-#: Which statuses may directly follow each status (ADR-0031: "DRAFT ->
+#: Which statuses may directly follow each status (ADR-0034: "DRAFT ->
 #: UNDER_REVIEW -> REFINED -> CONFIRMED ... the cycle repeats until the
 #: human confirms"). REFINED may return to UNDER_REVIEW -- that repeating
 #: cycle -- or move on to CONFIRMED. Every `DocumentStatus` is a key, the
@@ -169,7 +169,7 @@ LEGAL_TRANSITIONS: dict[DocumentStatus, frozenset[DocumentStatus]] = {
 }
 
 #: Statuses nothing leaves. A confirmed document is what `attach_intent`
-#: (ADR-0031, not yet implemented) will read from; nothing here reopens one.
+#: (ADR-0034, not yet implemented) will read from; nothing here reopens one.
 TERMINAL_STATUSES: frozenset[DocumentStatus] = frozenset(
     status for status, targets in LEGAL_TRANSITIONS.items() if not targets
 )
@@ -396,7 +396,7 @@ def extract_requirement_fields(
 ) -> dict[str, Any]:
     """Attach the Requirement target and Intended effect described by a
     `CONFIRMED` `document` onto every Customer requirement row it covers
-    (issue #323; ADR-0031's "Requirement target and Intended effect are
+    (issue #323; ADR-0034's "Requirement target and Intended effect are
     extracted from the confirmed document, not elicited standalone").
 
     For each `document["requirement_targets"][requirement_id]` entry -- a
@@ -413,7 +413,7 @@ def extract_requirement_fields(
 
     Raises `InvalidRequirementsDocumentError` if `document["status"]` is
     not `CONFIRMED` -- extraction only ever happens from a confirmed
-    document (ADR-0031); calling this on a `DRAFT`/`UNDER_REVIEW`/`REFINED`
+    document (ADR-0034); calling this on a `DRAFT`/`UNDER_REVIEW`/`REFINED`
     document names the mistake instead of quietly writing an unreviewed
     reading onto the design's own requirements.
 
@@ -421,7 +421,7 @@ def extract_requirement_fields(
     already carries `provenance="ASSUMED"` from `propose_target`/
     `mark_unscoreable`/`propose_intended_effect`, and nothing here upgrades
     it, regardless of how many review rounds produced this revision
-    (docs/adr/0030, docs/adr/0031).
+    (docs/adr/0030, docs/adr/0034).
 
     Pure and DB-free, exactly like `attach_target`/`attach_intent`
     themselves (never mutates `requirements` or `document`);
@@ -549,7 +549,7 @@ def create_requirements_document(
     `design_id`), `"already_exists"` (this design already has a document --
     call `transition_requirements_document` to revise it instead, since
     creating a second one would fork the single-document-per-Design
-    invariant ADR-0031 requires), `"invalid_document"` (bad shape --
+    invariant ADR-0034 requires), `"invalid_document"` (bad shape --
     `draft_requirements_document`'s own error), or on success
     `{"status": "created", "design_id": ..., "document_status": "DRAFT",
     "narrative": ..., "requirement_targets": {...}}`. A write that fails for
@@ -613,7 +613,7 @@ def transition_requirements_document(
     When the new revision's status is `CONFIRMED`, this also extracts the
     Requirement target and Intended effect for every requirement the
     document describes and writes them onto this design's own
-    `requirements[requirement_id]` rows (issue #323; ADR-0031: "confirming
+    `requirements[requirement_id]` rows (issue #323; ADR-0034: "confirming
     a document should trigger extraction for every requirement it
     describes") -- via `extract_requirement_fields`, in the same
     transaction as the revision insert, so a caller never observes a

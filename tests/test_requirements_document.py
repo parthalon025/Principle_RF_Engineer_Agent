@@ -240,7 +240,7 @@ def test_a_document_cannot_skip_from_under_review_to_confirmed():
 
 
 def test_refined_can_repeat_the_review_cycle():
-    """ADR-0031: 'the agent revises, and the cycle repeats until the human
+    """ADR-0034: 'the agent revises, and the cycle repeats until the human
     confirms' -- REFINED can go back to UNDER_REVIEW for another round."""
     document = draft_requirements_document(
         requirement_ids={"req-1"}, narrative="v1", requirement_targets={"req-1": _proposed()}
@@ -379,7 +379,7 @@ def test_document_status_covers_the_four_lifecycle_states():
 
 # ---------------------------------------------------------------------------
 # extract_requirement_fields -- attach_target/attach_intent from a CONFIRMED
-# document onto a design's own requirements (issue #323, docs/adr/0031)
+# document onto a design's own requirements (issue #323, docs/adr/0034)
 # ---------------------------------------------------------------------------
 
 

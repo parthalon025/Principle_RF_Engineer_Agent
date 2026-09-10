@@ -495,7 +495,7 @@ def decide_pending_approval(
     finally:
         conn.close()
 
-    # issue #325, docs/adr/0031: ARCHITECTURE additionally gates on the
+    # issue #325, docs/adr/0034: ARCHITECTURE additionally gates on the
     # design's Requirements document reaching CONFIRMED. This module already
     # talks to Postgres directly (unlike orchestration/tooling.py, which
     # takes requirements_document_status as a caller-supplied pass-through --

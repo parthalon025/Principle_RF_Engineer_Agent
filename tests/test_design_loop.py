@@ -1759,7 +1759,7 @@ def _grant_and_advance(
     """Advance past `step` for real (state.current_step must equal it),
     via the real handler, granting a real approval first if `step` is
     gated. `requirements_document_status="CONFIRMED"` is passed
-    unconditionally (issue #325, docs/adr/0031) -- harmless for every step
+    unconditionally (issue #325, docs/adr/0034) -- harmless for every step
     other than ARCHITECTURE, the only one advance_loop_step actually reads
     it for, and keeps every ARCHITECTURE-advancing call site in this file
     that goes through this helper working unchanged now that ARCHITECTURE
@@ -1871,7 +1871,7 @@ def test_architecture_distinguishes_an_unread_bound_from_a_family_with_none():
 
 
 # ---------------------------------------------------------------------------
-# Group 2d (issue #325, docs/adr/0031, CONTEXT.md's "Requirements document"):
+# Group 2d (issue #325, docs/adr/0034, CONTEXT.md's "Requirements document"):
 # ARCHITECTURE gates on the design's Requirements document reaching
 # CONFIRMED, as ONE MORE condition inside advance_loop_step's existing
 # `if current_step in GATED_STEPS:` block -- checked immediately after
@@ -1904,7 +1904,7 @@ def _draft_requirements_document_with_target(
 
 
 def _confirm_requirements_document(document: dict) -> dict:
-    """Walk `document` through ADR-0031's full review cycle to CONFIRMED
+    """Walk `document` through ADR-0034's full review cycle to CONFIRMED
     (DRAFT -> UNDER_REVIEW -> REFINED -> CONFIRMED) via
     revise_requirements_document, restating the same narrative/
     requirement_targets at each step exactly like
