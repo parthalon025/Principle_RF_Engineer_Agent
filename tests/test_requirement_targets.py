@@ -9,42 +9,55 @@ and are exercised directly here.
 
 `propose_requirement_target`/`mark_requirement_unscoreable`/
 `confirm_requirement_target` (the I/O wrappers that actually read/write a
-stored design's `requirements` column) are NOT tested here: they need a
-live Postgres via DATABASE_URL, and there is no database in this sandbox
-(same constraint tests/test_designs_service.py and tests/test_tooling.py
-already document for themselves). Were a live DATABASE_URL available, a
-test for them would follow tests/test_designs_service.py's own
-`cleanup_designs` fixture convention -- open a real connection, create a
-design via designs.service.create_design, call
-propose_requirement_target/confirm_requirement_target/
-mark_requirement_unscoreable against it, assert the returned
-`requirements` (via designs.service.read_design) carries the expected
-`target` dict, and delete the design afterward. Not written here because it
-cannot run in this sandbox and the pure functions it would exercise
-end-to-end are already fully covered directly below -- the I/O wrappers
-themselves are thin glue (open connection, fetch, validate via the pure
-functions, attach, write, translate exceptions), the same shape
-designs/service.py's already-integration-tested wrappers use.
+stored design's `requirements` column) are mostly NOT tested here: they
+need a live Postgres via DATABASE_URL, which most sandboxes running this
+suite don't have (same constraint tests/test_designs_service.py and
+tests/test_tooling.py already document for themselves) -- the I/O wrappers
+are thin glue (open connection, fetch, validate via the pure functions,
+attach, write, translate exceptions), the same shape designs/service.py's
+already-integration-tested wrappers use, and the pure functions they call
+are already fully covered directly below.
+
+The one exception, guarded by the module-level `DATABASE_URL` connectivity
+probe at the bottom of this file (mirroring
+tests/test_element_alphabet.py's identical `pytest.mark.skipif` pattern):
+`_fetch_requirements`'s row lock (issue #389 -- without it,
+two proposals against *different* `requirement_id`s on the same design,
+close enough in time, can race: the second reads the `requirements` payload
+before the first writes its change back, and silently discards it on
+commit). That failure mode needs two real, concurrent connections to
+reproduce -- a pure-function test cannot exercise it -- so it is the one
+thing in this file that is DB-backed rather than a pure in/out check.
 """
 
 from __future__ import annotations
 
 import math
+import os
+import threading
+import uuid
 
+import psycopg
 import pytest
+from dotenv import load_dotenv
 
 from designs.requirement_targets import (
     InvalidRequirementTargetError,
     TargetComparator,
     TargetStatus,
     UnknownRequirementError,
+    _fetch_requirements,
     attach_intent,
     attach_target,
     confirm_target,
     mark_unscoreable,
     propose_intended_effect,
+    propose_requirement_target,
     propose_target,
 )
+from designs.service import create_design, read_design
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # propose_target -- comparator vocabulary and shape validation
@@ -350,3 +363,94 @@ def test_target_comparator_covers_point_minimum_and_maximum():
 
 def test_target_status_covers_the_three_lifecycle_states():
     assert {s.value for s in TargetStatus} == {"PROPOSED", "CONFIRMED", "UNSCOREABLE"}
+
+
+# ---------------------------------------------------------------------------
+# DB-backed: _fetch_requirements's row lock (issue #389) -- see this
+# module's docstring for why this is the one DB-backed exception here.
+# ---------------------------------------------------------------------------
+
+_TEST_DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://rf:rf_dev_password@localhost:5432/rfengineer"
+)
+
+
+def _database_reachable() -> bool:
+    try:
+        with psycopg.connect(_TEST_DATABASE_URL, connect_timeout=3):
+            return True
+    except psycopg.OperationalError:
+        return False
+
+
+_DB_REACHABLE = _database_reachable()
+
+
+@pytest.mark.skipif(
+    not _DB_REACHABLE,
+    reason=f"no reachable Postgres at {_TEST_DATABASE_URL.split('@')[-1]!r} in this sandbox",
+)
+class TestFetchRequirementsRowLock:
+    @pytest.fixture
+    def design_id(self):
+        result = create_design(
+            design_key=f"REQ-TARGET-LOCK-{uuid.uuid4().hex[:8]}",
+            name="Row Lock Fixture Design",
+            revision="A",
+            requirements={
+                "REQ-1": {"requirement": "Gain >= 20 dB."},
+                "REQ-2": {"requirement": "VSWR <= 1.5."},
+            },
+            architecture={},
+        )
+        design_id = result["design_id"]
+        yield design_id
+        conn = psycopg.connect(_TEST_DATABASE_URL, autocommit=True)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM designs WHERE id = %s", (design_id,))
+        finally:
+            conn.close()
+
+    def test_propose_requirement_target_persists_via_read_design(self, design_id):
+        result = propose_requirement_target(
+            design_id=design_id,
+            requirement_id="REQ-1",
+            value=20.0,
+            comparator="AT_LEAST",
+            unit="dB",
+        )
+        assert result["status"] == "proposed"
+
+        stored = read_design(design_id)
+        assert stored["requirements"]["REQ-1"]["target"]["value"] == 20.0
+
+    def test_fetch_requirements_for_update_blocks_a_concurrent_fetch_until_release(self, design_id):
+        """The core issue #389 regression test. Without `FOR UPDATE`, two
+        proposals against different requirement_ids on the same design can
+        both read the `requirements` payload before either writes it back,
+        so the second write silently discards the first's change. Proving
+        that needs two real, concurrent connections -- a pure-function test
+        cannot reproduce a database lock."""
+        conn1 = psycopg.connect(_TEST_DATABASE_URL)
+        conn2 = psycopg.connect(_TEST_DATABASE_URL)
+        unblocked = threading.Event()
+        try:
+            _fetch_requirements(conn1, design_id)  # holds the row lock, uncommitted
+
+            def _blocked_fetch():
+                _fetch_requirements(conn2, design_id)
+                unblocked.set()
+
+            thread = threading.Thread(target=_blocked_fetch)
+            thread.start()
+            # conn2's FOR UPDATE must block while conn1 holds the lock -- a
+            # generous window to prove it does NOT complete.
+            assert not unblocked.wait(timeout=0.5)
+
+            conn1.rollback()  # releases the lock without persisting anything
+            assert unblocked.wait(timeout=2.0)
+            thread.join()
+        finally:
+            conn1.close()
+            conn2.close()

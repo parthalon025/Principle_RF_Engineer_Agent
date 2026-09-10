@@ -456,9 +456,20 @@ def _fetch_requirements(conn: Any, design_id: int) -> dict[str, Any]:
     Raises `designs.db.UnknownDesignError` (reused as-is, not redefined) if
     no `designs` row matches -- the same "no row matched is unambiguous"
     reasoning that class's own docstring already gives, since `designs.id`
-    is a primary key."""
+    is a primary key.
+
+    The row is read `FOR UPDATE` (issue #389), same as
+    `designs.db.update_design_status`'s own status read -- every caller of
+    this function fetches, merges a change in Python, and writes the whole
+    `requirements` payload back (`_store_requirements`) on the same
+    connection before committing, and without the lock two callers
+    proposing targets on different `requirement_id`s of the same design at
+    the same time can each read the payload before either writes, so the
+    second write silently discards the first's change (a lost update, not a
+    conflict either side is told about).
+    """
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("SELECT requirements FROM designs WHERE id = %s", (design_id,))
+        cur.execute("SELECT requirements FROM designs WHERE id = %s FOR UPDATE", (design_id,))
         row = cur.fetchone()
     if row is None:
         raise db.UnknownDesignError(design_id)
