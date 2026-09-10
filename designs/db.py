@@ -397,6 +397,7 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
         "status": design_row["status"],
         "requirements": design_row["requirements"],
         "architecture": architecture,
+        "supersedes_design_id": design_row["supersedes_design_id"],
         "engineering_results": [_serialize_row(r) for r in engineering_results],
         "decision_records": [_serialize_row(r) for r in decision_records],
         "verification_items": verification_items,

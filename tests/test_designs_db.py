@@ -504,6 +504,51 @@ def test_read_design_includes_engineering_results_and_decision_records(db_conn):
     assert dr["approval_status"] == "PENDING"
 
 
+def test_read_design_surfaces_supersedes_design_id_when_set(db_conn):
+    """Issue #398: read_design must surface a design's supersedes_design_id
+    field to enable revision-history tracing through the database (not
+    client-side string-matching), mirroring the pattern documents.supersedes_document_id
+    already uses successfully."""
+    # Create a base design
+    base = create_design(
+        db_conn,
+        design_key="DES-REV-BASE",
+        name="Base Design",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+
+    # Create a successor design (revision B)
+    successor = create_design(
+        db_conn,
+        design_key="DES-REV-BASE",
+        name="Revised Design",
+        revision="B",
+        requirements={},
+        architecture={},
+    )
+
+    # Manually set supersedes_design_id (the write path isn't built yet;
+    # this test only exercises read_design's surface)
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE designs SET supersedes_design_id = %s WHERE id = %s",
+            (base["id"], successor["id"]),
+        )
+
+    # Read the successor design and verify supersedes_design_id is present
+    result = read_design(db_conn, successor["id"])
+
+    assert result is not None
+    assert result["supersedes_design_id"] == base["id"]
+
+    # Read the base design and verify its supersedes_design_id is None
+    base_result = read_design(db_conn, base["id"])
+    assert base_result is not None
+    assert base_result["supersedes_design_id"] is None
+
+
 # --- record_decision -----------------------------------------------------
 
 
