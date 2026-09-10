@@ -111,6 +111,26 @@ treatment CONTEXT.md's Fabrication capability gives a failed capability
 check. #127's rejected alternative ("silently excluding a candidate with
 no data") is exactly the failure mode this refuses to reproduce.
 
+MATERIAL / FAMILY VOCABULARY (issue #404). `material` and `family` used to
+be checked only for being non-empty strings, so a typo when citing a new
+entry (or filing a Family fallback bracket) silently created a row no
+lookup would ever find -- `resolve_material_property` would just report
+`status="no_data"`, indistinguishable from a genuine absence of data.
+`designs/material_families.py` is the fix, mirroring
+`designs/design_families.py`'s registry pattern but split by how open each
+vocabulary actually is: `family` is a small, closed set of broad categories
+(ADR-0015 names them), so `add_family_bracket` REJECTS one this registry
+doesn't hold; `material` is deliberately open-ended (CONTEXT.md: "a
+growing... record, not a fixed reference table"), so `add_entry` only WARNS
+on one it doesn't yet recognize -- see that module's own docstring for why
+the two are not treated the same way. Because `family` is this closed
+registry's key, `add_family_bracket` stores its CANONICAL spelling (not the
+caller's literal casing), and `fetch_family_bracket`/`resolve_material_property`
+canonicalize before comparing or querying too -- otherwise two callers citing
+the same registered family under different casing ("Generic Polymer" vs
+"generic polymer") would land in two disconnected rows, reproducing issue
+#404's own failure on the casing axis instead of the spelling axis.
+
 MODULE SHAPE. Two layers, the same pure/I-O seam
 `designs/requirement_targets.py` already establishes for this package:
 
@@ -150,6 +170,11 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from designs.material_families import (
+    UnknownMaterialFamilyError,
+    get_material_family,
+    warn_if_unknown_material,
+)
 from designs.requirement_targets import ASSUMED
 from knowledge.provenance import LITERATURE_SUPPORTED, MANUFACTURER_SPECIFIED
 
@@ -168,10 +193,15 @@ class InvalidMaterialPropertyError(ValueError):
     or inverted frequency band, a `provenance` outside
     `ENTRY_PROVENANCE_VALUES`, a missing `citation` for a
     `MANUFACTURER-SPECIFIED`/`LITERATURE-SUPPORTED` entry, a missing `note`
-    for an `ASSUMED` entry, an inverted family bracket, or a set of matching
-    entries that disagree on unit. Named and raised the same way
-    `designs.requirement_targets.InvalidRequirementTargetError` is -- naming
-    exactly what's wrong rather than a bare `TypeError`/`KeyError`."""
+    for an `ASSUMED` entry, an inverted family bracket, an unrecognized
+    `family` (`designs.material_families.get_material_family`; issue
+    #404), or a set of matching entries that disagree on unit. Named and
+    raised the same way `designs.requirement_targets.InvalidRequirementTargetError`
+    is -- naming exactly what's wrong rather than a bare `TypeError`/`KeyError`.
+
+    Note that an unrecognized `material` (as opposed to `family`) does NOT
+    raise this -- see `designs.material_families`'s module docstring for why
+    the two are enforced differently."""
 
 
 def _require_nonempty_string(field_name: str, value: Any) -> str:
@@ -234,6 +264,12 @@ def add_entry(
     resolved_material = _require_nonempty_string("material", material)
     resolved_property = _require_nonempty_string("property_name", property_name)
     resolved_unit = _require_nonempty_string("unit", unit)
+
+    # Issue #404: an unrecognized material never blocks the entry -- the
+    # Material-property library is deliberately a growing record, not a
+    # fixed reference table (CONTEXT.md) -- but it warns, since this is also
+    # exactly what a typo of an already-cited material looks like.
+    warn_if_unknown_material(resolved_material)
 
     low = _require_nonnegative_finite_number("frequency_low_hz", frequency_low_hz)
     high = _require_nonnegative_finite_number("frequency_high_hz", frequency_high_hz)
@@ -303,8 +339,39 @@ def add_family_bracket(
     cited -- a bracket is never a single borrowed point value, and never an
     uncited number (see this module's docstring's "FAMILY FALLBACK
     BRACKET" section). `max_value` must be `>= min_value`.
+
+    `family` must be one of `designs.material_families.known_material_family_names()`
+    (case-insensitively), unlike `material` on `add_entry` -- unlike a
+    specific material, the family vocabulary for a fallback bracket is a
+    small, closed set of broad categories (ADR-0015: "generic polymer,
+    generic conductor, etc."), so an unrecognized one raises rather than
+    warns: a bracket filed under a misspelled family is one
+    `resolve_material_property` will never find for the correctly-spelled
+    family a later caller asks for (issue #404).
+
+    The CANONICAL spelling `designs.material_families.get_material_family`
+    returns is what gets stored on the returned bracket, not the caller's
+    literal text -- deliberately unlike `orchestration.design_loop`'s
+    `design_family` field, which ADR-0037 keeps in the caller's own spelling
+    because it is a decision record of what a human/agent actually typed. A
+    Family fallback bracket is not that: `family` is this table's lookup key
+    (`db/schema.sql`'s `UNIQUE(family, property)`, and
+    `fetch_family_bracket`/`resolve_material_property`'s exact-match
+    comparisons), so two callers citing the SAME family under different
+    casing ("Generic Polymer" vs "generic polymer") must land on the same
+    row. Storing the raw text would silently split them into two brackets
+    that can never find each other -- exactly issue #404's failure mode,
+    moved from the spelling axis to the casing axis.
     """
     resolved_family = _require_nonempty_string("family", family)
+    try:
+        canonical_family = get_material_family(resolved_family)
+    except UnknownMaterialFamilyError as exc:
+        # Reuse get_material_family's own message (it already names every
+        # known family and issue #404) rather than composing a second,
+        # independently-worded "unrecognized family" message here that could
+        # drift out of sync with it.
+        raise InvalidMaterialPropertyError(str(exc)) from exc
     resolved_property = _require_nonempty_string("property_name", property_name)
     resolved_unit = _require_nonempty_string("unit", unit)
     resolved_min_citation = _require_nonempty_string("min_citation", min_citation)
@@ -318,7 +385,7 @@ def add_family_bracket(
         )
 
     return {
-        "family": resolved_family,
+        "family": canonical_family,
         "property": resolved_property,
         "min_value": resolved_min,
         "min_citation": resolved_min_citation,
@@ -326,6 +393,27 @@ def add_family_bracket(
         "max_citation": resolved_max_citation,
         "unit": resolved_unit,
     }
+
+
+def _canonical_family_or_raw(family: str) -> str:
+    """`family`'s canonical spelling if it names a known material family
+    (`designs.material_families.get_material_family`), else `family`
+    unchanged.
+
+    Used everywhere a `family` a CALLER supplied is compared against, or
+    queried for, a bracket that `add_family_bracket` already stored under
+    its canonical spelling (see that function's own docstring) -- so a
+    caller asking under a different casing of the SAME family still matches
+    the stored row instead of silently missing it (issue #404, casing
+    axis). Never raises: an unrecognized family was never going to match a
+    stored bracket either way (`add_family_bracket` already refuses to
+    store one), and rejecting a name is that function's job, not this
+    lookup-time helper's.
+    """
+    try:
+        return get_material_family(family)
+    except UnknownMaterialFamilyError:
+        return family
 
 
 def _entry_matches(
@@ -371,9 +459,11 @@ def resolve_material_property(
     2. Otherwise, if a `family_bracket` is supplied (fetched by the caller
        for `family`), return its cited `[min_value, max_value]` range --
        `status = "family_fallback"`. `family_bracket["family"]` and
-       `["property"]` must match `family`/`property_name`, or this raises
-       (a caller-supplied bracket for the wrong family/property would
-       silently mislead).
+       `["property"]` must match `family`/`property_name` (`family`
+       compared case-insensitively via its canonical spelling, since
+       `add_family_bracket` only ever stores that spelling -- issue #404),
+       or this raises (a caller-supplied bracket for the wrong family/
+       property would silently mislead).
     3. Otherwise, `status = "no_data"` with a `message` naming exactly what
        was looked for and found nothing -- never an invented number (#127's
        rejected "silently excluding a candidate with no data").
@@ -411,9 +501,17 @@ def resolve_material_property(
                 "family_bracket was supplied without a family -- pass the "
                 "family name the bracket applies to"
             )
+        # Compare canonically, not by raw spelling: add_family_bracket only
+        # ever stores the canonical spelling of a known family (see its own
+        # docstring), so a caller asking under a DIFFERENT casing of the
+        # SAME family ("Generic Polymer" vs "generic polymer") must still
+        # match here -- comparing raw strings would falsely report a
+        # family/property mismatch for a bracket that is, in fact, the
+        # right one (issue #404, casing axis).
+        canonical_family = _canonical_family_or_raw(family)
         bracket_family = family_bracket.get("family")
         bracket_property = family_bracket.get("property")
-        if bracket_family != family or bracket_property != property_name:
+        if bracket_family != canonical_family or bracket_property != property_name:
             raise InvalidMaterialPropertyError(
                 f"family_bracket is for family={bracket_family!r} "
                 f"property={bracket_property!r}, which does not match "
@@ -668,11 +766,24 @@ def fetch_family_bracket(
 ) -> dict[str, Any] | None:
     """Return the stored Family fallback bracket for `(family,
     property_name)`, or `None` if no bracket has been entered for it yet --
-    mirrors `designs.db.read_design`'s "None means not found" convention."""
+    mirrors `designs.db.read_design`'s "None means not found" convention.
+
+    `family` is canonicalized first, via `designs.material_families
+    .get_material_family`, when it names a known material family --
+    `insert_family_bracket`/`add_family_bracket` only ever store the
+    canonical spelling (see `add_family_bracket`'s own docstring), so a
+    caller asking under a different casing of the SAME family ("Generic
+    Polymer" vs "generic polymer") still finds the row, rather than
+    `WHERE family = %s`'s exact, case-sensitive match silently reporting
+    "no bracket" for one that exists (issue #404, casing axis). An
+    unrecognized family is passed through unchanged and simply matches no
+    row, same as before -- rejecting a name is `add_family_bracket`'s job,
+    not this function's."""
+    canonical_family = _canonical_family_or_raw(family)
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT * FROM material_family_brackets WHERE family = %s AND property = %s",
-            (family, property_name),
+            (canonical_family, property_name),
         )
         return cur.fetchone()
 

@@ -8,20 +8,29 @@ actual validation/lookup/fallback logic and need no database, so they are
 exercised directly here. The DB-backed I/O wrappers
 (`insert_material_property_entry`/`insert_family_bracket`/
 `fetch_material_property_entries`/`fetch_family_bracket`/
-`resolve_material_property_from_db`) need a live Postgres via DATABASE_URL,
-and there is no database in this sandbox (same constraint
-tests/test_requirement_targets.py, tests/test_designs_service.py, and
-tests/test_tooling.py already document for themselves) -- they are thin
-glue over the pure functions above, the same shape those modules' own
-untested I/O wrappers already have.
+`resolve_material_property_from_db`) need a live Postgres via DATABASE_URL --
+they are thin glue over the pure functions above, the same shape those
+modules' own untested I/O wrappers already have.
+
+The one exception, guarded by the module-level `DATABASE_URL` connectivity
+probe at the bottom of this file (mirroring tests/test_requirement_targets.py's
+identical `pytest.mark.skipif` pattern): issue #404's material/family
+vocabulary check must reject an unrecognized `family` (and warn on an
+unrecognized `material`) through the *real* insert wrappers too, not just the
+pure functions they call -- proving the check actually fires before any SQL
+runs, and that a rejected bracket insert leaves no row behind.
 """
 
 from __future__ import annotations
 
 import math
+import os
+import warnings
 
+import psycopg
 import pytest
 
+from designs.material_families import UnknownMaterialNameWarning
 from designs.material_properties import (
     DATASHEET_SEED_ENTRIES,
     FR4_SEED_ENTRIES,
@@ -29,6 +38,10 @@ from designs.material_properties import (
     InvalidMaterialPropertyError,
     add_entry,
     add_family_bracket,
+    fetch_family_bracket,
+    fetch_material_property_entries,
+    insert_family_bracket,
+    insert_material_property_entry,
     lookup_entries,
     resolve_material_property,
 )
@@ -201,6 +214,62 @@ def test_add_entry_allows_a_single_frequency_point():
 
 
 # ---------------------------------------------------------------------------
+# add_entry -- material vocabulary (issue #404). Unlike an unrecognized
+# `family` on add_family_bracket below, an unrecognized `material` never
+# raises -- see designs/material_families.py's module docstring for why the
+# two vocabularies are enforced differently.
+# ---------------------------------------------------------------------------
+
+
+def test_add_entry_warns_for_an_unrecognized_material():
+    with pytest.warns(UnknownMaterialNameWarning, match="Unobtainium Composite Z9"):
+        add_entry(
+            material="Unobtainium Composite Z9",
+            property_name="eps_r",
+            frequency_low_hz=10e9,
+            frequency_high_hz=10e9,
+            value=3.0,
+            unit="unitless",
+            provenance="ASSUMED",
+            note="placeholder pending a real datasheet",
+        )
+
+
+def test_add_entry_does_not_warn_for_an_already_known_material():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        # FR4 is one of the harvested, already-known materials -- must not warn.
+        add_entry(
+            material="FR4",
+            property_name="eps_r",
+            frequency_low_hz=10e9,
+            frequency_high_hz=10e9,
+            value=4.3,
+            unit="unitless",
+            provenance="LITERATURE-SUPPORTED",
+            citation="some paper",
+        )
+
+
+def test_add_entry_unrecognized_material_still_builds_the_entry():
+    # A typo warns, but the Material-property library is a growing record,
+    # never a fixed reference table (CONTEXT.md) -- so the entry is still
+    # built, not rejected.
+    with pytest.warns(UnknownMaterialNameWarning):
+        entry = add_entry(
+            material="Brand New Substrate Never Seen Before",
+            property_name="eps_r",
+            frequency_low_hz=10e9,
+            frequency_high_hz=10e9,
+            value=3.0,
+            unit="unitless",
+            provenance="ASSUMED",
+            note="placeholder",
+        )
+    assert entry["material"] == "Brand New Substrate Never Seen Before"
+
+
+# ---------------------------------------------------------------------------
 # add_family_bracket -- validation
 # ---------------------------------------------------------------------------
 
@@ -248,6 +317,99 @@ def test_add_family_bracket_requires_both_citations():
             max_citation="b",
             unit="unitless",
         )
+
+
+def test_add_family_bracket_rejects_an_unrecognized_family():
+    # Issue #404: unlike an unrecognized material on add_entry above, an
+    # unrecognized family fails loudly -- the family vocabulary is a small,
+    # closed set of broad categories (ADR-0015), so a bracket filed under a
+    # misspelled one would be one resolve_material_property could never find.
+    with pytest.raises(InvalidMaterialPropertyError, match="family"):
+        add_family_bracket(
+            family="generic plasticky stuff",
+            property_name="eps_r",
+            min_value=2.0,
+            min_citation="a",
+            max_value=6.0,
+            max_citation="b",
+            unit="unitless",
+        )
+
+
+def test_add_family_bracket_accepts_a_known_family_case_insensitively():
+    bracket = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    # Unlike orchestration.design_loop's design_family (ADR-0037: kept in the
+    # caller's own spelling because it is a decision record of what a human/
+    # agent typed), `family` here is this table's lookup key
+    # (db/schema.sql's UNIQUE(family, property)), so the CANONICAL spelling
+    # is what gets stored -- not the caller's literal casing. Storing the
+    # raw text would let "Generic Polymer" and "generic polymer" file as two
+    # disconnected brackets that can never find each other, reproducing
+    # issue #404's own failure mode on the casing axis instead of the
+    # spelling axis (see the two tests below).
+    assert bracket["family"] == "generic polymer"
+
+
+def test_add_family_bracket_canonicalizes_regardless_of_the_caller_s_casing():
+    # Two callers citing the SAME family under different casing must land on
+    # the SAME canonical spelling, not two independently-cased strings.
+    from_title_case = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    from_upper_case = add_family_bracket(
+        family="GENERIC POLYMER",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    assert from_title_case["family"] == from_upper_case["family"] == "generic polymer"
+
+
+def test_resolve_material_property_finds_a_bracket_cited_under_different_casing():
+    # The bracket is filed under "Generic Polymer"; a later caller asks
+    # under a differently-cased spelling of the SAME registered family
+    # ("generic polymer"). Before issue #404's casing fix, comparing raw
+    # strings here would have raised a false family/property mismatch, or
+    # (via fetch_family_bracket's exact-match SQL) never found the row at
+    # all -- exactly the "no lookup will ever find it" failure issue #404
+    # was opened to close.
+    bracket = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="citation A",
+        max_value=6.0,
+        max_citation="citation B",
+        unit="unitless",
+    )
+    result = resolve_material_property(
+        [],
+        material="unobtainium foam",
+        property_name="eps_r",
+        frequency_hz=9.5e9,
+        family="generic polymer",
+        family_bracket=bracket,
+    )
+    assert result["status"] == "family_fallback"
+    assert result["low"] == 2.0
+    assert result["high"] == 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -737,3 +899,77 @@ def test_ro4350b_new_entries_do_not_cite_a_document_that_lacks_their_values():
             "which does not contain that value"
         )
         assert "datasheet" in entry["citation"].lower()
+
+
+# ---------------------------------------------------------------------------
+# DB-backed: issue #404's material/family vocabulary check through the real
+# insert wrappers -- see this module's docstring for why this is the one
+# DB-backed exception here.
+# ---------------------------------------------------------------------------
+
+_TEST_DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://rf:rf_dev_password@localhost:5432/rfengineer"
+)
+
+
+def _database_reachable() -> bool:
+    try:
+        with psycopg.connect(_TEST_DATABASE_URL, connect_timeout=3):
+            return True
+    except psycopg.OperationalError:
+        return False
+
+
+_DB_REACHABLE = _database_reachable()
+
+
+@pytest.mark.skipif(
+    not _DB_REACHABLE,
+    reason=f"no reachable Postgres at {_TEST_DATABASE_URL.split('@')[-1]!r} in this sandbox",
+)
+class TestInsertWrappersEnforceTheVocabulary:
+    def test_insert_family_bracket_rejects_an_unrecognized_family_and_writes_no_row(self):
+        conn = psycopg.connect(_TEST_DATABASE_URL)
+        try:
+            with pytest.raises(InvalidMaterialPropertyError, match="family"):
+                insert_family_bracket(
+                    conn,
+                    family="generic squishy stuff",
+                    property_name="eps_r",
+                    min_value=2.0,
+                    min_citation="a",
+                    max_value=6.0,
+                    max_citation="b",
+                    unit="unitless",
+                )
+            # The check fires before any SQL runs -- confirm no row landed
+            # for this property under any family, on the same connection.
+            assert fetch_family_bracket(conn, "generic squishy stuff", "eps_r") is None
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_insert_material_property_entry_warns_but_still_inserts(self):
+        conn = psycopg.connect(_TEST_DATABASE_URL)
+        try:
+            with pytest.warns(UnknownMaterialNameWarning, match="Issue 404 DB Probe Material"):
+                row = insert_material_property_entry(
+                    conn,
+                    material="Issue 404 DB Probe Material",
+                    property_name="eps_r",
+                    frequency_low_hz=10e9,
+                    frequency_high_hz=10e9,
+                    value=3.0,
+                    unit="unitless",
+                    provenance="ASSUMED",
+                    note="issue #404 DB-backed wiring probe, never committed",
+                )
+            assert row["material"] == "Issue 404 DB Probe Material"
+            # The Material-property library never blocks a new material --
+            # confirm the row is actually visible on this connection.
+            fetched = fetch_material_property_entries(conn, "Issue 404 DB Probe Material", "eps_r")
+            assert len(fetched) == 1
+        finally:
+            # Never committed -- rolling back leaves the real table untouched.
+            conn.rollback()
+            conn.close()
