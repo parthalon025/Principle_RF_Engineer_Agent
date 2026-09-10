@@ -2059,7 +2059,7 @@ def _combinatorial_result_to_dict(result: Any) -> dict[str, Any]:
         }
         # Row-major, j-outer/i-inner -- the SAME grid-walk order
         # optimization.combinatorial's own `positions = [(i, j) for j in
-        # range(n_rows) for i in range(n_cols)]` and `_layout_from_choices`'s
+        # range(n_rows) for i in range(n_cols)]` and `_grid_from_choices`'s
         # `layout[j][i]` already use, so this debug/audit snapshot's order
         # agrees with every other grid walk this feature touches (each
         # entry is still self-describing via its own "i"/"j" fields either

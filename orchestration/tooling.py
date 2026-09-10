@@ -308,49 +308,6 @@ class _FlushTarget:
     kwargs: dict[str, Any]
 
 
-def _engineering_result_value(decision: LoopDecision) -> dict[str, Any]:
-    """The `value` payload `_flush_target_for` writes to `engineering_
-    results` for a calculation/simulation/optimization/measurement/
-    correlation decision (issue #400): `decision.result`'s own fields,
-    spread at the TOP level, plus `decision.input` carried along under an
-    `"input"` key.
-
-    WHY TOP-LEVEL, NOT `{"result": ..., "input": ...}` (the more obviously
-    symmetric shape): `orchestration/solver.py`'s `_prior_best_from_design`
-    reads a PRIOR, already-persisted row's `value` back
-    (`designs.db.read_engineering_results_for_scoring`) and indexes
-    straight into it for the scored field named by
-    `orchestration/score_fields.py` (e.g. `value["resonant_frequency_hz"]`)
-    -- exactly the same top-level shape `_score_step` already expects from
-    an in-memory `decision.result` it never went through this function at
-    all (`orchestration/solver.py`'s own `_drive_candidate` scores
-    `decision["result"]` directly, before any flush). Nesting `decision.
-    result` under a `"result"` key would silently break that reader for
-    every row this flush ever writes, trading one dropped fact
-    (`decision.input`) for another (the scored field) -- not a fix. Adding
-    `"input"` alongside the existing top-level fields costs nothing that
-    reader cares about, and is safe precisely because no step handler in
-    `orchestration/design_loop.py` returns a result dict with an `"input"`
-    key of its own (grep confirms it; this function does not defend against
-    that colliding, matching this module's existing "trusted internal
-    caller" posture toward `decision.result`'s shape elsewhere).
-
-    BEFORE THIS FIX, `decision.input` was silently dropped here for every
-    one of these five decision kinds, not just the combinatorial-
-    optimization one issue #400 was filed against -- e.g. the specific
-    `symbol_alphabet_entries` a combinatorial OPTIMIZATION step matched
-    against (`decision.input["symbol_entries"]`) never reached the
-    persisted row at all, even though `optimization.combinatorial.
-    SymbolOption.entry_id`/`CombinatorialPlacementResult.entry_id_layout`
-    (this same issue) already name WHICH matched entry backed each cell --
-    `decision.result` alone. Both facts together are what let a later
-    reader answer "which measured process backed cell (i, j)": the
-    resolved candidates and query context from `input`, and the specific
-    winning entry per cell from `result["entry_id_layout"]`.
-    """
-    return {**decision.result, "input": decision.input}
-
-
 def _flush_target_for(
     decision: LoopDecision,
     design_id: int,
@@ -450,7 +407,29 @@ def _flush_target_for(
             {
                 "design_id": design_id,
                 "tool_name": _tool_name_for(decision),
-                "value": _engineering_result_value(decision),
+                # decision.result's own fields spread at the TOP level, plus
+                # decision.input carried along under an "input" key (issue
+                # #400) -- NOT nested as {"result": ..., "input": ...}:
+                # orchestration/solver.py's _prior_best_from_design reads a
+                # prior persisted row's value back and indexes straight
+                # into it for the scored field (e.g.
+                # value["resonant_frequency_hz"]), so nesting decision.
+                # result under a "result" key would silently break that
+                # reader for every row this flush writes. Before this fix,
+                # decision.input was dropped here for every calculation/
+                # simulation/optimization/measurement/correlation decision,
+                # not just the combinatorial-optimization case issue #400
+                # was filed against -- e.g. the resolved symbol_entries a
+                # combinatorial OPTIMIZATION step matched against
+                # (decision.input["symbol_entries"]) never reached the
+                # persisted row, even though optimization.combinatorial.
+                # SymbolOption.entry_id/CombinatorialPlacementResult.
+                # entry_id_layout (this same issue) already name WHICH
+                # matched entry backed each cell. Safe to spread
+                # unguarded: no step handler in orchestration/design_loop.py
+                # returns a result dict with an "input" key of its own
+                # (grep confirms it).
+                "value": {**decision.result, "input": decision.input},
                 "provenance": decision.provenance,
             },
         )

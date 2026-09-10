@@ -3354,7 +3354,7 @@ def test_combinatorial_result_to_dict_orders_candidate_snapshot_row_major():
     row-major, j-outer/i-inner order every other grid walk this feature
     touches already uses -- optimization.combinatorial's own
     `positions = [(i, j) for j in range(n_rows) for i in range(n_cols)]`
-    and `_layout_from_choices`'s `layout[j][i]`. A 2-row, 2-col fake result
+    and `_grid_from_choices`'s `layout[j][i]`. A 2-row, 2-col fake result
     is built with its `candidate_snapshot` dict populated out of order, and
     the resulting list must still come back as [(0,0), (1,0), (0,1), (1,1)]
     -- j varying slowest, i fastest -- not the column-major (i, j) tuple

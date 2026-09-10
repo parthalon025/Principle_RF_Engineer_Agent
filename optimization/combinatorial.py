@@ -303,24 +303,16 @@ def _neighbour_violation(
     return violation
 
 
-def _layout_from_choices(
-    choices: dict[Position, SymbolOption], n_cols: int, n_rows: int
-) -> list[list[str]]:
-    """Build a `layout[j][i]` grid of symbol ids from a resolved
-    per-position `SymbolOption` choice -- exactly
-    `generate_coded_unit_cell_array`'s own `layout` shape."""
-    return [[choices[(i, j)].symbol_id for i in range(n_cols)] for j in range(n_rows)]
-
-
-def _entry_id_layout_from_choices(
-    choices: dict[Position, SymbolOption], n_cols: int, n_rows: int
-) -> list[list[int | None]]:
-    """The SAME `[j][i]` grid `_layout_from_choices` builds, but each cell
-    holds the winning `SymbolOption.entry_id` instead of its `symbol_id`
-    (issue #400) -- `CombinatorialPlacementResult.entry_id_layout`'s own
-    docstring explains why a bare symbol id cannot answer "which measured
-    process backed this cell" on its own."""
-    return [[choices[(i, j)].entry_id for i in range(n_cols)] for j in range(n_rows)]
+def _grid_from_choices(
+    choices: dict[Position, SymbolOption], n_cols: int, n_rows: int, attr: str
+) -> list[list[Any]]:
+    """Build a `[j][i]` grid of one `SymbolOption` attribute from a resolved
+    per-position choice. `attr="symbol_id"` is exactly
+    `generate_coded_unit_cell_array`'s own `layout` shape; `attr="entry_id"`
+    is `CombinatorialPlacementResult.entry_id_layout` (issue #400) -- that
+    field's own docstring explains why a bare symbol id cannot answer
+    "which measured process backed this cell" on its own."""
+    return [[getattr(choices[(i, j)], attr) for i in range(n_cols)] for j in range(n_rows)]
 
 
 def combinatorial_symbol_placement(
@@ -438,8 +430,8 @@ def combinatorial_symbol_placement(
         # see optimization/base.py's validate_parameters). Build and score
         # the single possible placement directly.
         raw_error, feasible = _score(fixed_choices)
-        layout = _layout_from_choices(fixed_choices, n_cols, n_rows)
-        entry_id_layout = _entry_id_layout_from_choices(fixed_choices, n_cols, n_rows)
+        layout = _grid_from_choices(fixed_choices, n_cols, n_rows, "symbol_id")
+        entry_id_layout = _grid_from_choices(fixed_choices, n_cols, n_rows, "entry_id")
         evaluations = [{"layout": layout, "error": raw_error, "feasible": feasible}]
         if not feasible:
             warnings.append(
@@ -499,15 +491,15 @@ def combinatorial_symbol_placement(
         raw_error, feasible = _score(choices)
         evaluations.append(
             {
-                "layout": _layout_from_choices(choices, n_cols, n_rows),
+                "layout": _grid_from_choices(choices, n_cols, n_rows, "symbol_id"),
                 "error": raw_error,
                 "feasible": feasible,
             }
         )
 
     best_choices = _decode(ga_result.best_parameters)
-    best_layout = _layout_from_choices(best_choices, n_cols, n_rows)
-    best_entry_id_layout = _entry_id_layout_from_choices(best_choices, n_cols, n_rows)
+    best_layout = _grid_from_choices(best_choices, n_cols, n_rows, "symbol_id")
+    best_entry_id_layout = _grid_from_choices(best_choices, n_cols, n_rows, "entry_id")
     best_error, best_feasible = _score(best_choices)
 
     if not best_feasible:

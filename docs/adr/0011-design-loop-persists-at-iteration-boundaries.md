@@ -134,7 +134,8 @@ the other four decision kinds too, not just this one.
 
 Fixed by folding `decision.input` into the persisted value under an
 `"input"` key, alongside `decision.result`'s own fields left at the TOP
-level (`_engineering_result_value`, `orchestration/tooling.py`) —
+level (`_flush_target_for`'s `_ENGINEERING_RESULT_KINDS` branch,
+`orchestration/tooling.py`) —
 deliberately NOT nesting `decision.result` itself under a matching
 `"result"` key: `orchestration/solver.py`'s `_prior_best_from_design`
 already reads a persisted row's scored field straight off `value`'s top
