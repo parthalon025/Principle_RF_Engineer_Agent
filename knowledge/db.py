@@ -123,8 +123,8 @@ def insert_document(
                     INSERT INTO documents (
                         title, source_uri, source_type, author, revision,
                         license, authority_rank, checksum_sha256, metadata,
-                        status, supersedes_document_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        status, supersedes_document_id, classification
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
@@ -139,6 +139,7 @@ def insert_document(
                         Json(draft.metadata),
                         DocumentStatus.ACTIVE.value,
                         supersedes_id,
+                        draft.classification.value,
                     ),
                 )
                 new_row = cur.fetchone()

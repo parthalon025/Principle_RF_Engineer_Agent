@@ -419,6 +419,35 @@ def test_extra_metadata_is_merged_into_stored_metadata(tmp_path, cleanup_documen
     assert stored_metadata["extraction_status"] == "ok"
 
 
+def test_ingest_document_stores_classification_as_a_real_column(tmp_path, cleanup_documents):
+    """Issue #407: classification must land in `documents.classification` (a
+    real, schema-enforced column), not only inside the `metadata` JSONB
+    blob -- `insert_document` writes `draft.classification` as a real INSERT
+    argument now, so this must be true for every classification value, not
+    just PUBLIC."""
+    pdf_path = tmp_path / "classification_column.pdf"
+    _write_pdf(pdf_path, ["Classification Column Test", "Body text."])
+
+    result = ingest_document(
+        file_path=str(pdf_path),
+        source_type="paper",
+        license="cc-by-4.0",
+        classification="SENSITIVE",
+    )
+    cleanup_documents.append(result["document_id"])
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT classification FROM documents WHERE id = %s", (result["document_id"],)
+            )
+            (stored_classification,) = cur.fetchone()
+    finally:
+        conn.close()
+    assert stored_classification == "SENSITIVE"
+
+
 def test_extra_metadata_cannot_override_reserved_metadata_keys(tmp_path, cleanup_documents):
     pdf_path = tmp_path / "extra_metadata_collision.pdf"
     _write_pdf(pdf_path, ["Extra Metadata Collision Test", "Body text."])

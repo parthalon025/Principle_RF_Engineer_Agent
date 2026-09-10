@@ -102,7 +102,7 @@ def extract_components(
                 ),
             }
 
-        classification = Classification(document["metadata"]["classification"])
+        classification = Classification(document["classification"])
 
         # Enforces the floor (raises for SENSITIVE/RESTRICTED + EXTERNAL)
         # before any chunk is touched.

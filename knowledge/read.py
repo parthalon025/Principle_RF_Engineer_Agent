@@ -41,7 +41,7 @@ def read_document(document_id: int) -> dict[str, Any]:
         "title": document["title"],
         "source_type": document["source_type"],
         "license": document["license"],
-        "classification": document["metadata"].get("classification"),
+        "classification": document["classification"],
         "authority_rank": document["authority_rank"],
         "revision": document["revision"],
         "supersedes_document_id": document["supersedes_document_id"],

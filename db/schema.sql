@@ -27,6 +27,47 @@ CREATE TABLE IF NOT EXISTS documents (
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS supersedes_document_id BIGINT REFERENCES documents(id);
 
+-- Issue #407 (ADR-0001, ADR-0004). classification used to live only as a
+-- key inside the free-form `metadata` JSONB blob, with nothing at the
+-- schema level requiring it to be present, correct, or immutable -- the
+-- "mandatory, no default" guarantee ADR-0001 describes was enforced only by
+-- one function's parameter signature (`knowledge.ingest.ingest_document`),
+-- not by the database: any write path that bypassed that one function
+-- could insert a document with no classification, or a wrong one, with
+-- nothing to catch it. Promoted to a real column here, added the exact
+-- same idempotent-ALTER way as `documents.status`/
+-- `documents.supersedes_document_id` immediately above -- the two direct
+-- precedents this ticket's Implementation Decisions name.
+--
+-- No DEFAULT, deliberately, matching ADR-0001's "mandatory, no default"
+-- intent -- unlike `documents.status` above, which does carry one. This
+-- means `ADD COLUMN ... NOT NULL` only succeeds against a `documents` table
+-- with zero existing rows: Postgres has no value to backfill an existing
+-- row with otherwise. Verified against this project's one live database
+-- (0 rows) before this line was written -- `knowledge/db.py`'s
+-- `insert_document` is the only production write path today
+-- (`knowledge/ingest.py`'s module docstring), and it already requires
+-- `DocumentDraft.classification`, so no pre-existing row could have been
+-- written without one. If a future environment ever DOES have pre-existing
+-- rows when this file is (re-)applied, this line fails loudly (`ERROR:
+-- column "classification" contains null values`) rather than silently
+-- leaving some rows unclassified -- exactly the failure mode ADR-0001
+-- wants, not a bug in this migration.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification TEXT NOT NULL;
+
+-- CHECK against the exact closed vocabulary `knowledge/models.py`'s
+-- `Classification` enum already defines -- no new vocabulary, just
+-- enforcing the one that already exists in Python. Drop-then-add under the
+-- same constraint name, matching this file's `components_manufacturer_
+-- part_number_key`/`designs_design_key_revision_key` precedent below for a
+-- named constraint that isn't a CREATE-TABLE-time PRIMARY KEY/UNIQUE, so
+-- this is safe to re-run against both a fresh container and an
+-- already-initialized database.
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_classification_check;
+ALTER TABLE documents
+    ADD CONSTRAINT documents_classification_check
+    CHECK (classification IN ('PUBLIC', 'INTERNAL', 'SENSITIVE', 'RESTRICTED'));
+
 CREATE TABLE IF NOT EXISTS document_chunks (
     id BIGSERIAL PRIMARY KEY,
     document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -595,7 +636,20 @@ ALTER TABLE components
 -- under a new constraint name, matching issue #367's identical fix to
 -- components' constraint -- safe to re-run against both a fresh container
 -- and an already-initialized database.
+--
+-- Both DROPs are needed, unlike the components fix immediately above:
+-- issue #367's DROP/ADD used the SAME constraint name on both sides, so
+-- re-running it just drops and re-adds the identical name every time. This
+-- one renames (`designs_design_key_key` -> `designs_design_key_revision_key`),
+-- so a first run leaves ONLY the new name behind -- a second run's
+-- `DROP ... designs_design_key_key` then finds nothing to drop (already
+-- renamed away) and the unqualified `ADD CONSTRAINT
+-- designs_design_key_revision_key` collided with itself
+-- (`DuplicateTable`), which is exactly what happened applying this file a
+-- second time against issue #407's sandbox database. Dropping the new name
+-- too, first, makes this idempotent under either starting state.
 ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_key;
+ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_revision_key;
 ALTER TABLE designs
     ADD CONSTRAINT designs_design_key_revision_key
     UNIQUE (design_key, revision);

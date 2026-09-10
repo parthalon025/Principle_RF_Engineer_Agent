@@ -228,6 +228,51 @@ def test_restricted_document_rejects_explicit_external_request(cleanup_documents
     assert rows == [(0, False, False), (1, False, False)]
 
 
+def test_restricted_routing_reads_the_classification_column_not_metadata(cleanup_documents):
+    """Issue #407: `index_document`'s RESTRICTED/SENSITIVE-forces-local floor
+    must be driven by `documents.classification` (the real column), not by
+    the `metadata` JSONB blob -- proven by seeding a document whose metadata
+    carries no 'classification' key at all and confirming the floor is still
+    enforced. This is the regression test for the promotion being a pure
+    storage-location change: the routing behavior itself must be identical
+    to test_restricted_document_uses_local_only/
+    test_restricted_document_rejects_explicit_external_request above."""
+    draft = DocumentDraft(
+        title="No Metadata Classification Key",
+        source_type=SourceType.DATASHEET,
+        classification=Classification.RESTRICTED,
+        license="manufacturer-datasheet",
+        checksum_sha256="d8" * 32,
+        metadata={},  # deliberately no "classification" key
+    )
+    conn = psycopg.connect(os.environ["DATABASE_URL"])
+    try:
+        row = db.insert_document(conn, draft, authority_rank=20)
+        chunks = [ChunkDraft(chunk_index=0, content="chunk 0", section=None, page_number=1)]
+        db.insert_chunks(conn, row["id"], chunks)
+        conn.commit()
+        doc_id = row["id"]
+    finally:
+        conn.close()
+    cleanup_documents.append(doc_id)
+
+    # The floor still rejects an explicit external request...
+    with pytest.raises(RestrictedBackendViolation):
+        index_document(
+            doc_id, requested_backend="external", embed_local=_Spy(), embed_external=_Spy()
+        )
+
+    # ...and still routes to local-only by default.
+    local_spy = _Spy(result=[_local_vector(0.9)])
+    external_spy = _Spy()
+    result = index_document(doc_id, embed_local=local_spy, embed_external=external_spy)
+
+    assert result["backend"] == "local"
+    assert result["column"] == "embedding_local"
+    assert len(local_spy.calls) == 1
+    assert external_spy.calls == []
+
+
 @pytest.mark.parametrize("classification", [Classification.SENSITIVE, Classification.RESTRICTED])
 def test_restricted_document_local_unavailable_fails_loudly_no_fallback(
     cleanup_documents, classification

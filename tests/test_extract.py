@@ -305,6 +305,46 @@ def test_restricted_document_local_unavailable_fails_loudly_no_fallback(
     assert rows == []
 
 
+def test_restricted_routing_reads_the_classification_column_not_metadata(cleanup_documents):
+    """Issue #407: `extract_components`'s RESTRICTED/SENSITIVE-forces-local
+    floor must be driven by `documents.classification` (the real column),
+    not by the `metadata` JSONB blob -- proven by seeding a document whose
+    metadata carries no 'classification' key at all and confirming the
+    floor is still enforced, exactly like tests/test_index.py's identical
+    regression test for `index_document`."""
+    draft = DocumentDraft(
+        title="No Metadata Classification Key",
+        source_type=SourceType.DATASHEET,
+        classification=Classification.RESTRICTED,
+        license="manufacturer-datasheet",
+        checksum_sha256="e9" * 32,
+        metadata={},  # deliberately no "classification" key
+    )
+    conn = psycopg.connect(os.environ["DATABASE_URL"])
+    try:
+        row = db.insert_document(conn, draft, authority_rank=20)
+        chunks = [ChunkDraft(chunk_index=0, content="chunk 0", section=None, page_number=1)]
+        db.insert_chunks(conn, row["id"], chunks)
+        conn.commit()
+        doc_id = row["id"]
+    finally:
+        conn.close()
+    cleanup_documents.append(doc_id)
+
+    with pytest.raises(RestrictedBackendViolation):
+        extract_components(
+            doc_id, requested_backend="external", extract_local=_Spy(), extract_external=_Spy()
+        )
+
+    local_spy = _Spy(result=_raw_amp(part_number="T11-ACM-COLUMN-A"))
+    external_spy = _Spy()
+    result = extract_components(doc_id, extract_local=local_spy, extract_external=external_spy)
+
+    assert result["backend"] == "local"
+    assert len(local_spy.calls) == 1
+    assert external_spy.calls == []
+
+
 def test_unknown_category_in_raw_result_is_skipped_not_fatal(cleanup_documents):
     doc_id = _seed_document(Classification.PUBLIC, "t11-s8" * 11)
     cleanup_documents.append(doc_id)

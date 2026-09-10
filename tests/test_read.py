@@ -153,6 +153,35 @@ def test_read_document_returns_full_metadata_and_ordered_chunks(
         assert set(chunk) == {"chunk_index", "content", "page_number", "section"}
 
 
+def test_read_document_classification_reads_the_column_not_metadata(cleanup_documents):
+    """Issue #407: `read_document` must surface `documents.classification`
+    (the real column), not the `metadata` JSONB blob's own key -- proven by
+    inserting a document whose metadata carries no 'classification' key at
+    all via `knowledge.db.insert_document` directly (bypassing
+    `ingest_document`) and confirming `read_document` still reports it
+    correctly from the column."""
+    from knowledge import db
+    from knowledge.models import Classification, DocumentDraft, SourceType
+
+    draft = DocumentDraft(
+        title="Read Document Column Test",
+        source_type=SourceType.DATASHEET,
+        classification=Classification.RESTRICTED,
+        license="manufacturer-datasheet",
+        checksum_sha256="f7" * 32,
+        metadata={},  # deliberately no "classification" key
+    )
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        row = db.insert_document(conn, draft, authority_rank=20)
+    finally:
+        conn.close()
+    cleanup_documents.append(row["id"])
+
+    result = read_document(row["id"])
+    assert result["classification"] == "RESTRICTED"
+
+
 def test_read_document_with_zero_chunks_returns_empty_chunk_list(tmp_path, cleanup_documents):
     """A document whose extraction failed (per #8) is still stored, with zero
     chunks -- read_document must reflect that as an empty list, not an error."""
