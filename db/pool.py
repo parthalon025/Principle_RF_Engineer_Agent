@@ -149,29 +149,25 @@ class PoolSettings:
     statement_timeout_ms: int
 
 
-def _int_from_env(name: str, default: int) -> int:
-    """`os.environ[name]` as an int, or `default` if unset. A value that is
-    not a number raises naming the variable -- otherwise a typo surfaces
-    much later as an unexplained pool timeout, because every checkout would
-    fail its configuration step and the pool would keep retrying."""
+def _from_env[T](name: str, default: T, parse: Callable[[str], T], expected: str) -> T:
+    """`os.environ[name]` read through `parse`, or `default` if unset or
+    blank.
+
+    A value `parse` refuses raises naming both the variable and what a good
+    value looks like -- otherwise a typo surfaces much later as an
+    unexplained pool timeout, because every checkout would fail its
+    configuration step and the pool would keep retrying. `expected`
+    completes the sentence "<name> must be ...", so it belongs to the
+    setting rather than to `parse`: two settings can share `int` and still
+    want different wording.
+    """
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return int(raw)
+        return parse(raw)
     except ValueError:
-        raise ValueError(f"{name} must be an integer, got {raw!r}") from None
-
-
-def _float_from_env(name: str, default: float) -> float:
-    """`_int_from_env`'s counterpart for a seconds-valued setting."""
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        raise ValueError(f"{name} must be a number of seconds, got {raw!r}") from None
+        raise ValueError(f"{name} must be {expected}, got {raw!r}") from None
 
 
 def pool_settings() -> PoolSettings:
@@ -181,12 +177,18 @@ def pool_settings() -> PoolSettings:
     test) can change a setting and rebuild via `reset_pool()` without
     reloading this module.
     """
+    connections = "a whole number of connections"
+    milliseconds = "a whole number of milliseconds"
     return PoolSettings(
-        min_size=_int_from_env(ENV_MIN_SIZE, DEFAULT_MIN_SIZE),
-        max_size=_int_from_env(ENV_MAX_SIZE, DEFAULT_MAX_SIZE),
-        checkout_timeout_s=_float_from_env(ENV_CHECKOUT_TIMEOUT_S, DEFAULT_CHECKOUT_TIMEOUT_S),
-        lock_timeout_ms=_int_from_env(ENV_LOCK_TIMEOUT_MS, DEFAULT_LOCK_TIMEOUT_MS),
-        statement_timeout_ms=_int_from_env(ENV_STATEMENT_TIMEOUT_MS, DEFAULT_STATEMENT_TIMEOUT_MS),
+        min_size=_from_env(ENV_MIN_SIZE, DEFAULT_MIN_SIZE, int, connections),
+        max_size=_from_env(ENV_MAX_SIZE, DEFAULT_MAX_SIZE, int, connections),
+        checkout_timeout_s=_from_env(
+            ENV_CHECKOUT_TIMEOUT_S, DEFAULT_CHECKOUT_TIMEOUT_S, float, "a number of seconds"
+        ),
+        lock_timeout_ms=_from_env(ENV_LOCK_TIMEOUT_MS, DEFAULT_LOCK_TIMEOUT_MS, int, milliseconds),
+        statement_timeout_ms=_from_env(
+            ENV_STATEMENT_TIMEOUT_MS, DEFAULT_STATEMENT_TIMEOUT_MS, int, milliseconds
+        ),
     )
 
 

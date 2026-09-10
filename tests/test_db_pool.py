@@ -80,11 +80,23 @@ class TestPoolConfiguration:
         assert settings.checkout_timeout_s == 2.5
 
     def test_a_non_numeric_override_is_refused_by_name(self, monkeypatch):
-        """A typo in the environment must name itself, not surface later as
-        an unexplained pool timeout when every checkout fails its
-        configuration step."""
+        """A typo in the environment must name itself and say what a good
+        value looks like, not surface later as an unexplained pool timeout
+        when every checkout fails its configuration step."""
         monkeypatch.setenv("RF_DB_LOCK_TIMEOUT_MS", "five seconds")
-        with pytest.raises(ValueError, match="RF_DB_LOCK_TIMEOUT_MS"):
+        with pytest.raises(ValueError, match="RF_DB_LOCK_TIMEOUT_MS.*milliseconds"):
+            db_pool.pool_settings()
+
+    def test_a_non_numeric_seconds_override_is_refused_in_its_own_units(self, monkeypatch):
+        """The whole-number knobs and the seconds-valued one share one
+        parsing helper, so this proves that helper still tells them apart:
+        a bad `RF_DB_POOL_TIMEOUT_S` must be described in seconds, not
+        rejected as "a whole number" it was never meant to be. `"2.5"` is a
+        *valid* value for this knob and an invalid one for the others,
+        which is exactly the distinction that would rot if the two ever
+        drifted apart."""
+        monkeypatch.setenv("RF_DB_POOL_TIMEOUT_S", "half a minute")
+        with pytest.raises(ValueError, match="RF_DB_POOL_TIMEOUT_S.*seconds"):
             db_pool.pool_settings()
 
 
