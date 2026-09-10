@@ -898,6 +898,34 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         "Disagrees with FR4_SEED_ENTRIES (0.025, 0.02, 0.024) by up to 47%",
     ),
     # 7. Rogers RO4350B
+    #
+    # ROGERS PUBLISHES TWO DIFFERENT PERMITTIVITIES FOR THIS ONE LAMINATE, and
+    # which one a caller wants depends on the geometry being modelled. Both are
+    # entered here, distinguished by their `method`, because storing only one of
+    # them silently answers a question the caller did not ask:
+    #
+    #   - PROCESS Dk (3.48) is measured on the bare laminate clamped in a
+    #     stripline fixture (IPC-TM-650 2.5.5.5). It is a factory
+    #     quality-control number for incoming material.
+    #   - DESIGN Dk (3.66) is extracted by building and measuring real
+    #     microstrip transmission lines -- a printed pattern on one face with
+    #     air on the other, which is exactly this project's own unit-cell
+    #     geometry (a printed element over a substrate, per ADR-0017's printed
+    #     reflector default). It is the number a solver should be fed.
+    #
+    # The gap is ~5%, which is not noise: at 40 GHz it moves a predicted
+    # resonance by roughly 1-1.4 GHz, enough to walk a narrowband Ka-band
+    # element off its target. Before this entry existed the library held only
+    # the Process number, so every lookup returned the wrong quantity for a
+    # printed design.
+    #
+    # A THICKNESS CAVEAT THAT NEITHER ENTRY CAN CARRY: Rogers states Design Dk
+    # falls by about 0.1 as core thickness drops from 0.020" to 0.004", and
+    # that 4-mil RO4350B has a Process Dk of 3.33 rather than 3.48. A thin core
+    # is the likely choice for a conformal part, and for it BOTH values below
+    # are wrong. The library has no thickness field (see this module's
+    # docstring), so that cannot be expressed here -- it is recorded in the
+    # note instead rather than left for a caller to rediscover.
     add_entry(
         material="Rogers RO4350B",
         property_name="eps_r",
@@ -907,7 +935,46 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         uncertainty=0.05,
         unit="unitless",
         provenance=MANUFACTURER_SPECIFIED,
-        method="datasheet, 10 GHz / 23 degrees C",
+        method="datasheet Process Dk, IPC-TM-650 2.5.5.5 clamped stripline, 10 GHz / 23 degrees C",
+        note="PROCESS Dk -- a bare-laminate incoming-QC number, NOT the value to feed a solver "
+        "for a printed pattern with air above it. Use the Design Dk entry (3.66) for that. "
+        "For 4-mil core Rogers publishes 3.33, not 3.48",
+        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+    ),
+    add_entry(
+        material="Rogers RO4350B",
+        property_name="eps_r",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=40.0e9,
+        value=3.66,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet Design Dk, extracted from measured microstrip transmission lines, "
+        "8-40 GHz",
+        note="DESIGN Dk -- the value for a printed pattern on one face with air on the other, "
+        "which is this project's own unit-cell geometry. ~5% above the Process Dk (3.48); at "
+        "40 GHz that difference moves a predicted resonance by roughly 1-1.4 GHz. Design Dk "
+        'falls by about 0.1 from 0.020" to 0.004" core, and the library has no thickness '
+        "field, so a thin-core part needs this checked against the datasheet directly",
+        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+    ),
+    # Loss tangent is entered at BOTH published test frequencies rather than
+    # only the 10 GHz one. tan_delta disperses far more strongly than eps_r,
+    # so a single point invites a caller to reuse it across the whole 2-50 GHz
+    # design band -- exactly the extrapolation this module's "WHY AN ENTRY'S
+    # FREQUENCY IS A BAND" section exists to prevent. Two points at least make
+    # the slope visible.
+    add_entry(
+        material="Rogers RO4350B",
+        property_name="tan_delta",
+        frequency_low_hz=2.5e9,
+        frequency_high_hz=2.5e9,
+        value=0.0031,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 2.5 GHz / 23 degrees C",
+        note="Second published point, entered alongside the 10 GHz value (0.0037) so the "
+        "frequency dependence is visible rather than inferred",
         citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
     ),
     add_entry(
@@ -934,5 +1001,283 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         citation=f"{_SHORTLIST}, which records the value as approximate and notes that no "
         "first-party X-band measurement was retrieved. The loss tangent is reported only as "
         "a range (~0.0002-0.001) and is therefore not entered",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# DATASHEET_SEED_ENTRIES -- manufacturer datasheet values gathered in a
+# 2026-09-09 sweep of the materials this project actually prints with, across
+# its stated 2-50 GHz operating band.
+#
+# WHY THIS IS A SEPARATE LIST rather than more rows in SUBSTRATE_SEED_ENTRIES:
+# that list has its own provenance story (the twelve substrates migrated from
+# docs/xband-absorber-substrate-shortlist.md) and its own test asserting how
+# many materials it holds. Mixing a differently-sourced batch into it would
+# blur both. Same reason FR4_SEED_ENTRIES is separate.
+#
+# THE ONE STRUCTURAL FINDING BEHIND THIS BATCH. Whether a vendor publishes an
+# RF number is decided by who buys the product, not by the material. Rogers
+# and Isola sell to radar and base-station engineers, so they test at 2-40 GHz.
+# DuPont sells Kapton film to flexible-circuit customers, so it tests at 1 kHz
+# -- six orders of magnitude below this project's band. The same split appears
+# INSIDE one company: DuPont's Pyralux LF bonding film, sold for RF multilayer
+# boards, publishes a 10 GHz number, while DuPont's Kapton film does not.
+#
+# WHY THE OUT-OF-BAND VALUES ARE ENTERED AT ALL, AND HOW. A 1 kHz permittivity
+# is not "the same number, less precise" -- it is wrong in band, and the errors
+# run in OPPOSITE directions between materials, so no correction factor exists:
+# Kapton's published loss tangent is ~5-6x too LOW against a 9.975 GHz
+# measurement, while TPU's published permittivity is up to 2.2x too HIGH
+# against a 5.1-18 GHz sweep. Entering them keyed at their own kHz/MHz band
+# means a 2-50 GHz lookup MISSES them and returns no_data, rather than either
+# silently returning a wrong number or leaving the value to be rediscovered
+# and misused. This is the pattern the library already applies to Melinex
+# ST505 (see SUBSTRATE_SEED_ENTRIES).
+#
+# THE SAME TRICK CARRIES THE INK CONDUCTIVITIES. Not one ink vendor -- Voltera,
+# ACI Materials, DuPont/Celanese, Novacentrix -- publishes conductivity at any
+# RF frequency; every published figure is a DC bench measurement, and most do
+# not state a test frequency at all. Keying them at DC (low = high = 0.0 Hz)
+# makes them unreturnable by any in-band query while still recording them as
+# evidence. Each carries its cure schedule in `note`, because cure alone swings
+# one ink's conductivity by 8x, and a conductivity without its cure schedule is
+# not a number.
+# ---------------------------------------------------------------------------
+
+_DATASHEET_SWEEP = "2026-09-09 datasheet sweep for issue #337"
+
+DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
+    # -- Isola Astra MT77: the only genuinely MULTI-POINT manufacturer dataset
+    #    found in the whole sweep. Five separate published test frequencies for
+    #    one laminate, which is what makes dispersion visible instead of
+    #    inferred. Entered as five entries, not one wide band, because the
+    #    vendor measured five points and did not claim the values in between.
+    *[
+        add_entry(
+            material="Isola Astra MT77",
+            property_name="eps_r",
+            frequency_low_hz=f,
+            frequency_high_hz=f,
+            value=3.00,
+            unit="unitless",
+            provenance=MANUFACTURER_SPECIFIED,
+            method="datasheet, published test point",
+            note="One of five published points (2/5/10/15/20 GHz) -- the only multi-point "
+            "manufacturer dataset in this batch",
+            citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+        )
+        for f in (2.0e9, 5.0e9, 1.0e10, 1.5e10, 2.0e10)
+    ],
+    *[
+        add_entry(
+            material="Isola Astra MT77",
+            property_name="tan_delta",
+            frequency_low_hz=f,
+            frequency_high_hz=f,
+            value=0.0017,
+            unit="unitless",
+            provenance=MANUFACTURER_SPECIFIED,
+            method="datasheet, published test point",
+            citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+        )
+        for f in (2.0e9, 5.0e9, 1.0e10, 1.5e10, 2.0e10)
+    ],
+    # -- Rogers RO4003C: same Process/Design Dk split as RO4350B above. See
+    #    that entry's comment for why both are stored and which one a printed
+    #    pattern actually wants.
+    add_entry(
+        material="Rogers RO4003C",
+        property_name="eps_r",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=3.38,
+        uncertainty=0.05,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet Process Dk, IPC-TM-650 2.5.5.5 clamped stripline, 10 GHz",
+        note="PROCESS Dk -- incoming-QC number for bare laminate, NOT the value for a printed "
+        "pattern with air above it. Use the Design Dk entry (3.55) for that",
+        citation=f"Rogers RO4003C datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Rogers RO4003C",
+        property_name="eps_r",
+        frequency_low_hz=8.0e9,
+        frequency_high_hz=4.0e10,
+        value=3.55,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet Design Dk, extracted from measured microstrip lines, 8-40 GHz",
+        note="DESIGN Dk -- the value for this project's own geometry, a printed element over a "
+        "substrate (ADR-0017). ~5% above the Process Dk",
+        citation=f"Rogers RO4003C datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Rogers RO4003C",
+        property_name="tan_delta",
+        frequency_low_hz=2.5e9,
+        frequency_high_hz=2.5e9,
+        value=0.0021,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 2.5 GHz",
+        citation=f"Rogers RO4003C datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Rogers RO4003C",
+        property_name="tan_delta",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=0.0027,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 10 GHz",
+        note="Second published point alongside 2.5 GHz (0.0021), so the frequency dependence "
+        "is visible rather than extrapolated",
+        citation=f"Rogers RO4003C datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    # -- Rogers 2929 Bondply: the library's FIRST adhesive-layer dielectric.
+    #    Worth calling out because an adhesive layer can be thicker than the
+    #    substrate carrying the printed pattern, and almost no adhesive has any
+    #    published electrical data in band (see the Kapton/3M notes).
+    add_entry(
+        material="Rogers 2929 Bondply",
+        property_name="eps_r",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=2.94,
+        uncertainty=0.05,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 10 GHz",
+        note="First adhesive/bonding-layer dielectric in this library. An adhesive line can be "
+        "thicker than the substrate it bonds, so its loss is not negligible",
+        citation=f"Rogers 2929 Bondply datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Rogers 2929 Bondply",
+        property_name="tan_delta",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=0.003,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 10 GHz",
+        citation=f"Rogers 2929 Bondply datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    # -- DuPont Pyralux LF: the one honest kHz-to-GHz comparison a manufacturer
+    #    publishes, both numbers in the same table of the same document. Kept as
+    #    two entries at their two real bands so the in-band query returns the
+    #    in-band value and the 1 MHz value can never be returned for a GHz
+    #    question. This pair is the clearest demonstration in the library of why
+    #    the frequency band on an entry is load-bearing.
+    add_entry(
+        material="DuPont Pyralux LF",
+        property_name="eps_r",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=2.8,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 10 GHz",
+        citation=f"DuPont Pyralux LF datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="DuPont Pyralux LF",
+        property_name="tan_delta",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=0.02,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 10 GHz",
+        citation=f"DuPont Pyralux LF datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="DuPont Pyralux LF",
+        property_name="eps_r",
+        frequency_low_hz=1.0e6,
+        frequency_high_hz=1.0e6,
+        value=3.5,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, 1 MHz",
+        note="OUT OF BAND, deliberately kept. The same document also publishes 2.8 at 10 GHz, "
+        "so this vendor shows directly how far a 1 MHz number sits from the in-band one. Keyed "
+        "at 1 MHz so a 2-50 GHz query cannot return it",
+        citation=f"DuPont Pyralux LF datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    # -- Kapton HN: the sharpest frequency trap in the sweep. The published
+    #    dissipation factor is a 1 kHz number, and an independent 9.975 GHz
+    #    split-cylinder measurement puts the real value 5-6x higher. Kept at
+    #    1 kHz so no in-band lookup can reach it.
+    add_entry(
+        material="DuPont Kapton HN",
+        property_name="tan_delta",
+        frequency_low_hz=1.0e3,
+        frequency_high_hz=1.0e3,
+        value=0.0026,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, ASTM D-150, 1 kHz",
+        note="OUT OF BAND and known to be badly unrepresentative: an independent split-cylinder "
+        "measurement near 9.975 GHz gives ~0.01066, roughly 5-6x higher. DuPont's own bulletin "
+        "plots 0.004-0.010 from 10 MHz to 100 GHz, contradicting this headline figure. Recorded "
+        "keyed at 1 kHz so a 2-50 GHz query misses it -- entering it is what stops it being "
+        "rediscovered and used in band",
+        citation=f"DuPont/Qnity Kapton Summary of Properties, via {_DATASHEET_SWEEP}",
+    ),
+    # -- Ink conductivities, all keyed at DC. Every one is a bench four-point-
+    #    probe or drawdown figure; no vendor states an RF value or even a test
+    #    frequency. Cure schedule lives in `note` because it is inseparable
+    #    from the number.
+    add_entry(
+        material="ACI Materials SS1109 silver",
+        property_name="conductivity_s_per_m",
+        frequency_low_hz=0.0,
+        frequency_high_hz=0.0,
+        value=2.22e6,
+        unit="S/m",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="DC volume resistivity, bench measurement; no frequency stated by vendor",
+        note="Cure: the datasheet's resistivity row states 135 C for 15 min, but its own "
+        "recommended PROCESS cure is only 5 min at >=135 C -- following the vendor's process "
+        "instructions does not reproduce the conditions of this number. A guaranteed floor, "
+        "not a typical value",
+        citation=f"ACI Materials SS1109 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="ACI Materials SC1502 carbon",
+        property_name="conductivity_s_per_m",
+        frequency_low_hz=0.0,
+        frequency_high_hz=0.0,
+        value=167.0,
+        unit="S/m",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="DC volume resistivity, bench measurement; no frequency stated by vendor",
+        note="Cure: resistivity row states 135 C for 15 min; recommended process cure is 15 min "
+        "at >=120 C. Never electrically thick anywhere in 2-50 GHz at any printable thickness, "
+        "which is the intended behaviour for a deliberately resistive layer and the one case "
+        "where the thin-film form Rs = 1/(sigma*t) is actually valid",
+        citation=f"ACI Materials SC1502 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="DuPont Celanese Intexar PE874 silver",
+        property_name="conductivity_s_per_m",
+        frequency_low_hz=0.0,
+        frequency_high_hz=0.0,
+        value=8.0e5,
+        unit="S/m",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="DC sheet resistance <50 mOhm/sq normalized to 25 um, measured on a 5 um dried "
+        "print on PET; converted to conductivity here",
+        note="Cure: 130 C for 15 min, ventilated oven. The Voltera NOVA's own heater reaches "
+        "only 40 C (viscosity conditioning), so an external oven is required. Named by Voltera "
+        "as NOVA-compatible. At its typical 8-12 um cured thickness this is only 0.6-1.0 skin "
+        "depths at 2 GHz and does not reach 3 skin depths until roughly 20-45 GHz -- i.e. NOT "
+        "safely a good conductor over most of the band in a single pass. Two passes moves that "
+        "crossover down to ~5-7 GHz",
+        citation=f"DuPont/Celanese Intexar PE874 TDS K-29701, via {_DATASHEET_SWEEP}",
     ),
 ]

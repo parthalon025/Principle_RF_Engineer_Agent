@@ -94,6 +94,46 @@ ltspice = [
 kicad = [
   "kicad-python",
 ]
+# Reading a solver's own field output for the Field bundle (issue #337) --
+# PyVista wraps VTK and reads Palace's ParaView `.vtu`/`.pvd` output
+# natively, including the multi-cycle `.pvd` manifest Palace writes (one
+# cycle per sweep frequency). meshio is DELIBERATELY NOT listed here even
+# though it is the obvious lighter-weight alternative: it hard-rejects the
+# VTU version and the `PUnstructuredGrid` wrapper Palace actually writes
+# (nschloe/meshio#1322), so it throws on every real Palace file. VTK also
+# brings the gradient filter the field-aware divergence check needs, so no
+# separate finite-difference package is required. This pulls ~80 MB of VTK
+# that CI and every install without a Palace run will never touch, so --
+# like hfss/geometry/ltspice/kicad above -- it is an explicit optional
+# extra: `uv sync --extra viz` or `pip install '.[viz]'`.
+viz = [
+  "pyvista",
+]
+# Conformal/curved unit-cell meshing (issue #337) -- MFEM, the mesh library
+# Palace itself reads through, natively loads Gmsh `.msh` v2.2 and v4.1
+# including periodic meshes, which is what makes a FreeCAD STEP export
+# reachable by Palace with no conversion layer. Gmsh ships a native Windows
+# wheel and is already apt-installed in this repo's Docker image, but most
+# installs (including CI) never mesh anything, so it is an optional extra:
+# `uv sync --extra meshing` or `pip install '.[meshing]'`. TetGen and CGAL
+# are deliberately not listed -- both carry licence complexity Gmsh avoids.
+meshing = [
+  "gmsh",
+]
+# Manufacturing-tolerance ensembles (issue #337). SALib ranks which
+# parameters actually move the result; chaospy builds a polynomial-chaos
+# surrogate, which matters here because every "sample" is a full-wave solve
+# -- roughly 35-70 runs for four smooth variables against the
+# hundreds-to-thousands brute Monte Carlo needs, i.e. hours instead of days.
+# OpenTURNS is deliberately not listed (a 65 MB wheel for the same job) and
+# neither is Dakota (worst integration fit of the options surveyed). Both
+# packages here are pure Python over numpy/scipy, which this project already
+# depends on, but nothing outside a tolerance study imports them, so they
+# are an optional extra: `uv sync --extra uq` or `pip install '.[uq]'`.
+uq = [
+  "salib",
+  "chaospy",
+]
 
 [dependency-groups]
 dev = [

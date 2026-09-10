@@ -23,6 +23,7 @@ import math
 import pytest
 
 from designs.material_properties import (
+    DATASHEET_SEED_ENTRIES,
     FR4_SEED_ENTRIES,
     SUBSTRATE_SEED_ENTRIES,
     InvalidMaterialPropertyError,
@@ -540,3 +541,116 @@ def test_PET_is_entered_at_its_datasheet_band_so_an_x_band_lookup_misses():
     pet = [e for e in SUBSTRATE_SEED_ENTRIES if e["material"].startswith("PET")]
     assert lookup_entries(pet, pet[0]["material"], "eps_r", 10.0e9) == []
     assert lookup_entries(pet, pet[0]["material"], "eps_r", 1.0e5) == pet
+
+
+# ---------------------------------------------------------------------------
+# DATASHEET_SEED_ENTRIES -- the 2026-09-09 manufacturer datasheet sweep.
+#
+# The behaviour worth protecting here is NOT that a particular number is
+# stored. It is that the deliberately out-of-band values -- a 1 kHz Kapton
+# loss tangent, a 1 MHz Pyralux permittivity, a DC ink conductivity -- are
+# recorded as evidence WITHOUT ever being returnable for an in-band query.
+# That is the whole reason they are entered at all: an unrecorded wrong number
+# gets rediscovered and reused, and a recorded-but-reachable one gets returned
+# and believed. These tests pin the middle path.
+# ---------------------------------------------------------------------------
+
+# This project's stated operating band (issue #337), used to assert that no
+# out-of-band datasheet value can leak into an in-band answer.
+_IN_BAND_HZ = (2.0e9, 1.0e10, 2.8e10, 5.0e10)
+
+
+def test_datasheet_entries_all_carry_a_method_and_none_claim_measured():
+    assert all(e["method"] for e in DATASHEET_SEED_ENTRIES)
+    assert all(e["provenance"] != "MEASURED" for e in DATASHEET_SEED_ENTRIES)
+
+
+def test_datasheet_out_of_band_traps_are_unreachable_in_band():
+    """The 1 kHz Kapton and 1 MHz Pyralux values must never answer a GHz query.
+
+    Kapton's published 1 kHz dissipation factor is roughly 5-6x lower than an
+    independent ~9.975 GHz measurement of the same film, so returning it for an
+    in-band question would be worse than returning nothing.
+    """
+    for frequency_hz in _IN_BAND_HZ:
+        kapton = resolve_material_property(
+            DATASHEET_SEED_ENTRIES, "DuPont Kapton HN", "tan_delta", frequency_hz
+        )
+        assert kapton["status"] == "no_data"
+
+    # ... but the value IS recorded, at its own frequency, so it is not lost.
+    assert (
+        resolve_material_property(DATASHEET_SEED_ENTRIES, "DuPont Kapton HN", "tan_delta", 1.0e3)[
+            "status"
+        ]
+        == "material_entries"
+    )
+
+
+def test_datasheet_pyralux_returns_its_in_band_value_and_hides_its_1mhz_one():
+    """Pyralux LF publishes both a 1 MHz and a 10 GHz permittivity in one
+    document -- the clearest case in the library of why an entry's frequency
+    band is load-bearing. The in-band query must get 2.8, never 3.5."""
+    in_band = resolve_material_property(
+        DATASHEET_SEED_ENTRIES, "DuPont Pyralux LF", "eps_r", 1.0e10
+    )
+    assert in_band["status"] == "material_entries"
+    assert in_band["low"] == in_band["high"] == 2.8
+
+    # 20 GHz sits outside both published points, so nothing is returned rather
+    # than the 1 MHz value being stretched to cover it.
+    assert (
+        resolve_material_property(DATASHEET_SEED_ENTRIES, "DuPont Pyralux LF", "eps_r", 2.0e10)[
+            "status"
+        ]
+        == "no_data"
+    )
+
+
+def test_datasheet_ink_conductivities_are_dc_keyed_and_never_answer_an_rf_query():
+    """No ink vendor publishes conductivity at any RF frequency; every figure
+    is a DC bench measurement. Keying them at DC records the evidence while
+    making it impossible to return for an in-band question."""
+    inks = sorted(
+        {e["material"] for e in DATASHEET_SEED_ENTRIES if e["property"] == "conductivity_s_per_m"}
+    )
+    assert inks, "expected at least one ink conductivity entry"
+
+    for ink in inks:
+        for frequency_hz in _IN_BAND_HZ:
+            assert (
+                resolve_material_property(
+                    DATASHEET_SEED_ENTRIES, ink, "conductivity_s_per_m", frequency_hz
+                )["status"]
+                == "no_data"
+            )
+        at_dc = resolve_material_property(DATASHEET_SEED_ENTRIES, ink, "conductivity_s_per_m", 0.0)
+        assert at_dc["status"] == "material_entries"
+        # A conductivity without its cure schedule is not a number.
+        assert all("Cure" in e["note"] for e in at_dc["entries"])
+
+
+def test_datasheet_multi_point_laminate_does_not_interpolate_between_points():
+    """Isola Astra MT77 publishes five separate test points. A query between
+    two of them returns nothing -- the vendor measured points, not a curve."""
+    on_point = resolve_material_property(
+        DATASHEET_SEED_ENTRIES, "Isola Astra MT77", "eps_r", 1.5e10
+    )
+    assert on_point["status"] == "material_entries"
+
+    between = resolve_material_property(DATASHEET_SEED_ENTRIES, "Isola Astra MT77", "eps_r", 1.2e10)
+    assert between["status"] == "no_data"
+
+
+def test_datasheet_process_and_design_dk_are_both_stored_and_distinguishable():
+    """Rogers publishes two permittivities for one laminate. At 10 GHz both
+    match, and the caller must see the spread rather than inherit whichever
+    was stored first; at 40 GHz only the Design Dk is valid."""
+    at_10ghz = resolve_material_property(DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 1.0e10)
+    assert at_10ghz["low"] == 3.38
+    assert at_10ghz["high"] == 3.55
+    methods = " ".join(e["method"] for e in at_10ghz["entries"])
+    assert "Process Dk" in methods and "Design Dk" in methods
+
+    at_40ghz = resolve_material_property(DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 4.0e10)
+    assert at_40ghz["low"] == at_40ghz["high"] == 3.55
