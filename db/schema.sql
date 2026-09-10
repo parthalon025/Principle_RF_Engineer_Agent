@@ -27,6 +27,47 @@ CREATE TABLE IF NOT EXISTS documents (
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS supersedes_document_id BIGINT REFERENCES documents(id);
 
+-- Issue #407 (ADR-0001, ADR-0004). classification used to live only as a
+-- key inside the free-form `metadata` JSONB blob, with nothing at the
+-- schema level requiring it to be present, correct, or immutable -- the
+-- "mandatory, no default" guarantee ADR-0001 describes was enforced only by
+-- one function's parameter signature (`knowledge.ingest.ingest_document`),
+-- not by the database: any write path that bypassed that one function
+-- could insert a document with no classification, or a wrong one, with
+-- nothing to catch it. Promoted to a real column here, added the exact
+-- same idempotent-ALTER way as `documents.status`/
+-- `documents.supersedes_document_id` immediately above -- the two direct
+-- precedents this ticket's Implementation Decisions name.
+--
+-- No DEFAULT, deliberately, matching ADR-0001's "mandatory, no default"
+-- intent -- unlike `documents.status` above, which does carry one. This
+-- means `ADD COLUMN ... NOT NULL` only succeeds against a `documents` table
+-- with zero existing rows: Postgres has no value to backfill an existing
+-- row with otherwise. Verified against this project's one live database
+-- (0 rows) before this line was written -- `knowledge/db.py`'s
+-- `insert_document` is the only production write path today
+-- (`knowledge/ingest.py`'s module docstring), and it already requires
+-- `DocumentDraft.classification`, so no pre-existing row could have been
+-- written without one. If a future environment ever DOES have pre-existing
+-- rows when this file is (re-)applied, this line fails loudly (`ERROR:
+-- column "classification" contains null values`) rather than silently
+-- leaving some rows unclassified -- exactly the failure mode ADR-0001
+-- wants, not a bug in this migration.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification TEXT NOT NULL;
+
+-- CHECK against the exact closed vocabulary `knowledge/models.py`'s
+-- `Classification` enum already defines -- no new vocabulary, just
+-- enforcing the one that already exists in Python. Drop-then-add under the
+-- same constraint name, matching this file's `components_manufacturer_
+-- part_number_key`/`designs_design_key_revision_key` precedent below for a
+-- named constraint that isn't a CREATE-TABLE-time PRIMARY KEY/UNIQUE, so
+-- this is safe to re-run against both a fresh container and an
+-- already-initialized database.
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_classification_check;
+ALTER TABLE documents
+    ADD CONSTRAINT documents_classification_check
+    CHECK (classification IN ('PUBLIC', 'INTERNAL', 'SENSITIVE', 'RESTRICTED'));
+
 CREATE TABLE IF NOT EXISTS document_chunks (
     id BIGSERIAL PRIMARY KEY,
     document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -56,6 +97,13 @@ CREATE TABLE IF NOT EXISTS components (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(manufacturer, part_number)
 );
+
+-- Issue #402: allow deleting a document referenced by a component,
+-- clearing the component's datasheet_document_id instead of blocking deletion.
+ALTER TABLE components DROP CONSTRAINT IF EXISTS components_datasheet_document_id_fkey;
+ALTER TABLE components
+    ADD CONSTRAINT components_datasheet_document_id_fkey
+    FOREIGN KEY (datasheet_document_id) REFERENCES documents(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS designs (
     id BIGSERIAL PRIMARY KEY,
@@ -123,6 +171,23 @@ CREATE TABLE IF NOT EXISTS decision_records (
 -- above) -- schema.sql is re-applied against a live database
 -- (db/apply_schema.py), where CREATE TABLE IF NOT EXISTS is a no-op.
 ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family TEXT;
+
+-- Issue #408 (ADR-0037: "Design family keeps both the caller's spelling and
+-- the registry's canonical name"). `design_family` immediately above is
+-- never rewritten -- it stays whatever string the caller (a human, via the
+-- ARCHITECTURE/REDESIGN_DECISION step) actually typed, e.g. "patch_antenna"
+-- or "PATCH". `orchestration/design_loop.py`'s ARCHITECTURE step already
+-- resolves that string against `designs/design_families.py`'s registry and
+-- computes a canonical payload (`recorded["design_family_registry"]
+-- ["canonical_name"]`) so two runs spelling the same family differently
+-- still group together for #150/#151 -- this column is where that
+-- already-computed value lands, alongside the raw one, rather than merging
+-- the two into one field (which would silently rewrite what the caller
+-- wrote) or re-deriving the canonical name a second time on read. Nullable,
+-- same "ALTER TABLE ADD COLUMN IF NOT EXISTS" pattern as design_family
+-- immediately above, for the same reason: only architecture_decision/
+-- redesign_decision rows ever carry a value.
+ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family_canonical TEXT;
 
 -- Issue #322 (ADR-0025's Considered-and-dropped ledger; CONTEXT.md's entry
 -- of the same name). Per entry: the family weighed, whether it was kept or
@@ -587,3 +652,95 @@ ALTER TABLE components DROP CONSTRAINT IF EXISTS components_manufacturer_part_nu
 ALTER TABLE components
     ADD CONSTRAINT components_manufacturer_part_number_key
     UNIQUE NULLS NOT DISTINCT (manufacturer, part_number);
+
+-- Issue #369. CONTEXT.md documents, as an already-holding rule, that a
+-- released design gets a new revision rather than being edited back into
+-- engineering -- but `design_key` alone was UNIQUE, so the database could
+-- never actually hold two revisions of the same design_key. Drop-then-add
+-- under a new constraint name, matching issue #367's identical fix to
+-- components' constraint -- safe to re-run against both a fresh container
+-- and an already-initialized database.
+--
+-- Both DROPs are needed, unlike the components fix immediately above:
+-- issue #367's DROP/ADD used the SAME constraint name on both sides, so
+-- re-running it just drops and re-adds the identical name every time. This
+-- one renames (`designs_design_key_key` -> `designs_design_key_revision_key`),
+-- so a first run leaves ONLY the new name behind -- a second run's
+-- `DROP ... designs_design_key_key` then finds nothing to drop (already
+-- renamed away) and the unqualified `ADD CONSTRAINT
+-- designs_design_key_revision_key` collided with itself
+-- (`DuplicateTable`), which is exactly what happened applying this file a
+-- second time against issue #407's sandbox database. Dropping the new name
+-- too, first, makes this idempotent under either starting state.
+ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_key;
+ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_revision_key;
+ALTER TABLE designs
+    ADD CONSTRAINT designs_design_key_revision_key
+    UNIQUE (design_key, revision);
+
+-- Issue #398: a design's revision history should be traceable through the
+-- database via a real link (supersedes_design_id), mirroring the pattern
+-- `documents.supersedes_document_id` already uses for the same "what did this
+-- follow" question. Nullable -- a design with no predecessor (the first in a
+-- family, or an independent design) has none. Added via ALTER TABLE ADD COLUMN
+-- IF NOT EXISTS, matching the convention already used in this file for
+-- extending tables that predate the column (see `documents.status` /
+-- `documents.supersedes_document_id` above).
+ALTER TABLE designs ADD COLUMN IF NOT EXISTS supersedes_design_id BIGINT REFERENCES designs(id);
+
+-- Issue #395 (duplicate of #392's identical deliverable; both closed by
+-- this table). A 9-reviewer DB architecture-soundness review found the
+-- same gap from five independent angles: `designs.architecture` names
+-- which real, orderable `components` row backs each functional block
+-- (`designs.validation.extract_component_refs`'s walk), but that link was
+-- only ever checked once, at `create_design` time, and never again --
+-- `architecture` is a JSON blob, so Postgres itself had no way to see or
+-- protect the link. Nothing stopped a referenced component from being
+-- deleted out from under a live design, and "which designs use component
+-- X" had no answer short of scanning every design's JSON by hand.
+--
+-- `component_id` deliberately carries no `ON DELETE` action -- default
+-- `RESTRICT` -- so a `components` row a live design still references
+-- cannot be deleted out from under it; a caller that genuinely needs to
+-- remove a component must first remove or repoint every design that
+-- references it (proven live in tests/test_designs_db.py against the real
+-- constraint, not mocked -- the same discipline
+-- tests/test_element_alphabet.py already applies to
+-- symbol_alphabet_entries.process_id). `design_id` is `ON DELETE CASCADE`,
+-- matching every other design-scoped child table in this file
+-- (`engineering_results`, `verification_items`, `decision_records`, ...):
+-- once the `designs` row itself is gone, its component references go
+-- with it.
+--
+-- `UNIQUE(design_id, block)` -- `block` is the architecture block name
+-- (`designs.validation._iter_component_refs`'s nearest-enclosing-dict-key
+-- label, e.g. "lna"/"mixer"); today's architecture shape never repeats a
+-- block name within one design's own JSON (each is a distinct dict key),
+-- so this also catches a future write path silently double-inserting the
+-- same block.
+--
+-- Populated by `designs.db.create_design` in the same transaction as the
+-- `designs`/`architecture` write it describes, reusing the already-
+-- validated `component_id` list `_find_dangling_component_refs` computes
+-- today -- no second validation pass, no new seam. No path exists yet for
+-- updating an existing design's `architecture` after creation (every
+-- design-loop-created design is created with `architecture={}` and
+-- nothing ever updates it afterward), so `create_design` is this table's
+-- only writer for now; a future architecture-update path must keep this
+-- table in step the same way, not just write `architecture`'s JSON.
+CREATE TABLE IF NOT EXISTS design_component_refs (
+    id BIGSERIAL PRIMARY KEY,
+    design_id BIGINT NOT NULL REFERENCES designs(id) ON DELETE CASCADE,
+    component_id BIGINT NOT NULL REFERENCES components(id),
+    block TEXT NOT NULL,
+    UNIQUE(design_id, block)
+);
+
+-- The new "which designs use component X" query direction
+-- (`designs.db.find_designs_referencing_component`) -- the primary key
+-- above indexes `id`, and `UNIQUE(design_id, block)` indexes `design_id`
+-- as its leftmost column, but neither covers a `component_id`-first
+-- lookup, which is the one this table exists to make fast and indexed
+-- instead of a full-table JSON scan.
+CREATE INDEX IF NOT EXISTS design_component_refs_component_id_idx
+ON design_component_refs (component_id);

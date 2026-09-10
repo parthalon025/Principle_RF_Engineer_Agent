@@ -165,15 +165,25 @@ def test_advance_design_loop_step_requires_design_id_in_state():
 # ---------------------------------------------------------------------------
 
 
-def _measurement_decision(result: dict[str, Any]) -> Any:
+def _engineering_decision(
+    step: DesignStep,
+    kind: str,
+    result: dict[str, Any],
+    provenance: str | None = None,
+) -> Any:
+    """One LoopDecision of an engineering-result kind (calculation/
+    simulation/optimization/measurement/correlation), shaped exactly as
+    `orchestration.design_loop.advance_loop_step` records it -- only
+    `step`/`kind`/`result` matter to `_tool_name_for`, so the rest is
+    filled with plausible constants."""
     from orchestration.design_loop import LoopDecision
 
     return LoopDecision(
-        step=DesignStep.MEASUREMENT.value,
-        kind="measurement",
+        step=step.value,
+        kind=kind,
         input={},
         result=result,
-        provenance="MEASURED",
+        provenance=provenance,
         approved_by="jane.engineer",
         recorded_at=0.0,
     )
@@ -186,14 +196,211 @@ def test_external_measurement_is_recorded_as_record_external_measurement():
     produced it."""
     from orchestration.tooling import _tool_name_for
 
-    decision = _measurement_decision(
+    decision = _engineering_decision(
+        DesignStep.MEASUREMENT,
+        "measurement",
         {
             "touchstone_file": "/tmp/dut.s2p",
             "provenance": "MEASURED",
             "source": "external_test_iteration",
-        }
+        },
+        provenance="MEASURED",
     )
     assert _tool_name_for(decision) == "record_external_measurement"
+
+
+# ---------------------------------------------------------------------------
+# Issue #334: engineering_results.tool_name must name the function that
+# ACTUALLY ran, not whatever the step's name used to imply.
+#
+# ANALYSIS, SIMULATION and OPTIMIZATION each dispatch per design family
+# (issues #239/#229/#241/#255): an ABSORBER's SIMULATION runs Meep, a
+# PATCH's runs NEC2, and the flat `tool_name` column used to be filled from
+# a fixed per-step table that said "run_nec2_simulation" for every one of
+# them. In plain terms: every Meep and Palace run in the database was filed
+# under the name of a solver that never touched it, so anything counting
+# results per solver counted them all as NEC2.
+#
+# These reach for the private `_tool_name_for` for the same reason the
+# MEASUREMENT test above does -- the only public path that reads a tool
+# name is the flush, which needs a real Postgres. The end-to-end proof
+# against a real database is
+# test_flush_records_a_meep_run_under_its_own_tool_name below.
+# ---------------------------------------------------------------------------
+
+
+def test_a_meep_run_is_recorded_as_run_meep_simulation():
+    """The defect this issue names: an ABSORBER's SIMULATION decision is
+    the output of `run_meep_simulation` (design_loop.py's
+    `_simulate_meep_floquet`), and must be filed under that name."""
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.SIMULATION,
+        "simulation",
+        {
+            "function": "run_meep_simulation",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "worst_absorption": 0.8,
+            "provenance": "SIMULATED",
+        },
+        provenance="SIMULATED",
+    )
+    assert _tool_name_for(decision) == "run_meep_simulation"
+
+
+def test_a_palace_run_is_recorded_as_run_palace_simulation():
+    """The same for REFLECTION_PHASE/DIFFUSIVE's declared solver (#252) --
+    proving the fix reads the result rather than swapping one hardcoded
+    solver name for another."""
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.SIMULATION,
+        "simulation",
+        {
+            "function": "run_palace_simulation",
+            "simulator": "PALACE",
+            "status": "COMPLETED",
+            "provenance": "SIMULATED",
+        },
+        provenance="SIMULATED",
+    )
+    assert _tool_name_for(decision) == "run_palace_simulation"
+
+
+def test_a_nec2_run_is_still_recorded_as_run_nec2_simulation():
+    """The PATCH path, unchanged: what used to be right by accident (every
+    SIMULATION was called NEC2) must still be right on purpose."""
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.SIMULATION,
+        "simulation",
+        {
+            "function": "run_nec2_simulation",
+            "simulator": "NEC2++",
+            "status": "COMPLETED",
+            "vswr": 1.9,
+            "provenance": "SIMULATED",
+        },
+        provenance="SIMULATED",
+    )
+    assert _tool_name_for(decision) == "run_nec2_simulation"
+
+
+def test_an_absorber_analysis_is_recorded_as_absorber_band_response():
+    """ANALYSIS has the same defect as SIMULATION (this issue's own scope
+    check): it dispatches per family too (#239), so an ABSORBER's closed-
+    form absorption was being filed under the patch-antenna resonant-
+    frequency formula's name."""
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.ANALYSIS,
+        "calculation",
+        {
+            "function": "absorber_band_response",
+            "worst_absorption": 0.62,
+            "provenance": "CALCULATED",
+        },
+        provenance="CALCULATED",
+    )
+    assert _tool_name_for(decision) == "absorber_band_response"
+
+
+def test_a_patch_analysis_is_still_recorded_as_patch_resonant_frequency_hz():
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.ANALYSIS,
+        "calculation",
+        {
+            "function": "patch_resonant_frequency_hz",
+            "resonant_frequency_hz": 2.45e9,
+            "provenance": "CALCULATED",
+        },
+        provenance="CALCULATED",
+    )
+    assert _tool_name_for(decision) == "patch_resonant_frequency_hz"
+
+
+def test_a_combinatorial_optimization_is_recorded_as_its_own_search():
+    """OPTIMIZATION dispatches per family too (#255/#267): a
+    REFLECTION_PHASE/DIFFUSIVE family runs the combinatorial symbol-
+    placement search, not the continuous patch-length one."""
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.OPTIMIZATION,
+        "optimization",
+        {
+            "function": "combinatorial_symbol_placement",
+            "method": "combinatorial_symbol_placement",
+            "achieved_error": 12.0,
+            "provenance": "CALCULATED",
+        },
+        provenance="CALCULATED",
+    )
+    assert _tool_name_for(decision) == "combinatorial_symbol_placement"
+
+
+def test_a_continuous_optimization_falls_back_to_the_step_table():
+    """The continuous patch-length search states no `function` of its own
+    (its `method` names the SEARCH -- "bayesian"/"sweep"/"grid" -- not the
+    tool), so this step keeps its per-step table entry as the documented
+    fallback."""
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.OPTIMIZATION,
+        "optimization",
+        {
+            "method": "parameter_sweep",
+            "best_length_m": 0.0286,
+            "provenance": "CALCULATED",
+        },
+        provenance="CALCULATED",
+    )
+    assert _tool_name_for(decision) == "optimize_patch_length_for_target_frequency"
+
+
+def test_a_correlation_falls_back_to_the_step_table():
+    from orchestration.tooling import _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.CORRELATION,
+        "correlation",
+        {"comparison": {}, "provenance": "CALCULATED"},
+        provenance="CALCULATED",
+    )
+    assert _tool_name_for(decision) == "correlate_simulation_measurement"
+
+
+def test_a_simulation_naming_no_function_is_refused_not_filed_as_nec2():
+    """A future solver wired into `_SIMULATION_ADAPTERS` without stating
+    which function produced its result is a mapping gap, and this module
+    already fails loud for those (`_flush_target_for`'s unknown-kind
+    branch) rather than guessing. Guessing here is precisely the bug: the
+    silent guess was "NEC2", and a wrong tool_name is unrecoverable once
+    written, whereas this raise happens before the flush opens a
+    connection, leaving the caller's pre-call state the only valid one.
+
+    This shape is also what a SIMULATION decision recorded BEFORE this fix
+    looks like -- a NEC2 run whose result never stated its function -- so
+    the message must name the repair (add the key to the held state) rather
+    than assume the historical answer and re-establish the guess."""
+    from orchestration.tooling import DesignLoopPersistenceError, _tool_name_for
+
+    decision = _engineering_decision(
+        DesignStep.SIMULATION,
+        "simulation",
+        {"simulator": "SOME_NEW_SOLVER", "status": "COMPLETED"},
+        provenance="SIMULATED",
+    )
+    with pytest.raises(DesignLoopPersistenceError, match="simulation"):
+        _tool_name_for(decision)
 
 
 def test_inspect_design_loop_state_passes_through_design_fields(cleanup_designs):
@@ -395,6 +602,8 @@ def _drive_to_redesign_decision(
     design_family: str = "patch_antenna",
     considered_and_dropped: list[dict[str, Any]] | None = None,
     capability_warnings: list[dict[str, Any]] | None = None,
+    analysis_input: dict[str, Any] | None = None,
+    simulation_input: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Real ARCHITECTURE -> ... -> CORRELATION, leaving `state` positioned
     at REDESIGN_DECISION -- callers advance the final gated step themselves
@@ -412,7 +621,15 @@ def _drive_to_redesign_decision(
     than asserting an empty list is what every caller wants. `capability_warnings`
     (issue #324) does the same for a Capability warning list -- a wholly
     separate key from `considered_and_dropped` above, so both can be
-    supplied together without either affecting the other."""
+    supplied together without either affecting the other.
+
+    `analysis_input`/`simulation_input` (issue #334) let a caller drive a
+    family whose ANALYSIS and SIMULATION are not the patch antenna's --
+    ABSORBER's closed-form absorption and its Meep unit-cell run, say.
+    Omitted, both default to the patch-antenna inputs every other test in
+    this file already drives (including the fake NEC2++ executable, which
+    is only created when the caller supplies no `simulation_input` of its
+    own -- a Meep-driven iteration has no NEC2 binary to fake)."""
     architecture_input = {
         "decision": "rectangular microstrip patch on FR4",
         "rationale": "meets band/gain target with a simple, low-cost fabrication",
@@ -424,19 +641,18 @@ def _drive_to_redesign_decision(
         architecture_input["capability_warnings"] = capability_warnings
     state = _grant_and_advance(state, DesignStep.ARCHITECTURE, architecture_input)
     state = advance_design_loop_step(
-        state, {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
+        state, analysis_input or {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
     )
-    fake_nec2pp = _make_fake_nec2pp(tmp_path)
-    state = advance_design_loop_step(
-        state,
-        {
+    if simulation_input is None:
+        fake_nec2pp = _make_fake_nec2pp(tmp_path)
+        simulation_input = {
             "geometry": _DIPOLE_GEOMETRY,
             "frequency_hz": 300e6,
             "reference_impedance_ohms": 50.0,
             "executable": str(fake_nec2pp),
             "workdir": str(tmp_path / "nec2_run"),
-        },
-    )
+        }
+    state = advance_design_loop_step(state, simulation_input)
     state = advance_design_loop_step(
         state,
         {
@@ -528,6 +744,99 @@ def test_flush_at_accept_design_persists_full_history(cleanup_designs, tmp_path)
     assert results_by_tool["patch_resonant_frequency_hz"]["provenance"] == "CALCULATED"
     assert results_by_tool["run_nec2_simulation"]["provenance"] == "SIMULATED"
     assert results_by_tool["record_external_measurement"]["provenance"] == "MEASURED"
+
+
+# ---------------------------------------------------------------------------
+# Issue #334, end to end against a real database: an ABSORBER iteration --
+# closed-form absorption for ANALYSIS, a Meep unit-cell run for SIMULATION --
+# must land in engineering_results under the names of the functions that
+# actually ran. The unit-level counterpart is the _tool_name_for block near
+# the top of this file.
+# ---------------------------------------------------------------------------
+
+# Duplicated from tests/test_design_loop.py's constant of the same name, not
+# imported -- this file's own "duplicated, not imported" convention (module
+# docstring).
+_ABSORBER_ANALYSIS_INPUT = {
+    "f_low_hz": 8e9,
+    "f_high_hz": 12e9,
+    "eps_r": 2.9,
+    "tan_delta": 0.10,
+    "thickness_m": 2.0e-3,
+    "period_m": 3.0e-3,
+    "gap_m": 0.2e-3,
+    "sheet_resistance_ohm_sq": 500.0,
+    "squares": 0.1,
+}
+
+
+def _fake_meep_run(geometry, characteristic_length_m, nfreq, workdir):
+    """Stands in for `simulation.meep.run_meep_simulation`, whose real run
+    needs a Meep install this suite does not assume -- the same
+    monkeypatched-adapter approach tests/test_design_loop.py's own ABSORBER
+    dispatch tests take. What is under test here is which NAME the run is
+    filed under, not the solver's numbers."""
+    del geometry, characteristic_length_m, nfreq, workdir
+    return {
+        "provenance": "SIMULATED",
+        "simulator": "MEEP",
+        "status": "COMPLETED",
+        "s_parameters": {"frequency_hz": [9e9, 10e9], "reflectance": [0.2, 0.01]},
+    }
+
+
+def test_flush_records_a_meep_run_under_its_own_tool_name(cleanup_designs, tmp_path, monkeypatch):
+    """The consequence issue #334 names, proved against a real Postgres:
+    group `engineering_results` by `tool_name` after an ABSORBER iteration
+    and the Meep run must appear as `run_meep_simulation`. Before the fix
+    this whole design's five rows claimed a NEC2 run and a patch-antenna
+    resonance calculation, neither of which happened -- in plain terms, the
+    filing cabinet named a different instrument than the one that took the
+    reading."""
+    import orchestration.design_loop as design_loop_module
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", _fake_meep_run)
+
+    state = start_new_design_loop("TOOL-MEEP", "Absorber Flush Test", "A", REQUIREMENTS)
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    state = _drive_to_redesign_decision(
+        state,
+        tmp_path,
+        design_family="ABSORBER",
+        analysis_input=dict(_ABSORBER_ANALYSIS_INPUT),
+        simulation_input={
+            "geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]},
+            "frequency_hz": 10e9,
+        },
+    )
+    state = _grant_and_advance(
+        state,
+        DesignStep.REDESIGN_DECISION,
+        {
+            "decision": "accept the absorber as-is",
+            "rationale": "worst-in-band absorption meets the requirement",
+            "next_action": "accept_design",
+        },
+    )
+    assert state["completed"] is True
+
+    stored = read_design(design_id)
+    results_by_tool = {r["tool_name"]: r for r in stored["engineering_results"]}
+    assert set(results_by_tool) == {
+        "absorber_band_response",
+        "run_meep_simulation",
+        "optimize_patch_length_for_target_frequency",
+        "record_external_measurement",
+        "correlate_simulation_measurement",
+    }
+    # The row's own value already carried the truth (this issue's "where the
+    # real value already lives"); the flat column must now agree with it.
+    assert results_by_tool["run_meep_simulation"]["value"]["function"] == "run_meep_simulation"
+    assert results_by_tool["run_meep_simulation"]["value"]["simulator"] == "MEEP"
+    assert results_by_tool["run_meep_simulation"]["provenance"] == "SIMULATED"
+    assert results_by_tool["absorber_band_response"]["provenance"] == "CALCULATED"
 
 
 # ---------------------------------------------------------------------------
@@ -1129,6 +1438,109 @@ def test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration(
     # must show iteration 2's OWN family, not iteration 1's already-flushed
     # "patch_antenna" leaking forward across a flush boundary.
     assert _row("iter2", "redesign_decision")["design_family"] == "microstrip_patch"
+
+
+def test_flush_persists_design_family_canonical_alongside_the_raw_spelling(
+    cleanup_designs, tmp_path
+):
+    """Issue #408 (ADR-0037). `_handle_architecture` (design_loop.py) has
+    always computed a registry-resolved canonical name alongside the
+    caller's raw `design_family` string (`design_family_registry
+    .canonical_name`) -- this test proves that value actually reaches
+    Postgres, not just design_loop.py's in-memory state, and that a query
+    grouping by the canonical field merges two differently-spelled runs of
+    the same family while grouping by the raw field would not.
+
+    WHY "patch_antenna" / "PATCH" RATHER THAN THE ISSUE'S OWN LITERAL PAIRING.
+    Issue #408's acceptance criteria illustrate this with "design_family=
+    'PATCH'" and "registry canonical name ... patch_antenna" -- but
+    designs/design_families.py's actual registry (_REGISTRY, keyed by
+    `fam.name`) defines the PATCH family with `name="PATCH"` (uppercase) and
+    lists `"PATCH_ANTENNA"` only as an _ALIASES entry pointing AT it, never
+    the other way around: every real `get_design_family` call resolves to
+    canonical_name="PATCH", regardless of which of "PATCH"/"patch_antenna"/
+    "microstrip_patch" the caller wrote. So this test states the two
+    spellings against the registry's real, verifiable behavior instead of
+    the issue's (reversed) illustrative pairing: iteration 1's ARCHITECTURE
+    step states the lowercase alias "patch_antenna" (already used by
+    _drive_to_redesign_decision's own default and by
+    test_flush_design_family_carry_forward_is_scoped_to_its_own_iteration
+    above), iteration 2 states the literal uppercase spelling "PATCH" the
+    issue names -- both resolve to the SAME canonical_name="PATCH", which is
+    exactly the cross-run-grouping behavior #150/#151 and this test exist to
+    prove.
+    """
+    state = start_new_design_loop(
+        "TOOL-FAMILY-CANON", "Design Family Canonical Test", "A", REQUIREMENTS
+    )
+    cleanup_designs.append(state["design_id"])
+    design_id = state["design_id"]
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="patch_antenna")
+    iterate_input = {
+        "decision": "abandon this patch variant, try another patch geometry instead",
+        "rationale": "the first geometry cannot meet the gain target",
+        "next_action": "iterate",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, iterate_input)
+
+    state = _drive_to_redesign_decision(state, tmp_path, design_family="PATCH")
+    accept_input = {
+        "decision": "accept the second patch geometry",
+        "rationale": "meets the gain requirement with margin",
+        "next_action": "accept_design",
+    }
+    state = _grant_and_advance(state, DesignStep.REDESIGN_DECISION, accept_input)
+
+    stored = read_design(design_id)
+    by_record_key = {d["record_key"]: d for d in stored["decision_records"]}
+
+    def _row(iteration_marker: str, kind_marker: str) -> dict[str, Any]:
+        matches = [
+            row
+            for key, row in by_record_key.items()
+            if iteration_marker in key and kind_marker in key
+        ]
+        assert len(matches) == 1, f"expected exactly one {iteration_marker}-{kind_marker} row"
+        return matches[0]
+
+    # Both values persist, distinctly, on the row that stated them: the raw
+    # spelling verbatim (never rewritten to match the registry), and the
+    # registry's canonical name alongside it.
+    iter1_architecture = _row("iter1", "architecture")
+    assert iter1_architecture["design_family"] == "patch_antenna"
+    assert iter1_architecture["design_family_canonical"] == "PATCH"
+
+    iter2_architecture = _row("iter2", "architecture")
+    assert iter2_architecture["design_family"] == "PATCH"
+    assert iter2_architecture["design_family_canonical"] == "PATCH"
+
+    # The DESIGN_FAMILY CARRY-FORWARD reconciliation (_flush_decisions)
+    # applies to the canonical field the same way it already does for the
+    # raw one: each iteration's redesign_decision row (which never states
+    # either field itself) carries forward that SAME iteration's own
+    # ARCHITECTURE values, not a stale value from the other iteration.
+    assert _row("iter1", "redesign_decision")["design_family"] == "patch_antenna"
+    assert _row("iter1", "redesign_decision")["design_family_canonical"] == "PATCH"
+    assert _row("iter2", "redesign_decision")["design_family"] == "PATCH"
+    assert _row("iter2", "redesign_decision")["design_family_canonical"] == "PATCH"
+
+    # The acceptance criteria's real point: grouping by the RAW field
+    # fragments this design's two architecture_decision rows into two
+    # separate buckets (different spellings, "patch_antenna" vs "PATCH")
+    # even though they are the same family -- exactly the failure mode
+    # ADR-0037 exists to fix. Grouping by the CANONICAL field instead
+    # correctly merges them into one.
+    architecture_rows = [iter1_architecture, iter2_architecture]
+    by_raw_family: dict[str, list[dict[str, Any]]] = {}
+    by_canonical_family: dict[str, list[dict[str, Any]]] = {}
+    for row in architecture_rows:
+        by_raw_family.setdefault(row["design_family"], []).append(row)
+        by_canonical_family.setdefault(row["design_family_canonical"], []).append(row)
+
+    assert len(by_raw_family) == 2  # "patch_antenna" and "PATCH" fragment apart
+    assert len(by_canonical_family) == 1  # both group under canonical "PATCH"
+    assert len(by_canonical_family["PATCH"]) == 2
 
 
 # ---------------------------------------------------------------------------

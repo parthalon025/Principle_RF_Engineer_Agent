@@ -49,16 +49,25 @@ def cleanup_documents():
         conn.close()
 
 
-def _seed_document(classification: Classification, checksum: str, n_chunks: int = 2) -> int:
+def _seed_document(
+    classification: Classification,
+    checksum: str,
+    n_chunks: int = 2,
+    metadata: dict | None = None,
+) -> int:
     """Insert and commit a document with `n_chunks` chunks, for index_document
-    (on its own connection) to see."""
+    (on its own connection) to see. `metadata` defaults to today's
+    `{"classification": ...}` shape; pass `metadata={}` to seed a document
+    whose metadata carries no "classification" key at all (Issue #407's
+    regression tests use this to prove the routing floor reads
+    `documents.classification`, not the JSONB blob)."""
     draft = DocumentDraft(
         title=f"Seeded Doc {checksum}",
         source_type=SourceType.DATASHEET,
         classification=classification,
         license="manufacturer-datasheet",
         checksum_sha256=checksum,
-        metadata={"classification": classification.value},
+        metadata=metadata if metadata is not None else {"classification": classification.value},
     )
     conn = psycopg.connect(os.environ["DATABASE_URL"])
     try:
@@ -226,6 +235,35 @@ def test_restricted_document_rejects_explicit_external_request(cleanup_documents
 
     rows = _fetch_columns(doc_id)
     assert rows == [(0, False, False), (1, False, False)]
+
+
+def test_restricted_routing_reads_the_classification_column_not_metadata(cleanup_documents):
+    """Issue #407: `index_document`'s RESTRICTED/SENSITIVE-forces-local floor
+    must be driven by `documents.classification` (the real column), not by
+    the `metadata` JSONB blob -- proven by seeding a document whose metadata
+    carries no 'classification' key at all and confirming the floor is still
+    enforced. This is the regression test for the promotion being a pure
+    storage-location change: the routing behavior itself must be identical
+    to test_restricted_document_uses_local_only/
+    test_restricted_document_rejects_explicit_external_request above."""
+    doc_id = _seed_document(Classification.RESTRICTED, "d8" * 32, n_chunks=1, metadata={})
+    cleanup_documents.append(doc_id)
+
+    # The floor still rejects an explicit external request...
+    with pytest.raises(RestrictedBackendViolation):
+        index_document(
+            doc_id, requested_backend="external", embed_local=_Spy(), embed_external=_Spy()
+        )
+
+    # ...and still routes to local-only by default.
+    local_spy = _Spy(result=[_local_vector(0.9)])
+    external_spy = _Spy()
+    result = index_document(doc_id, embed_local=local_spy, embed_external=external_spy)
+
+    assert result["backend"] == "local"
+    assert result["column"] == "embedding_local"
+    assert len(local_spy.calls) == 1
+    assert external_spy.calls == []
 
 
 @pytest.mark.parametrize("classification", [Classification.SENSITIVE, Classification.RESTRICTED])

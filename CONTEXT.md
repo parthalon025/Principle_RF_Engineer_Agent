@@ -553,20 +553,27 @@ and a glossary that churns with it stops being trustworthy (see
   document** reaches `CONFIRMED` (ADR-0034). The name is validated against the Design family registry
   (`designs/design_families.py`, #109/ADR-0018): an unrecognised family is
   rejected at the ARCHITECTURE step rather than persisted as a grouping key
-  nothing downstream recognises. The caller's own spelling is kept verbatim
-  and the registry's canonical name recorded alongside it, so a run written
-  as `patch_antenna` and one written as `PATCH` still group together. #150
-  and #151 key off this field. Selection stays human-authored: the loop does
-  not attempt to infer a family from a requirement's prose.
-  Persists through the ADR-0011 flush (#167): `db/schema.sql`'s
-  `decision_records` table has a nullable `design_family` column, and
+  nothing downstream recognises. The caller's own spelling is kept verbatim,
+  never silently rewritten, and the registry's canonical name is kept
+  alongside it as its own field, so a run written as `patch_antenna` and one
+  written as `PATCH` still group together (ADR-0037). #150 and #151 key off
+  the canonical field, not the raw one. Selection stays human-authored: the
+  loop does not attempt to infer a family from a requirement's prose.
+  Both the raw spelling and the canonical name persist through the ADR-0011
+  flush (#167, #408): `db/schema.sql`'s `decision_records` table has nullable
+  `design_family`/`design_family_canonical` columns, and
   `orchestration/tooling.py`'s `_flush_target_for`/`_flush_decisions` write
-  it for every `architecture_decision`/`redesign_decision` row, so #150 and
-  #151 can read it back out via `read_design` rather than only seeing it in
-  one design-loop session's in-memory state. `_handle_architecture` always
-  states `design_family`, but `_handle_redesign_decision` never asks for
-  one — `_flush_decisions` reconciles that by carrying forward the most
-  recently stated `design_family` to every decision recorded after it,
+  both for every `architecture_decision`/`redesign_decision` row --
+  `design_family_canonical` carries the value `design_loop.py`'s
+  ARCHITECTURE step already computed
+  (`design_family_registry`/`canonical_name`) through the flush boundary
+  rather than re-deriving it on read, so #150 and #151 can read a real
+  grouping key back out via `read_design` rather than only seeing it in one
+  design-loop session's in-memory state.
+  `_handle_architecture` always states `design_family` (and, alongside it,
+  the registry's canonical name), but `_handle_redesign_decision` never asks
+  for either — `_flush_decisions` reconciles that by carrying forward the
+  most recently stated value of each to every decision recorded after it,
   rather than persisting `NULL` for a redesign decision that is, in fact,
   about a perfectly well-known family (the one its iteration's own
   ARCHITECTURE step already declared); see that function's own docstring,
@@ -768,6 +775,32 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: folding this into `capability-verdict` — that was tried
   (ADR-0025's 2026-09-08 correction) and contradicted ADR-0021's own rule
   that an unbuildable candidate is reported, not dropped.
+- **Field bundle**: the self-describing directory written after a SIMULATION
+  step, holding the mesh the solver actually solved on, the complex fields it
+  returned, and a manifest carrying that result's **Provenance**, its
+  **Validity box**, any **Capability warnings**, and its **Claim limits**. It
+  is the one seam every renderer reads, so nothing downstream reaches into a
+  solver's own working files. Distinct from an **Engineering result**, which
+  records the scalars a run reported: the bundle records what the solver was
+  *given* and what it *computed*, which is what makes a picture checkable
+  against it rather than merely captioned.
+  _Avoid_: export, dump — both name it as a copy of solver output, where the
+  load-bearing content is the manifest saying what that output may be shown as.
+- **Claim limit**: a machine-readable statement that a **Field bundle**'s
+  contents do not support one specific claim — that it is a finished part
+  rather than one periodic cell, a measured result, a converged mesh, an
+  arbitrary printed outline, or a solver path that has ever been run against a
+  real binary. Populated by the exporter from facts it can establish and never
+  hand-written per run, so every renderer inherits the same limits; a renderer
+  that cannot honour one must refuse to render rather than render without it.
+  Distinct from a **Capability warning** (the shop cannot build this today) and
+  from a `capability-verdict` (the requirement falls outside a family's
+  **Validity box**) — those two are about a candidate, while a Claim limit is
+  only about what may be shown or said about a result, and so never adds,
+  drops or ranks anything.
+  _Avoid_: refusal — a **Rejection record** already stores "the refusal" in the
+  sense of a human declining a proposal, and a Claim limit is a fact about what
+  the evidence supports, not a decision anyone made.
 - **Rejection record**: the stored fact that a human refused a specific
   proposal, with who, when and the stated reason (ADR-0026). A named
   exception to "a guess never becomes settled by repetition", on

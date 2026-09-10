@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import psycopg
 import pytest
@@ -13,6 +14,18 @@ from designs.service import (
 )
 
 load_dotenv()
+
+
+def _unique(base: str) -> str:
+    """A design_key/record_key unique to this call, not a bare literal --
+    every write in this file commits a real row to the same shared dev
+    database interactive use also points at (`ingest_document`/
+    `create_design` commit their own connection, so nothing here rolls
+    back). A hardcoded literal collides with a leftover row from an
+    interrupted run, or with another concurrent run against that same
+    instance -- the xUnit Test Patterns "Unique Data" fixture, not a fresh
+    literal per test."""
+    return f"{base}-{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture
@@ -34,8 +47,9 @@ def cleanup_designs():
 
 
 def test_create_design_returns_created_status_and_design_id(cleanup_designs):
+    design_key = _unique("SVC-DES-1")
     result = create_design(
-        design_key="SVC-DES-1",
+        design_key=design_key,
         name="Service Layer Design",
         revision="A",
         requirements={},
@@ -44,13 +58,40 @@ def test_create_design_returns_created_status_and_design_id(cleanup_designs):
     cleanup_designs.append(result["design_id"])
 
     assert result["status"] == "created"
-    assert result["design_key"] == "SVC-DES-1"
+    assert result["design_key"] == design_key
     assert result["design_status"] == "DRAFT"
 
 
-def test_create_design_with_dangling_component_id_returns_structured_error(cleanup_designs):
+def test_create_design_with_reused_design_key_and_revision_returns_structured_error(
+    cleanup_designs,
+):
+    first = create_design(
+        design_key="SVC-DES-COLLIDE-1",
+        name="First Attempt",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    cleanup_designs.append(first["design_id"])
+
     result = create_design(
-        design_key="SVC-DES-2",
+        design_key="SVC-DES-COLLIDE-1",
+        name="Second Attempt, Same Key And Revision",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+
+    assert result["status"] == "design_key_revision_collision"
+    assert result["existing_design_id"] == first["design_id"]
+    assert "SVC-DES-COLLIDE-1" in result["message"]
+    assert "A" in result["message"]
+
+
+def test_create_design_with_dangling_component_id_returns_structured_error(cleanup_designs):
+    design_key = _unique("SVC-DES-2")
+    result = create_design(
+        design_key=design_key,
         name="Dangling Ref via Service",
         revision="A",
         requirements={},
@@ -63,7 +104,7 @@ def test_create_design_with_dangling_component_id_returns_structured_error(clean
     conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM designs WHERE design_key = %s", ("SVC-DES-2",))
+            cur.execute("SELECT count(*) FROM designs WHERE design_key = %s", (design_key,))
             (count,) = cur.fetchone()
     finally:
         conn.close()
@@ -72,7 +113,7 @@ def test_create_design_with_dangling_component_id_returns_structured_error(clean
 
 def _make_design(cleanup_designs, design_key):
     result = create_design(
-        design_key=design_key,
+        design_key=_unique(design_key),
         name="Decision Host Design",
         revision="A",
         requirements={},
@@ -84,9 +125,10 @@ def _make_design(cleanup_designs, design_key):
 
 def test_record_decision_returns_recorded_status_and_pending_approval(cleanup_designs):
     design_id = _make_design(cleanup_designs, "SVC-DES-DEC-1")
+    record_key = _unique("SVC-DES-DEC-1-topology")
     result = record_decision(
         design_id=design_id,
-        record_key="SVC-DES-DEC-1-topology",
+        record_key=record_key,
         decision="Used a pi-network instead of an L-network.",
         alternatives=["L-network"],
         rationale="Pi-network gives an extra degree of freedom for Q.",
@@ -94,7 +136,7 @@ def test_record_decision_returns_recorded_status_and_pending_approval(cleanup_de
     )
 
     assert result["status"] == "recorded"
-    assert result["record_key"] == "SVC-DES-DEC-1-topology"
+    assert result["record_key"] == record_key
     assert result["approval_status"] == "PENDING"
     assert "decision_id" in result
 
@@ -110,7 +152,7 @@ def test_record_decision_threads_design_family_through_to_the_stored_row(cleanup
     design_id = _make_design(cleanup_designs, "SVC-DES-DEC-FAMILY")
     record_decision(
         design_id=design_id,
-        record_key="SVC-DES-DEC-FAMILY-architecture",
+        record_key=_unique("SVC-DES-DEC-FAMILY-architecture"),
         decision="rectangular microstrip patch on FR4",
         alternatives=[],
         rationale="meets band/gain target with a simple, low-cost fabrication",
@@ -125,9 +167,10 @@ def test_record_decision_threads_design_family_through_to_the_stored_row(cleanup
 
 def test_record_decision_with_reused_record_key_returns_structured_error(cleanup_designs):
     design_id = _make_design(cleanup_designs, "SVC-DES-DEC-2")
+    record_key = _unique("SVC-DES-DEC-2-topology")
     first = record_decision(
         design_id=design_id,
-        record_key="SVC-DES-DEC-2-topology",
+        record_key=record_key,
         decision="Used a pi-network instead of an L-network.",
         alternatives=[],
         rationale="Pi-network gives an extra degree of freedom for Q.",
@@ -136,7 +179,7 @@ def test_record_decision_with_reused_record_key_returns_structured_error(cleanup
 
     result = record_decision(
         design_id=design_id,
-        record_key="SVC-DES-DEC-2-topology",
+        record_key=record_key,
         decision="Used an L-network instead, on reconsideration.",
         alternatives=[],
         rationale="Changed our minds.",
@@ -145,12 +188,12 @@ def test_record_decision_with_reused_record_key_returns_structured_error(cleanup
 
     assert result["status"] == "record_key_collision"
     assert result["existing_decision_id"] == first["decision_id"]
-    assert "SVC-DES-DEC-2-topology" in result["message"]
+    assert record_key in result["message"]
 
 
 def test_record_engineering_result_returns_engineering_result_id(cleanup_designs):
     design = create_design(
-        design_key="SVC-ER-1",
+        design_key=_unique("SVC-ER-1"),
         name="Engineering Result Service Fixture",
         revision="A",
         requirements={},
@@ -180,8 +223,9 @@ def test_record_engineering_result_returns_engineering_result_id(cleanup_designs
 
 
 def test_create_design_with_malformed_requirements_returns_structured_error(cleanup_designs):
+    design_key = _unique("SVC-DES-3")
     result = create_design(
-        design_key="SVC-DES-3",
+        design_key=design_key,
         name="Bad Requirements via Service",
         revision="A",
         requirements={"REQ-1": "not a dict"},
@@ -194,7 +238,7 @@ def test_create_design_with_malformed_requirements_returns_structured_error(clea
     conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM designs WHERE design_key = %s", ("SVC-DES-3",))
+            cur.execute("SELECT count(*) FROM designs WHERE design_key = %s", (design_key,))
             (count,) = cur.fetchone()
     finally:
         conn.close()
@@ -208,8 +252,9 @@ def test_read_design_returns_not_found_for_nonexistent_id():
 
 def test_read_design_returns_full_payload_for_created_design(cleanup_designs):
     requirements = {"REQ-1": {"requirement": "Gain >= 20 dB."}}
+    design_key = _unique("SVC-DES-READ-1")
     created = create_design(
-        design_key="SVC-DES-READ-1",
+        design_key=design_key,
         name="Service Read Design",
         revision="A",
         requirements=requirements,
@@ -220,7 +265,7 @@ def test_read_design_returns_full_payload_for_created_design(cleanup_designs):
     result = read_design(created["design_id"])
 
     assert result["design_id"] == created["design_id"]
-    assert result["design_key"] == "SVC-DES-READ-1"
+    assert result["design_key"] == design_key
     assert result["name"] == "Service Read Design"
     assert result["revision"] == "A"
     assert result["status"] == "DRAFT"
@@ -234,7 +279,7 @@ def test_read_design_returns_full_payload_for_created_design(cleanup_designs):
 
 def test_verify_requirement_returns_verified_status_and_updated_fields(cleanup_designs):
     design = create_design(
-        design_key="SVC-DES-VERIFY-1",
+        design_key=_unique("SVC-DES-VERIFY-1"),
         name="Verify via Service",
         revision="A",
         requirements={"REQ-1": {"requirement": "Gain >= 20 dB."}},
@@ -268,7 +313,7 @@ def test_verify_requirement_with_unknown_requirement_id_returns_structured_error
     cleanup_designs,
 ):
     design = create_design(
-        design_key="SVC-DES-VERIFY-2",
+        design_key=_unique("SVC-DES-VERIFY-2"),
         name="Verify Unknown via Service",
         revision="A",
         requirements={"REQ-1": {"requirement": "Gain >= 20 dB."}},
@@ -289,7 +334,7 @@ def test_verify_requirement_with_unknown_requirement_id_returns_structured_error
 
 def test_verify_requirement_with_invalid_status_returns_structured_error(cleanup_designs):
     design = create_design(
-        design_key="SVC-DES-VERIFY-3",
+        design_key=_unique("SVC-DES-VERIFY-3"),
         name="Verify Bad Status via Service",
         revision="A",
         requirements={"REQ-1": {"requirement": "Gain >= 20 dB."}},

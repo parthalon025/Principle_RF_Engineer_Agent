@@ -127,6 +127,57 @@ runners must filter on that. A case is only meaningful to the solver its
 geometry is written for: a wire list means nothing to an FDTD grid, and an
 absorber stack means nothing to a thin-wire method-of-moments code.
 
+### Literature cases — the same registry, a different question (issue #386)
+
+The four cases above score a solver against **algebra**. Four more, added by
+#386, score it against **something somebody built and measured**: a published
+paper carrying both a fabricated geometry and a measured curve, reconstructed
+here and run. Full write-up, per-case reconstructions, assumptions and scope
+limits: `docs/literature-validation-cases.md`.
+
+Three things work differently for them, and each is machinery rather than
+prose:
+
+- **The pass band is not ours to choose.** It is
+  `max(digitization error, the paper's own published simulated-versus-measured
+  gap)` — an accuracy bar taken from the literature. Where a paper publishes no
+  such gap, the digitization error alone sets it and `PassBand.set_by` says so.
+- **Reflection and transmission are scored separately and never summed.** Two
+  errors of opposite sign cancel inside a total and manufacture a false pass, so
+  `CaseScore` carries no total, mean or aggregate error at all.
+- **`UNRESOLVED` is a real third outcome** beside PASS and FAIL, for a paper
+  that omits something load-bearing, a reconstruction that is ambiguous, or a
+  problem no adapter here can pose. Forcing those into pass/fail would turn
+  missing information into a verdict.
+
+**Status: one of the four has been executed and it FAILS; three cannot be
+posed.** `bandpass-fss-silver-paste-arxiv-2511.16777v1` — a band-pass FSS with
+silver paste dispensed on 3D-printed ABS, the closest published work to this
+programme's own manufacturing route — runs through `rf_tools/transmissive_absorber.py`'s
+ABCD primitives with no external binary, via
+`verification/fss_bandpass_circuit_check.py`. It reproduces the paper's
+stop-band (−15.69 dB at 20 GHz against a published 15–20 dB) and misses its
+passband by 1.31 dB (−0.39 dB against a measured −1.7 dB), which is more than
+the paper's own 1 dB simulated-versus-measured gap allows. The suspect is
+named rather than absorbed into a wider band: the paper gives its paste's
+conductivity (10⁶ S/m, some sixty times worse a conductor than copper) but
+never the dispensed trace thickness, so the reconstruction's shunt elements are
+lossless. *In plain terms: our model wired the surface for free and the bench
+did not.*
+
+The other three carry `unresolved_reason` strings naming exactly what is
+missing — a symbol-to-feature mapping that exists only in a figure
+(arXiv:2607.10687v1), ten cells' worth of untabulated dimensions plus a
+substrate permittivity the paper never states (arXiv:1812.05084v1), and a
+capability gap in this repo's own adapters, none of which can put a discrete
+lumped element inside a periodic cell (arXiv:2608.06541v1).
+
+**These four license nothing about the magnetic mirror.** Passing all of them
+would cover passive planar periodic unit cells, on a known substrate, at normal
+incidence, roughly 4–30 GHz — and **no artificial magnetic conductor at all**,
+which is the physics `CONTEXT.md` opens on. That gap is stated at length in the
+write-up rather than left for a green result to paper over.
+
 ## What `SIMULATED` now means -- and where that stops (issue #222, criterion 4)
 
 CONTEXT.md's evidence hierarchy has always ranked *validated* simulation

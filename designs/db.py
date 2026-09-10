@@ -68,15 +68,24 @@ class DanglingComponentReferenceError(Exception):
 
 
 def _find_dangling_component_refs(
-    conn: psycopg.Connection, architecture: dict[str, Any]
+    conn: psycopg.Connection, component_refs: list[tuple[str, int]]
 ) -> list[dict[str, Any]]:
     """Return `{"block": ..., "component_id": ...}` for every `component_id`
-    referenced in `architecture` that has no matching `components` row, in
-    the order `extract_component_refs` encountered them. Empty list ->
-    every reference resolves (including when there are none at all)."""
-    component_ids = extract_component_refs(architecture)
-    if not component_ids:
+    in `component_refs` that has no matching `components` row, in the order
+    `component_refs` lists them. Empty list -> every reference resolves
+    (including when there are none at all).
+
+    `component_refs` is the caller's own already-computed
+    `designs.validation._iter_component_refs(architecture)` walk -- a list
+    of `(block, component_id)` pairs -- passed in rather than an
+    `architecture` dict this function would have to walk itself, so
+    `create_design` can walk `architecture` exactly once and reuse the
+    result both for this existence check and for its own
+    `design_component_refs` insert.
+    """
+    if not component_refs:
         return []
+    component_ids = [component_id for _, component_id in component_refs]
 
     with conn.cursor() as cur:
         cur.execute(
@@ -90,7 +99,7 @@ def _find_dangling_component_refs(
         return []
     return [
         {"block": block, "component_id": component_id}
-        for block, component_id in _iter_component_refs(architecture)
+        for block, component_id in component_refs
         if component_id in missing
     ]
 
@@ -125,6 +134,7 @@ def record_decision(
     rationale: str,
     evidence: list[Any],
     design_family: str | None = None,
+    design_family_canonical: str | None = None,
     considered_and_dropped: list[Any] | None = None,
     capability_warnings: list[Any] | None = None,
     approval_required: bool = True,
@@ -149,6 +159,13 @@ def record_decision(
     does not validate the value against a known-family list -- that
     belongs to the still-open design family registry (docs/adr/0018), not
     this write path.
+
+    `design_family_canonical` (issue #408; ADR-0037) is `design_family`'s
+    companion, never derived from it here -- the caller (orchestration/
+    tooling.py) already has the registry's `canonical_name` in hand from
+    `orchestration/design_loop.py`'s ARCHITECTURE step and passes it
+    through verbatim, same optional/nullable shape as `design_family`
+    immediately above.
 
     `considered_and_dropped` (issue #322; ADR-0025's Considered-and-dropped
     ledger) is optional, defaulting to `[]` -- same "only a design-loop
@@ -177,9 +194,10 @@ def record_decision(
             """
             INSERT INTO decision_records
                 (design_id, record_key, decision, alternatives, rationale,
-                 evidence, design_family, considered_and_dropped, capability_warnings,
+                 evidence, design_family, design_family_canonical,
+                 considered_and_dropped, capability_warnings,
                  approval_required, approval_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -190,6 +208,7 @@ def record_decision(
                 rationale,
                 Json(evidence),
                 design_family,
+                design_family_canonical,
                 Json(considered_and_dropped if considered_and_dropped is not None else []),
                 Json(capability_warnings if capability_warnings is not None else []),
                 approval_required,
@@ -200,6 +219,40 @@ def record_decision(
         assert row is not None
 
     return row
+
+
+class DesignKeyRevisionCollisionError(Exception):
+    """Raised by `create_design` when `(design_key, revision)` is already in
+    use. Carries the existing row so the caller can point at it instead of
+    crashing on the database's own `UNIQUE(design_key, revision)` constraint
+    -- the same dedup-and-point-back shape as `record_decision`'s
+    `RecordKeyCollisionError` and `knowledge.db.insert_document`'s
+    `DuplicateDocumentError`. A *different* `revision` under an
+    already-used `design_key` is not a collision -- CONTEXT.md's own rule
+    that a released design gets a new revision depends on that pair, not
+    `design_key` alone, being the identity key."""
+
+    def __init__(self, design_key: str, revision: str, existing: dict[str, Any]):
+        self.design_key = design_key
+        self.revision = revision
+        self.existing = existing
+        super().__init__(
+            f"design_key {design_key!r} revision {revision!r} already in use (id={existing['id']})"
+        )
+
+
+def find_design_by_key_and_revision(
+    conn: psycopg.Connection, design_key: str, revision: str
+) -> dict[str, Any] | None:
+    """Return the `designs` row for this exact `(design_key, revision)`
+    pair, if any -- that pair is unique (`db/schema.sql`), so at most one
+    row can ever match."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT * FROM designs WHERE design_key = %s AND revision = %s",
+            (design_key, revision),
+        )
+        return cur.fetchone()
 
 
 def create_design(
@@ -213,6 +266,12 @@ def create_design(
     """Insert a new `designs` row in `DRAFT` status, plus one
     `verification_items` row per `requirements` key (all `NOT VERIFIED`).
 
+    - `(design_key, revision)` is globally unique. Reusing an exact pair
+      already in use raises `DesignKeyRevisionCollisionError` carrying the
+      existing row -- never silently overwritten, never a raw database
+      exception -- mirroring `record_decision`'s `record_key` handling. A
+      different `revision` under the same `design_key` is a different,
+      independent row, not a collision.
     - `requirements` is shape-checked by
       `designs.validation.validate_requirements` before anything touches
       the database -- a dict keyed by `requirement_id`, each value
@@ -224,10 +283,25 @@ def create_design(
       dangling reference raises `DanglingComponentReferenceError` naming
       every offending block; no `designs` or `verification_items` row is
       created.
-    - The `designs` insert and its `verification_items` auto-creation are
-      two statements on the same connection with no commit between them,
-      so they share whatever transaction the caller is already in --
-      never left half-done. (Deliberately *not* wrapped in its own nested
+    - Every `(block, component_id)` pair the same walk found (issue
+      #395/#392) is also written to `design_component_refs` -- the real,
+      database-enforced link a caller uses via
+      `find_designs_referencing_component` to ask "which designs use
+      component X", and that Postgres itself uses to refuse deleting a
+      `components` row a live design still references
+      (`db/schema.sql`'s `component_id` FK, default `RESTRICT`).
+      `architecture` is walked via `_iter_component_refs` exactly once,
+      up front; that one list feeds both `_find_dangling_component_refs`'s
+      existence check above and this insert -- no second walk of
+      `architecture` to re-derive the same `(block, component_id)` pairs.
+      `architecture={}` (every design-loop-created design today) writes no
+      rows here, same as it creates no `verification_items` rows when
+      `requirements={}`.
+    - The `designs` insert, its `verification_items` auto-creation, and its
+      `design_component_refs` auto-creation are all statements on the same
+      connection with no commit between them, so they share whatever
+      transaction the caller is already in -- never left half-done.
+      (Deliberately *not* wrapped in its own nested
       `with conn.transaction():`: psycopg treats that as a genuine
       top-level transaction -- auto-committing on a clean exit -- unless
       some earlier statement on this connection already opened one, which
@@ -235,11 +309,20 @@ def create_design(
       -- e.g. `architecture` with no `component_id` refs never queries
       `components` at all. Plain sequential statements avoid depending on
       that invariant and match this module's own contract: the caller
-      owns the transaction boundary, not `create_design`.)
+      owns the transaction boundary, not `create_design`. For the same
+      reason, the `(design_key, revision)` collision check below is a
+      pre-check only, not also a caught `UniqueViolation` around the
+      INSERT -- catching it here would leave the caller's transaction
+      poisoned with no savepoint to recover to.)
     """
+    existing = find_design_by_key_and_revision(conn, design_key, revision)
+    if existing is not None:
+        raise DesignKeyRevisionCollisionError(design_key, revision, existing)
+
     validate_requirements(requirements)
 
-    offending = _find_dangling_component_refs(conn, architecture)
+    component_refs = _iter_component_refs(architecture)
+    offending = _find_dangling_component_refs(conn, component_refs)
     if offending:
         raise DanglingComponentReferenceError(offending)
 
@@ -286,7 +369,48 @@ def create_design(
                 ],
             )
 
+        if component_refs:
+            cur.executemany(
+                """
+                INSERT INTO design_component_refs (design_id, component_id, block)
+                VALUES (%s, %s, %s)
+                """,
+                [(design_row["id"], component_id, block) for block, component_id in component_refs],
+            )
+
     return design_row
+
+
+def find_designs_referencing_component(
+    conn: psycopg.Connection, component_id: int
+) -> list[dict[str, Any]]:
+    """Return `{"id": ..., "design_key": ..., "revision": ..., "block": ...}`
+    for every `design_component_refs` row naming this `component_id` (issue
+    #395/#392) -- the "which designs use component X" lookup `db/schema.sql`'s
+    `design_component_refs_component_id_idx` exists to make a fast, indexed
+    query instead of a full-table scan of every design's `architecture`
+    JSON. Ordered by design id then block, so a component referenced from
+    several blocks of the same design, or from several different designs,
+    comes back in a stable order. Returns `[]` for a `component_id`
+    referenced by no design (including one that doesn't exist) -- never
+    raises, mirroring this module's other plain-read functions
+    (`read_engineering_results_for_scoring`).
+
+    Read-only counterpart to `create_design`'s write into the same table --
+    this function only ever SELECTs.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT d.id, d.design_key, d.revision, dcr.block
+            FROM design_component_refs dcr
+            JOIN designs d ON d.id = dcr.design_id
+            WHERE dcr.component_id = %s
+            ORDER BY d.id, dcr.block
+            """,
+            (component_id,),
+        )
+        return cur.fetchall()
 
 
 def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | None:
@@ -326,8 +450,8 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
 
         cur.execute(
             "SELECT id, record_key, decision, alternatives, rationale, evidence, "
-            "design_family, considered_and_dropped, capability_warnings, "
-            "approval_required, approval_status, created_at "
+            "design_family, design_family_canonical, considered_and_dropped, "
+            "capability_warnings, approval_required, approval_status, created_at "
             "FROM decision_records WHERE design_id = %s ORDER BY id",
             (design_id,),
         )
@@ -349,6 +473,7 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
         "status": design_row["status"],
         "requirements": design_row["requirements"],
         "architecture": architecture,
+        "supersedes_design_id": design_row["supersedes_design_id"],
         "engineering_results": [_serialize_row(r) for r in engineering_results],
         "decision_records": [_serialize_row(r) for r in decision_records],
         "verification_items": verification_items,

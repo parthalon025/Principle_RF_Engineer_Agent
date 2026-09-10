@@ -132,10 +132,24 @@ def test_every_discrepancy_names_its_source():
 # --- the fixture's own integrity ------------------------------------------
 
 
-def test_tolerances_are_tight_enough_to_fail_a_wrong_answer():
+def test_closed_form_tolerances_are_tight_enough_to_fail_a_wrong_answer():
     """A tolerance wide enough to accept anything is worse than no test. Each
-    expected value must reject a result 50% away from it."""
-    for case in REFERENCE_CASES.values():
+    closed-form expected value must reject a result 50% away from it.
+
+    CLOSED-FORM ONLY, and the exclusion is deliberate rather than a dodge.
+    These cases score against algebra, so their bands cover discretisation
+    and nothing else, and anything wider is a tolerance somebody chose. The
+    literature cases (#386) are the opposite: their bands are dictated by
+    `max(digitization error, the paper's own published simulated-versus-
+    measured gap)` and are not ours to narrow. One of them -- the FSS
+    passband insertion loss, -1.7 dB with a 1.0 dB band -- genuinely exceeds
+    half its value, and that is a true statement about how weak that
+    particular check is, not licence to invent a tighter number. Their own
+    integrity is asserted in tests/test_literature_reference_cases.py.
+    """
+    closed_form = [case for case in REFERENCE_CASES.values() if case.source is None]
+    assert closed_form, "sanity check: the closed-form cases have not all become literature ones"
+    for case in closed_form:
         for expected in case.expected:
             assert expected.tolerance < abs(expected.value) * 0.5, expected.name
 
@@ -225,11 +239,23 @@ def test_every_reference_case_names_a_solver_that_can_pose_it():
     wire list to nec2++ the moment that binary appeared on PATH. It skipped
     everywhere, so nothing caught it -- a permanently-skipping test hides its
     own bugs.
+
+    Four names were added by #386. "PALACE" and "CIRCUIT" are real paths -- a
+    Floquet-port periodic solve and this repo's own ABCD cascade. "NONE" is
+    the honest one: the varactor case needs a discrete lumped element inside a
+    periodic cell, no adapter here can do both, and naming a solver that
+    cannot pose it would be worse than admitting there isn't one. A case that
+    names NONE must say why in `unresolved_reason`, which is what stops the
+    value being used as a shrug.
     """
     for case in REFERENCE_CASES.values():
-        assert case.solver in {"NEC2", "MEEP"}, case.case_id
+        assert case.solver in {"NEC2", "MEEP", "PALACE", "CIRCUIT", "NONE"}, case.case_id
         if case.solver == "NEC2":
             assert case.geometry, f"{case.case_id} must carry a deck for nec2++"
+        if case.solver == "NONE":
+            assert case.unresolved_reason, (
+                f"{case.case_id} names no solver, so it must say why no adapter here can pose it"
+            )
 
 
 @pytest.mark.parametrize("case_id", NEC2_CASE_IDS)

@@ -111,6 +111,26 @@ treatment CONTEXT.md's Fabrication capability gives a failed capability
 check. #127's rejected alternative ("silently excluding a candidate with
 no data") is exactly the failure mode this refuses to reproduce.
 
+MATERIAL / FAMILY VOCABULARY (issue #404). `material` and `family` used to
+be checked only for being non-empty strings, so a typo when citing a new
+entry (or filing a Family fallback bracket) silently created a row no
+lookup would ever find -- `resolve_material_property` would just report
+`status="no_data"`, indistinguishable from a genuine absence of data.
+`designs/material_families.py` is the fix, mirroring
+`designs/design_families.py`'s registry pattern but split by how open each
+vocabulary actually is: `family` is a small, closed set of broad categories
+(ADR-0015 names them), so `add_family_bracket` REJECTS one this registry
+doesn't hold; `material` is deliberately open-ended (CONTEXT.md: "a
+growing... record, not a fixed reference table"), so `add_entry` only WARNS
+on one it doesn't yet recognize -- see that module's own docstring for why
+the two are not treated the same way. Because `family` is this closed
+registry's key, `add_family_bracket` stores its CANONICAL spelling (not the
+caller's literal casing), and `fetch_family_bracket`/`resolve_material_property`
+canonicalize before comparing or querying too -- otherwise two callers citing
+the same registered family under different casing ("Generic Polymer" vs
+"generic polymer") would land in two disconnected rows, reproducing issue
+#404's own failure on the casing axis instead of the spelling axis.
+
 MODULE SHAPE. Two layers, the same pure/I-O seam
 `designs/requirement_targets.py` already establishes for this package:
 
@@ -150,6 +170,11 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from designs.material_families import (
+    UnknownMaterialFamilyError,
+    get_material_family,
+    warn_if_unknown_material,
+)
 from designs.requirement_targets import ASSUMED
 from knowledge.provenance import LITERATURE_SUPPORTED, MANUFACTURER_SPECIFIED
 
@@ -168,10 +193,15 @@ class InvalidMaterialPropertyError(ValueError):
     or inverted frequency band, a `provenance` outside
     `ENTRY_PROVENANCE_VALUES`, a missing `citation` for a
     `MANUFACTURER-SPECIFIED`/`LITERATURE-SUPPORTED` entry, a missing `note`
-    for an `ASSUMED` entry, an inverted family bracket, or a set of matching
-    entries that disagree on unit. Named and raised the same way
-    `designs.requirement_targets.InvalidRequirementTargetError` is -- naming
-    exactly what's wrong rather than a bare `TypeError`/`KeyError`."""
+    for an `ASSUMED` entry, an inverted family bracket, an unrecognized
+    `family` (`designs.material_families.get_material_family`; issue
+    #404), or a set of matching entries that disagree on unit. Named and
+    raised the same way `designs.requirement_targets.InvalidRequirementTargetError`
+    is -- naming exactly what's wrong rather than a bare `TypeError`/`KeyError`.
+
+    Note that an unrecognized `material` (as opposed to `family`) does NOT
+    raise this -- see `designs.material_families`'s module docstring for why
+    the two are enforced differently."""
 
 
 def _require_nonempty_string(field_name: str, value: Any) -> str:
@@ -234,6 +264,12 @@ def add_entry(
     resolved_material = _require_nonempty_string("material", material)
     resolved_property = _require_nonempty_string("property_name", property_name)
     resolved_unit = _require_nonempty_string("unit", unit)
+
+    # Issue #404: an unrecognized material never blocks the entry -- the
+    # Material-property library is deliberately a growing record, not a
+    # fixed reference table (CONTEXT.md) -- but it warns, since this is also
+    # exactly what a typo of an already-cited material looks like.
+    warn_if_unknown_material(resolved_material)
 
     low = _require_nonnegative_finite_number("frequency_low_hz", frequency_low_hz)
     high = _require_nonnegative_finite_number("frequency_high_hz", frequency_high_hz)
@@ -303,8 +339,39 @@ def add_family_bracket(
     cited -- a bracket is never a single borrowed point value, and never an
     uncited number (see this module's docstring's "FAMILY FALLBACK
     BRACKET" section). `max_value` must be `>= min_value`.
+
+    `family` must be one of `designs.material_families.known_material_family_names()`
+    (case-insensitively), unlike `material` on `add_entry` -- unlike a
+    specific material, the family vocabulary for a fallback bracket is a
+    small, closed set of broad categories (ADR-0015: "generic polymer,
+    generic conductor, etc."), so an unrecognized one raises rather than
+    warns: a bracket filed under a misspelled family is one
+    `resolve_material_property` will never find for the correctly-spelled
+    family a later caller asks for (issue #404).
+
+    The CANONICAL spelling `designs.material_families.get_material_family`
+    returns is what gets stored on the returned bracket, not the caller's
+    literal text -- deliberately unlike `orchestration.design_loop`'s
+    `design_family` field, which ADR-0037 keeps in the caller's own spelling
+    because it is a decision record of what a human/agent actually typed. A
+    Family fallback bracket is not that: `family` is this table's lookup key
+    (`db/schema.sql`'s `UNIQUE(family, property)`, and
+    `fetch_family_bracket`/`resolve_material_property`'s exact-match
+    comparisons), so two callers citing the SAME family under different
+    casing ("Generic Polymer" vs "generic polymer") must land on the same
+    row. Storing the raw text would silently split them into two brackets
+    that can never find each other -- exactly issue #404's failure mode,
+    moved from the spelling axis to the casing axis.
     """
     resolved_family = _require_nonempty_string("family", family)
+    try:
+        canonical_family = get_material_family(resolved_family)
+    except UnknownMaterialFamilyError as exc:
+        # Reuse get_material_family's own message (it already names every
+        # known family and issue #404) rather than composing a second,
+        # independently-worded "unrecognized family" message here that could
+        # drift out of sync with it.
+        raise InvalidMaterialPropertyError(str(exc)) from exc
     resolved_property = _require_nonempty_string("property_name", property_name)
     resolved_unit = _require_nonempty_string("unit", unit)
     resolved_min_citation = _require_nonempty_string("min_citation", min_citation)
@@ -318,7 +385,7 @@ def add_family_bracket(
         )
 
     return {
-        "family": resolved_family,
+        "family": canonical_family,
         "property": resolved_property,
         "min_value": resolved_min,
         "min_citation": resolved_min_citation,
@@ -326,6 +393,27 @@ def add_family_bracket(
         "max_citation": resolved_max_citation,
         "unit": resolved_unit,
     }
+
+
+def _canonical_family_or_raw(family: str) -> str:
+    """`family`'s canonical spelling if it names a known material family
+    (`designs.material_families.get_material_family`), else `family`
+    unchanged.
+
+    Used everywhere a `family` a CALLER supplied is compared against, or
+    queried for, a bracket that `add_family_bracket` already stored under
+    its canonical spelling (see that function's own docstring) -- so a
+    caller asking under a different casing of the SAME family still matches
+    the stored row instead of silently missing it (issue #404, casing
+    axis). Never raises: an unrecognized family was never going to match a
+    stored bracket either way (`add_family_bracket` already refuses to
+    store one), and rejecting a name is that function's job, not this
+    lookup-time helper's.
+    """
+    try:
+        return get_material_family(family)
+    except UnknownMaterialFamilyError:
+        return family
 
 
 def _entry_matches(
@@ -371,9 +459,11 @@ def resolve_material_property(
     2. Otherwise, if a `family_bracket` is supplied (fetched by the caller
        for `family`), return its cited `[min_value, max_value]` range --
        `status = "family_fallback"`. `family_bracket["family"]` and
-       `["property"]` must match `family`/`property_name`, or this raises
-       (a caller-supplied bracket for the wrong family/property would
-       silently mislead).
+       `["property"]` must match `family`/`property_name` (`family`
+       compared case-insensitively via its canonical spelling, since
+       `add_family_bracket` only ever stores that spelling -- issue #404),
+       or this raises (a caller-supplied bracket for the wrong family/
+       property would silently mislead).
     3. Otherwise, `status = "no_data"` with a `message` naming exactly what
        was looked for and found nothing -- never an invented number (#127's
        rejected "silently excluding a candidate with no data").
@@ -411,9 +501,17 @@ def resolve_material_property(
                 "family_bracket was supplied without a family -- pass the "
                 "family name the bracket applies to"
             )
+        # Compare canonically, not by raw spelling: add_family_bracket only
+        # ever stores the canonical spelling of a known family (see its own
+        # docstring), so a caller asking under a DIFFERENT casing of the
+        # SAME family ("Generic Polymer" vs "generic polymer") must still
+        # match here -- comparing raw strings would falsely report a
+        # family/property mismatch for a bracket that is, in fact, the
+        # right one (issue #404, casing axis).
+        canonical_family = _canonical_family_or_raw(family)
         bracket_family = family_bracket.get("family")
         bracket_property = family_bracket.get("property")
-        if bracket_family != family or bracket_property != property_name:
+        if bracket_family != canonical_family or bracket_property != property_name:
             raise InvalidMaterialPropertyError(
                 f"family_bracket is for family={bracket_family!r} "
                 f"property={bracket_property!r}, which does not match "
@@ -668,11 +766,24 @@ def fetch_family_bracket(
 ) -> dict[str, Any] | None:
     """Return the stored Family fallback bracket for `(family,
     property_name)`, or `None` if no bracket has been entered for it yet --
-    mirrors `designs.db.read_design`'s "None means not found" convention."""
+    mirrors `designs.db.read_design`'s "None means not found" convention.
+
+    `family` is canonicalized first, via `designs.material_families
+    .get_material_family`, when it names a known material family --
+    `insert_family_bracket`/`add_family_bracket` only ever store the
+    canonical spelling (see `add_family_bracket`'s own docstring), so a
+    caller asking under a different casing of the SAME family ("Generic
+    Polymer" vs "generic polymer") still finds the row, rather than
+    `WHERE family = %s`'s exact, case-sensitive match silently reporting
+    "no bracket" for one that exists (issue #404, casing axis). An
+    unrecognized family is passed through unchanged and simply matches no
+    row, same as before -- rejecting a name is `add_family_bracket`'s job,
+    not this function's."""
+    canonical_family = _canonical_family_or_raw(family)
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT * FROM material_family_brackets WHERE family = %s AND property = %s",
-            (family, property_name),
+            (canonical_family, property_name),
         )
         return cur.fetchone()
 
@@ -749,6 +860,19 @@ def resolve_material_property_from_db(
 # ---------------------------------------------------------------------------
 
 _SHORTLIST = "docs/xband-absorber-substrate-shortlist.md section 1"
+
+# A citation names a DOCUMENT a reader can go and check, not the activity that
+# found it. These two strings say which document, which table inside it, and --
+# honestly -- that the vendor PDF's revision was never captured, so a reader
+# knows the one thing they must re-verify rather than discovering it later.
+# ADR-0015's rule is that "the library never parses a document itself, only
+# cites it"; a citation that cannot be followed back to a document fails that
+# rule even when the number itself is right.
+_ROGERS_DESIGN_DK_CITATION = (
+    "Rogers RO4000-series laminate datasheet, Design Dk table -- transcribed in the "
+    "2026-09-09 datasheet sweep for issue #337; the vendor PDF revision was not "
+    "captured, so re-verify against the current datasheet before relying on it"
+)
 
 SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
     # 1. Silicone sheet, 60 Shore A (Polymax SILONA GP/FDA)
@@ -956,7 +1080,14 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         "40 GHz that difference moves a predicted resonance by roughly 1-1.4 GHz. Design Dk "
         'falls by about 0.1 from 0.020" to 0.004" core, and the library has no thickness '
         "field, so a thin-core part needs this checked against the datasheet directly",
-        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+        # NOT cited via _SHORTLIST. docs/xband-absorber-substrate-shortlist.md
+        # records only this laminate's Process Dk (3.48) and its 10 GHz
+        # tan_delta (0.0037) -- the strings "3.66" and "Design Dk" appear
+        # nowhere in it. Citing it here would point a reader at a document that
+        # does not contain the value, which is the exact failure this library
+        # exists to prevent (ADR-0015: "the library never parses a document
+        # itself, only cites it").
+        citation=_ROGERS_DESIGN_DK_CITATION,
     ),
     # Loss tangent is entered at BOTH published test frequencies rather than
     # only the 10 GHz one. tan_delta disperses far more strongly than eps_r,
@@ -975,7 +1106,9 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         method="datasheet, 2.5 GHz / 23 degrees C",
         note="Second published point, entered alongside the 10 GHz value (0.0037) so the "
         "frequency dependence is visible rather than inferred",
-        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+        # Also NOT via _SHORTLIST -- that document carries only the 10 GHz
+        # tan_delta (0.0037), not this 2.5 GHz one. See the Design Dk entry above.
+        citation=_ROGERS_DESIGN_DK_CITATION,
     ),
     add_entry(
         material="Rogers RO4350B",
@@ -1030,7 +1163,9 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
 # Kapton's published loss tangent is ~5-6x too LOW against a 9.975 GHz
 # measurement, while TPU's published permittivity is up to 2.2x too HIGH
 # against a 5.1-18 GHz sweep. Entering them keyed at their own kHz/MHz band
-# means a 2-50 GHz lookup MISSES them and returns no_data, rather than either
+# means a 2-50 GHz lookup MISSES them -- returning no_data when the caller
+# supplies no family bracket, or that family's cited MIN/MAX range when they do,
+# but NEVER this entry's out-of-band number either way -- rather than either
 # silently returning a wrong number or leaving the value to be rediscovered
 # and misused. This is the pattern the library already applies to Melinex
 # ST505 (see SUBSTRATE_SEED_ENTRIES).
@@ -1045,7 +1180,18 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
 # not a number.
 # ---------------------------------------------------------------------------
 
-_DATASHEET_SWEEP = "2026-09-09 datasheet sweep for issue #337"
+# Every citation below reads "<vendor> <document>, via {_DATASHEET_SWEEP}". The
+# leading half is the document a reader checks; this trailing half says how it
+# reached us and what is missing from it. Naming the sweep ALONE would be a
+# provenance smell -- an activity is not a retrievable document -- so the vendor
+# document is always named first, and this string exists to record honestly that
+# the PDF revision was not captured. Where a revision IS known it is written
+# into the citation directly (see the Intexar PE874 entry, which cites
+# "TDS K-29701"); that is the shape every entry here should eventually take.
+_DATASHEET_SWEEP = (
+    "2026-09-09 datasheet sweep for issue #337 -- vendor document revision not "
+    "captured, re-verify before relying on the value"
+)
 
 DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
     # -- Isola Astra MT77: the only genuinely MULTI-POINT manufacturer dataset
@@ -1053,6 +1199,18 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
     #    one laminate, which is what makes dispersion visible instead of
     #    inferred. Entered as five entries, not one wide band, because the
     #    vendor measured five points and did not claim the values in between.
+    #
+    #    THIS IS WHY ISOLA IS FIVE POINTS AND ROGERS' DESIGN Dk IS ONE WIDE
+    #    BAND, which otherwise looks inconsistent: a query at 12 GHz misses
+    #    Isola entirely but returns Rogers' 3.55. The difference is in what the
+    #    vendor claimed, not in how this file treats them. Isola publishes five
+    #    discrete test points; Rogers publishes Design Dk as a value asserted
+    #    ACROSS 8-40 GHz. Storing Isola as a band would invent coverage the
+    #    vendor never claimed, and storing Rogers as points would discard
+    #    coverage it did. An entry's frequency band is meant to be the interval
+    #    the citation is valid over -- see this module's docstring's "WHY AN
+    #    ENTRY'S FREQUENCY IS A BAND" section -- so both shapes are that same
+    #    rule applied to two differently-shaped claims.
     *[
         add_entry(
             material="Isola Astra MT77",
@@ -1259,7 +1417,11 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
         note="Cure: resistivity row states 135 C for 15 min; recommended process cure is 15 min "
         "at >=120 C. Never electrically thick anywhere in 2-50 GHz at any printable thickness, "
         "which is the intended behaviour for a deliberately resistive layer and the one case "
-        "where the thin-film form Rs = 1/(sigma*t) is actually valid",
+        "where the thin-film form Rs = 1/(sigma*t) is actually valid. A LOWER BOUND, not a "
+        "typical value: the vendor publishes an upper bound on resistivity (< 0.6 ohm.cm), so "
+        "the real cured ink is at least this conductive and may be more. The library's "
+        "`uncertainty` field takes a single symmetric error bar and cannot express a one-sided "
+        "bound, so the direction is stated here instead of being silently dropped",
         citation=f"ACI Materials SC1502 datasheet, via {_DATASHEET_SWEEP}",
     ),
     add_entry(
@@ -1277,7 +1439,11 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
         "as NOVA-compatible. At its typical 8-12 um cured thickness this is only 0.6-1.0 skin "
         "depths at 2 GHz and does not reach 3 skin depths until roughly 20-45 GHz -- i.e. NOT "
         "safely a good conductor over most of the band in a single pass. Two passes moves that "
-        "crossover down to ~5-7 GHz",
+        "crossover down to ~5-7 GHz. A LOWER BOUND, not a typical value: the vendor publishes "
+        "sheet resistance as '< 50 mOhm/sq', an upper bound, so the cured ink is at least this "
+        "conductive and may be more -- which also means the skin-depth figures above are the "
+        "PESSIMISTIC end and the real film may cross into good-conductor behaviour lower in "
+        "the band than stated",
         citation=f"DuPont/Celanese Intexar PE874 TDS K-29701, via {_DATASHEET_SWEEP}",
     ),
 ]

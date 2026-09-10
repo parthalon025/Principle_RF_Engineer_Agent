@@ -8,20 +8,29 @@ actual validation/lookup/fallback logic and need no database, so they are
 exercised directly here. The DB-backed I/O wrappers
 (`insert_material_property_entry`/`insert_family_bracket`/
 `fetch_material_property_entries`/`fetch_family_bracket`/
-`resolve_material_property_from_db`) need a live Postgres via DATABASE_URL,
-and there is no database in this sandbox (same constraint
-tests/test_requirement_targets.py, tests/test_designs_service.py, and
-tests/test_tooling.py already document for themselves) -- they are thin
-glue over the pure functions above, the same shape those modules' own
-untested I/O wrappers already have.
+`resolve_material_property_from_db`) need a live Postgres via DATABASE_URL --
+they are thin glue over the pure functions above, the same shape those
+modules' own untested I/O wrappers already have.
+
+The one exception, guarded by the module-level `DATABASE_URL` connectivity
+probe at the bottom of this file (mirroring tests/test_requirement_targets.py's
+identical `pytest.mark.skipif` pattern): issue #404's material/family
+vocabulary check must reject an unrecognized `family` (and warn on an
+unrecognized `material`) through the *real* insert wrappers too, not just the
+pure functions they call -- proving the check actually fires before any SQL
+runs, and that a rejected bracket insert leaves no row behind.
 """
 
 from __future__ import annotations
 
 import math
+import os
+import warnings
 
+import psycopg
 import pytest
 
+from designs.material_families import UnknownMaterialNameWarning
 from designs.material_properties import (
     DATASHEET_SEED_ENTRIES,
     FR4_SEED_ENTRIES,
@@ -29,6 +38,10 @@ from designs.material_properties import (
     InvalidMaterialPropertyError,
     add_entry,
     add_family_bracket,
+    fetch_family_bracket,
+    fetch_material_property_entries,
+    insert_family_bracket,
+    insert_material_property_entry,
     lookup_entries,
     resolve_material_property,
 )
@@ -201,6 +214,62 @@ def test_add_entry_allows_a_single_frequency_point():
 
 
 # ---------------------------------------------------------------------------
+# add_entry -- material vocabulary (issue #404). Unlike an unrecognized
+# `family` on add_family_bracket below, an unrecognized `material` never
+# raises -- see designs/material_families.py's module docstring for why the
+# two vocabularies are enforced differently.
+# ---------------------------------------------------------------------------
+
+
+def test_add_entry_warns_for_an_unrecognized_material():
+    with pytest.warns(UnknownMaterialNameWarning, match="Unobtainium Composite Z9"):
+        add_entry(
+            material="Unobtainium Composite Z9",
+            property_name="eps_r",
+            frequency_low_hz=10e9,
+            frequency_high_hz=10e9,
+            value=3.0,
+            unit="unitless",
+            provenance="ASSUMED",
+            note="placeholder pending a real datasheet",
+        )
+
+
+def test_add_entry_does_not_warn_for_an_already_known_material():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        # FR4 is one of the harvested, already-known materials -- must not warn.
+        add_entry(
+            material="FR4",
+            property_name="eps_r",
+            frequency_low_hz=10e9,
+            frequency_high_hz=10e9,
+            value=4.3,
+            unit="unitless",
+            provenance="LITERATURE-SUPPORTED",
+            citation="some paper",
+        )
+
+
+def test_add_entry_unrecognized_material_still_builds_the_entry():
+    # A typo warns, but the Material-property library is a growing record,
+    # never a fixed reference table (CONTEXT.md) -- so the entry is still
+    # built, not rejected.
+    with pytest.warns(UnknownMaterialNameWarning):
+        entry = add_entry(
+            material="Brand New Substrate Never Seen Before",
+            property_name="eps_r",
+            frequency_low_hz=10e9,
+            frequency_high_hz=10e9,
+            value=3.0,
+            unit="unitless",
+            provenance="ASSUMED",
+            note="placeholder",
+        )
+    assert entry["material"] == "Brand New Substrate Never Seen Before"
+
+
+# ---------------------------------------------------------------------------
 # add_family_bracket -- validation
 # ---------------------------------------------------------------------------
 
@@ -248,6 +317,99 @@ def test_add_family_bracket_requires_both_citations():
             max_citation="b",
             unit="unitless",
         )
+
+
+def test_add_family_bracket_rejects_an_unrecognized_family():
+    # Issue #404: unlike an unrecognized material on add_entry above, an
+    # unrecognized family fails loudly -- the family vocabulary is a small,
+    # closed set of broad categories (ADR-0015), so a bracket filed under a
+    # misspelled one would be one resolve_material_property could never find.
+    with pytest.raises(InvalidMaterialPropertyError, match="family"):
+        add_family_bracket(
+            family="generic plasticky stuff",
+            property_name="eps_r",
+            min_value=2.0,
+            min_citation="a",
+            max_value=6.0,
+            max_citation="b",
+            unit="unitless",
+        )
+
+
+def test_add_family_bracket_accepts_a_known_family_case_insensitively():
+    bracket = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    # Unlike orchestration.design_loop's design_family (ADR-0037: kept in the
+    # caller's own spelling because it is a decision record of what a human/
+    # agent typed), `family` here is this table's lookup key
+    # (db/schema.sql's UNIQUE(family, property)), so the CANONICAL spelling
+    # is what gets stored -- not the caller's literal casing. Storing the
+    # raw text would let "Generic Polymer" and "generic polymer" file as two
+    # disconnected brackets that can never find each other, reproducing
+    # issue #404's own failure mode on the casing axis instead of the
+    # spelling axis (see the two tests below).
+    assert bracket["family"] == "generic polymer"
+
+
+def test_add_family_bracket_canonicalizes_regardless_of_the_caller_s_casing():
+    # Two callers citing the SAME family under different casing must land on
+    # the SAME canonical spelling, not two independently-cased strings.
+    from_title_case = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    from_upper_case = add_family_bracket(
+        family="GENERIC POLYMER",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="a",
+        max_value=6.0,
+        max_citation="b",
+        unit="unitless",
+    )
+    assert from_title_case["family"] == from_upper_case["family"] == "generic polymer"
+
+
+def test_resolve_material_property_finds_a_bracket_cited_under_different_casing():
+    # The bracket is filed under "Generic Polymer"; a later caller asks
+    # under a differently-cased spelling of the SAME registered family
+    # ("generic polymer"). Before issue #404's casing fix, comparing raw
+    # strings here would have raised a false family/property mismatch, or
+    # (via fetch_family_bracket's exact-match SQL) never found the row at
+    # all -- exactly the "no lookup will ever find it" failure issue #404
+    # was opened to close.
+    bracket = add_family_bracket(
+        family="Generic Polymer",
+        property_name="eps_r",
+        min_value=2.0,
+        min_citation="citation A",
+        max_value=6.0,
+        max_citation="citation B",
+        unit="unitless",
+    )
+    result = resolve_material_property(
+        [],
+        material="unobtainium foam",
+        property_name="eps_r",
+        frequency_hz=9.5e9,
+        family="generic polymer",
+        family_bracket=bracket,
+    )
+    assert result["status"] == "family_fallback"
+    assert result["low"] == 2.0
+    assert result["high"] == 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +674,27 @@ def test_no_substrate_seed_claims_MEASURED_provenance():
     # The shortlist tags several rows MEASURED, meaning "somebody measured
     # this." CONTEXT.md reserves MEASURED for what this programme measured
     # itself, and ENTRY_PROVENANCE_VALUES does not admit it at all.
-    assert all(e["provenance"] != "MEASURED" for e in SUBSTRATE_SEED_ENTRIES)
+    #
+    # Asserting `provenance != "MEASURED"` over the seed list CANNOT FAIL --
+    # add_entry raises at import for anything outside ENTRY_PROVENANCE_VALUES,
+    # so the list could never have contained one. That is a guarantee worth
+    # proving rather than restating, so the constructor is exercised directly.
+    with pytest.raises(InvalidMaterialPropertyError, match="provenance"):
+        add_entry(
+            material="Anything",
+            property_name="eps_r",
+            frequency_low_hz=1.0e10,
+            frequency_high_hz=1.0e10,
+            value=1.0,
+            unit="unitless",
+            provenance="MEASURED",
+            citation="a real measurement someone else made",
+        )
+
+    # What CAN drift is the data: an unsourced value slipping into a list whose
+    # every row is supposed to carry a citation.
+    assert all(e["provenance"] != "ASSUMED" for e in SUBSTRATE_SEED_ENTRIES)
+    assert all(e["citation"] for e in SUBSTRATE_SEED_ENTRIES)
 
 
 def test_every_substrate_seed_records_its_method_even_when_it_is_unknown():
@@ -560,9 +742,26 @@ def test_PET_is_entered_at_its_datasheet_band_so_an_x_band_lookup_misses():
 _IN_BAND_HZ = (2.0e9, 1.0e10, 2.8e10, 5.0e10)
 
 
-def test_datasheet_entries_all_carry_a_method_and_none_claim_measured():
+def test_datasheet_entries_all_carry_a_method_and_a_document_citation():
+    """Every entry in this batch came off a vendor datasheet, so each must be
+    MANUFACTURER-SPECIFIED and each citation must name a *document*, not only the
+    sweep that found it.
+
+    This replaces an earlier `provenance != "MEASURED"` assertion that could never
+    fail: MEASURED is not in ENTRY_PROVENANCE_VALUES, so `add_entry` raises at
+    import time for it and the test only restated a guarantee the constructor
+    already enforces. What can genuinely drift is the data -- someone adding an
+    ASSUMED value, or a citation that names the research pass and no document.
+    """
     assert all(e["method"] for e in DATASHEET_SEED_ENTRIES)
-    assert all(e["provenance"] != "MEASURED" for e in DATASHEET_SEED_ENTRIES)
+    assert all(e["provenance"] == "MANUFACTURER-SPECIFIED" for e in DATASHEET_SEED_ENTRIES)
+
+    for entry in DATASHEET_SEED_ENTRIES:
+        document = entry["citation"].split(", via ")[0].strip()
+        assert document, f"{entry['material']}: citation is only a sweep reference"
+        assert document != entry["citation"].strip(), (
+            f"{entry['material']}: citation names no document before the sweep reference"
+        )
 
 
 def test_datasheet_out_of_band_traps_are_unreachable_in_band():
@@ -654,3 +853,123 @@ def test_datasheet_process_and_design_dk_are_both_stored_and_distinguishable():
 
     at_40ghz = resolve_material_property(DATASHEET_SEED_ENTRIES, "Rogers RO4003C", "eps_r", 4.0e10)
     assert at_40ghz["low"] == at_40ghz["high"] == 3.55
+
+
+def test_ro4350b_process_and_design_dk_behave_like_ro4003c():
+    """RO4350B got the same Process/Design Dk split as RO4003C but had no test
+    of its own. Both laminates must behave identically: a caller at 10 GHz sees
+    the spread between the two published quantities, and a caller at 40 GHz gets
+    only the Design Dk, which is the one valid there."""
+    at_10ghz = resolve_material_property(SUBSTRATE_SEED_ENTRIES, "Rogers RO4350B", "eps_r", 1.0e10)
+    assert at_10ghz["low"] == 3.48
+    assert at_10ghz["high"] == 3.66
+    methods = " ".join(e["method"] for e in at_10ghz["entries"])
+    assert "Process Dk" in methods and "Design Dk" in methods
+
+    at_40ghz = resolve_material_property(SUBSTRATE_SEED_ENTRIES, "Rogers RO4350B", "eps_r", 4.0e10)
+    assert at_40ghz["low"] == at_40ghz["high"] == 3.66
+
+    # tan_delta is published at two points and must not span between them.
+    assert (
+        resolve_material_property(SUBSTRATE_SEED_ENTRIES, "Rogers RO4350B", "tan_delta", 5.0e9)[
+            "status"
+        ]
+        == "no_data"
+    )
+
+
+def test_ro4350b_new_entries_do_not_cite_a_document_that_lacks_their_values():
+    """Regression guard on a real defect found in review.
+
+    The Design Dk (3.66) and the 2.5 GHz tan_delta (0.0031) were originally
+    cited to `docs/xband-absorber-substrate-shortlist.md`, which records only
+    this laminate's Process Dk (3.48) and its 10 GHz tan_delta (0.0037). Citing
+    a document that does not contain the value is precisely the failure this
+    library exists to prevent -- ADR-0015's "the library never parses a document
+    itself, only cites it" is worthless if the cited document is the wrong one.
+    """
+    values_absent_from_the_shortlist = {3.66, 0.0031}
+    for entry in SUBSTRATE_SEED_ENTRIES:
+        if entry["material"] != "Rogers RO4350B":
+            continue
+        if entry["value"] not in values_absent_from_the_shortlist:
+            continue
+        assert "xband-absorber-substrate-shortlist" not in entry["citation"], (
+            f"RO4350B {entry['property']}={entry['value']} cites the shortlist, "
+            "which does not contain that value"
+        )
+        assert "datasheet" in entry["citation"].lower()
+
+
+# ---------------------------------------------------------------------------
+# DB-backed: issue #404's material/family vocabulary check through the real
+# insert wrappers -- see this module's docstring for why this is the one
+# DB-backed exception here.
+# ---------------------------------------------------------------------------
+
+_TEST_DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://rf:rf_dev_password@localhost:5432/rfengineer"
+)
+
+
+def _database_reachable() -> bool:
+    try:
+        with psycopg.connect(_TEST_DATABASE_URL, connect_timeout=3):
+            return True
+    except psycopg.OperationalError:
+        return False
+
+
+_DB_REACHABLE = _database_reachable()
+
+
+@pytest.mark.skipif(
+    not _DB_REACHABLE,
+    reason=f"no reachable Postgres at {_TEST_DATABASE_URL.split('@')[-1]!r} in this sandbox",
+)
+class TestInsertWrappersEnforceTheVocabulary:
+    def test_insert_family_bracket_rejects_an_unrecognized_family_and_writes_no_row(self):
+        conn = psycopg.connect(_TEST_DATABASE_URL)
+        try:
+            with pytest.raises(InvalidMaterialPropertyError, match="family"):
+                insert_family_bracket(
+                    conn,
+                    family="generic squishy stuff",
+                    property_name="eps_r",
+                    min_value=2.0,
+                    min_citation="a",
+                    max_value=6.0,
+                    max_citation="b",
+                    unit="unitless",
+                )
+            # The check fires before any SQL runs -- confirm no row landed
+            # for this property under any family, on the same connection.
+            assert fetch_family_bracket(conn, "generic squishy stuff", "eps_r") is None
+        finally:
+            conn.rollback()
+            conn.close()
+
+    def test_insert_material_property_entry_warns_but_still_inserts(self):
+        conn = psycopg.connect(_TEST_DATABASE_URL)
+        try:
+            with pytest.warns(UnknownMaterialNameWarning, match="Issue 404 DB Probe Material"):
+                row = insert_material_property_entry(
+                    conn,
+                    material="Issue 404 DB Probe Material",
+                    property_name="eps_r",
+                    frequency_low_hz=10e9,
+                    frequency_high_hz=10e9,
+                    value=3.0,
+                    unit="unitless",
+                    provenance="ASSUMED",
+                    note="issue #404 DB-backed wiring probe, never committed",
+                )
+            assert row["material"] == "Issue 404 DB Probe Material"
+            # The Material-property library never blocks a new material --
+            # confirm the row is actually visible on this connection.
+            fetched = fetch_material_property_entries(conn, "Issue 404 DB Probe Material", "eps_r")
+            assert len(fetched) == 1
+        finally:
+            # Never committed -- rolling back leaves the real table untouched.
+            conn.rollback()
+            conn.close()

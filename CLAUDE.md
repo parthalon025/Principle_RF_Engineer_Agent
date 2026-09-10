@@ -174,6 +174,10 @@ Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `read
 
 Single-context layout (`CONTEXT.md` + `docs/adr/` at repo root). See `docs/agents/domain.md`.
 
+### Model selection
+
+Match Claude model tier (Haiku/Sonnet/Opus/Fable) to the task rather than a blanket default. See `docs/agents/model-selection.md`.
+
 ## Planning docs are not a status source
 
 `docs/BUILD_PLAN.md` and `docs/ROADMAP.md` describe an *intended* build order.

@@ -1,3 +1,4 @@
+import psycopg
 import pytest
 
 from knowledge.db import (
@@ -87,6 +88,47 @@ def test_insert_document_never_infers_supersession_from_title(db_conn):
     row2 = insert_document(db_conn, doc2, authority_rank=20)
 
     assert row2["supersedes_document_id"] is None
+
+
+def test_insert_document_writes_classification_as_a_real_column(db_conn):
+    """Issue #407: classification must be a real, queryable `documents`
+    column -- not only a key buried inside the `metadata` JSONB blob."""
+    draft = _draft(checksum_sha256="c1" * 32, classification=Classification.RESTRICTED)
+    row = insert_document(db_conn, draft, authority_rank=20)
+
+    assert row["classification"] == "RESTRICTED"
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT classification FROM documents WHERE id = %s", (row["id"],))
+        (stored,) = cur.fetchone()
+    assert stored == "RESTRICTED"
+
+
+def test_documents_classification_column_rejects_null_at_the_database_level(db_conn):
+    """ADR-0001's 'mandatory, no default' guarantee must be enforced by the
+    database itself, not only by `ingest_document`'s parameter signature --
+    proven here with a raw INSERT that bypasses `insert_document` entirely,
+    exactly the bypass ADR-0001's guarantee needs to survive (issue #407)."""
+    with pytest.raises(psycopg.errors.NotNullViolation):
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO documents (title, source_type, license, checksum_sha256, "
+                "classification) VALUES (%s, %s, %s, %s, %s)",
+                ("Bogus Doc", "datasheet", "cc-by-4.0", "d1" * 32, None),
+            )
+
+
+def test_documents_classification_column_rejects_out_of_vocabulary_value(db_conn):
+    """Same bypass as above, but with a value outside the closed vocabulary
+    `knowledge/models.py`'s `Classification` enum defines -- the CHECK
+    constraint, not just NOT NULL, must reject it (issue #407)."""
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO documents (title, source_type, license, checksum_sha256, "
+                "classification) VALUES (%s, %s, %s, %s, %s)",
+                ("Bogus Doc", "datasheet", "cc-by-4.0", "d2" * 32, "TOP_SECRET"),
+            )
 
 
 def test_insert_document_rejects_nonexistent_supersession_target(db_conn):
@@ -280,3 +322,34 @@ def test_get_component_null_manufacturer_matches_null_manufacturer(db_conn):
 
     assert found is not None
     assert found["manufacturer"] is None
+
+
+def test_delete_document_clears_component_datasheet_reference(db_conn):
+    """Issue #402: deleting a document referenced by a component should
+    set the component's datasheet_document_id to NULL instead of raising."""
+    # Create a document
+    draft = _draft(checksum_sha256="zz" + "1" * 62)
+    doc_row = insert_document(db_conn, draft, authority_rank=20)
+
+    # Create a component referencing this document
+    specs = {"gain_db": {"value": 20.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}}
+    component = upsert_component(
+        db_conn,
+        manufacturer="Test RF",
+        part_number="TEST-PART-402",
+        category="amplifier",
+        specifications=specs,
+        datasheet_document_id=doc_row["id"],
+    )
+
+    assert component["datasheet_document_id"] == doc_row["id"]
+
+    # Delete the document
+    with db_conn.cursor() as cur:
+        cur.execute("DELETE FROM documents WHERE id = %s", (doc_row["id"],))
+        db_conn.commit()
+
+    # Verify the component still exists but has datasheet_document_id = NULL
+    found = get_component(db_conn, "Test RF", "TEST-PART-402")
+    assert found is not None
+    assert found["datasheet_document_id"] is None

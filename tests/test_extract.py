@@ -42,14 +42,20 @@ def _seed_document(
     checksum: str,
     source_type: SourceType = SourceType.DATASHEET,
     n_chunks: int = 1,
+    metadata: dict | None = None,
 ) -> int:
+    """`metadata` defaults to today's `{"classification": ...}` shape; pass
+    `metadata={}` to seed a document whose metadata carries no
+    "classification" key at all (Issue #407's regression test uses this to
+    prove the routing floor reads `documents.classification`, not the JSONB
+    blob)."""
     draft = DocumentDraft(
         title=f"Seeded Doc {checksum}",
         source_type=source_type,
         classification=classification,
         license="manufacturer-datasheet",
         checksum_sha256=checksum,
-        metadata={"classification": classification.value},
+        metadata=metadata if metadata is not None else {"classification": classification.value},
     )
     conn = psycopg.connect(os.environ["DATABASE_URL"])
     try:
@@ -303,6 +309,30 @@ def test_restricted_document_local_unavailable_fails_loudly_no_fallback(
 
     rows = _fetch_components(doc_id)
     assert rows == []
+
+
+def test_restricted_routing_reads_the_classification_column_not_metadata(cleanup_documents):
+    """Issue #407: `extract_components`'s RESTRICTED/SENSITIVE-forces-local
+    floor must be driven by `documents.classification` (the real column),
+    not by the `metadata` JSONB blob -- proven by seeding a document whose
+    metadata carries no 'classification' key at all and confirming the
+    floor is still enforced, exactly like tests/test_index.py's identical
+    regression test for `index_document`."""
+    doc_id = _seed_document(Classification.RESTRICTED, "e9" * 32, metadata={})
+    cleanup_documents.append(doc_id)
+
+    with pytest.raises(RestrictedBackendViolation):
+        extract_components(
+            doc_id, requested_backend="external", extract_local=_Spy(), extract_external=_Spy()
+        )
+
+    local_spy = _Spy(result=_raw_amp(part_number="T11-ACM-COLUMN-A"))
+    external_spy = _Spy()
+    result = extract_components(doc_id, extract_local=local_spy, extract_external=external_spy)
+
+    assert result["backend"] == "local"
+    assert len(local_spy.calls) == 1
+    assert external_spy.calls == []
 
 
 def test_unknown_category_in_raw_result_is_skipped_not_fatal(cleanup_documents):
