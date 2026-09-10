@@ -4,25 +4,26 @@ Ticket 3 (already merged, see `tests/test_approval_cli.py`) gave a human a
 local CLI (`orchestration/approval_cli.py`'s `approve-release` subcommand)
 that mints a real `DesignReleaseApprovalReceipt` and prints its `.to_dict()`
 output. Until this ticket, nothing let that dict actually reach the RELEASED
-gate: `agent/main.py`'s and `mcp_server/server.py`'s `advance_design_status`
-tools were hardcoded to call `designs.service.update_design_status` with no
-`approval` at all, so a release attempt always fell through to
-`release_not_approved` no matter what a human had approved.
+gate: `mcp_server/server.py`'s `advance_design_status` tool was hardcoded to
+call `designs.service.update_design_status` with no `approval` at all, so a
+release attempt always fell through to `release_not_approved` no matter what
+a human had approved.
 
-This file proves the last hop works, on BOTH tool surfaces, mirroring
-`tests/test_calculation_tool_recording.py`'s `_invoke_agent_tool`/
-`_invoke_mcp_tool` pattern (real `FunctionTool.on_invoke_tool` / `FastMCP.
-call_tool` machinery, not a plain Python call, since `@function_tool`/
-`@mcp.tool()` wrap the original function into a non-callable Tool object).
+This file proves the last hop works, through real `FastMCP.call_tool`
+machinery rather than a plain Python call, since `@mcp.tool()` wraps the
+original function into a non-callable Tool object. The `agent/main.py`
+wrapper this file used to exercise alongside it is gone: `advance_design_
+status` belongs to the principal, which reaches every tool it holds over
+MCP, so the server is now the tool's only implementation.
 
 `designs.service.coerce_release_approval` -- the dict -> receipt coercion
-both tool wrappers share -- gets its own direct unit coverage at the bottom
-of this file for the one case a JSON tool boundary cannot exercise: an
+the tool wrapper uses -- gets its own direct unit coverage at the bottom of
+this file for the one case a JSON tool boundary cannot exercise: an
 already-constructed `DesignReleaseApprovalReceipt` passed straight through
 (mirroring `orchestration.design_loop`'s `_coerce_receipt` no-op-passthrough
 behavior for a non-dict). Everything reachable through the JSON boundary
-(a dict, or nothing) is exercised end-to-end through both real tool
-surfaces instead.
+(a dict, or nothing) is exercised end-to-end through the real tool surface
+instead.
 
 The `tests/test_designs_db.py::test_a_valid_release_receipt_releases_the_design`
 / `test_a_release_receipt_for_another_design_is_refused` pair already proves
@@ -39,11 +40,11 @@ import os
 
 import psycopg
 import pytest
-from agents.tool_context import ToolContext
 from dotenv import load_dotenv
 
 import agent.main as agent_main
 import mcp_server.server as mcp_module
+from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 from designs.release_approval import (
     DesignReleaseApprovalError,
     DesignReleaseApprovalReceipt,
@@ -61,9 +62,9 @@ load_dotenv()
 @pytest.fixture
 def cleanup_designs():
     """Same shape as `tests/test_designs_service.py`'s fixture of the same
-    name: both tool wrappers commit their own connection via
-    `designs.service`, so a rolled-back `db_conn` transaction can't isolate
-    them -- cascade-delete the design afterward instead."""
+    name: the tool wrapper commits its own connection via `designs.service`,
+    so a rolled-back `db_conn` transaction can't isolate it -- cascade-delete
+    the design afterward instead."""
     ids: list[int] = []
     yield ids
     if not ids:
@@ -106,20 +107,6 @@ def _mint_valid_receipt(
     )
 
 
-def _invoke_agent_tool(**kwargs):
-    all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
-    tool = next(t for t in all_tools if t.name == "advance_design_status")
-    args_json = json.dumps(kwargs)
-    ctx = ToolContext(
-        context=None,
-        tool_name="advance_design_status",
-        tool_call_id="test-call",
-        tool_arguments=args_json,
-    )
-    raw = asyncio.run(tool.on_invoke_tool(ctx, args_json))
-    return json.loads(raw) if isinstance(raw, str) else raw
-
-
 def _invoke_mcp_tool(**kwargs):
     result = asyncio.run(mcp_module.mcp.call_tool("advance_design_status", kwargs))
     if isinstance(result, tuple):
@@ -128,10 +115,25 @@ def _invoke_mcp_tool(**kwargs):
     return json.loads(result[0].text)
 
 
-INVOKERS = {"agent": _invoke_agent_tool, "mcp": _invoke_mcp_tool}
+# Only one surface left to parametrize over: `advance_design_status` reaches
+# the principal (its only role) over MCP alone now, so agent/main.py has no
+# wrapper for a second invoker to drive. Kept as a mapping so a future
+# second surface adds a key rather than reshaping every test below.
+INVOKERS = {"mcp": _invoke_mcp_tool}
 
 
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+def test_advance_design_status_is_registered_on_the_only_surface_that_serves_it():
+    """The premise the single-layer parametrization above rests on -- stated
+    as an assertion so a regression reads as this tool losing its last
+    implementation, not as thinner coverage nobody noticed."""
+    registered = {t.name for t in asyncio.run(mcp_module.mcp.list_tools())}
+    assert "advance_design_status" in registered
+    assert "advance_design_status" in MIGRATED_ROLE_TOOL_NAMES["principal"]
+    wrapped = {t.name for role in agent_main.ROLES.values() for t in role.tools}
+    assert "advance_design_status" not in wrapped
+
+
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_a_valid_receipt_releases_the_design_through_the_tool(layer, cleanup_designs):
     """The core regression this ticket exists to fix: a real receipt,
     minted exactly as the ticket-3 CLI mints one, reaches
@@ -146,7 +148,7 @@ def test_a_valid_receipt_releases_the_design_through_the_tool(layer, cleanup_des
     assert _read_design(design_id)["status"] == "RELEASED"
 
 
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_no_approval_still_refuses_exactly_as_before(layer, cleanup_designs):
     """Regression guard (constraint 1): the default (no `approval` at all)
     must behave EXACTLY as it did before this ticket -- release_not_approved,
@@ -159,7 +161,7 @@ def test_no_approval_still_refuses_exactly_as_before(layer, cleanup_designs):
     assert _read_design(design_id)["status"] == "PASS"
 
 
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_explicit_none_approval_still_refuses(layer, cleanup_designs):
     design_id, _ = _make_design_at_pass(cleanup_designs, f"REL-{layer}-3")
 
@@ -169,7 +171,7 @@ def test_explicit_none_approval_still_refuses(layer, cleanup_designs):
     assert _read_design(design_id)["status"] == "PASS"
 
 
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_a_garbage_shaped_dict_is_refused_not_crashed(layer, cleanup_designs):
     """Constraint 3 + the ticket's explicit test list: a dict that doesn't
     even match DesignReleaseApprovalReceipt's fields must be refused
@@ -185,7 +187,7 @@ def test_a_garbage_shaped_dict_is_refused_not_crashed(layer, cleanup_designs):
     assert _read_design(design_id)["status"] == "PASS"
 
 
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_a_forged_receipt_dict_is_refused(layer, cleanup_designs):
     """Constraint 3: a dict with the RIGHT shape (all four receipt fields)
     but fabricated content -- never issued by
@@ -205,7 +207,7 @@ def test_a_forged_receipt_dict_is_refused(layer, cleanup_designs):
     assert _read_design(design_id)["status"] == "PASS"
 
 
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_a_receipt_for_another_design_is_refused_at_the_tool_layer(layer, cleanup_designs):
     """Constraint 4, one layer up from
     tests/test_designs_db.py::test_a_release_receipt_for_another_design_is_refused:

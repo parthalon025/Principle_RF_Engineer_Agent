@@ -59,7 +59,11 @@ def test_assert_all_tools_categorized_raises_for_an_uncategorized_tool_name():
 def test_assert_all_tools_categorized_accepts_every_real_agent_tool():
     # The real regression-catching assertion: every tool agent/main.py
     # actually registers must have a category in tool_policy.yaml, so the
-    # code and the yaml can never silently drift apart.
+    # code and the yaml can never silently drift apart. Narrower than it
+    # once was -- that file now wraps only what microwave/antenna/test still
+    # need directly -- but not redundant with the MCP-side check below: a
+    # tool wrapped here and never registered on the server would be caught
+    # by this one alone.
     assert_all_tools_categorized([tool.name for tool in agent.main._ALL_TOOLS])
 
 

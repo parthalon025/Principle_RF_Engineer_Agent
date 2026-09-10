@@ -425,11 +425,10 @@ def test_search_knowledge_uses_supplied_query_embedding_without_calling_embed_fn
     assert "semantic_external" in match_types
 
 
-def test_search_knowledge_registered_as_agent_tool():
-    import agent.main as agent_main
+def test_search_knowledge_reaches_the_principal_role():
+    from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 
-    tool_names = {tool.name for tool in agent_main.principal.tools}
-    assert "search_knowledge" in tool_names
+    assert "search_knowledge" in MIGRATED_ROLE_TOOL_NAMES["principal"]
 
 
 def test_search_knowledge_registered_as_mcp_tool():
@@ -537,11 +536,10 @@ def test_search_design_records_excludes_superseded_by_default(cleanup_documents)
     assert results == []
 
 
-def test_search_design_records_registered_as_agent_tool():
-    import agent.main as agent_main
+def test_search_design_records_reaches_the_principal_role():
+    from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 
-    tool_names = {tool.name for tool in agent_main.principal.tools}
-    assert "search_design_records" in tool_names
+    assert "search_design_records" in MIGRATED_ROLE_TOOL_NAMES["principal"]
 
 
 def test_search_design_records_registered_as_mcp_tool():

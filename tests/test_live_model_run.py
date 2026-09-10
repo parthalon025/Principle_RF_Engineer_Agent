@@ -26,7 +26,8 @@ from agents import Runner
 from agents.exceptions import OutputGuardrailTripwireTriggered
 
 import agent.main as agent_main
-from agent.main import _PRINCIPAL_DIRECT_TOOLS, ProvenanceIntegrityError
+from agent.main import ProvenanceIntegrityError
+from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 from orchestration.policy import category_for
 
 _PROBE_TIMEOUT_S = 3
@@ -107,7 +108,7 @@ def test_live_run_serves_the_principals_mcp_tool_allowlist_to_a_real_model():
     )
 
     assert offered_tools, "the model was never asked for a response"
-    assert set(offered_tools[0]) == {tool.name for tool in _PRINCIPAL_DIRECT_TOOLS}
+    assert set(offered_tools[0]) == set(MIGRATED_ROLE_TOOL_NAMES["principal"])
 
 
 _MISLABEL_PROMPT = (

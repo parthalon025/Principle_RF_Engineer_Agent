@@ -208,3 +208,49 @@ registration gaps found between `agent/main.py`'s wrapper layer,
 code changes to `agent/main.py` or `agent/mcp_roles.py`.
 
 **Raised by:** issue #320's own investigation, 2026-09-09.
+
+### 2026-09-10 — the 37-tool deletion landed; `agent/main.py` now wraps 59 tools, not 96
+
+Issue #376 carried out the narrowed contraction the entry above deferred,
+once #377 put principal, systems and verification on `build_role_agent()`
+for real traffic. Final end-state numbers, re-derived from the code rather
+than carried forward from the entry above:
+
+- **37 wrapper functions deleted** from `agent/main.py`, each with its
+  `@function_tool` decorator and whole body — not just the decorator. The
+  set was recomputed independently and came out identical to #320's, tool
+  for tool. All 37 were confirmed, one by one before deletion, to have an
+  independent `@mcp.tool()` implementation in `mcp_server/server.py` calling
+  the same underlying business-logic helper, so no tool lost its only
+  implementation. `mcp_server/server.py` imports nothing from `agent.*`,
+  which is what makes those implementations genuinely independent rather
+  than a second name for the same object.
+- **59 wrappers remain** — exactly the union of what microwave, antenna and
+  test hold, and nothing else. Those three keep real `FunctionTool` objects
+  because every subprocess-shelling solver tool still hangs over the MCP
+  stdio transport on native Windows (#372, unresolved).
+- **`agent/mcp_roles.py` now owns the migrated roles' tool-name lists**
+  outright (`MIGRATED_ROLE_TOOL_NAMES`), as this ADR's Decision requires
+  once a role's wrappers are gone: with `RoleSpec.tools` emptied for those
+  three, continuing to derive their filters from it would have silently
+  handed each an empty allow-list. The lists are byte-for-byte the ones
+  those roles had before (16 principal / 34 systems / 4 verification), so
+  no live role's reach changed.
+- **The old-style `ROLES["principal"]`/`["systems"]`/`["verification"]`
+  Agent objects survive with no tools** and are dead outside the test
+  suite — nothing at runtime reads them since #377 moved `run()` onto
+  `_build_live_principal()`. Deleting them is a separate decision this
+  issue did not take.
+
+**Audit re-run against the new end state (#320's own methodology): zero
+registration gaps.** 59 wrapper tools, 96 MCP-registered tools, 96 tools in
+the union of every role's assignment; every wrapper is registered on the MCP
+server, every registered tool is assigned to at least one role, every name a
+role's filter allows exists on the server, and every per-role filter still
+matches its declared source — `MIGRATED_ROLE_TOOL_NAMES` for the migrated
+three, `ROLE_SPECS`/`ROLES[key].tools` for the three still on the old path.
+
+The `tools=[...]` + `mcp_servers=[...]` hybrid noted as finding 3 above
+remains unattempted and out of #376's scope.
+
+**Raised by:** issue #376's implementation, 2026-09-10.
