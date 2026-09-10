@@ -28,7 +28,14 @@ from db.apply_schema import SCHEMA_APPLY_LOCK_KEY, apply_schema
 load_dotenv()
 
 _TEST_DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://rf:rf_dev_password@localhost:5432/rfengineer"
+    # 127.0.0.1, not localhost (99d6744): on Windows+Docker Desktop,
+    # `localhost` resolves to `::1` first and psycopg's connect() has no
+    # default timeout, so a dead IPv6 attempt can stall for seconds. This
+    # test opens multiple concurrent connections across threads with
+    # 0.5s/10s wait windows to prove lock-blocking behavior -- exactly the
+    # concurrent-load scenario that stall would masquerade as a hang in.
+    "DATABASE_URL",
+    "postgresql://rf:rf_dev_password@127.0.0.1:5432/rfengineer",
 )
 
 
