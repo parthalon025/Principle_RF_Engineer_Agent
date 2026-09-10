@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS components (
     UNIQUE(manufacturer, part_number)
 );
 
+-- Issue #402: allow deleting a document referenced by a component,
+-- clearing the component's datasheet_document_id instead of blocking deletion.
+ALTER TABLE components DROP CONSTRAINT IF EXISTS components_datasheet_document_id_fkey;
+ALTER TABLE components
+    ADD CONSTRAINT components_datasheet_document_id_fkey
+    FOREIGN KEY (datasheet_document_id) REFERENCES documents(id) ON DELETE SET NULL;
+
 CREATE TABLE IF NOT EXISTS designs (
     id BIGSERIAL PRIMARY KEY,
     design_key TEXT NOT NULL UNIQUE,
