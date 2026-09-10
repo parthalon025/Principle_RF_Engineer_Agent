@@ -283,6 +283,25 @@ def _insert_considered_and_dropped_entries(
         )
 
 
+# The considered_and_dropped_entries columns every ledger-entry row carries,
+# beyond decision_record_id/entry_index -- named once here (issue #396 code
+# review) so `_read_considered_and_dropped_entries`'s grouped SELECT and
+# `find_capability_verdict_entries`'s joined SELECT build their column list
+# from the same tuple instead of each spelling it out by hand. The two
+# queries still differ in shape (grouped by decision_record_id vs. joined
+# through decision_records) -- only the column list itself is shared, and it
+# is the same list `_entry_dict_from_row` below reads back off a row.
+_ENTRY_COLUMNS = (
+    "family",
+    "verdict",
+    "reason",
+    "reason_kind",
+    "requirement_id",
+    "validity_box_property",
+    "theta_max_deg",
+)
+
+
 def _entry_dict_from_row(row: dict[str, Any]) -> dict[str, Any]:
     """Build one considered_and_dropped ledger entry dict from a
     `considered_and_dropped_entries` row (or an equivalent dict carrying the
@@ -329,9 +348,8 @@ def _read_considered_and_dropped_entries(
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            """
-            SELECT decision_record_id, family, verdict, reason, reason_kind,
-                   requirement_id, validity_box_property, theta_max_deg
+            f"""
+            SELECT decision_record_id, {", ".join(_ENTRY_COLUMNS)}
             FROM considered_and_dropped_entries
             WHERE decision_record_id = ANY(%s)
             ORDER BY decision_record_id, entry_index
@@ -369,10 +387,9 @@ def find_capability_verdict_entries(
     `decision_records ORDER BY id` / entries `ORDER BY entry_index`
     already establishes.
     """
-    query = """
-        SELECT dr.design_id, dr.record_key, cde.family, cde.verdict, cde.reason,
-               cde.reason_kind, cde.requirement_id, cde.validity_box_property,
-               cde.theta_max_deg
+    cde_columns = ", ".join(f"cde.{column}" for column in _ENTRY_COLUMNS)
+    query = f"""
+        SELECT dr.design_id, dr.record_key, {cde_columns}
         FROM considered_and_dropped_entries cde
         JOIN decision_records dr ON dr.id = cde.decision_record_id
         WHERE cde.reason_kind = 'capability-verdict'
