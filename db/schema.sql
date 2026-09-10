@@ -124,6 +124,23 @@ CREATE TABLE IF NOT EXISTS decision_records (
 -- (db/apply_schema.py), where CREATE TABLE IF NOT EXISTS is a no-op.
 ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family TEXT;
 
+-- Issue #408 (ADR-0037: "Design family keeps both the caller's spelling and
+-- the registry's canonical name"). `design_family` immediately above is
+-- never rewritten -- it stays whatever string the caller (a human, via the
+-- ARCHITECTURE/REDESIGN_DECISION step) actually typed, e.g. "patch_antenna"
+-- or "PATCH". `orchestration/design_loop.py`'s ARCHITECTURE step already
+-- resolves that string against `designs/design_families.py`'s registry and
+-- computes a canonical payload (`recorded["design_family_registry"]
+-- ["canonical_name"]`) so two runs spelling the same family differently
+-- still group together for #150/#151 -- this column is where that
+-- already-computed value lands, alongside the raw one, rather than merging
+-- the two into one field (which would silently rewrite what the caller
+-- wrote) or re-deriving the canonical name a second time on read. Nullable,
+-- same "ALTER TABLE ADD COLUMN IF NOT EXISTS" pattern as design_family
+-- immediately above, for the same reason: only architecture_decision/
+-- redesign_decision rows ever carry a value.
+ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family_canonical TEXT;
+
 -- Issue #322 (ADR-0025's Considered-and-dropped ledger; CONTEXT.md's entry
 -- of the same name). Per entry: the family weighed, whether it was kept or
 -- dropped, a free-text reason, and a reason kind

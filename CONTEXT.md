@@ -559,19 +559,21 @@ and a glossary that churns with it stops being trustworthy (see
   written as `PATCH` still group together (ADR-0037). #150 and #151 key off
   the canonical field, not the raw one. Selection stays human-authored: the
   loop does not attempt to infer a family from a requirement's prose.
-  The raw spelling persists through the ADR-0011 flush (#167): `db/schema.sql`'s
-  `decision_records` table has a nullable `design_family` column, and
+  Both the raw spelling and the canonical name persist through the ADR-0011
+  flush (#167, #408): `db/schema.sql`'s `decision_records` table has nullable
+  `design_family`/`design_family_canonical` columns, and
   `orchestration/tooling.py`'s `_flush_target_for`/`_flush_decisions` write
-  it for every `architecture_decision`/`redesign_decision` row. The canonical
-  name is already computed at ARCHITECTURE time (`design_loop.py`'s
-  `design_family_registry`/`canonical_name`) but does not yet reach that same
-  flush -- threading it through to a companion column is tracked separately
-  so #150 and #151 can read a real grouping key back out via `read_design`
-  rather than only seeing it in one design-loop session's in-memory state.
-  `_handle_architecture` always
-  states `design_family`, but `_handle_redesign_decision` never asks for
-  one — `_flush_decisions` reconciles that by carrying forward the most
-  recently stated `design_family` to every decision recorded after it,
+  both for every `architecture_decision`/`redesign_decision` row --
+  `design_family_canonical` carries the value `design_loop.py`'s
+  ARCHITECTURE step already computed
+  (`design_family_registry`/`canonical_name`) through the flush boundary
+  rather than re-deriving it on read, so #150 and #151 can read a real
+  grouping key back out via `read_design` rather than only seeing it in one
+  design-loop session's in-memory state.
+  `_handle_architecture` always states `design_family` (and, alongside it,
+  the registry's canonical name), but `_handle_redesign_decision` never asks
+  for either — `_flush_decisions` reconciles that by carrying forward the
+  most recently stated value of each to every decision recorded after it,
   rather than persisting `NULL` for a redesign decision that is, in fact,
   about a perfectly well-known family (the one its iteration's own
   ARCHITECTURE step already declared); see that function's own docstring,
