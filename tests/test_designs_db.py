@@ -1,5 +1,6 @@
 import psycopg
 import pytest
+from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from designs.db import (
@@ -1009,6 +1010,131 @@ def test_record_decision_persists_and_round_trips_capability_warnings(db_conn):
     (dr,) = result["decision_records"]
     assert dr["capability_warnings"] == warnings
     assert dr["considered_and_dropped"] == []
+
+
+def test_record_decision_writes_capability_warning_entries_to_own_table(db_conn):
+    """Issue #397 (parent #393): capability_warnings entries must actually
+    land as rows in `capability_warning_entries`, each correctly FK'd back
+    to the decision_records row that carries them -- not merely readable
+    back out through record_decision's return value/read_design (the test
+    immediately above proves that unchanged shape; this proves the
+    underlying storage really moved off the JSON blob, per the acceptance
+    criterion "record_decision writes entries there instead of a JSON
+    blob")."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-CAPWARN-TABLE")
+    warnings = [
+        {
+            "family": "patch_antenna",
+            "capability_kind": "fabrication",
+            "capability_property": "min_feature_size_mm",
+            "value": 0.2,
+            "comparator": "AT_MOST",
+            "unit": "mm",
+            "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+        },
+        {
+            "family": "patch_antenna",
+            "capability_kind": "ink",
+            "capability_property": "sheet_resistance_ohm_per_sq",
+            "value": 0.05,
+            "comparator": "AT_MOST",
+            "unit": "ohm/sq",
+            "reason": "needs 0.05 ohm/sq; loaded ink measures 0.2 ohm/sq",
+        },
+    ]
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-CAPWARN-TABLE-architecture",
+        decision="checkerboard AMC absorber",
+        alternatives=[],
+        rationale="best absorption for the stated band",
+        evidence=[],
+        design_family="patch_antenna",
+        capability_warnings=warnings,
+    )
+
+    with db_conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT decision_record_id, family, capability_kind, capability_property, "
+            "value, comparator, unit, reason FROM capability_warning_entries "
+            "WHERE decision_record_id = %s ORDER BY id",
+            (row["id"],),
+        )
+        stored = cur.fetchall()
+
+    assert len(stored) == 2
+    for stored_entry, expected in zip(stored, warnings, strict=True):
+        assert stored_entry["decision_record_id"] == row["id"]
+        assert stored_entry["family"] == expected["family"]
+        assert stored_entry["capability_kind"] == expected["capability_kind"]
+        assert stored_entry["capability_property"] == expected["capability_property"]
+        assert stored_entry["value"] == expected["value"]
+        assert stored_entry["comparator"] == expected["comparator"]
+        assert stored_entry["unit"] == expected["unit"]
+        assert stored_entry["reason"] == expected["reason"]
+
+
+def test_record_decision_writes_no_capability_warning_entries_when_none_given(db_conn):
+    """No caller-stated capability_warnings -> zero child-table rows, not a
+    row carrying an empty JSON placeholder -- the child-table-level version
+    of test_record_decision_defaults_capability_warnings_to_empty_list
+    above."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-CAPWARN-TABLE-EMPTY")
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-CAPWARN-TABLE-EMPTY-topology",
+        decision="Used a pi-network instead of an L-network.",
+        alternatives=[],
+        rationale="Pi-network gives an extra degree of freedom for Q.",
+        evidence=[],
+    )
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM capability_warning_entries WHERE decision_record_id = %s",
+            (row["id"],),
+        )
+        (count,) = cur.fetchone()
+    assert count == 0
+
+
+def test_capability_warning_entries_cascade_delete_with_their_decision_record(db_conn):
+    """The FK is `ON DELETE CASCADE` (issue #397's acceptance criteria) --
+    an entry cannot outlive the decision_records row that carries it. A
+    real-constraint test against the real database, per this ticket's own
+    testing decisions, not a mocked stand-in."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-CAPWARN-CASCADE")
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-CAPWARN-CASCADE-architecture",
+        decision="checkerboard AMC absorber",
+        alternatives=[],
+        rationale="best absorption for the stated band",
+        evidence=[],
+        capability_warnings=[
+            {
+                "family": "patch_antenna",
+                "capability_kind": "fabrication",
+                "capability_property": "min_feature_size_mm",
+                "value": 0.2,
+                "comparator": "AT_MOST",
+                "unit": "mm",
+                "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+            }
+        ],
+    )
+
+    with db_conn.cursor() as cur:
+        cur.execute("DELETE FROM decision_records WHERE id = %s", (row["id"],))
+        cur.execute(
+            "SELECT count(*) FROM capability_warning_entries WHERE decision_record_id = %s",
+            (row["id"],),
+        )
+        (count,) = cur.fetchone()
+    assert count == 0
 
 
 def test_record_decision_round_trips_alternatives_and_evidence_as_jsonb(db_conn):

@@ -877,9 +877,9 @@ def reevaluate_capability_warnings(
     "re-evaluated every run against the current manufacturing configuration
     and clears automatically when the configuration improves enough." A
     WHOLLY SEPARATE query from `reevaluate_capability_verdicts` above (issue
-    #324 acceptance criterion 3): reads a different column
-    (`capability_warnings`, never `considered_and_dropped`) and checks
-    against a different axis entirely.
+    #324 acceptance criterion 3): reads a different table entirely
+    (`capability_warning_entries`, never `considered_and_dropped`) and
+    checks against a different axis entirely.
 
     Unlike `reevaluate_capability_verdicts`, which re-reads the design's own
     `requirements` straight from the database (a per-design fact this
@@ -894,8 +894,13 @@ def reevaluate_capability_warnings(
     signature differs from its capability-verdict counterpart -- not an
     oversight.
 
-    Scans every `decision_records` row this design has, same "read whatever
-    is actually there" approach as `reevaluate_capability_verdicts`.
+    Issue #397 (parent #393): queries `capability_warning_entries` directly
+    via `designs.db.read_capability_warning_entries` -- a single indexed
+    join scoped to this `design_id` -- instead of the old approach of
+    calling `read_design` for its full aggregated payload and looping over
+    each decision record's embedded `capability_warnings` JSON list in
+    Python. `capability_warning_holds`'s own re-check logic is unchanged;
+    only where the entries come from changed.
 
     Returns one dict per `capability_warnings` entry found, `{"record_key",
     "family", "capability_kind", "capability_property", "status"}` where
@@ -911,26 +916,25 @@ def reevaluate_capability_warnings(
     """
     conn = designs_db.get_connection()
     try:
-        design = designs_db.read_design(conn, design_id)
+        entries = designs_db.read_capability_warning_entries(conn, design_id)
     finally:
         conn.close()
-    if design is None:
+    if entries is None:
         raise DesignLoopPersistenceError(
             f"reevaluate_capability_warnings: no design found for design_id={design_id!r}"
         )
 
     results: list[dict[str, Any]] = []
-    for row in design["decision_records"]:
-        for entry in row.get("capability_warnings") or []:
-            still_holds = capability_warning_holds(entry, capability_configuration)
-            status = "unresolved" if still_holds else "resolved"
-            results.append(
-                {
-                    "record_key": row["record_key"],
-                    "family": entry.get("family"),
-                    "capability_kind": entry.get("capability_kind"),
-                    "capability_property": entry.get("capability_property"),
-                    "status": status,
-                }
-            )
+    for entry in entries:
+        still_holds = capability_warning_holds(entry, capability_configuration)
+        status = "unresolved" if still_holds else "resolved"
+        results.append(
+            {
+                "record_key": entry["record_key"],
+                "family": entry["family"],
+                "capability_kind": entry["capability_kind"],
+                "capability_property": entry["capability_property"],
+                "status": status,
+            }
+        )
     return results

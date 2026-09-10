@@ -31,6 +31,7 @@ from conftest import make_fake_executable
 from dotenv import load_dotenv
 from psycopg.types.json import Json
 
+import designs.db as designs_db
 from designs.db import get_connection, record_decision
 from designs.requirement_targets import (
     confirm_requirement_target,
@@ -1384,6 +1385,63 @@ def test_reevaluate_capability_warnings_flips_to_resolved_once_configuration_imp
 def test_reevaluate_capability_warnings_raises_for_an_unknown_design_id():
     with pytest.raises(DesignLoopPersistenceError, match="no design found"):
         reevaluate_capability_warnings(-1, {})
+
+
+def test_reevaluate_capability_warnings_reads_the_entries_table_directly(cleanup_designs):
+    """Issue #397 acceptance criterion 3: this function queries
+    `capability_warning_entries` directly, not `read_design`'s aggregated
+    JSON -- proved here against a decision record written straight through
+    `designs.db.record_decision`, with no design loop involved at all (the
+    design loop's own ADR-0011 flush is exercised separately by
+    test_flush_persists_a_capability_warning_entry above). Since
+    `record_decision` (issue #397) no longer writes real content into
+    `decision_records.capability_warnings`, this entry is only visible AT
+    ALL if the read path really is the new table -- a `read_design`-based
+    implementation would see an empty list here and return `[]`."""
+    conn = designs_db.get_connection()
+    try:
+        design_row = designs_db.create_design(
+            conn,
+            design_key="TOOL-CAPWARN-DIRECT",
+            name="Direct Capability Warning Table Read Test",
+            revision="A",
+            requirements={},
+            architecture={},
+        )
+        design_id = design_row["id"]
+        cleanup_designs.append(design_id)
+        designs_db.record_decision(
+            conn,
+            design_id=design_id,
+            record_key="TOOL-CAPWARN-DIRECT-architecture",
+            decision="checkerboard AMC absorber",
+            alternatives=[],
+            rationale="best absorption for the stated band",
+            evidence=[],
+            design_family="patch_antenna",
+            capability_warnings=[_capability_warning_entry()],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    still_short = reevaluate_capability_warnings(
+        design_id, {"fabrication": {"min_feature_size_mm": 0.5}}
+    )
+    assert still_short == [
+        {
+            "record_key": "TOOL-CAPWARN-DIRECT-architecture",
+            "family": "patch_antenna",
+            "capability_kind": "fabrication",
+            "capability_property": "min_feature_size_mm",
+            "status": "unresolved",
+        }
+    ]
+
+    now_resolved = reevaluate_capability_warnings(
+        design_id, {"fabrication": {"min_feature_size_mm": 0.15}}
+    )
+    assert now_resolved[0]["status"] == "resolved"
 
 
 def test_capability_verdict_and_capability_warning_reevaluations_are_independent(

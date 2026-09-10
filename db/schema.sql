@@ -833,3 +833,62 @@ ON considered_and_dropped_entries (decision_record_id);
 -- grows.
 CREATE INDEX IF NOT EXISTS considered_and_dropped_entries_reason_kind_idx
 ON considered_and_dropped_entries (reason_kind);
+
+-- Issue #397 (#393's Capability warning half; ADR-0025's 2026-09-09
+-- correction). `decision_records.capability_warnings` (added above, issue
+-- #324) is a JSONB array with no index -- "list every entry ever warned
+-- for lacking fabrication capability" can only be answered today by
+-- unpacking that JSON on every decision_records row in application code.
+-- This table gives each entry its own row instead, one per entry, so that
+-- query becomes ordinary indexed SQL. `designs/db.py::record_decision`
+-- writes here now, in the same transaction as the decision_records insert
+-- that owns it; `decision_records.capability_warnings` itself is retired
+-- as a source of truth (record_decision no longer writes real content into
+-- it -- issue #393's "nothing should read them as authoritative after this
+-- ships") but is left in place rather than dropped, per that issue's own
+-- "either way" allowance, since dropping it is a separate migration this
+-- ticket doesn't need.
+--
+-- Columns mirror the entry shape `orchestration.design_loop.
+-- _validate_capability_warnings` already enforces at write time: `family`
+-- (which design family the warning is attached to), `capability_kind` (one
+-- of "fabrication"/"ink"/"material" -- which of the three capability
+-- sources fell short), `capability_property` (e.g.
+-- "min_feature_size_mm"), the stated need in the same `value`/`comparator`/
+-- `unit` shape a Requirement target uses, and a free-text `reason`. No
+-- CHECK constraint on `capability_kind`'s closed vocabulary here -- same
+-- discipline as `material_properties.provenance` elsewhere in this file:
+-- the closed set is enforced in Python
+-- (`orchestration.design_loop._CAPABILITY_KINDS`), not duplicated in SQL.
+--
+-- `ON DELETE CASCADE` matches every other decision_records-owned child
+-- row in this schema (there are none yet, but this is the same pattern
+-- `document_chunks.document_id`/`symbol_alphabet_entries.process_id`
+-- already use for their own parent tables) -- an entry cannot outlive the
+-- decision record that carries it.
+--
+-- Two indexes, both named in issue #393's own Implementation Decisions:
+-- `decision_record_id` for the per-design join `designs.db.
+-- read_capability_warning_entries` runs (the FK alone constrains the
+-- column but does not itself create an index on it, unlike a PRIMARY KEY),
+-- and `capability_kind` for the cross-design worklist query issue #393
+-- names as the actual payoff ("list every entry ever warned for lacking a
+-- given capability kind").
+CREATE TABLE IF NOT EXISTS capability_warning_entries (
+    id BIGSERIAL PRIMARY KEY,
+    decision_record_id BIGINT NOT NULL REFERENCES decision_records(id) ON DELETE CASCADE,
+    family TEXT NOT NULL,
+    capability_kind TEXT NOT NULL,
+    capability_property TEXT NOT NULL,
+    value DOUBLE PRECISION NOT NULL,
+    comparator TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS capability_warning_entries_decision_record_id_idx
+ON capability_warning_entries (decision_record_id);
+
+CREATE INDEX IF NOT EXISTS capability_warning_entries_capability_kind_idx
+ON capability_warning_entries (capability_kind);
