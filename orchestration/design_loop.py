@@ -1824,6 +1824,14 @@ def _simulate_nec2(
 
     result = {
         **result,
+        # Which function actually ran, stated on the result itself -- the
+        # same key `_simulate_meep_floquet`/`_simulate_palace_floquet`
+        # already record, and the one `orchestration/tooling.py`'s flush
+        # reads for `engineering_results.tool_name` (issue #334). Without
+        # it this branch would depend on a per-step default to be labelled
+        # correctly, which is precisely how every Meep and Palace run came
+        # to be filed under NEC2's name.
+        "function": "run_nec2_simulation",
         "reference_impedance_ohms": reference_impedance_ohms,
         "reflection_coefficient_magnitude": reflection_coefficient_magnitude,
         "vswr": vswr,
@@ -2038,6 +2046,15 @@ def _combinatorial_result_to_dict(result: Any) -> dict[str, Any]:
         )
     ]
     return {
+        # Which search actually ran, stated the same way every other
+        # family-dispatched step states it (issue #334), so
+        # `orchestration/tooling.py`'s flush files this row under the
+        # combinatorial search rather than under the continuous patch-length
+        # one this family never touched. `method` happens to carry the same
+        # string here, but it is not the same fact: on the CONTINUOUS path
+        # `method` is the search algorithm ("parameter_sweep"/
+        # "bayesian_optimize"), so a reader cannot use it as a tool name.
+        "function": "combinatorial_symbol_placement",
         "method": result.method,
         "layout": result.layout,
         "achieved_error": result.achieved_error,
