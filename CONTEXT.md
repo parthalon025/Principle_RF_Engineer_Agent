@@ -553,17 +553,22 @@ and a glossary that churns with it stops being trustworthy (see
   document** reaches `CONFIRMED` (ADR-0034). The name is validated against the Design family registry
   (`designs/design_families.py`, #109/ADR-0018): an unrecognised family is
   rejected at the ARCHITECTURE step rather than persisted as a grouping key
-  nothing downstream recognises. The caller's own spelling is kept verbatim
-  and the registry's canonical name recorded alongside it, so a run written
-  as `patch_antenna` and one written as `PATCH` still group together. #150
-  and #151 key off this field. Selection stays human-authored: the loop does
-  not attempt to infer a family from a requirement's prose.
-  Persists through the ADR-0011 flush (#167): `db/schema.sql`'s
+  nothing downstream recognises. The caller's own spelling is kept verbatim,
+  never silently rewritten, and the registry's canonical name is kept
+  alongside it as its own field, so a run written as `patch_antenna` and one
+  written as `PATCH` still group together (ADR-0037). #150 and #151 key off
+  the canonical field, not the raw one. Selection stays human-authored: the
+  loop does not attempt to infer a family from a requirement's prose.
+  The raw spelling persists through the ADR-0011 flush (#167): `db/schema.sql`'s
   `decision_records` table has a nullable `design_family` column, and
   `orchestration/tooling.py`'s `_flush_target_for`/`_flush_decisions` write
-  it for every `architecture_decision`/`redesign_decision` row, so #150 and
-  #151 can read it back out via `read_design` rather than only seeing it in
-  one design-loop session's in-memory state. `_handle_architecture` always
+  it for every `architecture_decision`/`redesign_decision` row. The canonical
+  name is already computed at ARCHITECTURE time (`design_loop.py`'s
+  `design_family_registry`/`canonical_name`) but does not yet reach that same
+  flush -- threading it through to a companion column is tracked separately
+  so #150 and #151 can read a real grouping key back out via `read_design`
+  rather than only seeing it in one design-loop session's in-memory state.
+  `_handle_architecture` always
   states `design_family`, but `_handle_redesign_decision` never asks for
   one — `_flush_decisions` reconciles that by carrying forward the most
   recently stated `design_family` to every decision recorded after it,
