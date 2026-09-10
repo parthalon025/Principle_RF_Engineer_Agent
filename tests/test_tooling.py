@@ -31,6 +31,7 @@ from conftest import make_fake_executable
 from dotenv import load_dotenv
 from psycopg.types.json import Json
 
+from designs.db import get_connection, record_decision
 from designs.requirement_targets import (
     confirm_requirement_target,
     propose_requirement_target,
@@ -1237,6 +1238,61 @@ def test_reevaluate_capability_verdicts_skips_non_capability_verdict_entries(
 def test_reevaluate_capability_verdicts_raises_for_an_unknown_design_id():
     with pytest.raises(DesignLoopPersistenceError, match="no design found"):
         reevaluate_capability_verdicts(-1)
+
+
+def test_reevaluate_capability_verdicts_aggregates_entries_across_multiple_decision_records(
+    cleanup_designs,
+):
+    """Issue #396 regression: reevaluate_capability_verdicts moved from
+    looping over read_design's aggregated considered_and_dropped JSON to
+    querying considered_and_dropped_entries directly
+    (designs.db.find_capability_verdict_entries) -- this proves the
+    OUTCOME is unchanged for a case the single-decision-record tests above
+    don't exercise: capability-verdict entries recorded on TWO SEPARATE
+    decision_records rows for the same design are still all found and
+    aggregated together, in decision_records.id order, exactly as they
+    would have been read out of read_design's old aggregated view."""
+    state = start_new_design_loop(
+        "TOOL-LEDGER-MULTI", "Capability Verdict Multi-Record Test", "A", CURVATURE_REQUIREMENTS
+    )
+    design_id = state["design_id"]
+    cleanup_designs.append(design_id)
+
+    conn = get_connection()
+    try:
+        record_decision(
+            conn,
+            design_id=design_id,
+            record_key="TOOL-LEDGER-MULTI-manual-1",
+            decision="rectangular microstrip patch on FR4",
+            alternatives=[],
+            rationale="meets band/gain target with a simple, low-cost fabrication",
+            evidence=[],
+            design_family="patch_antenna",
+            considered_and_dropped=[_capability_verdict_entry(family="reflection_phase_surface")],
+        )
+        record_decision(
+            conn,
+            design_id=design_id,
+            record_key="TOOL-LEDGER-MULTI-manual-2",
+            decision="revisit after simulation",
+            alternatives=[],
+            rationale="checking a second family too",
+            evidence=[],
+            design_family="patch_antenna",
+            considered_and_dropped=[_capability_verdict_entry(family="checkerboard_amc")],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    results = reevaluate_capability_verdicts(design_id)
+    assert [r["record_key"] for r in results] == [
+        "TOOL-LEDGER-MULTI-manual-1",
+        "TOOL-LEDGER-MULTI-manual-2",
+    ]
+    assert [r["family"] for r in results] == ["reflection_phase_surface", "checkerboard_amc"]
+    assert all(r["status"] == "excluded" for r in results)
 
 
 # ---------------------------------------------------------------------------

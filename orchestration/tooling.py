@@ -811,15 +811,17 @@ def reevaluate_capability_verdicts(design_id: int) -> list[dict[str, Any]]:
     docstring) -- a read-only query a caller runs whenever it wants a fresh
     view (e.g. before proposing a new ARCHITECTURE decision), same "fresh
     read, never a frozen snapshot" spirit as `_fresh_requirements` above,
-    which this function reuses the same connection/read pattern from.
+    which this function reuses the same connection/read pattern from for
+    `requirements` (and for the existence check below).
 
-    Scans every `decision_records` row this design has -- ARCHITECTURE and
-    REDESIGN_DECISION rows are the only ones that ever carry a
-    `considered_and_dropped` ledger (orchestration.design_loop's step
-    handlers), but this reads whatever is actually there rather than
-    assuming which record_key suffixes exist. Non-capability-verdict
-    entries (human-decision/engineering-judgment) are skipped entirely --
-    ADR-0025's own rule is that only a capability-verdict ever expires.
+    ISSUE #396: the entries themselves come from `designs.db.
+    find_capability_verdict_entries` -- a direct, indexed
+    `considered_and_dropped_entries` query scoped to this `design_id` --
+    not from looping over `read_design`'s aggregated `considered_and_
+    dropped` JSON in Python. That query already filters to
+    `reason_kind="capability-verdict"` at the database layer (ADR-0025's
+    own rule that only a capability-verdict ever expires), so nothing here
+    re-checks `reason_kind` itself the way the pre-#396 version had to.
 
     Returns one dict per capability-verdict entry found, `{"record_key",
     "family", "requirement_id", "validity_box_property", "status"}` where
@@ -841,30 +843,29 @@ def reevaluate_capability_verdicts(design_id: int) -> list[dict[str, Any]]:
     conn = designs_db.get_connection()
     try:
         design = designs_db.read_design(conn, design_id)
+        if design is None:
+            raise DesignLoopPersistenceError(
+                f"reevaluate_capability_verdicts: no design found for design_id={design_id!r}"
+            )
+        requirements = design["requirements"]
+        verdict_rows = designs_db.find_capability_verdict_entries(conn, design_id=design_id)
     finally:
         conn.close()
-    if design is None:
-        raise DesignLoopPersistenceError(
-            f"reevaluate_capability_verdicts: no design found for design_id={design_id!r}"
-        )
 
-    requirements = design["requirements"]
     results: list[dict[str, Any]] = []
-    for row in design["decision_records"]:
-        for entry in row.get("considered_and_dropped") or []:
-            if entry.get("reason_kind") != "capability-verdict":
-                continue
-            still_holds = capability_verdict_holds(entry, requirements)
-            status = "excluded" if still_holds else "reconsiderable"
-            results.append(
-                {
-                    "record_key": row["record_key"],
-                    "family": entry.get("family"),
-                    "requirement_id": entry.get("requirement_id"),
-                    "validity_box_property": entry.get("validity_box_property"),
-                    "status": status,
-                }
-            )
+    for row in verdict_rows:
+        entry = row["entry"]
+        still_holds = capability_verdict_holds(entry, requirements)
+        status = "excluded" if still_holds else "reconsiderable"
+        results.append(
+            {
+                "record_key": row["record_key"],
+                "family": entry.get("family"),
+                "requirement_id": entry.get("requirement_id"),
+                "validity_box_property": entry.get("validity_box_property"),
+                "status": status,
+            }
+        )
     return results
 
 

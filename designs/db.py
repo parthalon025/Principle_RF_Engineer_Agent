@@ -170,11 +170,22 @@ def record_decision(
     `considered_and_dropped` (issue #322; ADR-0025's Considered-and-dropped
     ledger) is optional, defaulting to `[]` -- same "only a design-loop
     ARCHITECTURE/REDESIGN_DECISION call ever states one" shape as
-    `design_family` immediately above. This function stores it verbatim; the
-    `reason_kind="capability-verdict"` narrowing (issue #322) is enforced
-    upstream, by `orchestration.design_loop`'s step validation, before a
-    decision ever reaches this write path -- this is a storage layer, not a
-    second place to re-check the rule.
+    `design_family` immediately above. The `reason_kind="capability-verdict"`
+    narrowing (issue #322) is enforced upstream, by
+    `orchestration.design_loop`'s step validation, before a decision ever
+    reaches this write path -- this is a storage layer, not a second place
+    to re-check the rule.
+
+    ISSUE #396: each entry is inserted as its own row in
+    `considered_and_dropped_entries` (FK'd to the `decision_records` row
+    just inserted, on the SAME connection/transaction -- no commit happens
+    in between), not written into `decision_records.considered_and_dropped`
+    any more -- that column is left at its own schema default (`'[]'::jsonb`)
+    from here on. The row this function returns, and every entry
+    `read_design` reports for this decision, are reconstructed from that
+    table (`_read_considered_and_dropped_entries`) rather than read back off
+    the column, so both stay byte-for-byte identical to what a caller
+    actually passed in here.
 
     `capability_warnings` (issue #324; ADR-0025's 2026-09-09 correction;
     CONTEXT.md's "Capability warning") is optional, defaulting to `[]` --
@@ -183,7 +194,9 @@ def record_decision(
     never one of that ledger's entries). Same "only a design-loop
     ARCHITECTURE/REDESIGN_DECISION call ever states one" shape, and stored
     verbatim for the same reason: the shape check (issue #324) is enforced
-    upstream, by `orchestration.design_loop`'s step validation.
+    upstream, by `orchestration.design_loop`'s step validation. NOT moved to
+    its own table by this ticket -- that is sibling issue #397's separate,
+    independently-scoped work.
     """
     existing = find_decision_by_record_key(conn, record_key)
     if existing is not None:
@@ -195,9 +208,9 @@ def record_decision(
             INSERT INTO decision_records
                 (design_id, record_key, decision, alternatives, rationale,
                  evidence, design_family, design_family_canonical,
-                 considered_and_dropped, capability_warnings,
+                 capability_warnings,
                  approval_required, approval_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -209,7 +222,6 @@ def record_decision(
                 Json(evidence),
                 design_family,
                 design_family_canonical,
-                Json(considered_and_dropped if considered_and_dropped is not None else []),
                 Json(capability_warnings if capability_warnings is not None else []),
                 approval_required,
                 "PENDING",
@@ -218,7 +230,171 @@ def record_decision(
         row = cur.fetchone()
         assert row is not None
 
+    _insert_considered_and_dropped_entries(conn, row["id"], considered_and_dropped or [])
+    row["considered_and_dropped"] = _read_considered_and_dropped_entries(conn, [row["id"]]).get(
+        row["id"], []
+    )
+
     return row
+
+
+def _insert_considered_and_dropped_entries(
+    conn: psycopg.Connection, decision_record_id: int, entries: list[dict[str, Any]]
+) -> None:
+    """Insert one `considered_and_dropped_entries` row per entry in
+    `entries`, preserving each entry's position in the original list as
+    `entry_index` -- the write half of `_read_considered_and_dropped_entries`
+    below (issue #396). A no-op for an empty list, so a caller that never
+    stated a ledger causes no query at all.
+
+    Every entry here has already passed
+    `orchestration.design_loop._validate_considered_and_dropped` (this
+    module's own long-standing contract: `record_decision` stores what it is
+    given, it does not re-validate the shape) -- `family`/`verdict`/
+    `reason`/`reason_kind` are always present; `requirement_id`/
+    `validity_box_property`/`theta_max_deg` are read with `.get(...)`
+    (`None` when absent) since only a `reason_kind="capability-verdict"`
+    entry ever states them.
+    """
+    if not entries:
+        return
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO considered_and_dropped_entries
+                (decision_record_id, entry_index, family, verdict, reason, reason_kind,
+                 requirement_id, validity_box_property, theta_max_deg)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                (
+                    decision_record_id,
+                    index,
+                    entry["family"],
+                    entry["verdict"],
+                    entry["reason"],
+                    entry["reason_kind"],
+                    entry.get("requirement_id"),
+                    entry.get("validity_box_property"),
+                    entry.get("theta_max_deg"),
+                )
+                for index, entry in enumerate(entries)
+            ],
+        )
+
+
+def _entry_dict_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Build one considered_and_dropped ledger entry dict from a
+    `considered_and_dropped_entries` row (or an equivalent dict carrying the
+    same keys, e.g. `find_capability_verdict_entries`'s joined query) --
+    shared by every reader of this table (issue #396) so they all
+    reconstruct an entry the exact same way: `requirement_id`/
+    `validity_box_property`/`theta_max_deg` are omitted from the returned
+    dict entirely when NULL, never carried as an explicit `None`, so a plain
+    human-decision/engineering-judgment entry (which never states them)
+    round-trips byte-for-byte identical to what `record_decision` was
+    originally called with."""
+    entry: dict[str, Any] = {
+        "family": row["family"],
+        "verdict": row["verdict"],
+        "reason": row["reason"],
+        "reason_kind": row["reason_kind"],
+    }
+    for optional_field in ("requirement_id", "validity_box_property", "theta_max_deg"):
+        if row.get(optional_field) is not None:
+            entry[optional_field] = row[optional_field]
+    return entry
+
+
+def _read_considered_and_dropped_entries(
+    conn: psycopg.Connection, decision_record_ids: list[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Reconstruct the considered_and_dropped ledger for every id in
+    `decision_record_ids` from `considered_and_dropped_entries` (issue
+    #396), in original `entry_index` order -- one query regardless of how
+    many ids are asked for, the same "IN-list, not N+1" shape
+    `read_engineering_results_for_scoring` already established. Used by
+    both `record_decision` (a single freshly-inserted id) and `read_design`
+    (every decision_records row a design has).
+
+    Returns `{decision_record_id: [entry, ...]}`; an id with no entries
+    recorded is simply absent from the dict (the caller already defaults a
+    miss to `[]`, matching `read_engineering_results_for_scoring`'s own
+    "empty list on a miss" contract at the call site rather than here).
+    `decision_record_ids=[]` returns `{}` without querying at all.
+    """
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    if not decision_record_ids:
+        return grouped
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT decision_record_id, family, verdict, reason, reason_kind,
+                   requirement_id, validity_box_property, theta_max_deg
+            FROM considered_and_dropped_entries
+            WHERE decision_record_id = ANY(%s)
+            ORDER BY decision_record_id, entry_index
+            """,
+            (list(decision_record_ids),),
+        )
+        rows = cur.fetchall()
+
+    for row in rows:
+        grouped.setdefault(row["decision_record_id"], []).append(_entry_dict_from_row(row))
+    return grouped
+
+
+def find_capability_verdict_entries(
+    conn: psycopg.Connection, design_id: int | None = None
+) -> list[dict[str, Any]]:
+    """Every `reason_kind="capability-verdict"` `considered_and_dropped_
+    entries` row, joined through `decision_records` (issue #396).
+
+    `design_id=None` (the default) is ADR-0025's own named payoff query --
+    CONTEXT.md's Considered-and-dropped ledger entry: "every entry dropped
+    as a capability-verdict is exactly what relaxing that requirement
+    unlocks" -- across EVERY design this database holds, not just one.
+    Passing `design_id` scopes it to a single design: the exact query
+    `orchestration.tooling.reevaluate_capability_verdicts` runs (issue #396
+    acceptance criterion 3), instead of looping over `read_design`'s
+    aggregated JSON in Python.
+
+    Returns one dict per matching row, `{"design_id": ..., "record_key":
+    ..., "entry": {...}}` -- `entry` is the same ledger-entry shape
+    `_read_considered_and_dropped_entries` reconstructs, ready to hand
+    straight to `orchestration.design_loop.capability_verdict_holds`
+    unchanged. Ordered by `design_id`, then `decision_records.id`, then
+    `entry_index` -- the same encounter order `read_design`'s own
+    `decision_records ORDER BY id` / entries `ORDER BY entry_index`
+    already establishes.
+    """
+    query = """
+        SELECT dr.design_id, dr.record_key, cde.family, cde.verdict, cde.reason,
+               cde.reason_kind, cde.requirement_id, cde.validity_box_property,
+               cde.theta_max_deg
+        FROM considered_and_dropped_entries cde
+        JOIN decision_records dr ON dr.id = cde.decision_record_id
+        WHERE cde.reason_kind = 'capability-verdict'
+    """
+    params: tuple[Any, ...] = ()
+    if design_id is not None:
+        query += " AND dr.design_id = %s"
+        params = (design_id,)
+    query += " ORDER BY dr.design_id, dr.id, cde.entry_index"
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+    return [
+        {
+            "design_id": row["design_id"],
+            "record_key": row["record_key"],
+            "entry": _entry_dict_from_row(row),
+        }
+        for row in rows
+    ]
 
 
 class DesignKeyRevisionCollisionError(Exception):
@@ -450,7 +626,7 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
 
         cur.execute(
             "SELECT id, record_key, decision, alternatives, rationale, evidence, "
-            "design_family, design_family_canonical, considered_and_dropped, "
+            "design_family, design_family_canonical, "
             "capability_warnings, approval_required, approval_status, created_at "
             "FROM decision_records WHERE design_id = %s ORDER BY id",
             (design_id,),
@@ -464,6 +640,16 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
             (design_id,),
         )
         verification_items = cur.fetchall()
+
+    # Issue #396: considered_and_dropped is no longer a column on the
+    # decision_records row itself -- reconstructed here, one query for every
+    # decision_records row this design has (not N+1), from
+    # considered_and_dropped_entries instead.
+    entries_by_decision_record_id = _read_considered_and_dropped_entries(
+        conn, [row["id"] for row in decision_records]
+    )
+    for row in decision_records:
+        row["considered_and_dropped"] = entries_by_decision_record_id.get(row["id"], [])
 
     return {
         "design_id": design_row["id"],
