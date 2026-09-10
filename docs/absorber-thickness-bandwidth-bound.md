@@ -686,7 +686,45 @@ necessarily means absorption. A surface with a period large enough to launch pro
 diffracted orders redistributes power into other directions without absorbing it. Monostatic
 RCS drops; nothing is dissipated; no absorption budget is spent. Such a surface can achieve
 arbitrarily large monostatic reduction at arbitrarily small thickness, limited by fabrication
-and by scan/angle stability rather than by a causality sum rule. The conserved quantity that
+and by scan/angle stability rather than by a causality sum rule.
+
+**Making the precondition explicit, and checkable.** The exemption above is conditioned on the
+surface having "a period large enough to launch propagating diffracted orders" — but that
+condition is itself arithmetic, and it is checked nowhere in this repo. For a checkerboard (a
+square lattice, two orthogonal periods) at normal incidence, the grating equation gives the
+propagation threshold for each diffracted order `(m, n)`: `sin θ_{m,n} = √((mλ/D)² + (nλ/D)²)`
+must stay `≤ 1`. For a two-phase checkerboard specifically, the 180°-phase reversal between
+adjacent cells cancels the low-order `(±1, 0)`/`(0, ±1)` diffraction by destructive
+interference — that is the well-known "four symmetric diagonal beams" result for a
+phase-cancelling AMC checkerboard — so the **diagonal `(±1, ±1)` order is the first one that
+actually carries power**, and it propagates only once
+
+```
+D ≥ √2 · λ
+```
+
+`CALCULATED`: at 10 GHz, λ = 29.98 mm, so **D ≥ 42.4 mm**; at 14 GHz, λ = 21.41 mm, so
+**D ≥ 30.3 mm**. Below that supercell period, no diffracted channel exists at all — the
+specular mode is the only place for power to go, `|ρ| < 1` necessarily means absorption, and
+every dB of specular (monostatic) reduction the surface reports must have come from
+dissipation, which **is** fully Rozanov-bounded after all. A coding/diffusive candidate whose
+supercell period sits under this threshold at its operating frequency has, in other words,
+quietly re-entered the absorber case this section says it escapes.
+
+**This is checkable per candidate, and it is checked nowhere.** Nothing in the design loop
+currently compares a diffusive-family candidate's supercell period against `√2·λ` (or the
+general two-index grating condition) before treating it as exempt from Rozanov. Per **ADR-0047**,
+a physical bound in this codebase **advises, never gates** — so making this check explicit is a
+recommendation to compute and report the margin (or the shortfall) alongside a diffusive
+candidate's score, **not** a proposal for a new hard gate. Saying so here is deliberate: this
+section already self-flags its own diffusive-exemption argument as `INFERRED` and *"needing
+confirmation before anything depends on it"* — and shipped code
+(`DIFFUSIVE.physical_bound = NO_PHYSICAL_BOUND` in `designs/design_families.py`) already extends
+the exemption by default, i.e. already depends on the precondition holding. Nobody should read
+the arithmetic above as a newly-imposed gate; it is the missing verification for an exemption
+the code already grants.
+
+The conserved quantity that
 *does* bind it is total scattering, not backscatter — the nearest formal statement retrieved is
 Gustafsson, Vakili, Bayer Keskin, Sjöberg & Larsson, *"Optical theorem and forward scattering
 sum rule for periodic structures,"* IEEE Trans. Antennas Propag. 60(8), 3818–3826, 2012, whose

@@ -502,8 +502,12 @@ thin-film regime, RF sheet resistance equals DC sheet resistance exactly: `Rs = 
 | 24 µm | 250 Ω/sq | 2 |
 
 Because the datasheet number is a bound (`< 0.6 Ω·cm`), these are **upper** bounds on `Rs` —
-a better-conducting batch shifts the whole column down, and thickness must rise to compensate.
-That is a calibration coupon, not a blocker.
+a better-conducting batch shifts the whole column down, and **less** thickness is needed to
+compensate and hit a given target `Rs`, not more.
+
+**Correction.** An earlier revision of this line read "thickness must rise to compensate" —
+backwards. `Rs = 1/(σt)`: if `σ` rises at fixed `t`, `Rs` falls, so restoring a target `Rs`
+needs *less* thickness, not more. That is a calibration coupon, not a blocker.
 
 **This is the finding that most changes issue #128.** The issue's Correction 1 — that
 `Rs = 1/σt` demands a 3.85 nm MXene film to hit 377 Ω/sq, and dispensing produces microns — is
