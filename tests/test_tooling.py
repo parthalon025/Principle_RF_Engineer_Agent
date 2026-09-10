@@ -699,7 +699,7 @@ def _fingerprint(state: dict[str, Any], step: DesignStep, step_input: dict) -> d
 
 
 def _grant_and_advance(state: dict[str, Any], step: DesignStep, step_input: dict) -> dict:
-    """`requirements_document_status="CONFIRMED"` (issue #325, docs/adr/0031)
+    """`requirements_document_status="CONFIRMED"` (issue #325, docs/adr/0034)
     is passed unconditionally, the same way `approval` already is -- a
     no-op for every step but ARCHITECTURE, the only one
     advance_design_loop_step reads it for, and keeps every ARCHITECTURE-

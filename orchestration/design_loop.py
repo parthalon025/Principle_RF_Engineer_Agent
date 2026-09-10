@@ -141,10 +141,10 @@ recorded evidence into a verification-matrix entry rather than exercising
 new judgment. REQUIREMENTS is the loop's human-supplied starting input, not
 a step the loop "advances past" via advance_loop_step.
 
-REQUIREMENTS-DOCUMENT GATE (issue #325, docs/adr/0031): ARCHITECTURE carries
+REQUIREMENTS-DOCUMENT GATE (issue #325, docs/adr/0034): ARCHITECTURE carries
 ONE MORE precondition beyond the approval receipt every GATED_STEPS member
 already requires -- the design's Requirements document (designs/
-requirements_document.py, issue #321) must have reached `CONFIRMED` (ADR-0031:
+requirements_document.py, issue #321) must have reached `CONFIRMED` (ADR-0034:
 "you don't pick a physical approach before the customer's actual ask is
 locked in"). This is checked as part of the SAME `if current_step in
 GATED_STEPS:` block in advance_loop_step, immediately after
@@ -439,7 +439,7 @@ def _pending_approval_for(step: DesignStep, completed: bool) -> dict[str, Any] |
 def _require_requirements_document_confirmed(status: str | None) -> None:
     """Raise OrchestrationError naming exactly what's missing unless
     `status` is the design's Requirements document CONFIRMED status
-    (issue #325, docs/adr/0031: "ARCHITECTURE gates on the document
+    (issue #325, docs/adr/0034: "ARCHITECTURE gates on the document
     reaching CONFIRMED"). Called by advance_loop_step for ARCHITECTURE
     only, as one more condition inside the SAME `if current_step in
     GATED_STEPS:` block that already checks the approval receipt -- see
@@ -464,7 +464,7 @@ def _require_requirements_document_confirmed(status: str | None) -> None:
     raise OrchestrationError(
         "Design-loop step advancement refused: the ARCHITECTURE decision may "
         "not run until this design's Requirements document reaches CONFIRMED "
-        f"(docs/adr/0031) -- {detail}. Confirm it "
+        f"(docs/adr/0034) -- {detail}. Confirm it "
         "(designs.requirements_document.transition_requirements_document) "
         "before retrying this exact ARCHITECTURE decision."
     )
@@ -2433,7 +2433,7 @@ def advance_loop_step(
     valid and still shows the loop parked at the gated step).
 
     For ARCHITECTURE specifically, `requirements_document_status` is ALSO
-    checked (issue #325, docs/adr/0031; see this module's own docstring's
+    checked (issue #325, docs/adr/0034; see this module's own docstring's
     "REQUIREMENTS-DOCUMENT GATE" section) -- it must equal `"CONFIRMED"`
     (`designs.requirements_document.DocumentStatus.CONFIRMED.value`) or the
     same OrchestrationError is raised, naming what's missing, with `state`
