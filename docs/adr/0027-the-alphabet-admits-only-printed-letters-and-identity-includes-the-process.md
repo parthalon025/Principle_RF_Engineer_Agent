@@ -188,3 +188,38 @@ family.
 - **#207 blocks #132**, which cannot define its own pass/fail test
   without the admission gate this ADR establishes. The gate's *numbers*
   still wait on #115 and #106.
+
+## Corrections
+
+### 2026-09-10 — a machine-blocked candidate is a Capability warning, not a `capability-verdict`
+
+**What this ADR said:**
+
+> A candidate blocked because no configured machine can make it is exactly
+> a `capability-verdict` under ADR-0025's 2026-09-08 correction, so it
+> resurfaces by query the day equipment changes rather than being lost.
+
+**Why that was wrong.** ADR-0025's own 2026-09-09 correction — filed the
+day after this ADR's text above was written, and never propagated back
+here — narrowed `capability-verdict` to mean exactly one thing: a family
+outside its own characterised **Validity box** for what the requirement
+states (today, curvature exceeding `S ≤ 2·θ_max·R`). An equipment, ink or
+material shortfall — "no configured machine can make it today" — is a
+different case, split out into a separate **Capability warning**
+mechanism (ADR-0030) that states the gap without dropping the candidate
+from the batch at all.
+
+**What is true instead.** A literature element the shop cannot yet build
+does not sit as a *dropped* `capability-verdict` entry waiting to
+resurface — under the corrected model it is never dropped in the first
+place. It stays a candidate in ADR-0025's ledger, or is scored with a
+Capability warning attached, per the requirement-target shape
+ADR-0030/ADR-0035 describe. The equipment-change worklist this ADR
+promised is built from unresolved Capability warnings, not from ledger
+exclusions — exactly as ADR-0025's 2026-09-09 correction already
+concluded for the fabrication-equipment case generally.
+
+This is an **amendment, not a supersede** (ADR-0020): the decision that a
+literature element enters as a candidate/hypothesis, never as a library
+entry, until printed, is unchanged. Only the label naming *why* a
+not-yet-buildable element is not yet an entry was wrong.
