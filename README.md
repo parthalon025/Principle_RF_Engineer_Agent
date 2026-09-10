@@ -193,7 +193,7 @@ discipline needs:
 ├── measurement/      # externally-obtained results only (no instrument control)
 ├── verification/     # verification matrix, retrieval-quality gate, simulator reference cases
 ├── knowledge/        # ingestion, embedding, extraction, component lookup
-├── db/               # Postgres schema + init
+├── db/               # Postgres schema + init, and the shared connection pool
 ├── policies/         # tool_policy.yaml (the permission model)
 ├── prompts/          # principal-engineer system prompt
 ├── tests/

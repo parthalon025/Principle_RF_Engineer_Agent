@@ -13,6 +13,20 @@ dependencies = [
   "matplotlib>=3.9",
   "pydantic>=2.12",
   "psycopg[binary]>=3.2",
+  # The shared connection pool behind designs/db.py's and knowledge/db.py's
+  # get_connection() (issue #406). psycopg-pool is psycopg's own companion
+  # package -- same maintainers, same release train, LGPL like psycopg
+  # itself -- so it adds no new licence row and no new transitive
+  # dependency beyond psycopg, which is already a hard dependency here.
+  # It is NOT an optional extra: every database-touching code path in this
+  # repo goes through those two get_connection() functions, so an install
+  # without it could not talk to Postgres at all.
+  #
+  # >=3.3 specifically, not >=3.2: db/pool.py depends on `close_returns=True`
+  # -- the option that makes a caller's `conn.close()` a return to the pool
+  # rather than a disconnect -- and that option first exists in 3.3. Without
+  # it every existing `conn.close()` call site would have to change.
+  "psycopg-pool>=3.3",
   "pgvector>=0.3",
   "python-dotenv>=1.0",
   "rich>=13.9",
@@ -150,6 +164,15 @@ package = true
 # name, not a directory prefix -- "knowledge" alone would not pull in the
 # "knowledge.sourcing" subpackage (ticket #68's 3GPP/ETSI/FCC/arXiv thin
 # clients), so it is listed explicitly, same as every other top-level entry.
+#
+# "db" is listed for db/pool.py alone -- the shared connection pool (issue
+# #406) that designs/db.py and knowledge/db.py both check connections out
+# of. It lives in db/ because that directory is already this repo's
+# database home (schema.sql, apply_schema.py, docker-init.sh) and because
+# neither designs/ nor knowledge/ can own a module the other imports
+# without inventing a dependency between two peer packages. db/schema.sql
+# and db/docker-init.sh are data/shell files, not modules, so nothing else
+# in that directory is affected by it becoming an importable package.
 include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "knowledge.sourcing", "optimization", "measurement", "orchestration", "designs", "geometry", "verification", "db"]
 
 [tool.pytest.ini_options]
