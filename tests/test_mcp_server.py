@@ -758,7 +758,7 @@ def test_correlate_simulated_and_measured_docstring_states_openems_is_sometimes_
     assert "multi-port" in doc
 
 
-def test_mcp_server_and_agent_main_register_the_same_tool_names():
+def test_every_agent_main_wrapper_is_also_registered_on_the_mcp_server():
     """Issue #317 (ADR-0032 prefactor audit) exists because agent/main.py's
     @function_tool registrations and mcp_server/server.py's @mcp.tool()
     registrations are two independently hand-maintained copies of the same
@@ -771,17 +771,39 @@ def test_mcp_server_and_agent_main_register_the_same_tool_names():
     stopgap): it doesn't catch docstring wording drift (see the per-tool
     tests around this one for the specific content drift this issue's
     review found and fixed), but it does make a repeat of #276/#288 --
-    a tool registered on one surface and invisible on the other -- a loud
-    failure here instead of a silent gap."""
+    a tool wrapped in agent/main.py and invisible over MCP -- a loud
+    failure here instead of a silent gap.
+
+    Containment, not set equality: the MCP server is the only surface
+    principal/systems/verification reach, so it legitimately registers tools
+    agent/main.py no longer wraps. The reverse would be the real bug -- a
+    wrapper whose MCP twin never existed, in a file the live entry point no
+    longer reads for those roles. What the extra MCP tools are is pinned by
+    the companion test below, so "extra" can't quietly grow into "unassigned
+    to any role"."""
     import agent.main as agent_main
 
     agent_tool_names = {t.name for role in agent_main.ROLES.values() for t in role.tools}
     mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     # route_to_*_role handoffs are agent.py-only (Agents-SDK handoff
-    # mechanism, not an MCP tool); everything else must match both ways.
+    # mechanism, not an MCP tool).
     agent_only = {n for n in agent_tool_names - mcp_tool_names if not n.startswith("route_to_")}
     assert agent_only == set(), f"tools on agent/main.py only: {agent_only}"
-    assert mcp_tool_names - agent_tool_names == set()
+
+
+def test_every_mcp_only_tool_belongs_to_a_migrated_role():
+    """The other half of the sweep above: every tool the MCP server
+    registers and agent/main.py no longer wraps must be one a migrated role
+    actually asks for. A tool in neither place is registered for nobody."""
+    import agent.main as agent_main
+    from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
+
+    agent_tool_names = {t.name for role in agent_main.ROLES.values() for t in role.tools}
+    mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    migrated_names = {name for names in MIGRATED_ROLE_TOOL_NAMES.values() for name in names}
+
+    assert mcp_tool_names - agent_tool_names <= migrated_names
+    assert migrated_names <= mcp_tool_names
 
 
 def test_mcp_server_docstrings_carry_the_behavioral_content_agent_main_states():

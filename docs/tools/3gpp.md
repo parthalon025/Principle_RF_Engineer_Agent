@@ -140,10 +140,10 @@ the reasoning above), and the pure HTML-parsing function on its own, no
 `fetch_fn` involved. Registered under `ingestion_auto` in
 `policies/tool_policy.yaml` (ungated, same as `ingest_3gpp_spec`), and
 wired onto the MCP tool surface (`mcp_server/server.py`) and the systems
-role's tool list (`agent/main.py`) right beside `ingest_3gpp_spec` -- issue
-#215 found this exact "implemented and tested, wired onto no tool surface"
-gap once already for the sibling ingest functions, so this one ships
-alongside its own registration rather than repeating that gap.
+role's tool list (`agent/mcp_roles.py`) right beside `ingest_3gpp_spec` --
+issue #215 found this exact "implemented and tested, wired onto no tool
+surface" gap once already for the sibling ingest functions, so this one
+ships alongside its own registration rather than repeating that gap.
 
 ## Capabilities not yet used here
 

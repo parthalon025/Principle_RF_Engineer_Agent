@@ -6,6 +6,15 @@ scoped to its stated domain. They deliberately do NOT re-test the tools'
 own logic -- that is already covered by test_calculations.py,
 test_touchstone.py, and the knowledge test suite.
 
+A role's tool list no longer lives in one place for all six roles, so the
+domain-scoping tests below read it through `_role_tool_names`: principal,
+systems and verification run entirely over `agent/mcp_roles.py`'s MCP-routed
+construction and their names live there; microwave, antenna and test still
+hold real `FunctionTool` objects in `agent/main.py` because every
+subprocess-shelling solver tool hangs over the MCP stdio transport on native
+Windows. What each role may reach is unchanged either way -- only which file
+says so.
+
 The routing mechanism was originally built on `Agent.as_tool()` (a nested
 Runner.run() call per delegated question, with a deterministic
 `custom_output_extractor` stamping a "[Role Name] ..." citation onto each
@@ -62,11 +71,26 @@ from agent.main import (
     principal,
     run_meep_simulation,
 )
+from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
+from mcp_server.server import mcp as mcp_server
 from orchestration.policy import assert_all_tools_categorized, category_for
+
+_OLD_PATH_KEYS = ("microwave", "antenna", "test")
 
 
 def _tool_names(agent) -> set[str]:
     return {tool.name for tool in agent.tools}
+
+
+def _role_tool_names(role_key: str) -> set[str]:
+    """Every tool name that role can actually reach today, read from whichever
+    file owns its list -- see this module's docstring for why that differs by
+    role. Reading `ROLES[key].tools` unconditionally would report the three
+    migrated roles as holding nothing, which is true of those Agent objects
+    and false of the roles themselves."""
+    if role_key in MIGRATED_ROLE_TOOL_NAMES:
+        return set(MIGRATED_ROLE_TOOL_NAMES[role_key])
+    return _tool_names(ROLES[role_key])
 
 
 def test_all_six_roles_are_constructible():
@@ -76,10 +100,41 @@ def test_all_six_roles_are_constructible():
         assert ROLES[key] is not None
 
 
-def test_every_role_has_a_non_empty_tool_list():
+def test_every_role_can_still_reach_a_non_empty_tool_list():
     for spec in ROLE_SPECS:
-        assert len(spec.tools) > 0, f"role {spec.key!r} has no tools"
-        assert len(ROLES[spec.key].tools) > 0, f"role {spec.key!r} has no tools"
+        assert _role_tool_names(spec.key), f"role {spec.key!r} can reach no tools at all"
+
+
+def test_only_the_roles_still_on_the_old_path_carry_function_tool_objects():
+    """The deletion's headline invariant, stated from both sides: a migrated
+    role's `RoleSpec`/`Agent` carries nothing (its names live in
+    `agent/mcp_roles.py`), and an old-path role's carries everything it can
+    reach, because a solver tool has no working MCP route on Windows."""
+    for key in MIGRATED_ROLE_TOOL_NAMES:
+        assert _SPEC_BY_KEY[key].tools == []
+        assert ROLES[key].tools == []
+    for key in _OLD_PATH_KEYS:
+        assert _tool_names(ROLES[key]) == _role_tool_names(key)
+
+
+def test_the_surviving_wrapper_layer_is_exactly_what_the_old_path_roles_need():
+    """Nothing is kept in `agent/main.py` that no old-path role uses -- the
+    test that would fail first if a later deletion pass stopped short, or if a
+    new tool were wrapped here for a role that never needed a wrapper."""
+    old_path_union: set[str] = set()
+    for key in _OLD_PATH_KEYS:
+        old_path_union |= _tool_names(ROLES[key])
+    assert {tool.name for tool in _ALL_TOOLS} == old_path_union
+
+
+def test_no_migrated_role_names_a_tool_the_mcp_server_does_not_register():
+    """A migrated role's names are plain strings now, with no import to fail
+    on a typo. This is what turns a name that stopped existing server-side
+    into a loud failure instead of a role that silently reaches one tool
+    fewer."""
+    registered = {tool.name for tool in asyncio.run(mcp_server.list_tools())}
+    for key, names in MIGRATED_ROLE_TOOL_NAMES.items():
+        assert set(names) <= registered, f"role {key!r} names an unregistered tool"
 
 
 def test_principal_role_is_scoped_not_broad():
@@ -105,9 +160,9 @@ def test_principal_role_is_scoped_not_broad():
     specialist calculation/simulation tool is still fully reachable, just
     through a handoff rather than directly -- nothing lost, only routed
     through a smaller, more reliable per-call tool surface. See
-    agent/main.py's `_PRINCIPAL_DIRECT_TOOLS` for the exact, reasoned
-    list."""
-    names = _tool_names(ROLES["principal"])
+    `agent/mcp_roles.py`'s `MIGRATED_ROLE_TOOL_NAMES["principal"]` for the
+    exact, reasoned list."""
+    names = _role_tool_names("principal")
     # Specialist-domain tools are reachable only via handoff now, not directly.
     assert "calculate_wavelength" not in names
     assert "ingest_document" not in names
@@ -120,7 +175,7 @@ def test_principal_role_is_scoped_not_broad():
     assert "ingest_patent" not in names
     assert "extract_components" not in names
     assert "analyze_touchstone_file" not in names
-    # Design-record/lifecycle tools: still principal-exclusive, still direct.
+    # Design-record/lifecycle tools: still principal-exclusive.
     for tool_name in (
         "create_design",
         "read_design",
@@ -132,10 +187,10 @@ def test_principal_role_is_scoped_not_broad():
         "confirm_requirement_target",
     ):
         assert tool_name in names
-    # Shared search tools: still direct.
+    # Shared search tools.
     assert "search_knowledge" in names
     assert "search_design_records" in names
-    # Design-iteration-loop tools (issue #46/#94/#95): still principal-exclusive, still direct.
+    # Design-iteration-loop tools (issue #46/#94/#95): still principal-exclusive.
     for tool_name in (
         "start_design_loop",
         "advance_design_loop_step",
@@ -149,8 +204,8 @@ def test_principal_role_is_scoped_not_broad():
     # the design-iteration-loop tools above -- still principal-exclusive.
     assert "search_literature_for_capability_warning" in names
     # 8 design-record + 2 search + 5 design-loop + 1 capability-warning
-    # literature search = 16 direct tools. The 5 specialist handoffs are NOT
-    # in .tools -- see the handoff-specific tests below for those.
+    # literature search = 16 tools. The 5 specialist handoffs are a separate
+    # namespace -- see the handoff-specific tests below for those.
     assert len(names) == 16
 
 
@@ -166,7 +221,7 @@ def test_every_tool_in_all_tools_is_categorized_in_tool_policy():
 
 
 def test_systems_role_gets_calculations_and_knowledge_authoring():
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "calculate_cascade_gain" in names
     assert "ingest_document" in names
     assert "ingest_arxiv_paper" in names
@@ -182,12 +237,12 @@ def test_systems_role_gets_standards_body_sourcing_tools():
     # knowledge-authoring concern as ingest_document/ingest_arxiv_paper --
     # "bring an external document into the knowledge base", each with its
     # own fetch/extraction step ahead of it.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "ingest_3gpp_spec" in names
     assert "ingest_etsi_standard" in names
     assert "ingest_fcc_rule" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "ingest_3gpp_spec" not in role_names
         assert "ingest_etsi_standard" not in role_names
         assert "ingest_fcc_rule" not in role_names
@@ -197,13 +252,13 @@ def test_systems_role_gets_etsi_ipr_declaration_sourcing_tool():
     # issue #284: ingest_etsi_ipr_declaration (the SR 000 314 IPR/FRAND-
     # declaration register client) is the same knowledge-authoring concern
     # as its ingest_etsi_standard sibling -- same bucket, same reasoning.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "ingest_etsi_ipr_declaration" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "ingest_etsi_ipr_declaration" not in role_names
     # Not principal-direct either -- reachable via the systems handoff only.
-    assert "ingest_etsi_ipr_declaration" not in _tool_names(ROLES["principal"])
+    assert "ingest_etsi_ipr_declaration" not in _role_tool_names("principal")
 
 
 def test_systems_role_gets_3gpp_spec_status_lookup_tool():
@@ -212,13 +267,13 @@ def test_systems_role_gets_3gpp_spec_status_lookup_tool():
     # credential) -- sits right beside it here. issue #215 already found
     # the "implemented and tested but wired onto no role's tool list" gap
     # once for the ingest siblings; this guards the lookup sibling too.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "lookup_3gpp_spec_status" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        assert "lookup_3gpp_spec_status" not in _tool_names(ROLES[key])
+        assert "lookup_3gpp_spec_status" not in _role_tool_names(key)
     # Not principal-direct either -- reachable via the systems handoff only,
     # same as ingest_3gpp_spec (see test_principal_role_is_scoped_not_broad).
-    assert "lookup_3gpp_spec_status" not in _tool_names(ROLES["principal"])
+    assert "lookup_3gpp_spec_status" not in _role_tool_names("principal")
 
 
 def test_systems_role_gets_fcc_rules_discovery_search_tool():
@@ -227,14 +282,14 @@ def test_systems_role_gets_fcc_rules_discovery_search_tool():
     # ingest_fcc_rule -- both are the same "bring FCC rule text into reach
     # of the design loop" knowledge-sourcing concern, discovery finding
     # candidate parts ahead of the deliberate ingest step.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "search_fcc_rules" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "search_fcc_rules" not in role_names
     # Not principal-direct either -- reachable via the systems handoff only,
     # same as ingest_fcc_rule (see test_principal_role_is_scoped_not_broad).
-    assert "search_fcc_rules" not in _tool_names(ROLES["principal"])
+    assert "search_fcc_rules" not in _role_tool_names("principal")
 
 
 def test_search_fcc_rules_is_categorized_ingestion_auto():
@@ -251,10 +306,10 @@ def test_systems_role_gets_patent_sourcing_tool():
     # issue #219: fetching a USPTO patent grant/publication is the same
     # knowledge-authoring concern as ingest_arxiv_paper/ingest_3gpp_spec/
     # ingest_etsi_standard/ingest_fcc_rule -- same bucket, same reasoning.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "ingest_patent" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "ingest_patent" not in role_names
 
 
@@ -264,14 +319,14 @@ def test_systems_role_gets_arxiv_discovery_search_tool():
     # role as its sibling ingest_arxiv_paper -- both are the same "bring
     # arXiv into reach of the design loop" knowledge-sourcing concern,
     # discovery finding candidates ahead of the deliberate ingest step.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "search_arxiv_papers" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "search_arxiv_papers" not in role_names
     # Not principal-direct either -- reachable via the systems handoff only,
     # same as ingest_arxiv_paper (see test_principal_role_is_scoped_not_broad).
-    assert "search_arxiv_papers" not in _tool_names(ROLES["principal"])
+    assert "search_arxiv_papers" not in _role_tool_names("principal")
 
 
 def test_search_arxiv_papers_is_categorized_ingestion_auto():
@@ -290,10 +345,10 @@ def test_principal_role_gets_capability_warning_literature_search_tool():
     # principal-exclusive concern (advance_design_loop_step is principal-
     # exclusive too), unlike search_arxiv_papers's general-purpose topic
     # search above, which lives on systems instead.
-    names = _tool_names(ROLES["principal"])
+    names = _role_tool_names("principal")
     assert "search_literature_for_capability_warning" in names
     for key in ("systems", "microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "search_literature_for_capability_warning" not in role_names
 
 
@@ -309,14 +364,14 @@ def test_systems_role_gets_uspto_discovery_search_tool():
     # ingest_patent -- both are the same "bring USPTO patents into reach of
     # the design loop" knowledge-sourcing concern, discovery finding
     # candidates ahead of the deliberate ingest step.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "search_uspto_patents" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "search_uspto_patents" not in role_names
     # Not principal-direct either -- reachable via the systems handoff only,
     # same as ingest_patent (see test_principal_role_is_scoped_not_broad).
-    assert "search_uspto_patents" not in _tool_names(ROLES["principal"])
+    assert "search_uspto_patents" not in _role_tool_names("principal")
 
 
 def test_search_uspto_patents_is_categorized_approval_self_gated():
@@ -335,13 +390,13 @@ def test_systems_role_gets_component_sourcing_tools():
     # ticket #67: sourcing a datasheet straight from a distributor and
     # reconciling it into one components row is the same knowledge-
     # authoring concern as ingest_document/index_document.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "lookup_digikey_component" in names
     assert "lookup_mouser_component" in names
     assert "lookup_nexar_component" in names
     assert "reconcile_component_sources" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "lookup_digikey_component" not in role_names
         assert "lookup_mouser_component" not in role_names
         assert "lookup_nexar_component" not in role_names
@@ -353,10 +408,10 @@ def test_systems_role_gets_ink_lookup_tool():
     # Mouser citation-only ink/adhesive lookup) is the same knowledge-
     # sourcing concern as its lookup_digikey_component/lookup_mouser_
     # component siblings -- same role.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "search_ink_product" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "search_ink_product" not in role_names
 
 
@@ -374,10 +429,10 @@ def test_systems_role_gets_digikey_product_details_tool():
     # ticket #275: parametric-attribute/pricing lookup sits beside its
     # lookup_digikey_component sibling -- same component-sourcing concern,
     # same role.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "lookup_digikey_product_details" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        assert "lookup_digikey_product_details" not in _tool_names(ROLES[key])
+        assert "lookup_digikey_product_details" not in _role_tool_names(key)
 
 
 def test_systems_role_gets_nexar_part_data_tool():
@@ -387,15 +442,15 @@ def test_systems_role_gets_nexar_part_data_tool():
     # same role -- so the design loop can actually reach it; a function
     # that exists in knowledge/nexar.py but is never wired onto a tool
     # surface is unreachable to every role, this one included.
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "lookup_nexar_part_data" in names
     for key in ("microwave", "antenna", "test", "verification"):
-        role_names = _tool_names(ROLES[key])
+        role_names = _role_tool_names(key)
         assert "lookup_nexar_part_data" not in role_names
 
 
 def test_microwave_role_gets_network_and_component_analysis():
-    names = _tool_names(ROLES["microwave"])
+    names = _role_tool_names("microwave")
     assert "analyze_touchstone_file" in names
     assert "calculate_vswr" in names
     # system-chain concern, not a single component/network concern
@@ -407,7 +462,7 @@ def test_microwave_role_gets_network_and_component_analysis():
 
 
 def test_antenna_role_gets_antenna_relevant_tools():
-    names = _tool_names(ROLES["antenna"])
+    names = _role_tool_names("antenna")
     assert "calculate_wavelength" in names
     assert "analyze_touchstone_file" in names
     # receiver-chain concerns, not the antenna element itself
@@ -418,7 +473,7 @@ def test_antenna_role_gets_antenna_relevant_tools():
 
 
 def test_test_role_gets_verification_and_measurement_tools():
-    names = _tool_names(ROLES["test"])
+    names = _role_tool_names("test")
     assert "analyze_touchstone_file" in names
     assert "calculate_cascade_gain" in names
     # issue #45: quantifying simulated-vs-measured trust is test-engineering work
@@ -431,7 +486,7 @@ def test_test_role_gets_verification_and_measurement_tools():
 
 
 def test_verification_role_gets_knowledge_auditing_tools():
-    names = _tool_names(ROLES["verification"])
+    names = _role_tool_names("verification")
     assert "read_document" in names
     assert "extract_components" in names
     # verification audits documented claims, it does not run RF arithmetic
@@ -445,10 +500,10 @@ def test_search_design_records_is_scoped_to_principal_and_verification():
     # issue #37: precedent lookup is a knowledge-audit concern, same family
     # as read_document/extract_components -- narrower than search_knowledge,
     # which every role shares.
-    assert "search_design_records" in _tool_names(ROLES["principal"])
-    assert "search_design_records" in _tool_names(ROLES["verification"])
+    assert "search_design_records" in _role_tool_names("principal")
+    assert "search_design_records" in _role_tool_names("verification")
     for key in ("systems", "microwave", "antenna", "test"):
-        assert "search_design_records" not in _tool_names(ROLES[key])
+        assert "search_design_records" not in _role_tool_names(key)
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +518,7 @@ def test_search_design_records_is_scoped_to_principal_and_verification():
 
 
 def test_systems_role_gets_link_budget_and_ip3_and_unit_converters():
-    names = _tool_names(ROLES["systems"])
+    names = _role_tool_names("systems")
     assert "calculate_free_space_path_loss" in names
     assert "calculate_link_budget_margin" in names
     assert "calculate_cascade_output_ip3" in names
@@ -477,7 +532,7 @@ def test_systems_role_gets_link_budget_and_ip3_and_unit_converters():
 
 
 def test_microwave_role_gets_conversions_stability_and_matching():
-    names = _tool_names(ROLES["microwave"])
+    names = _role_tool_names("microwave")
     for tool_name in (
         "convert_s_to_z",
         "convert_z_to_s",
@@ -503,7 +558,7 @@ def test_microwave_role_gets_conversions_stability_and_matching():
 
 
 def test_antenna_role_gets_antenna_synthesis_tools():
-    names = _tool_names(ROLES["antenna"])
+    names = _role_tool_names("antenna")
     for tool_name in (
         "calculate_patch_effective_permittivity",
         "calculate_patch_length_extension",
@@ -527,12 +582,12 @@ def test_antenna_and_test_roles_get_nec2_simulation():
     # issue #38: simulating a wire-antenna structure is antenna-element
     # work, and its SIMULATED-provenance result is something a measured
     # result gets validated against in test engineering.
-    assert "run_nec2_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_nec2_simulation" in _tool_names(ROLES["test"])
+    assert "run_nec2_simulation" in _role_tool_names("antenna")
+    assert "run_nec2_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_nec2_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_nec2_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_nec2_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_nec2_simulation" not in _role_tool_names("systems")
+    assert "run_nec2_simulation" not in _role_tool_names("microwave")
+    assert "run_nec2_simulation" not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_openems_simulation():
@@ -541,24 +596,24 @@ def test_antenna_and_test_roles_get_openems_simulation():
     # model, and (like run_nec2_simulation) its SIMULATED-provenance result
     # is something a measured result gets validated against in test
     # engineering.
-    assert "run_openems_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_openems_simulation" in _tool_names(ROLES["test"])
+    assert "run_openems_simulation" in _role_tool_names("antenna")
+    assert "run_openems_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_openems_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_openems_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_openems_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_openems_simulation" not in _role_tool_names("systems")
+    assert "run_openems_simulation" not in _role_tool_names("microwave")
+    assert "run_openems_simulation" not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_hfss_simulation():
     # issue #40: full-wave HFSS/PyAEDT simulation, confined to a controlled
     # licensed workstation, is the same antenna-element/test-reference-
     # result family as run_nec2_simulation/run_openems_simulation.
-    assert "run_hfss_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_hfss_simulation" in _tool_names(ROLES["test"])
+    assert "run_hfss_simulation" in _role_tool_names("antenna")
+    assert "run_hfss_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_hfss_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_hfss_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_hfss_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_hfss_simulation" not in _role_tool_names("systems")
+    assert "run_hfss_simulation" not in _role_tool_names("microwave")
+    assert "run_hfss_simulation" not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_elmer_simulation():
@@ -568,12 +623,12 @@ def test_antenna_and_test_roles_get_elmer_simulation():
     # family as run_nec2_simulation/run_openems_simulation/run_hfss_
     # simulation, despite having no native S-parameter/far-field/gain
     # post-processing of its own (see simulation/elmer.py).
-    assert "run_elmer_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_elmer_simulation" in _tool_names(ROLES["test"])
+    assert "run_elmer_simulation" in _role_tool_names("antenna")
+    assert "run_elmer_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_elmer_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_elmer_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_elmer_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_elmer_simulation" not in _role_tool_names("systems")
+    assert "run_elmer_simulation" not in _role_tool_names("microwave")
+    assert "run_elmer_simulation" not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_openparem_simulation():
@@ -582,12 +637,12 @@ def test_antenna_and_test_roles_get_openparem_simulation():
     # as its S-parameters, is the same antenna-element/test-reference-
     # result family as run_nec2_simulation/run_openems_simulation/run_hfss_
     # simulation.
-    assert "run_openparem_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_openparem_simulation" in _tool_names(ROLES["test"])
+    assert "run_openparem_simulation" in _role_tool_names("antenna")
+    assert "run_openparem_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_openparem_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_openparem_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_openparem_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_openparem_simulation" not in _role_tool_names("systems")
+    assert "run_openparem_simulation" not in _role_tool_names("microwave")
+    assert "run_openparem_simulation" not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_kicad_gerber2ems_simulation():
@@ -595,12 +650,12 @@ def test_antenna_and_test_roles_get_kicad_gerber2ems_simulation():
     # real, as-laid-out KiCad PCB design (trace impedance, via/stackup
     # S-parameters) is antenna-feed-network geometry-prep/reference-result
     # work, same family as run_nec2_simulation/run_openems_simulation.
-    assert "run_kicad_gerber2ems_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_kicad_gerber2ems_simulation" in _tool_names(ROLES["test"])
+    assert "run_kicad_gerber2ems_simulation" in _role_tool_names("antenna")
+    assert "run_kicad_gerber2ems_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_kicad_gerber2ems_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_kicad_gerber2ems_simulation" not in _role_tool_names("systems")
+    assert "run_kicad_gerber2ems_simulation" not in _role_tool_names("microwave")
+    assert "run_kicad_gerber2ems_simulation" not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_palace_simulation():
@@ -608,12 +663,12 @@ def test_antenna_and_test_roles_get_palace_simulation():
     # simulation of a periodic metamaterial unit cell is the same
     # antenna-element/test-reference-result family as run_nec2_simulation/
     # run_openems_simulation/run_hfss_simulation.
-    assert "run_palace_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_palace_simulation" in _tool_names(ROLES["test"])
+    assert "run_palace_simulation" in _role_tool_names("antenna")
+    assert "run_palace_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_palace_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_palace_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_palace_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_palace_simulation" not in _role_tool_names("systems")
+    assert "run_palace_simulation" not in _role_tool_names("microwave")
+    assert "run_palace_simulation" not in _role_tool_names("verification")
 
 
 def test_microwave_and_test_roles_get_qucs_simulation():
@@ -623,12 +678,12 @@ def test_microwave_and_test_roles_get_qucs_simulation():
     # run_xyce_simulation, it belongs with microwave (not antenna), and
     # (like the full-wave simulators) with test as a SIMULATED-provenance
     # reference result to validate hardware against.
-    assert "run_qucs_simulation" in _tool_names(ROLES["microwave"])
-    assert "run_qucs_simulation" in _tool_names(ROLES["test"])
+    assert "run_qucs_simulation" in _role_tool_names("microwave")
+    assert "run_qucs_simulation" in _role_tool_names("test")
     # not systems/antenna/verification's job
-    assert "run_qucs_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_qucs_simulation" not in _tool_names(ROLES["antenna"])
-    assert "run_qucs_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_qucs_simulation" not in _role_tool_names("systems")
+    assert "run_qucs_simulation" not in _role_tool_names("antenna")
+    assert "run_qucs_simulation" not in _role_tool_names("verification")
 
 
 def test_microwave_and_test_roles_get_ltspice_simulation():
@@ -637,12 +692,12 @@ def test_microwave_and_test_roles_get_ltspice_simulation():
     # run_openems_simulation/run_hfss_simulation, it belongs with microwave
     # (not antenna), and (like the other three simulators) with test as a
     # SIMULATED-provenance reference result to validate hardware against.
-    assert "run_ltspice_simulation" in _tool_names(ROLES["microwave"])
-    assert "run_ltspice_simulation" in _tool_names(ROLES["test"])
+    assert "run_ltspice_simulation" in _role_tool_names("microwave")
+    assert "run_ltspice_simulation" in _role_tool_names("test")
     # not systems/antenna/verification's job
-    assert "run_ltspice_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_ltspice_simulation" not in _tool_names(ROLES["antenna"])
-    assert "run_ltspice_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_ltspice_simulation" not in _role_tool_names("systems")
+    assert "run_ltspice_simulation" not in _role_tool_names("antenna")
+    assert "run_ltspice_simulation" not in _role_tool_names("verification")
 
 
 def test_microwave_and_test_roles_get_ngspice_and_xyce_simulation():
@@ -653,14 +708,14 @@ def test_microwave_and_test_roles_get_ngspice_and_xyce_simulation():
     # result is something a measured result gets validated against in test
     # engineering.
     for tool_name in ("run_ngspice_simulation", "run_xyce_simulation"):
-        assert tool_name in _tool_names(ROLES["microwave"])
-        assert tool_name in _tool_names(ROLES["test"])
+        assert tool_name in _role_tool_names("microwave")
+        assert tool_name in _role_tool_names("test")
         # principal reaches this via a route_to_microwave_role/route_to_test_role
         # handoff now, not directly -- see test_principal_role_is_scoped_not_broad.
         # not systems/antenna/verification's job
-        assert tool_name not in _tool_names(ROLES["systems"])
-        assert tool_name not in _tool_names(ROLES["antenna"])
-        assert tool_name not in _tool_names(ROLES["verification"])
+        assert tool_name not in _role_tool_names("systems")
+        assert tool_name not in _role_tool_names("antenna")
+        assert tool_name not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_gprmax_simulation():
@@ -670,12 +725,12 @@ def test_antenna_and_test_roles_get_gprmax_simulation():
     # run_nec2_simulation/run_openems_simulation) its SIMULATED-provenance
     # result is something a measured result gets validated against in test
     # engineering.
-    assert "run_gprmax_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_gprmax_simulation" in _tool_names(ROLES["test"])
+    assert "run_gprmax_simulation" in _role_tool_names("antenna")
+    assert "run_gprmax_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_gprmax_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_gprmax_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_gprmax_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_gprmax_simulation" not in _role_tool_names("systems")
+    assert "run_gprmax_simulation" not in _role_tool_names("microwave")
+    assert "run_gprmax_simulation" not in _role_tool_names("verification")
 
 
 def test_antenna_and_test_roles_get_meep_simulation():
@@ -684,12 +739,12 @@ def test_antenna_and_test_roles_get_meep_simulation():
     # run_openems_simulation's own output -- same antenna-element/test-
     # reference-result family as run_nec2_simulation/run_openems_simulation/
     # run_hfss_simulation.
-    assert "run_meep_simulation" in _tool_names(ROLES["antenna"])
-    assert "run_meep_simulation" in _tool_names(ROLES["test"])
+    assert "run_meep_simulation" in _role_tool_names("antenna")
+    assert "run_meep_simulation" in _role_tool_names("test")
     # not systems/microwave/verification's job
-    assert "run_meep_simulation" not in _tool_names(ROLES["systems"])
-    assert "run_meep_simulation" not in _tool_names(ROLES["microwave"])
-    assert "run_meep_simulation" not in _tool_names(ROLES["verification"])
+    assert "run_meep_simulation" not in _role_tool_names("systems")
+    assert "run_meep_simulation" not in _role_tool_names("microwave")
+    assert "run_meep_simulation" not in _role_tool_names("verification")
 
 
 def test_run_meep_simulation_tool_description_reflects_far_field_support():
@@ -736,14 +791,14 @@ def test_antenna_role_gets_patch_length_optimization_tool():
     # issue #41: searching patch length against a target resonant frequency
     # via the generic optimization/ package composes with the Phase 1
     # antenna-synthesis tool this role already owns.
-    assert "optimize_patch_length_for_target_frequency" in _tool_names(ROLES["antenna"])
+    assert "optimize_patch_length_for_target_frequency" in _role_tool_names("antenna")
     # principal reaches this via a route_to_antenna_role handoff now, not
     # directly -- see test_principal_role_is_scoped_not_broad.
     # not systems/microwave/test/verification's job
-    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["systems"])
-    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["microwave"])
-    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["test"])
-    assert "optimize_patch_length_for_target_frequency" not in _tool_names(ROLES["verification"])
+    assert "optimize_patch_length_for_target_frequency" not in _role_tool_names("systems")
+    assert "optimize_patch_length_for_target_frequency" not in _role_tool_names("microwave")
+    assert "optimize_patch_length_for_target_frequency" not in _role_tool_names("test")
+    assert "optimize_patch_length_for_target_frequency" not in _role_tool_names("verification")
 
 
 def test_antenna_role_gets_freecad_curved_geometry_tool():
@@ -753,18 +808,18 @@ def test_antenna_role_gets_freecad_curved_geometry_tool():
     # generator family as optimize_patch_length_for_target_frequency, not a
     # SIMULATED-provenance reference result test would validate hardware
     # against.
-    assert "generate_freecad_curved_geometry" in _tool_names(ROLES["antenna"])
+    assert "generate_freecad_curved_geometry" in _role_tool_names("antenna")
     # principal reaches this via a route_to_antenna_role handoff now, not
     # directly -- see test_principal_role_is_scoped_not_broad.
     # not systems/microwave/test/verification's job
-    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["systems"])
-    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["microwave"])
-    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["test"])
-    assert "generate_freecad_curved_geometry" not in _tool_names(ROLES["verification"])
+    assert "generate_freecad_curved_geometry" not in _role_tool_names("systems")
+    assert "generate_freecad_curved_geometry" not in _role_tool_names("microwave")
+    assert "generate_freecad_curved_geometry" not in _role_tool_names("test")
+    assert "generate_freecad_curved_geometry" not in _role_tool_names("verification")
 
 
 def test_test_role_gets_new_touchstone_tools():
-    names = _tool_names(ROLES["test"])
+    names = _role_tool_names("test")
     assert "interpolate_touchstone_file" in names
     assert "deembed_touchstone_file" in names
     assert "cascade_touchstone_files" in names
@@ -779,18 +834,18 @@ def test_test_and_principal_roles_get_lab_test_plan_tool():
     # (which owns lab-test-plan work day to day), unlike the mutating
     # design-loop tools (start_design_loop/advance_design_loop_step/
     # inspect_design_loop_state), which stay principal-only.
-    assert "compile_lab_test_plan" in _tool_names(ROLES["principal"])
-    assert "compile_lab_test_plan" in _tool_names(ROLES["test"])
+    assert "compile_lab_test_plan" in _role_tool_names("principal")
+    assert "compile_lab_test_plan" in _role_tool_names("test")
     for key in ("systems", "microwave", "antenna", "verification"):
-        assert "compile_lab_test_plan" not in _tool_names(ROLES[key])
+        assert "compile_lab_test_plan" not in _role_tool_names(key)
     for key in ("systems", "microwave", "antenna", "test", "verification"):
-        assert "start_design_loop" not in _tool_names(ROLES[key])
-        assert "advance_design_loop_step" not in _tool_names(ROLES[key])
-        assert "inspect_design_loop_state" not in _tool_names(ROLES[key])
+        assert "start_design_loop" not in _role_tool_names(key)
+        assert "advance_design_loop_step" not in _role_tool_names(key)
+        assert "inspect_design_loop_state" not in _role_tool_names(key)
 
 
 def test_verification_role_gets_no_new_calculation_tools():
-    names = _tool_names(ROLES["verification"])
+    names = _role_tool_names("verification")
     # verification audits documented claims, it does not run RF arithmetic --
     # none of the issue #36 tools belong here either.
     assert "convert_db_to_linear" not in names
@@ -800,23 +855,21 @@ def test_verification_role_gets_no_new_calculation_tools():
 
 def test_search_knowledge_is_shared_by_every_role():
     for spec in ROLE_SPECS:
-        assert "search_knowledge" in _tool_names(ROLES[spec.key]), (
+        assert "search_knowledge" in _role_tool_names(spec.key), (
             f"role {spec.key!r} should share search_knowledge"
         )
 
 
 def test_no_role_has_a_tool_outside_all_currently_wired_tools():
-    # Was `_tool_names(ROLES["principal"])` -- valid back when the principal
-    # held every tool, no longer valid now that it's deliberately scoped
-    # (see test_principal_role_is_scoped_not_broad). The true superset is
-    # just _ALL_TOOLS now: every specialist's tools are drawn from it, and
-    # the principal's route_to_<role>_role handoffs live in .handoffs, not
-    # .tools, so they're a separate namespace this check doesn't need to
-    # include (see test_principal_has_one_handoff_per_specialist_role for
-    # that half).
-    all_wired = {tool.name for tool in _ALL_TOOLS}
+    # The superset is `mcp_server/server.py`'s live registry, not
+    # `_ALL_TOOLS`: since the migrated roles' wrappers were deleted, most of
+    # what principal/systems/verification reach exists on that surface alone.
+    # A role's route_to_<role>_role handoffs live in `.handoffs`, a separate
+    # namespace this check doesn't include (see
+    # test_principal_has_one_handoff_per_specialist_role for that half).
+    all_wired = {tool.name for tool in asyncio.run(mcp_server.list_tools())}
     for spec in ROLE_SPECS:
-        role_names = _tool_names(ROLES[spec.key])
+        role_names = _role_tool_names(spec.key)
         assert role_names <= all_wired, f"role {spec.key!r} has an unexpected tool"
 
 
@@ -843,7 +896,7 @@ def test_principal_has_one_handoff_per_specialist_role():
         assert f"route_to_{key}_role" in handoff_tool_names, f"missing handoff for {key!r}"
     assert "route_to_principal_role" not in handoff_tool_names
     # Handoffs are NOT tools -- confirm they don't leak into .tools too.
-    assert not (handoff_tool_names & _tool_names(ROLES["principal"]))
+    assert not (handoff_tool_names & _role_tool_names("principal"))
 
 
 def test_specialist_handoffs_registry_matches_specialist_keys():
