@@ -5,7 +5,14 @@ services:
     environment:
       POSTGRES_DB: rfengineer
       POSTGRES_USER: rf
-      POSTGRES_PASSWORD: rf_dev_password
+      # Same default as ever for local dev -- override via .env (or the
+      # shell environment) to use a real secret instead, e.g. before this
+      # ever runs on a shared or cloud host. If you do, also update
+      # DATABASE_URL's password in .env to match: docker compose
+      # substitutes ${POSTGRES_PASSWORD} for the containers below
+      # automatically, but a host-run script/test reads DATABASE_URL as a
+      # plain literal, so it does not auto-follow.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rf_dev_password}
       # Read from the host/.env at `docker compose` invocation time.
       # EMBEDDING_DIM_LOCAL defaults to 1024 (BAAI/bge-m3's actual, fixed
       # dense-embedding dimension -- see knowledge/embedding.py and
@@ -15,7 +22,19 @@ services:
       EMBEDDING_DIM_EXTERNAL: ${EMBEDDING_DIM_EXTERNAL:-1536}
       EMBEDDING_DIM_LOCAL: ${EMBEDDING_DIM_LOCAL:-1024}
     ports:
-      - "5432:5432"
+      # Loopback-only, both stacks: this database holds RESTRICTED-
+      # classification document text (ADR-0001/ADR-0004), so it should not
+      # be reachable from other machines by default. Both IPv4 (127.0.0.1)
+      # and IPv6 ([::1]) loopback are bound explicitly -- binding only one
+      # is a real footgun: "localhost" on a dual-stack host (confirmed on
+      # this workstation) resolves to BOTH ::1 and 127.0.0.1, and a client
+      # that tries the IPv6 address first hangs for the OS's full TCP
+      # retransmission window (20s+) against a port nothing is listening on,
+      # before ever falling back to IPv4 -- found live, mid-session, as a
+      # reproducible pytest hang traced via psycopg.connect() hanging on
+      # `localhost` but returning instantly on an explicit `127.0.0.1`.
+      - "127.0.0.1:5432:5432"
+      - "[::1]:5432:5432"
     volumes:
       - rf_pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql.template:ro
@@ -103,7 +122,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://rf:rf_dev_password@postgres:5432/rfengineer
+      DATABASE_URL: postgresql://rf:${POSTGRES_PASSWORD:-rf_dev_password}@postgres:5432/rfengineer
       LOCAL_LLM_BASE_URL: http://ollama:11434/v1
     volumes:
       # Live code sync (edit on the host, no rebuild needed to pick it up)
