@@ -86,3 +86,59 @@ guarded against it.
   specified, still-Draft, auth-scope-based one (SEP-1881). The per-role
   split stays an Agents-SDK-side concern (`ToolFilterContext`), not
   something pushed onto the MCP server itself.
+
+## Corrections
+
+### 2026-09-09 — the live behavior check this ADR asked for ran, and half the tool surface fails it
+
+**What this ADR said:**
+
+> Nothing in this session confirmed that round trip is behaviorally
+> identical (same latency class, same error surfacing, same argument
+> coercion) for this repo's actual tool shapes — particularly the several
+> `@function_tool(strict_mode=False)` wrappers whose whole reason for being
+> is a schema shape (open-ended dicts, variable-length lists) the SDK's
+> default strict mode rejects. That needs to survive the move to
+> `to_function_tool`'s MCP-schema conversion path before this is trusted in
+> production.
+
+**What is true instead:** issue #319 ran that check
+(`tests/test_mcp_tool_call_parity.py`). Latency and error-surfacing are
+fine — a real `SimulatorError`-style exception is caught and turned into
+plain text on both paths, just with different wording and envelope shape,
+and the added stdio/MCP transport hop costs milliseconds, not a gross
+regression. But for every tool whose implementation shells out to its own
+subprocess (`run_nec2_simulation` and, by the same code shape, every other
+`run_*_simulation` tool — NEC2++, openEMS, HFSS, Elmer, Palace, MEEP,
+gprMax, Qucs, LTspice, ngspice, Xyce, gerber2ems — roughly half this repo's
+real engineering tool surface), the round trip is not behaviorally
+different, it does not complete at all: on native Windows the call hangs
+indefinitely (confirmed with the raw `mcp` client, independent of the
+OpenAI Agents SDK entirely — see the test file's module docstring),
+root-caused to FastMCP's un-threaded synchronous tool dispatch combined
+with `mcp`'s own Windows-specific subprocess-launch path, both third-party,
+neither this repo's to patch directly. Confirmed Windows-specific, not a
+general `mcp`/`anyio` defect: the same test suite run against the same code
+inside a Linux container completes normally, in seconds, with no hang at
+all — `tests/test_mcp_tool_call_parity.py`'s three affected tests branch on
+platform for exactly this reason (CI runs `ubuntu-latest` only). The two other findings the same
+verification pass turned up (a missing `env` pass-through and a 5-second
+client-session timeout the SDK defaults to) were real bugs in this ADR's
+own follow-on construction (`agent/mcp_roles.py`, issue #318) and are fixed
+there, not corrections to this ADR's reasoning.
+
+**Raised by:** issue #319, `tests/test_mcp_tool_call_parity.py`.
+
+**The Decision is unaffected.** `mcp_server/server.py` remains the one
+place a tool is registered, and nothing here disputes that direction. What
+changes is the answer to the open question this ADR itself posed: it is not
+"behaviorally identical, modulo wording" for the subprocess-shelling half
+of the tool surface — it is "does not work yet." Issue #320 ("Contract:
+delete the old `agent/main.py` wrapper layer") is blocked on this finding
+in substance, not only on #319 closing formally: deleting the OLD direct-
+call path today would take every `run_*_simulation` tool down on Windows
+with no fallback. That blocker is recorded on #320 directly, not only
+here. The upstream `mcp`/`anyio` limitation itself — third-party, not
+this repo's code, and a distinct piece of work from #320's "delete the
+old path" scope — is tracked separately as #372, so it has a home that
+does not depend on either #319 or #320 staying open.

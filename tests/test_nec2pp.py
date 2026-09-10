@@ -28,7 +28,7 @@ import os
 from pathlib import Path
 
 import pytest
-from conftest import make_fake_executable
+from conftest import DIPOLE_GEOMETRY, make_fake_executable
 
 from simulation.base import SimulatorError
 from simulation.nec2pp import (
@@ -63,23 +63,6 @@ def _make_fake_nec2pp(tmp_path: Path, body: str) -> Path:
     """Write a small fake 'nec2++' executable (a Python script body,
     launched cross-platform -- see conftest.make_fake_executable)."""
     return make_fake_executable(tmp_path, body, name="fake_nec2pp")
-
-
-DIPOLE_GEOMETRY = {
-    "wires": [
-        {
-            "tag": 1,
-            "segments": 7,
-            "x1_m": 0.0,
-            "y1_m": 0.0,
-            "z1_m": -0.25,
-            "x2_m": 0.0,
-            "y2_m": 0.0,
-            "z2_m": 0.25,
-            "radius_m": 0.001,
-        }
-    ],
-}
 
 
 # ---------------------------------------------------------------------------

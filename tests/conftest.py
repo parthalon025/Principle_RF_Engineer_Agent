@@ -10,12 +10,39 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from agents import RunContextWrapper
 from agents.tool_context import ToolContext
 from dotenv import load_dotenv
 
 import agent.main as agent_main
+from agent.mcp_roles import build_role_agent
 
 load_dotenv()
+
+
+# A minimal center-fed half-wave dipole `run_nec2_simulation`/
+# `generate_nec2_deck` geometry dict -- one wire, 7 segments, resonant near
+# 300 MHz. Shared here (issue #319 code review: this was a byte-for-byte
+# copy between tests/test_nec2pp.py and tests/test_mcp_tool_call_parity.py
+# -- the exact pattern this file's own invoke_agent_tool docstring already
+# names as a smell it moved here to avoid, Fowler: Duplicated Code) so a
+# third NEC2-geometry-needing test file reuses this constant instead of
+# retyping it.
+DIPOLE_GEOMETRY = {
+    "wires": [
+        {
+            "tag": 1,
+            "segments": 7,
+            "x1_m": 0.0,
+            "y1_m": 0.0,
+            "z1_m": -0.25,
+            "x2_m": 0.0,
+            "y2_m": 0.0,
+            "z2_m": 0.25,
+            "radius_m": 0.001,
+        }
+    ],
+}
 
 
 def make_fake_executable(tmp_path: Path, body: str, name: str = "fake_exe") -> Path:
@@ -135,10 +162,6 @@ class McpRoutedToolCallTimedOut(TimeoutError):
 
 
 async def _invoke_role_mcp_tool_async(role_key: str, tool_name: str, **kwargs):
-    from agents import RunContextWrapper
-
-    from agent.mcp_roles import build_role_agent
-
     agent = build_role_agent(role_key)
     server = agent.mcp_servers[0]
     async with server:
