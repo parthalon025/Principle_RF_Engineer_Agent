@@ -17,6 +17,7 @@ from agents import (
     set_default_openai_client,
     set_tracing_disabled,
 )
+from agents.mcp import MCPServerManager, MCPServerStdio
 from agents.models.default_models import get_default_model_settings
 from dotenv import load_dotenv
 from openai.types.shared import Reasoning
@@ -3529,9 +3530,10 @@ _ROUTING_SUMMARY: dict[str, str] = {
     ),
 }
 
-SPECIALIST_HANDOFFS: dict[str, Handoff] = {
-    key: handoff(
-        ROLES[key],
+
+def _build_role_handoff(key: str, target_agent: Agent) -> Handoff:
+    return handoff(
+        target_agent,
         tool_name_override=f"route_to_{key}_role",
         tool_description_override=(
             f"Hand this question off to the {_SPEC_BY_KEY[key].display_name} "
@@ -3539,7 +3541,10 @@ SPECIALIST_HANDOFFS: dict[str, Handoff] = {
             f"{_ROUTING_SUMMARY[key]}"
         ),
     )
-    for key in _SPECIALIST_KEYS
+
+
+SPECIALIST_HANDOFFS: dict[str, Handoff] = {
+    key: _build_role_handoff(key, ROLES[key]) for key in _SPECIALIST_KEYS
 }
 
 # The principal's own DIRECT tools -- deliberately NOT `_ALL_TOOLS`. Giving
@@ -3585,6 +3590,22 @@ _PRINCIPAL_DIRECT_TOOLS = [
     search_literature_for_capability_warning,
 ]
 
+_PRINCIPAL_ROUTING_INSTRUCTIONS = (
+    "\n\n## Routing to a specialist\n\n"
+    "For ANY RF calculation, simulation, or domain-specific analysis, "
+    "hand the question off to the one specialist role whose domain it "
+    "matches (systems, microwave, antenna, test, verification) -- you "
+    "do not hold those tools directly, and that specialist will answer "
+    "directly once you hand off. Only use your own direct tools "
+    "(design-record management, the design-iteration loop, or "
+    "knowledge search) for what's actually your own job: tracking a "
+    "design's state, not computing RF values yourself. Never label a "
+    "value you reasoned out yourself CALCULATED -- that label means a "
+    "calculation tool actually computed it. If you (or the specialist "
+    "you hand off to) work a number out by reasoning instead of calling "
+    "a calculation tool, label it INFERRED or ASSUMED instead."
+)
+
 _principal_spec = _SPEC_BY_KEY["principal"]
 ROLES["principal"] = Agent(
     name=_principal_spec.display_name,
@@ -3592,26 +3613,15 @@ ROLES["principal"] = Agent(
     model_settings=_resolve_agent_model_settings(),
     instructions=(
         f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{_principal_spec.domain_note}"
-        "\n\n## Routing to a specialist\n\n"
-        "For ANY RF calculation, simulation, or domain-specific analysis, "
-        "hand the question off to the one specialist role whose domain it "
-        "matches (systems, microwave, antenna, test, verification) -- you "
-        "do not hold those tools directly, and that specialist will answer "
-        "directly once you hand off. Only use your own direct tools "
-        "(design-record management, the design-iteration loop, or "
-        "knowledge search) for what's actually your own job: tracking a "
-        "design's state, not computing RF values yourself. Never label a "
-        "value you reasoned out yourself CALCULATED -- that label means a "
-        "calculation tool actually computed it. If you (or the specialist "
-        "you hand off to) work a number out by reasoning instead of calling "
-        "a calculation tool, label it INFERRED or ASSUMED instead."
+        f"{_PRINCIPAL_ROUTING_INSTRUCTIONS}"
         f"{_local_reasoning_output_tail()}"
     ),
     tools=list(_PRINCIPAL_DIRECT_TOOLS),
     handoffs=list(SPECIALIST_HANDOFFS.values()),
 )
 
-# Kept as a module-level name for backward compatibility.
+# Kept as a module-level name for backward compatibility. This is NOT the
+# Agent `run()` drives -- that one is built by `_build_live_principal` below.
 principal = ROLES["principal"]
 
 
@@ -3732,23 +3742,72 @@ def _assert_calculated_provenance_is_tool_backed(result: RunResult) -> None:
         )
 
 
-def run(query: str) -> str:
-    result = Runner.run_sync(principal, query)
-    # Issue #158: native handoffs (route_to_<role>_role) keep the whole
-    # routed exchange in this one top-level RunResult -- new_items
-    # accumulates across the handoff, so this single check covers both the
-    # principal's own final answer and a specialist's handed-off answer.
-    # See this section's module-level comment above for how that was
-    # confirmed against this repo's actual installed SDK, not assumed.
+_LIVE_MCP_ROLE_KEYS = ("systems", "verification", "principal")
+
+
+def _build_live_principal(servers: dict[str, MCPServerStdio]) -> Agent:
+    """Build `run()`'s principal from already-connected per-role MCP servers.
+
+    `agent.mcp_roles` is imported here rather than at module level because it
+    imports several names from this module at ITS own module level -- a
+    module-level import either way round is a circular import that breaks
+    depending on which of the two a caller reaches first.
+    """
+    from agent.mcp_roles import build_role_agent
+
+    mixed_handoffs: list[Agent | Handoff] = [
+        _build_role_handoff("systems", build_role_agent("systems", mcp_server=servers["systems"])),
+        _build_role_handoff(
+            "verification",
+            build_role_agent("verification", mcp_server=servers["verification"]),
+        ),
+        SPECIALIST_HANDOFFS["microwave"],
+        SPECIALIST_HANDOFFS["antenna"],
+        SPECIALIST_HANDOFFS["test"],
+    ]
+    return build_role_agent(
+        "principal",
+        mcp_server=servers["principal"],
+        handoffs=mixed_handoffs,
+        extra_instructions=_PRINCIPAL_ROUTING_INSTRUCTIONS,
+    )
+
+
+async def run(query: str) -> str:
+    from agent.mcp_roles import ProvenanceTrackingContext, build_role_mcp_server
+
+    servers = {key: build_role_mcp_server(key) for key in _LIVE_MCP_ROLE_KEYS}
+    manager = MCPServerManager(list(servers.values()), strict=True)
+    # Everything that can spawn or hold a subprocess belongs inside this try:
+    # the connect and the agent construction that follows it both run against
+    # already-live servers, so an exception in either would otherwise strand
+    # them. Connecting is eager and unconditional rather than deferred until a
+    # handoff picks a role, because the SDK re-fetches an agent's MCP tools on
+    # every turn -- a handoff target's server must already be live by the time
+    # its own turn arrives, and nothing hooks handoff selection to connect it.
+    try:
+        await manager.connect_all()
+        result = await Runner.run(
+            _build_live_principal(servers), query, context=ProvenanceTrackingContext()
+        )
+    finally:
+        await manager.cleanup_all()
+
+    # Load-bearing despite `provenance_integrity_guardrail` covering the same
+    # condition: that guardrail only ever runs for the agent it is attached to,
+    # and microwave/antenna/test carry none. This reads the finished
+    # RunResult instead, so it is the only check that sees a claim one of them
+    # produced after a handoff.
     _assert_calculated_provenance_is_tool_backed(result)
     return result.final_output
 
 
 if __name__ == "__main__":
+    import asyncio
     import sys
 
     query = " ".join(sys.argv[1:]) or (
         "Explain the engineering workflow you will use for RF design and identify "
         "which claims require calculation, simulation, measurement, or human approval."
     )
-    print(run(query))
+    print(asyncio.run(run(query)))
