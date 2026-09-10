@@ -15,7 +15,7 @@ MXene ink viscosity spans roughly five orders of magnitude depending on formulat
 
 - **Inkjet-grade MXene inks** are dilute, low-viscosity, Newtonian-ish fluids — e.g., a 2026 direct-ink-write (DIW) paper on polyimide used an ink whose viscosity fell from **148 to 129 mPa·s (148–129 cP)** as shear rate rose from 100 to 900 s⁻¹ (Frontiers in Marine Science, 2026, DOI 10.3389/fmars.2026.1843170). That is **below** the NOVA's stated 1,000 cP floor — this specific ink would not be dispensable on the NOVA as formulated, despite being called "direct ink writing."
 - **Extrusion/DIW-grade MXene inks** are viscoelastic pastes, shear-thinning, with storage modulus (G′) exceeding loss modulus (G″) — "solid-like" behavior needed to hold a printed filament's shape before it sets. Two directly relevant, quantified examples:
-  - **Shao et al., *Nat. Commun.* 13, 3223 (2022)**, "Room-temperature high-precision printing of flexible wireless electronics based on MXene inks" (DOI 10.1038/s41467-022-30648-2; open-access PMC9184614): ink viscosity **~2.5×10² Pa·s ≈ 250,000 cP**, shear-thinning, at **60 mg/mL** solids loading (>90% single-layer flakes, ~1.6 µm average flake size). **This sits squarely inside the NOVA's 1,000–1,000,000 cP window**, and the printer used — "a programmable three-axis pneumatic extrusion dispenser" with interchangeable needles — is mechanically the same class of machine as the NOVA (pneumatic/volumetric syringe dispensing through a needle, not inkjet).
+  - **Shao et al., *Nat. Commun.* 13, 3223 (2022)**, "Room-temperature high-precision printing of flexible wireless electronics based on MXene inks" (DOI 10.1038/s41467-022-30648-2; open-access PMC9184614 — *this DOI has been cited under three different first-author surnames: "Shao" (correct, verified first-hand against PMC9184614), "Song" (an earlier error in this document, `RUNNING-LISTS.md` §3 correction 35) and "Zhang" (in outside material). **The DOI is the identity**; check it rather than the surname when matching a citation to this paper.*): ink viscosity **~2.5×10² Pa·s ≈ 250,000 cP**, shear-thinning, at **60 mg/mL** solids loading (>90% single-layer flakes, ~1.6 µm average flake size). **This sits squarely inside the NOVA's 1,000–1,000,000 cP window**, and the printer used — "a programmable three-axis pneumatic extrusion dispenser" with interchangeable needles — is mechanically the same class of machine as the NOVA (pneumatic/volumetric syringe dispensing through a needle, not inkjet).
   - **Zhao et al., *[EMI shielding DIW MXene frames]*** (open-access, PMC8219826): MXene/AlOOH pastes at **9–18 wt% solids (~98–196 mg/mL)**, shear-thinning with G′>G″, dispensed at 15–20 psi through a 410 µm needle on a three-axis DIW machine.
 
 **Verdict:** extrusion-formulated MXene ink does fit the NOVA's viscosity window; it is the dilute inkjet-style formulations (not what a NOVA would use anyway) that fall outside it.
@@ -48,7 +48,7 @@ Distinguishing printed/extruded traces from vacuum-filtered freestanding films (
 
 | Method | Conductivity (as-fabricated) | Notes |
 |---|---|---|
-| Extrusion-printed, room temp, no anneal (Song 2022) | **6.26×10⁵ S/m** as-printed; **6.9×10⁵ S/m** after 4 h storage at ~10% RH (no heat) | Best-evidenced extrusion-printed number |
+| Extrusion-printed, room temp, no anneal (Shao et al. 2022) | **6.26×10⁵ S/m** as-printed; **6.9×10⁵ S/m** after 4 h storage at ~10% RH (no heat) | Best-evidenced extrusion-printed number |
 | DIW porous frame + AlOOH crosslink + freeze-dry (Zhao) | **4,119–5,323 S/m** | Two orders of magnitude lower — porous, freeze-dried lattice, not dense film |
 | Spray-coated antenna film, PET substrate (PMC9119193) | ~1.5×10⁶ S/m measured; theoretical freestanding Ti₃C₂Tₓ up to 2×10⁶ S/m (20,000 S/cm) | Not extrusion; included for calibration |
 | Blade-coated, vacuum-annealed 180 °C, 4 h (PMC9979651) | Up to 1.93×10⁶ S/m (19,325 S/cm) | Shows annealing benefit, but blade-coating ≠ extrusion, and 180 °C exceeds NOVA's 40 °C ceiling and most flexible-substrate limits |
@@ -66,7 +66,7 @@ Yes — this is the best-supported claim in the entire investigation. Shao et al
 
 ## 7. Substrate compatibility for the patent's flexible substrates (PET, polyimide, TPU, textile)
 
-- **PET:** Well-demonstrated. Used as a MXene ink substrate in multiple sources (Song 2022; spray-coated antenna PMC9119193; blade-coated transparent films PMC9979651). Aqueous MXene ink is compatible; PET's ~80 °C thermal ceiling is irrelevant since MXene needs no high-temperature step.
+- **PET:** Well-demonstrated. Used as a MXene ink substrate in multiple sources (Shao et al. 2022; spray-coated antenna PMC9119193; blade-coated transparent films PMC9979651). Aqueous MXene ink is compatible; PET's ~80 °C thermal ceiling is irrelevant since MXene needs no high-temperature step.
 - **Polyimide:** Demonstrated (Frontiers 2026 DIW paper), though that source is the outlier with unusually low measured conductivity and doesn't report adhesion testing — polyimide compatibility is directionally confirmed but not well-characterized quantitatively.
 - **PDMS / curved and biological surfaces:** Shao et al. (2022) print on PDMS, PVA, ferrite, and explicitly demonstrate printing on curved substrates and even on leaves and fruit — strong evidence for conformal application onto non-flat surfaces, directly relevant to the patent's "conforming to curved surfaces" requirement.
 - **TPU and textile:** This is the weak point. No source found MXene extrusion-printed directly on TPU. For textile, the literature is explicit about a **real, unresolved adhesion problem**: "a major challenge in applying MXenes to fabric surfaces is achieving durable adhesion... weak interfacial bonding often results in poor wash fastness and limited long-term stability under mechanical deformation," driven by fiber roughness, chemical inertness, and porosity. Workarounds in the literature (e.g., atomic-layer-deposited Pt priming layers on textile to promote MXene ink adsorption) exist specifically *because* bare aqueous MXene ink does not reliably bond to textile — i.e., the problem is acknowledged as real enough to need a fix, not solved outright.
@@ -94,6 +94,25 @@ Line width and line-to-line gap are genuinely different constraints in this lite
 | Blade coating (not extrusion; reference only) | n/a | n/a (film, not line) | 2.2 nm – 11.5 nm | Up to 1.93×10⁶ S/m | Vacuum anneal 180 °C, 4 h (boosts conductivity but exceeds NOVA's 40 °C and most flexible-substrate thermal limits) | PMC9979651 |
 
 ## Skin depth / electrical-thickness check at X-band
+
+> **Read alongside [`docs/mxene-rf-band-electrical-properties.md`](mxene-rf-band-electrical-properties.md) (2026-09-10).**
+> This section uses σ ≈ 6.9×10⁵ S/m, which is a **DC** figure measured on an
+> as-printed extrusion trace. An **RF-band extracted conductivity now exists and
+> it is higher**: 1.2×10⁶ S/m, reported independently by two Drexel groups —
+> AlHassoon et al. (*Appl. Phys. Lett.* 116(18):184101, 2020, DOI
+> 10.1063/5.0002514, curve-fit over 1–10 GHz) and Rakhmanov et al. (*Appl.
+> Phys. Lett.* 123(20):204105, 2023, DOI 10.1063/5.0176575, measured in a WR-90
+> waveguide across all of 8.2–12.4 GHz). Both are **spray-coated films, not
+> extrusion-printed traces**, so neither replaces the figure this section uses.
+> **The numbers below are correct for the σ they state and are a conservative
+> bound, not a best estimate**: a higher conductivity means a *smaller* skin
+> depth (4.59 µm rather than 6.06 µm at 10 GHz) and therefore *less* thickness
+> needed, so this section overstates the required film thickness rather than
+> understating it.
+>
+> *In plain terms: the material appears to conduct better at radio frequency
+> than the DC number used here suggests, so the thickness targets below are the
+> safe end of the range — the real requirement is likely a bit thinner.*
 
 Using δ = 1/√(π f μ₀ σ), cross-validated against a literature-computed value (Nano Research, δ = 24.57 µm at f = 3.5 GHz, σ = 1.2×10⁵ S/m — confirmed, "Investigation of MXene nanosheets based radio-frequency electronics by skin depth effect," DOI 10.1007/s12274-023-6127-7, accessible only via search-result snippets — full text was 403/503-blocked from every route tried, so this is the one figure in the report sourced from a search snippet rather than a fetched page):
 
