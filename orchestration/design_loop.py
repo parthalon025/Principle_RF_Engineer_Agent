@@ -309,6 +309,12 @@ class DesignLoopValidationError(ValueError):
     convention of a domain-specific ValueError subclass."""
 
 
+class DesignLoopStateVersionError(OrchestrationError):
+    """Raised when a stored DesignLoopState snapshot's version doesn't match
+    what the current code expects. This prevents silent data loss when the
+    schema changes while a human-approval request is still pending."""
+
+
 @dataclass(frozen=True)
 class LoopDecision:
     """One recorded step outcome -- the loop's provenance trail. `kind`
@@ -470,6 +476,8 @@ class DesignLoopState:
     to_dict/from_dict) so the CALLER holds and passes it back in on each
     call, per this module's docstring's "STATE DESIGN" section."""
 
+    CURRENT_STATE_VERSION = 1
+
     loop_id: str
     iteration: int
     current_step: str
@@ -481,6 +489,7 @@ class DesignLoopState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "version": self.CURRENT_STATE_VERSION,
             "loop_id": self.loop_id,
             "iteration": self.iteration,
             "current_step": self.current_step,
@@ -496,6 +505,16 @@ class DesignLoopState:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> DesignLoopState:
+        # Check version explicitly to provide a clear error if schema changes
+        version = data.get("version")
+        if version is None or version != DesignLoopState.CURRENT_STATE_VERSION:
+            raise DesignLoopStateVersionError(
+                f"DesignLoopState snapshot has version={version!r}, but this code "
+                f"expects version={DesignLoopState.CURRENT_STATE_VERSION}. A schema "
+                "change may have occurred while this approval was pending. "
+                "Cannot safely deserialize. Contact support or check the CHANGELOG "
+                "for migration instructions."
+            )
         decisions = [LoopDecision.from_dict(d) for d in data.get("decisions", [])]
         return DesignLoopState(
             loop_id=data["loop_id"],
