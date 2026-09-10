@@ -6,12 +6,20 @@ tests/test_design_families.py -- this library is a lookup over physics and
 over the repo's own registry, so it is exercised directly with no database
 and no solver.
 
-Two of the tests below are deliberately written to fail LOUDLY on a future
-change rather than to describe today's behaviour for its own sake:
-`test_effects_without_family_reports_shielded_against` fails the day someone
-registers a shielding family and forgets this table, and
-`test_every_registered_design_family_is_claimed_by_some_effect` fails the day
-someone adds a seventh design family without wiring it in.
+ADR-0050 registered two design families this library did not yet know about
+-- `BANDPASS_FSS` for `transmitted`, `SHIELD` for `shielded against` -- and
+this file's own tests caught it: two of the tests below used to assert the
+STALE state (both effects reported gapped) and pinned the disagreement in
+their own docstrings rather than hiding it, because ADR-0050 could not edit
+this file (separate ownership) and left the wiring as a two-line fix. Wiring
+it in is what most of this revision does; `test_the_gap_report_is_now_exactly
+_low_infrared_emissivity` and `test_every_registered_design_family_is_claimed
+_by_some_effect` are the two that record what changed and why. A third test,
+`test_registry_and_effects_library_cannot_silently_drift_apart`, is new and
+is the general form of that tripwire: it checks BOTH directions (every family
+an effect claims resolves in the registry; every family the registry holds is
+claimed or explicitly excused) so the next drift between these two modules
+fails loudly here rather than needing a human to notice it again.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ from designs.intended_effects import (
     DefaultThreshold,
     EffectMiss,
     EffectProfile,
+    GapReason,
     ObjectiveSense,
     ScoringQuantity,
     diffracted_order_min_period_m,
@@ -230,70 +239,177 @@ def test_no_alias_is_claimed_by_two_effects():
 # ---------------------------------------------------------------------------
 
 
-def test_effects_without_family_reports_shielded_against():
-    """`shielded against` is one of CONTEXT.md's own seven and NOTHING in
-    designs/design_families.py serves it -- no family, no analysis_model, no
-    physical_bound.
+def test_transmitted_resolves_to_bandpass_fss():
+    """ADR-0050 registered BANDPASS_FSS for the radome/bandpass architecture;
+    this is the wiring half ADR-0050 could not do itself (separate file
+    ownership) -- see designs/intended_effects.py's TRANSMITTED profile."""
+    profile = resolve_intended_effect("transmitted")
+    assert profile.has_family
+    assert profile.family_gap is None
+    assert design_families.BANDPASS_FSS.name in profile.families
+    assert design_families.BANDPASS_FSS.name in families_serving("transmitted")
 
-    This test fails loudly the day somebody registers a shielding family and
-    forgets to wire it into designs/intended_effects.py. That is the point of
-    asserting it rather than merely reporting it.
+
+def test_shielded_against_resolves_to_shield():
+    """Same wiring, other effect: ADR-0050 registered SHIELD."""
+    profile = resolve_intended_effect("shielded against")
+    assert profile.has_family
+    assert profile.family_gap is None
+    assert design_families.SHIELD.name in profile.families
+    assert design_families.SHIELD.name in families_serving("shielded against")
+
+
+def test_the_radome_misfiling_arithmetic_is_still_on_record():
+    """The A = 1 - 0.16 - 0.78 = 0.06 figure against ADR-0041's 0.90 default is
+    the whole reason BANDPASS_FSS exists rather than a flag on
+    ABSORBER_TRANSMISSIVE (docs/adr/0050). `TRANSMITTED` no longer carries a
+    `FamilyGap` to hold that arithmetic now that the gap is closed, so it must
+    survive somewhere else or the defect it documents could silently return --
+    it lives in `TRANSMITTED.notes` now.
     """
-    gaps = effects_without_family()
-    gapped = {gap.effect for gap in gaps}
-    assert "shielded against" in gapped
+    profile = resolve_intended_effect("transmitted")
+    joined = " ".join(profile.notes)
+    assert "0.16" in joined
+    assert "0.78" in joined
+    assert "0.06" in joined
+    assert "ABSORBER_TRANSMISSIVE" in joined
 
 
-def test_effects_without_family_reports_the_transmitted_radome_gap():
-    """The other CONTEXT.md-named effect with no family, and the one with a
-    worked cost attached."""
-    gaps = {gap.effect: gap for gap in effects_without_family()}
-    assert "transmitted" in gaps
-    radome = gaps["transmitted"]
-    assert radome.misfiled_as == "ABSORBER_TRANSMISSIVE"
-    assert "0.06" in radome.misfiling_cost
-    assert radome.cheapest_fix
+def test_the_gap_report_is_now_exactly_low_infrared_emissivity():
+    """Down from three to one, and the remaining one changed MEANING, not just
+    count.
 
+    Before ADR-0050: `effects_without_family()` returned `transmitted`,
+    `shielded against` and `low infrared emissivity`, and the first two were
+    ordinary outstanding work -- nobody had registered a family yet.
+    ADR-0050 registered BANDPASS_FSS and SHIELD for those two, and this
+    revision wires designs/intended_effects.py to both (see
+    `test_transmitted_resolves_to_bandpass_fss` and
+    `test_shielded_against_resolves_to_shield`), closing that half of the
+    disagreement between this module and designs/design_families.py that
+    ADR-0050's own Consequences recorded and could not close itself (separate
+    file ownership).
 
-def test_the_gap_report_is_exactly_the_three_known_gaps_today():
-    """Still three, and two of them are now stale in ONE direction only.
+    `low infrared emissivity` remains, and it is no longer the same kind of
+    gap: ADR-0050 examined registering a family for it, by name, and declined
+    -- see `family_gap.status` on that profile, which now reads
+    `GapReason.DELIBERATELY_DECLINED` rather than `GapReason.OUTSTANDING_WORK`.
+    A gap report with only one entry left is not a smaller version of the old
+    finding; it is a different finding, which is why this test is renamed
+    rather than merely re-counted.
 
-    ADR-0050 registered BANDPASS_FSS for `transmitted` and SHIELD for
-    `shielded against` in designs/design_families.py. This library has not yet
-    been pointed at them -- `TRANSMITTED.families` and
-    `SHIELDED_AGAINST.families` are still empty tuples -- so both effects
-    still appear here. The registry-side truth is asserted from the other
-    direction in `test_every_registered_design_family_is_claimed_by_some_
-    effect` above, whose docstring carries the two-line fix.
-
-    Deliberately NOT weakened to a subset check while that is outstanding: an
-    exact set is what makes both halves of the wiring visible at once, and a
-    subset check would pass silently whether the gap were real or merely
-    unwired.
+    Still an EXACT set, not a subset check, for the same reason as before: a
+    subset check would pass whether the wiring were actually complete or
+    merely partial.
     """
     gapped = {gap.effect for gap in effects_without_family()}
-    assert gapped == {"transmitted", "shielded against", "low infrared emissivity"}
+    assert gapped == {"low infrared emissivity"}
 
 
 def test_a_family_gap_states_itself_in_value_comparator_unit_shape():
     """Capability-warning-SHAPED (precise, queryable), and explicitly not a
     Capability warning and not a capability-verdict: it drops nothing."""
     gaps = {gap.effect: gap for gap in effects_without_family()}
-    gap = gaps["shielded against"]
+    gap = gaps["low infrared emissivity"]
     assert gap.needed_value == 1.0
     assert gap.comparator == ">="
     assert gap.achieved_value == 0.0
     assert "design families" in gap.unit
     statement = gap.as_statement()
-    assert "shielded against" in statement
+    assert "low infrared emissivity" in statement
     assert ">=" in statement
+
+
+def test_low_infrared_emissivity_absence_is_deliberate_not_outstanding_work():
+    """ADR-0050 argued and declined a family for this effect; nobody should be
+    able to "helpfully" register one later without reopening that ADR. Pinned
+    on `GapReason` rather than left as prose so a caller can branch on the
+    TYPE of gap rather than parsing `misfiling_cost` for the word 'declined'.
+    """
+    profile = resolve_intended_effect("low infrared emissivity")
+    assert profile.family_gap is not None
+    assert profile.family_gap.status is GapReason.DELIBERATELY_DECLINED
+
+    # And the two effects ADR-0050 DID register families for must NOT carry
+    # that status -- there is nothing to carry, because they have no gap at
+    # all any more (has_family is True, family_gap is None). Asserted here so
+    # a future edit cannot quietly reintroduce a FamilyGap for either without
+    # this test noticing the asymmetry.
+    for effect in ("transmitted", "shielded against"):
+        assert resolve_intended_effect(effect).family_gap is None
+
+
+# A family here is EXPLAINED, not wired, when nothing in this library's
+# vocabulary should claim it -- currently exactly one, and the reason is
+# recorded here rather than only in a docstring so the test below can point
+# at it. Adding a name to this table must come with the same kind of argument
+# PATCH's carries (this module's docstring, finding 4, and
+# `test_every_registered_design_family_is_claimed_by_some_effect` below); it
+# is not a place to silence a failing test.
+_FAMILIES_DELIBERATELY_UNCLAIMED: dict[str, str] = {
+    "PATCH": (
+        "a patch antenna radiates a wave rather than doing something to an "
+        "arriving one, and 'radiated' is not among CONTEXT.md's seven"
+    ),
+}
+
+
+def test_registry_and_effects_library_cannot_silently_drift_apart():
+    """The consistency check ADR-0050 exposed the need for: two modules that
+    both know about design families must agree on which ones exist and which
+    ones are reachable, in both directions, or a defect like the one this
+    file's own tests just carried (BANDPASS_FSS and SHIELD registered in
+    designs/design_families.py, invisible to designs/intended_effects.py for
+    one release) can happen again without either module raising or failing a
+    test.
+
+    Direction 1: every family an EffectProfile claims must actually exist in
+    the registry -- a typo or a stale rename here must fail HERE, not surface
+    three steps downstream as a KeyError in designs/design_families.py.
+    (`test_families_serving_names_real_registry_entries` above already checks
+    this; repeated here as part of the combined statement so the two
+    directions read as one guarantee rather than two unrelated tests.)
+
+    Direction 2: every family the registry holds must be reachable from some
+    effect's `families`, OR be named in `_FAMILIES_DELIBERATELY_UNCLAIMED`
+    with a reason -- so a ninth family added to the registry and never wired
+    in here fails THIS test immediately, by name, rather than leaving a
+    family no requirement can ever reach.
+    """
+    registry_names = set(design_families.known_family_names())
+
+    claimed: set[str] = set()
+    for name in known_effect_names():
+        for family in families_serving(name):
+            assert family in registry_names, (
+                f"{name!r} claims family {family!r}, which does not exist in "
+                "designs/design_families.py -- fix the family name in "
+                "designs/intended_effects.py."
+            )
+            claimed.add(family)
+
+    unclaimed = registry_names - claimed
+    unexplained = unclaimed - set(_FAMILIES_DELIBERATELY_UNCLAIMED)
+    assert not unexplained, (
+        f"Design family(ies) {sorted(unexplained)} exist in "
+        "designs/design_families.py but no intended-effect profile in "
+        "designs/intended_effects.py claims them, and they are not recorded "
+        "in _FAMILIES_DELIBERATELY_UNCLAIMED with a reason. Either wire the "
+        "family into the effect(s) it serves, or add it to that table with "
+        "the same kind of argument PATCH's entry carries."
+    )
 
 
 def test_families_serving_distinguishes_a_miss_from_a_known_effect_with_no_family():
     """An empty tuple and a miss are different answers and must not collapse
     into one falsy value -- the ambiguity designs/design_families.py's own
-    docstring exists to refuse."""
-    no_family = families_serving("shielded against")
+    docstring exists to refuse.
+
+    `low infrared emissivity` is the fixture for "known effect, no family"
+    now that ADR-0050 wired a family in for `shielded against` -- see
+    `test_shielded_against_resolves_to_shield`.
+    """
+    no_family = families_serving("low infrared emissivity")
     assert no_family == ()
     assert not isinstance(no_family, EffectMiss)
 
@@ -324,40 +440,28 @@ def test_one_family_can_serve_two_effects():
 def test_every_registered_design_family_is_claimed_by_some_effect():
     """The gap in the other direction.
 
-    THE TRIPWIRE FIRED, EXACTLY AS DESIGNED. This assertion used to read
-    `== (PATCH,)` and was written to fail the day a seventh design family was
-    registered without being wired in here. ADR-0050 registered two --
-    BANDPASS_FSS (for `transmitted`) and SHIELD (for `shielded against`) --
-    and this test failed on the spot rather than leaving two families no
-    intended effect could reach. That is the mechanism working, so the list is
-    updated rather than the test weakened.
+    THE TRIPWIRE FIRED, EXACTLY AS DESIGNED, AND THIS IS THE RESET. This
+    assertion used to read `== (PATCH,)`, was rewritten to
+    `== (BANDPASS_FSS, PATCH, SHIELD)` the moment ADR-0050 registered two new
+    families this library did not yet claim, and is now back to `(PATCH,)`
+    because this revision does the wiring ADR-0050 itself could not (separate
+    file ownership): `TRANSMITTED.families` now names BANDPASS_FSS and
+    `SHIELDED_AGAINST.families` now names SHIELD.
 
-    Each of the three names below is unclaimed for a DIFFERENT reason, and the
-    difference matters:
+    `PATCH` is the one name that belongs here permanently, and for a
+    different reason than the other two ever were: a patch antenna radiates a
+    wave rather than doing something to an arriving one, and "radiated" is
+    not among CONTEXT.md's seven (this module's docstring, finding 4). That
+    is a finding, not outstanding work -- there is no fix to apply, and
+    minting a "radiated" effect just to close this test would be inventing
+    vocabulary this module's job is not to invent.
 
-      * PATCH -- a finding, not an oversight. A patch antenna radiates a wave
-        rather than doing something to an arriving one, and "radiated" is not
-        among CONTEXT.md's seven.
-      * BANDPASS_FSS and SHIELD -- WORK OUTSTANDING, not a finding. Both
-        exist precisely to serve an effect this library already holds
-        (`transmitted`, `shielded against`), and both are still listed here
-        only because `TRANSMITTED.families` and `SHIELDED_AGAINST.families` in
-        designs/intended_effects.py are still empty tuples. ADR-0050 could not
-        close that half: the two modules have separate owners and the family
-        registry landed first. Until they are wired, `effects_without_family()`
-        below still reports those two effects as gapped even though the
-        registry now serves them -- the two modules disagree, and the
-        disagreement is stated here rather than hidden.
-
-    Wiring them is a two-line change (add the family names to those two
-    profiles' `families` tuples) plus removing them from this list and from
-    `test_the_gap_report_is_exactly_the_three_known_gaps_today`.
+    See `test_registry_and_effects_library_cannot_silently_drift_apart` for
+    the general form of this tripwire: it will fire the same way the next
+    time a family is added here and not wired in, without needing this exact
+    tuple edited again.
     """
-    assert families_without_effect() == (
-        design_families.BANDPASS_FSS.name,
-        design_families.PATCH.name,
-        design_families.SHIELD.name,
-    )
+    assert families_without_effect() == (design_families.PATCH.name,)
 
 
 # ---------------------------------------------------------------------------

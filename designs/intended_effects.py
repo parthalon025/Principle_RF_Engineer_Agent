@@ -44,34 +44,51 @@ unit statement rather than prose) but explicitly NOT one, and not a
 THE FOUR FINDINGS THIS LIBRARY EXISTS TO EXPOSE
 --------------------------------------------------------------------------
 
-**1. Three of the eight effects here have no design family at all.**
-`effects_without_family()` is the live report; today it returns `transmitted`,
-`shielded against`, and `low infrared emissivity`. Two of those three are
-named in CONTEXT.md's own list of seven.
+**1. One of the eight effects here has no design family, and it stays that
+way on purpose.** `effects_without_family()` is the live report; today it
+returns exactly `low infrared emissivity`. Until ADR-0050 it returned three --
+`transmitted` and `shielded against` were the other two, both named in
+CONTEXT.md's own list of seven -- and closing those two is what this
+docstring used to spend most of its words justifying. Both now resolve to a
+registered family (`BANDPASS_FSS`, `SHIELD`); `low infrared emissivity` does
+not, and ADR-0050 argued that case rather than merely leaving it open -- see
+finding 3.
 
-The `transmitted` gap has a worked cost, and it is not subtle. A radome or
-bandpass FSS -- a real, printable architecture in this repo (ADR-0017's
-2026-09-06 correction: "A bandpass needs **exactly one** patterned layer and
-no backing at all") -- has no family to be filed under, so today it would be
-forced into `ABSORBER_TRANSMISSIVE`, the only ground-less two-port family in
-the registry. That family's `analysis_model` scores worst-in-band
-ABSORPTIVITY, `A = 1 - |S11|^2 - |S21|^2`. Take MIL-R-7705B Table 1's own
-sample electrical limits (`docs/military-requirements-vocabulary.md` section
-5): power reflection 2 percent, one-way power transmission 85-95 percent. A
-radome meeting them -- say 2 percent reflected and 92 percent transmitted --
-scores `A = 1 - 0.02 - 0.92 = 0.06` (`CALCULATED` from exactly those two
-stated inputs), against ADR-0041's 0.90 default absorption threshold. **A
-part that does its job nearly perfectly ranks last.** The same part scores
-0.92 on transmittance, which is what the requirement actually asked for.
+**The `transmitted` gap is closed, and the arithmetic that justified closing
+it is worth keeping on record**, because it is the whole reason
+`BANDPASS_FSS` exists rather than a flag on `ABSORBER_TRANSMISSIVE`. Before
+ADR-0050, a radome or bandpass FSS -- a real, printable architecture in this
+repo (ADR-0017's 2026-09-06 correction: "A bandpass needs **exactly one**
+patterned layer and no backing at all") -- had no family to be filed under,
+so it would have been forced into `ABSORBER_TRANSMISSIVE`, the only
+ground-less two-port family that existed then. That family's
+`analysis_model` scores worst-in-band ABSORPTIVITY, `A = 1 - |S11|^2 -
+|S21|^2`. Take MIL-R-7705B Table 1's own sample electrical limits
+(`docs/military-requirements-vocabulary.md` section 5): power reflection 2
+percent, one-way power transmission 85-95 percent. A radome meeting them --
+say 2 percent reflected and 92 percent transmitted -- scores
+`A = 1 - 0.02 - 0.92 = 0.06` (`CALCULATED` from exactly those two stated
+inputs), against ADR-0041's 0.90 default absorption threshold. **A part that
+does its job nearly perfectly ranks last.** The same part scores 0.92 on
+transmittance, which is what the requirement actually asked for. A second,
+measured worked example carries the identical arithmetic and lives on
+`TRANSMITTED.notes` now that there is no `FamilyGap` left to hold it: a
+screen-printed Ti3C2Tx chessboard FSS reported at 78 percent transmittance
+and 16 percent reflectivity has `A = 1 - 0.16 - 0.78 = 0.06`.
 
 *In plain terms: a window and a sponge are graded on opposite things. Grade
 the window as a sponge and the best window in the room comes bottom of the
 class.* `objective_sense` and the per-quantity senses below are the field
 that prevents this.
 
-The `shielded against` gap is worse in a quieter way: the effect is named in
-CONTEXT.md's seven and there is no family, no `analysis_model` and no
-`physical_bound` anywhere for it.
+**The `shielded against` gap is also closed** -- `SHIELD` is now its family
+-- but naming the family did not make it scoreable: `SHIELD` still carries
+`UndeclaredAnalysisModel` and `UnbuiltPostProcess` (ADR-0050), so a
+`shielded against` requirement still cannot be run through the loop today.
+It is also still true, independent of the registry, that shielding
+effectiveness is nearly informationless under this programme's default
+ground-backed architecture -- see finding 2, which that architecture
+question does not depend on which family, if any, is named.
 
 **2. `shielded against` may not be a scoreable ask under this programme's own
 default architecture.** Shielding effectiveness is a two-port transmission
@@ -100,6 +117,23 @@ not name. This module names it so the absence is visible and queryable. It
 does **not** assert that it belongs in CONTEXT.md's list -- that is a
 `/domain-modeling` decision with its own owner, and this file does not touch
 CONTEXT.md.
+
+**ADR-0050 went further than naming it: it examined registering a design
+family for this effect and declined, in writing.** Applying ADR-0027 section
+5's four-plug-in family test honestly returns four nothings -- no
+`physical_bound`, no `analysis_model`, no `optimizer_class`, no
+`simulation_adapter` -- and `DesignFamily.__post_init__` refuses the attempt
+on physics regardless: it requires `requires_ground_plane=True` to pair with
+`port_count=1` and `False` with `port_count=2`, and an infrared layer is not
+an S-parameter measurement at all, so it has no ports to declare either way.
+What ADR-0050 concludes instead is that low infrared emissivity is a
+**co-design constraint on a candidate whose family is set by its radar
+behaviour**, not a family of its own -- and the constraint already has a
+number, usable today with no registry change: see
+`LOW_INFRARED_EMISSIVITY.family_gap`, whose `status` now reads
+`GapReason.DELIBERATELY_DECLINED` rather than `OUTSTANDING_WORK`, precisely
+so a later reader cannot "helpfully" register a family here without
+reopening that ADR.
 
 **4. `PATCH` serves none of the eight effects, and that is a second gap in
 the other direction.** `families_without_effect()` returns `("PATCH",)`. A
@@ -551,6 +585,34 @@ DefaultThresholdSlot = DefaultThreshold | _NoDefaultThreshold
 # --------------------------------------------------------------------------
 
 
+class GapReason(StrEnum):
+    """Why a registered design family does not serve this intended effect --
+    kept apart for the same reason `BoundStatus`'s four states are kept
+    apart, above: "nobody has built this yet" and "this was considered and
+    refused, in writing" license opposite next actions, and a single
+    `FamilyGap` shape with no way to say which one it is would let a later
+    reader "helpfully" register a family that an ADR already argued against.
+
+    ADR-0050 is the reason this exists rather than being one more prose
+    sentence in `misfiling_cost`: it registered `BANDPASS_FSS` and `SHIELD`
+    for two of this library's three gaps and, for the third
+    (`low infrared emissivity`), argued a family BY NAME and declined it --
+    a materially different fact from "nobody has gotten to this yet", and
+    the whole point of recording it is that a `FamilyGap` for that effect
+    must not read the same as a `FamilyGap` for ordinary outstanding work.
+
+    OUTSTANDING_WORK      -- nothing here says a family should not exist;
+                             registering one (or wiring an existing one in)
+                             is the fix, and nobody has done it yet.
+    DELIBERATELY_DECLINED -- a family was considered and refused. Reopening
+                             it is a decision for whoever revisits the ADR
+                             that declined it, not a routine registration.
+    """
+
+    OUTSTANDING_WORK = "outstanding work"
+    DELIBERATELY_DECLINED = "deliberately declined"
+
+
 @dataclass(frozen=True)
 class FamilyGap:
     """A precise statement that no design family in the registry serves this
@@ -573,12 +635,19 @@ class FamilyGap:
     gates nothing -- it is a finding handed to the caller, per ADR-0028's
     "warn and proceed" and the charter's "the search space is unbounded".
 
+    `status` is a `GapReason`, never a bare bool: "not built yet" and
+    "considered and refused" are different facts about the SAME emptiness
+    and license different next actions, on the same reasoning
+    `designs/design_families.py`'s module docstring gives for
+    `NO_PHYSICAL_BOUND` versus `UnreadPhysicalBound`.
+
     `misfiled_as` and `misfiling_cost` are the load-bearing pair: naming a
     gap is cheap, and saying what it costs when the requirement arrives
     anyway is what makes it actionable.
     """
 
     effect: str
+    status: GapReason
     needed_value: float
     comparator: str
     unit: str
@@ -1070,42 +1139,16 @@ TRANSMITTED = EffectProfile(
                 "No ground plane at all; one patterned layer (ADR-0017's 2026-09-06 correction)."
             ),
             registry_state=(
-                "No design family serves this effect, so no registry slot exists to carry a bound."
+                "designs/design_families.py: BANDPASS_FSS.physical_bound is an "
+                "UnreadPhysicalBound (ADR-0050) naming broadband-matching theory "
+                "(Bode, Fano) as where a search should start -- explicitly NOT a "
+                "claim that either applies. The family now exists; the bound still "
+                "does not, so this stays NOT_ESTABLISHED."
             ),
         ),
     ),
-    families=(),
-    family_gap=FamilyGap(
-        effect="transmitted",
-        needed_value=1.0,
-        comparator=">=",
-        unit="registered design families in designs/design_families.py serving this effect",
-        achieved_value=0.0,
-        misfiled_as="ABSORBER_TRANSMISSIVE",
-        misfiling_cost=(
-            "ABSORBER_TRANSMISSIVE is the only ground-less two-port family in the "
-            "registry, so a radome would land there by elimination -- and its "
-            "analysis model scores worst-in-band ABSORPTIVITY. Worked from "
-            "MIL-R-7705B Table 1's own sample limits (power reflection 2 percent, "
-            "one-way transmission 85-95 percent): a radome reflecting 2 percent and "
-            "transmitting 92 percent scores A = 1 - 0.02 - 0.92 = 0.06 against "
-            "ADR-0041's 0.90 default threshold, and ranks last. The same part "
-            "scores 0.92 on transmittance, which is what was actually asked for. "
-            "CALCULATED from exactly those two stated inputs; not a measurement of "
-            "any real radome."
-        ),
-        cheapest_fix=(
-            "Register a transmissive/bandpass family in designs/design_families.py "
-            "with TRANSMITTANCE as its scored quantity, port_count=2, "
-            "requires_ground_plane=False, and an honest UndeclaredAnalysisModel "
-            "until a passband model is written. The architecture is already "
-            "characterised here: ADR-0017's 2026-09-06 correction records a "
-            "printable bandpass FSS -- square-loop slots in a ~15 um printed metal "
-            "layer, every feature clearing the 0.2 mm floor, modelled at a 62-80 "
-            "percent passband with about 0 dB insertion loss -- and notes it is the "
-            "one architecture with NO layer-registration risk at all."
-        ),
-    ),
+    families=(design_families.BANDPASS_FSS.name,),
+    family_gap=None,
     default_threshold=_NoDefaultThreshold(
         reason=(
             "No single convention exists, and the reason is structural rather than "
@@ -1136,10 +1179,25 @@ TRANSMITTED = EffectProfile(
         "frequency selective surface passband",
     ),
     notes=(
-        "This effect has NO design family. It is the sharpest of the three gaps "
-        "because the architecture is not hypothetical: ADR-0017's own correction "
-        "records a printable bandpass FSS and calls it 'the transmissive design "
-        "ADR-0017 assumed did not exist'.",
+        "This effect HAD no design family until ADR-0050 registered BANDPASS_FSS "
+        "for it. The gap was not subtle while it lasted, and the arithmetic that "
+        "priced it is kept here, verbatim, now that there is no FamilyGap left to "
+        "hold it -- so the defect this family exists to prevent cannot silently "
+        "return once nobody remembers why it was added. Before ADR-0050, a radome "
+        "had nowhere to go but ABSORBER_TRANSMISSIVE, the only ground-less "
+        "two-port family that existed then, and that family's analysis model "
+        "scores worst-in-band ABSORPTIVITY. A screen-printed Ti3C2Tx chessboard "
+        "FSS reported at X-band average radar transmittance 78 percent and "
+        "reflectivity 16 percent (J. Alloys Compd., PII S0925838826025946, "
+        "recorded on issue #453; provenance UNVERIFIED -- the primary paper has "
+        "not been read here) has A = 1 - 0.16 - 0.78 = 0.06 (CALCULATED from "
+        "exactly those two stated figures), against ADR-0041's 0.90 default "
+        "absorption threshold: a near-ideal radome scoring 6 percent of the bar. "
+        "ADR-0017's own correction independently records a printable bandpass FSS "
+        "and calls it 'the transmissive design ADR-0017 assumed did not exist'. "
+        "In plain terms: a window and a sponge are graded on opposite things, and "
+        "grading the window as a sponge put the best window in the room bottom of "
+        "the class.",
         "A transmissive candidate must state that it needs no reflector, as an "
         "explicit requirement assertion -- ADR-0017's default is that the base "
         "printed layer always supplies its own reflector, and a printed reflector "
@@ -1451,36 +1509,21 @@ SHIELDED_AGAINST = EffectProfile(
             ),
             applies_when="",
             registry_state=(
-                "No design family serves this effect, so there is no registry slot "
-                "to carry a bound, no analysis_model, and no simulation_adapter."
+                "designs/design_families.py: SHIELD.physical_bound is an "
+                "UnreadPhysicalBound (ADR-0050). Nobody here has searched, though "
+                "there is a structural reason to suspect no bound of the "
+                "Rozanov/Chu shape governs a quantity that rises monotonically "
+                "with thickness and conductivity with no bandwidth trade -- that "
+                "suspicion is this programme's own and unconfirmed, so it is not "
+                "enough to change the status. SHIELD.analysis_model and "
+                "SHIELD.postprocess are also both still missing "
+                "(UndeclaredAnalysisModel, UnbuiltPostProcess): a named family is "
+                "not yet a scoreable one."
             ),
         ),
     ),
-    families=(),
-    family_gap=FamilyGap(
-        effect="shielded against",
-        needed_value=1.0,
-        comparator=">=",
-        unit="registered design families in designs/design_families.py serving this effect",
-        achieved_value=0.0,
-        misfiled_as="(no candidate family -- worse than a misfiling)",
-        misfiling_cost=(
-            "There is no family whose scored quantity is shielding effectiveness at "
-            "all, so a requirement asking for it has nowhere to go: no "
-            "analysis_model, no physical_bound, no simulation_adapter. This effect "
-            "is named in CONTEXT.md's own list of seven, which makes the absence a "
-            "gap in the registry rather than a gap in the vocabulary."
-        ),
-        cheapest_fix=(
-            "Settle the prior question first, because it may dissolve the gap: "
-            "decide whether 'shielded against' is a distinct effect or 'transmitted' "
-            "with the sense flipped. Under ADR-0017's default every skin here prints "
-            "its own reflector, so |S21| = 0 by construction and SE is unbounded -- "
-            "the requirement is met perfectly and the number says nothing about the "
-            "design. SE only discriminates on an unbacked stack, which is the same "
-            "fixture 'transmitted' needs. A glossary decision, not a code change."
-        ),
-    ),
+    families=(design_families.SHIELD.name,),
+    family_gap=None,
     default_threshold=_NoDefaultThreshold(
         reason=(
             "No convention adopted here. The only SE figures this repo has read are "
@@ -1505,8 +1548,22 @@ SHIELDED_AGAINST = EffectProfile(
         "blocked",
     ),
     notes=(
+        "ADR-0050 registered SHIELD as this effect's design family, resolving the "
+        "registry-lookup half of the gap this profile used to carry as a "
+        "FamilyGap. Named after the MECHANISM -- attenuation through a "
+        "conductor's thickness against its skin depth, not a resonance -- rather "
+        "than after the objective-flipped algebra that would have merged it into "
+        "BANDPASS_FSS; see designs/design_families.py's own comment above SHIELD "
+        "for why that merge does not work even though SE_dB = -10*log10(T) makes "
+        "the two quantities mathematically equivalent (disjoint design inputs: a "
+        "bandpass FSS is designed by resonant aperture geometry, a shield by "
+        "conductor thickness and sheet resistance). Naming the family did not "
+        "make it scoreable -- SHIELD still carries UndeclaredAnalysisModel and "
+        "UnbuiltPostProcess, so nothing here can run a SHIELD design through the "
+        "loop yet, which is a second, still-open gap this note keeps visible.",
         "THIS EFFECT MAY NOT BE SCOREABLE UNDER THIS PROGRAMME'S DEFAULT "
-        "ARCHITECTURE, and that is the finding worth carrying. ADR-0017 makes the "
+        "ARCHITECTURE, and that is the finding worth carrying regardless of "
+        "whether a family names it. ADR-0017 makes the "
         "base printed layer supply its own conductive reflector by default; a "
         "ground-backed structure has zero transmission by construction "
         "(designs/design_families.py's __post_init__ states this as the reason "
@@ -1570,23 +1627,64 @@ LOW_INFRARED_EMISSIVITY = EffectProfile(
     families=(),
     family_gap=FamilyGap(
         effect="low infrared emissivity",
+        status=GapReason.DELIBERATELY_DECLINED,
         needed_value=1.0,
         comparator=">=",
         unit="registered design families in designs/design_families.py serving this effect",
         achieved_value=0.0,
-        misfiled_as="(none -- no family is even approximately right)",
+        misfiled_as=(
+            "(none -- and none can be. ADR-0050 examined registering a family and "
+            "found ADR-0027 section 5's four-plug-in test returns four nothings: "
+            "no physical_bound, no analysis_model, no optimizer_class, no "
+            "simulation_adapter. DesignFamily.__post_init__ refuses the attempt on "
+            "physics regardless -- it requires requires_ground_plane=True to pair "
+            "with port_count=1 and False with port_count=2, and an infrared layer "
+            "is not an S-parameter measurement at all, so it has no ports to "
+            "declare either way.)"
+        ),
         misfiling_cost=(
-            "Nothing in the registry scores an infrared quantity, and nothing in "
-            "rf_tools computes one. A multispectral requirement would have its "
-            "infrared half silently ignored while its radar half scored normally, "
-            "which reads as a passing design."
+            "Not the cost of an oversight -- the cost of the mechanism, and it is a "
+            "real number rather than a shrug. ADR-0050's conclusion: low infrared "
+            "emissivity is a CO-DESIGN CONSTRAINT on a candidate whose family is "
+            "set by its radar behaviour, not a design family of its own, because a "
+            "CONTINUOUS low-emissivity conductive layer laid over a radar absorber "
+            "SHORTS IT OUT. rf_tools.calculations.min_overlay_sheet_resistance_"
+            "ohm_sq returns 407.3 ohm/sq as the floor an overlay must clear to "
+            "leave 90 percent microwave absorption intact (1,695.3 ohm/sq for 99 "
+            "percent) -- VERIFIED by calling the function directly, not taken on "
+            "trust. A dense, continuous MXene film at this repo's own "
+            "best-evidenced as-printed conductivity (6.9e5 S/m, "
+            "docs/mxene-voltera-nova-printability.md) has an RF sheet resistance of "
+            "0.24 ohm/sq at 10 GHz and 20 um thickness "
+            "(rf_tools.calculations.sheet_resistance_ohm_sq, likewise VERIFIED by "
+            "calling the function), roughly 1,700 times too conductive to clear "
+            "the 90 percent floor. In plain terms: a solid metal film on top ruins "
+            "the radar absorber underneath, the way shorting a battery's terminals "
+            "with a wire drains it instead of running the circuit it was meant "
+            "for. So a requirement asking for BOTH a radar effect and low infrared "
+            "emissivity on one candidate needs this threshold checked against the "
+            "candidate's actual IR layer, or its radar half is silently wrong -- "
+            "and only a PATTERNED infrared layer (a metal grid of period p, "
+            "presenting Y/Y_0 ~ 2*pi*k*(p/lambda), microscopic at 10 GHz for an "
+            "infrared-scale period) can pass the threshold while still doing an "
+            "infrared job."
         ),
         cheapest_fix=(
-            "Not a family yet -- a vocabulary question first. This effect is absent "
-            "from CONTEXT.md's seven, and whether it belongs there is a "
-            "/domain-modeling decision with its own owner. The 407 / 1,695 ohm/sq "
-            "compatibility thresholds are usable today without any of that, as a "
-            "stated constraint on any overlay proposed above a microwave absorber."
+            "There is no code fix, and writing one would be the mistake ADR-0050 "
+            "exists to prevent: registering a family here would let "
+            "families_serving('low infrared emissivity') return a name and make "
+            "this FamilyGap vanish, so the gap report would say the gap was closed "
+            "when it was not -- an honest, queryable gap is worth more than a "
+            "family that appears to serve an effect and cannot. The 407 / 1,695.3 "
+            "ohm/sq thresholds are usable TODAY with no registry change, as a "
+            "stated co-design constraint on any overlay proposed above a microwave "
+            "absorber. If a later reader wants to reconsider registering a family, "
+            "ADR-0050's Consequences name the precondition: an infrared SOLVER and "
+            "an infrared MODEL would have to exist here first -- until then the "
+            "four plug-ins are four nothings and __post_init__ still refuses it. "
+            "Reopening this is a decision for whoever revisits that ADR, not a "
+            "routine registration -- which is what this FamilyGap's "
+            "status=GapReason.DELIBERATELY_DECLINED is for."
         ),
     ),
     default_threshold=_NoDefaultThreshold(
@@ -1626,6 +1724,12 @@ LOW_INFRARED_EMISSIVITY = EffectProfile(
         "why its fixture carries port_count=None. Any design serving both this and "
         "a microwave effect is scoring two quantities in two bands on two "
         "instruments, and the compatibility threshold above is what connects them.",
+        "ADR-0050 examined and declined a design family for this effect, in "
+        "writing -- see this module's docstring, finding 3, and "
+        "family_gap.status. That is a different fact from the other two effects "
+        "this library used to report as gapped, both of which ADR-0050 resolved "
+        "by registering a family (BANDPASS_FSS, SHIELD). Do not resolve this one "
+        "the same way without reopening that ADR.",
     ),
 )
 
