@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS components (
     part_number TEXT NOT NULL,
     category TEXT NOT NULL,
     specifications JSONB NOT NULL DEFAULT '{}'::jsonb,
-    datasheet_document_id BIGINT,
+    datasheet_document_id BIGINT REFERENCES documents(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(manufacturer, part_number)
 );
