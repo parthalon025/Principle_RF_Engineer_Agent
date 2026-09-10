@@ -68,15 +68,24 @@ class DanglingComponentReferenceError(Exception):
 
 
 def _find_dangling_component_refs(
-    conn: psycopg.Connection, architecture: dict[str, Any]
+    conn: psycopg.Connection, component_refs: list[tuple[str, int]]
 ) -> list[dict[str, Any]]:
     """Return `{"block": ..., "component_id": ...}` for every `component_id`
-    referenced in `architecture` that has no matching `components` row, in
-    the order `extract_component_refs` encountered them. Empty list ->
-    every reference resolves (including when there are none at all)."""
-    component_ids = extract_component_refs(architecture)
-    if not component_ids:
+    in `component_refs` that has no matching `components` row, in the order
+    `component_refs` lists them. Empty list -> every reference resolves
+    (including when there are none at all).
+
+    `component_refs` is the caller's own already-computed
+    `designs.validation._iter_component_refs(architecture)` walk -- a list
+    of `(block, component_id)` pairs -- passed in rather than an
+    `architecture` dict this function would have to walk itself, so
+    `create_design` can walk `architecture` exactly once and reuse the
+    result both for this existence check and for its own
+    `design_component_refs` insert.
+    """
+    if not component_refs:
         return []
+    component_ids = [component_id for _, component_id in component_refs]
 
     with conn.cursor() as cur:
         cur.execute(
@@ -90,7 +99,7 @@ def _find_dangling_component_refs(
         return []
     return [
         {"block": block, "component_id": component_id}
-        for block, component_id in _iter_component_refs(architecture)
+        for block, component_id in component_refs
         if component_id in missing
     ]
 
@@ -280,14 +289,14 @@ def create_design(
       `find_designs_referencing_component` to ask "which designs use
       component X", and that Postgres itself uses to refuse deleting a
       `components` row a live design still references
-      (`db/schema.sql`'s `component_id` FK, default `RESTRICT`). This
-      reuses the same `_iter_component_refs` walk `_find_dangling_
-      component_refs` already ran to validate the references above -- no
-      second validation pass, just a second, cheap walk of the same
-      already-in-memory `architecture` dict to get the `block` label
-      alongside each id. `architecture={}` (every design-loop-created
-      design today) writes no rows here, same as it creates no
-      `verification_items` rows when `requirements={}`.
+      (`db/schema.sql`'s `component_id` FK, default `RESTRICT`).
+      `architecture` is walked via `_iter_component_refs` exactly once,
+      up front; that one list feeds both `_find_dangling_component_refs`'s
+      existence check above and this insert -- no second walk of
+      `architecture` to re-derive the same `(block, component_id)` pairs.
+      `architecture={}` (every design-loop-created design today) writes no
+      rows here, same as it creates no `verification_items` rows when
+      `requirements={}`.
     - The `designs` insert, its `verification_items` auto-creation, and its
       `design_component_refs` auto-creation are all statements on the same
       connection with no commit between them, so they share whatever
@@ -312,7 +321,8 @@ def create_design(
 
     validate_requirements(requirements)
 
-    offending = _find_dangling_component_refs(conn, architecture)
+    component_refs = _iter_component_refs(architecture)
+    offending = _find_dangling_component_refs(conn, component_refs)
     if offending:
         raise DanglingComponentReferenceError(offending)
 
@@ -359,7 +369,6 @@ def create_design(
                 ],
             )
 
-        component_refs = _iter_component_refs(architecture)
         if component_refs:
             cur.executemany(
                 """
