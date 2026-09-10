@@ -216,13 +216,9 @@ def test_building_new_construction_agents_does_not_touch_specialist_handoffs():
     assert set(handoffs_after.keys()) == set(_SPECIALIST_KEYS)
 
 
-# ---------------------------------------------------------------------------
-# build_role_agent's three new, all-optional keyword parameters (issue #377):
-# mcp_server, handoffs, extra_instructions. Each must default to EXACTLY the
-# pre-#377 behavior (already proven by every test above, which calls
-# build_role_agent(role_key) with no extra arguments) -- these tests cover
-# the NEW, opt-in behavior each parameter adds for run()'s live wiring.
-# ---------------------------------------------------------------------------
+# build_role_agent's optional mcp_server/handoffs/extra_instructions
+# parameters. Every test above calls build_role_agent(role_key) with none of
+# them, so the defaults are already covered; these cover the opt-in behavior.
 
 
 def test_build_role_agent_attaches_an_already_built_mcp_server_instead_of_a_fresh_one():

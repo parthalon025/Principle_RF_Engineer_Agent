@@ -17,7 +17,7 @@ from agents import (
     set_default_openai_client,
     set_tracing_disabled,
 )
-from agents.mcp import MCPServerManager
+from agents.mcp import MCPServerManager, MCPServerStdio
 from agents.models.default_models import get_default_model_settings
 from dotenv import load_dotenv
 from openai.types.shared import Reasoning
@@ -3532,18 +3532,6 @@ _ROUTING_SUMMARY: dict[str, str] = {
 
 
 def _build_role_handoff(key: str, target_agent: Agent) -> Handoff:
-    """Build one `route_to_<key>_role` handoff pointing at `target_agent`.
-
-    Factored out (issue #377) so the SAME tool-name/description convention
-    serves two callers: `SPECIALIST_HANDOFFS` below (targeting this
-    module's own OLD-style, unchanged `ROLES[key]` Agents -- microwave,
-    antenna, test, and, historically, systems/verification before #377) and
-    `_build_live_principal`'s NEW-style targets (the `agent/mcp_roles.
-    build_role_agent()`-built systems/verification Agents `run()` actually
-    uses). A handoff's shape on the wire -- the tool name and description
-    the model sees to invoke it -- does not depend on which construction
-    sits on the other end, so one helper covers both without duplicating
-    this wording a second time."""
     return handoff(
         target_agent,
         tool_name_override=f"route_to_{key}_role",
@@ -3602,13 +3590,6 @@ _PRINCIPAL_DIRECT_TOOLS = [
     search_literature_for_capability_warning,
 ]
 
-# Extracted (issue #377) so run()'s live, MCP-routed principal
-# (_build_live_principal, via agent/mcp_roles.build_role_agent's
-# extra_instructions parameter) carries the EXACT SAME routing instructions
-# as this module's own OLD-style ROLES["principal"] below -- byte-for-byte,
-# not a second hand-typed copy that could drift from this one. Pure
-# extraction, no wording change: concatenated in the same position (right
-# after domain_note, right before _local_reasoning_output_tail()) either way.
 _PRINCIPAL_ROUTING_INSTRUCTIONS = (
     "\n\n## Routing to a specialist\n\n"
     "For ANY RF calculation, simulation, or domain-specific analysis, "
@@ -3639,20 +3620,8 @@ ROLES["principal"] = Agent(
     handoffs=list(SPECIALIST_HANDOFFS.values()),
 )
 
-# Kept as a module-level name for backward compatibility. NOTE (issue #377):
-# this is agent/main.py's own OLD-style principal -- ROLES["principal"]'s
-# direct `tools=[...]` list plus five OLD-style `route_to_<role>_role`
-# handoffs (SPECIALIST_HANDOFFS, all five targeting this module's own
-# ROLES[...] Agents). It is NOT what the live run() entry point below
-# actually runs -- run() builds its own, separate, MIXED-handoff principal
-# via _build_live_principal (agent/mcp_roles.build_role_agent, issue #377).
-# `principal`/`ROLES["principal"]` are kept exactly as they always were
-# because tests (test_agent_roles.py) and other callers depend on their
-# exact current shape (16 direct tools, 5 OLD-style handoffs) -- see this
-# module's own module-level "Principal routing to specialists" comment
-# above and agent/mcp_roles.py's module docstring, "ISSUE #377 (this
-# update)", for why run() needs a genuinely different Agent instead of
-# reusing this one.
+# Kept as a module-level name for backward compatibility. This is NOT the
+# Agent `run()` drives -- that one is built by `_build_live_principal` below.
 principal = ROLES["principal"]
 
 
@@ -3773,221 +3742,62 @@ def _assert_calculated_provenance_is_tool_backed(result: RunResult) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# Issue #377: run()'s live entry point now routes principal/systems/
-# verification through agent/mcp_roles.build_role_agent()'s mcp_servers=[...]
-# construction, while microwave/antenna/test stay on this module's own
-# unchanged ROLES construction (issue #376/#372's Windows-hanging-subprocess
-# tools -- see agent/mcp_roles.py's module docstring, "ISSUE #377 (this
-# update)", for the full account of why those three roles must not move).
-#
-# run() BECOMES ASYNC, NOT A SYNC WRAPPER: connecting an MCPServerStdio is
-# `async` (`agents.mcp.MCPServerManager.connect_all()`), and this needed to
-# happen before the very first model call, not lazily on first use -- so
-# `run()` itself is now `async def`, not `Runner.run_sync(...)` wrapped in
-# `asyncio.run()` internally. Confirmed by grep (not assumed) that this
-# function has exactly ONE caller in the whole codebase: the
-# `if __name__ == "__main__":` block at the bottom of this file, updated
-# below to `asyncio.run(run(query))`. No test or other module ever calls
-# `agent.main.run(...)` (they import individual tool wrappers, ROLES,
-# SPECIALIST_HANDOFFS, etc. directly instead), so this signature change has
-# no other call site to update.
-#
-# EAGER CONNECT-EVERYTHING-UP-FRONT, EVERY QUERY, ON PURPOSE: all three
-# NEW-style roles' MCPServerStdio instances are connected before the first
-# model call, regardless of which role (if any) the query actually reaches.
-# This costs three subprocess spawns per run() call even for a query the
-# principal answers with its own direct tools alone -- a deliberate
-# trade-off, not an oversight: `agents/run.py`'s own turn loop calls
-# `get_all_tools(execution_agent, ...)` fresh every turn (confirmed by
-# reading it directly, not assumed -- see agent/mcp_roles.py's module
-# docstring for the exact line), so a NEW-style handoff target's server only
-# needs to be connected by the time ITS OWN turn arrives, not at run() start
-# specifically -- but nothing in the Agents SDK hooks a handoff's own
-# selection to trigger a lazy connect, so "connect lazily, only once a
-# handoff actually picks a role" would need new machinery this ticket does
-# not build. Eager connect is the simpler, correct-by-construction choice;
-# revisit only if the subprocess-spawn cost is measured to matter in
-# practice.
-#
-# agents.mcp.MCPServerManager(strict=True): this repo's own fail-closed
-# style (DesignLoopValidationError, SymbolNotFoundError,
-# EmptyCandidateShelfError) applied to MCP connection failure -- a server
-# that fails to connect raises immediately out of connect_all(), rather than
-# silently degrading to a principal/systems/verification with a smaller (or
-# missing) tool set than the model's own tool schema advertised.
-#
-# LIVE-MODEL VERIFICATION (2026-09-10), matching this repo's own precedent
-# for the original `.as_tool()` -> `handoffs=[...]` redesign (this section's
-# own comment above): driven against a real local Ollama backend, this
-# module's actual `_build_live_principal()`/`run()` construction, no mocks.
-#
-# Model: `LLM_PROVIDER=local`, `LOCAL_AGENT_MODEL=gpt-oss:20b` -- this
-# repo's own `.env.example` default, confirmed pulled and available on this
-# machine (`ollama ps`/`api/tags`) before testing, per this ticket's own
-# instruction to use whatever is actually configured rather than assuming.
-# `qwen3.8:27b` (the model this repo's history names for the original
-# handoffs redesign) was tried FIRST and hit a genuine, reproducible
-# `openai.InternalServerError: 500 - "no user query found in messages"` on
-# the very first turn, before any handoff or tool call -- but a control
-# test against `agent.main.principal` (the OLD, completely UNCHANGED
-# construction, via plain `Runner.run_sync`) reproduced the IDENTICAL error
-# under the identical model/SDK combination, proving this is a pre-existing
-# Qwen3.8-chat-template/installed-`openai-agents`-version interaction this
-# ticket's changes did not cause and are not positioned to fix -- verification
-# proceeded on `gpt-oss:20b` instead, which does not hit it.
-#
-# Queries run (several per scenario; local-model tool-selection/routing
-# reliability on this specific model, not this construction's own
-# mechanics, is what varied run to run -- see this repo's own established
-# history of exactly this variability, e.g. `_ROUTING_SUMMARY`'s comment
-# above and `tests/test_agent_roles.py`'s module docstring):
-#
-#   (a) "Use your search_knowledge tool to search the knowledge base with
-#       query_text 'microstrip patch antenna resonant frequency' and
-#       summarize what comes back." -> principal called `search_knowledge`
-#       directly with correctly-shaped arguments over its own REAL,
-#       connected MCP server -- no handoff. Confirms a NEW-style principal's
-#       own direct-tool path works end to end, live.
-#   (b) "Route this to the systems specialist: use their calculate_wavelength
-#       tool to compute the free-space wavelength for 2.4 GHz." -> a REAL
-#       `handoff_call_item` fired, genuinely transferring control to the
-#       NEW-style, MCP-connected `systems` Agent this construction just
-#       built -- confirming the NEW-style handoff path is live and working.
-#       The specialist itself then called an unrelated, wrongly-shaped tool
-#       instead of `calculate_wavelength` (a model tool-selection miss, not
-#       a mechanism failure) and asked a clarifying question instead of
-#       answering -- no CALCULATED claim was made, so nothing needed
-#       catching, and nothing was.
-#   (c) "A two-port network's input reflection coefficient has a magnitude
-#       of 0.2. Please calculate the VSWR." and "Route this to the
-#       microwave specialist: use their calculate_vswr tool..." (several
-#       phrasings/attempts) -> a REAL `handoff_call_item` to the OLD-style,
-#       unchanged `ROLES["microwave"]` Agent fired on multiple attempts,
-#       confirming the MIXED-handoff path (NEW-style principal -> OLD-style
-#       specialist) genuinely works live, exactly as this ticket's own
-#       correctness trap describes. The specialist did not always follow
-#       through with the requested `calculate_vswr` call once handed off (a
-#       known small-local-model context-carrying limitation, not new here).
-#
-# THE HEADLINE LIVE FINDING (not scripted, not staged): on one direct-answer
-# attempt (principal, no handoff at all), gpt-oss:20b computed
-# VSWR = (1+0.2)/(1-0.2) = 1.5 BY HAND and labeled it "(CALCULATED)" in its
-# final answer -- exactly issue #158's own originally-reported failure mode,
-# reproduced live, for real, by this exact construction. This module's own
-# `provenance_integrity_guardrail` (wired onto the NEW-style principal via
-# `build_role_agent`) caught it: `Runner.run()` raised
-# `OutputGuardrailTripwireTriggered` before the mislabeled answer could ever
-# reach a caller. This is the live-model proof the ticket asked for that the
-# new per-agent guardrail mechanism genuinely works, not just in a scripted
-# test -- see `tests/test_agent_roles.py`'s scripted-fake-model tests for
-# the deterministic, repeatable version of the same proof, and this
-# function's own docstring / agent/mcp_roles.py's module docstring for why
-# `_assert_calculated_provenance_is_tool_backed` below stays the
-# AUTHORITATIVE check regardless (this guardrail only protects the two
-# NEW-style specialists and the principal itself -- an OLD-style specialist
-# mislabeling a hand-computed value the same way would need the unconditional
-# post-hoc check to catch it, since it has no output_guardrails at all).
-#
-# A SEPARATE, OUT-OF-SCOPE OBSERVATION (not a #377 defect, recorded so it
-# is not lost): on one other attempt, gpt-oss:20b hand-computed the same
-# VSWR value and labeled it "AUTHORITATIVE" -- not a real word in this
-# project's closed Provenance vocabulary (CONTEXT.md) and NOT the literal
-# string "CALCULATED", so neither `provenance_integrity_guardrail` nor
-# `_assert_calculated_provenance_is_tool_backed` (both deliberately a plain
-# substring check for "CALCULATED" specifically, by design predating this
-# ticket) caught it. This is a pre-existing limitation of the substring-
-# match approach itself, not something #377's mixed-handoff wiring
-# introduced or could fix in scope -- worth a future ticket if a model
-# inventing labels outside the closed set turns out to recur.
-# ---------------------------------------------------------------------------
+_LIVE_MCP_ROLE_KEYS = ("systems", "verification", "principal")
 
 
-async def _build_live_principal() -> tuple[Agent, MCPServerManager]:
-    """Build run()'s live principal: `agent/mcp_roles.build_role_agent()`
-    for principal/systems/verification (issue #377), MIXED handoffs to the
-    two NEW-style specialists it just built plus this module's own
-    EXISTING, UNCHANGED microwave/antenna/test Agents (SPECIALIST_HANDOFFS,
-    issue #376's Windows-hanging-subprocess-tool roles). Returns the
-    principal Agent alongside the `MCPServerManager` that connected its
-    (and systems'/verification's) MCPServerStdio instances, so the caller
-    can `await manager.cleanup_all()` once the run is over -- this function
-    does not clean up after itself, since the returned principal's own
-    MCP server must stay connected for the whole conversation the caller is
-    about to run.
+def _build_live_principal(servers: dict[str, MCPServerStdio]) -> Agent:
+    """Build `run()`'s principal from already-connected per-role MCP servers.
 
-    A deferred import (not module-level) for `agent.mcp_roles`: that module
-    already imports several names from THIS module (`SYSTEM_PROMPT`,
-    `_resolve_agent_model`, etc., at ITS OWN module level) -- a module-level
-    import here would create a circular import that breaks depending on
-    which module a caller imports first. Importing inside the function body
-    instead works regardless of import order (see issue #376's own
-    investigation, which named this exact fix and this exact reason before
-    this ticket implemented it)."""
-    from agent.mcp_roles import build_role_agent, build_role_mcp_server
+    `agent.mcp_roles` is imported here rather than at module level because it
+    imports several names from this module at ITS own module level -- a
+    module-level import either way round is a circular import that breaks
+    depending on which of the two a caller reaches first.
+    """
+    from agent.mcp_roles import build_role_agent
 
-    live_role_keys = ("systems", "verification", "principal")
-    servers = {key: build_role_mcp_server(key) for key in live_role_keys}
-    manager = MCPServerManager(list(servers.values()), strict=True)
-    await manager.connect_all()
-
-    systems_agent = build_role_agent("systems", mcp_server=servers["systems"])
-    verification_agent = build_role_agent("verification", mcp_server=servers["verification"])
-
-    # MIXED handoffs list: two NEW-style targets just built above, plus this
-    # module's own three EXISTING, unchanged ROLES[...] Agents (microwave/
-    # antenna/test) via SPECIALIST_HANDOFFS -- the SAME Handoff objects
-    # ROLES["principal"]'s own OLD-style handoffs list uses, not a second,
-    # separately-built copy. See agent/mcp_roles.py's module docstring for
-    # why an old-style target needs no MCP connection at all to be handed
-    # off to safely.
     mixed_handoffs: list[Agent | Handoff] = [
-        _build_role_handoff("systems", systems_agent),
-        _build_role_handoff("verification", verification_agent),
+        _build_role_handoff("systems", build_role_agent("systems", mcp_server=servers["systems"])),
+        _build_role_handoff(
+            "verification",
+            build_role_agent("verification", mcp_server=servers["verification"]),
+        ),
         SPECIALIST_HANDOFFS["microwave"],
         SPECIALIST_HANDOFFS["antenna"],
         SPECIALIST_HANDOFFS["test"],
     ]
-
-    live_principal = build_role_agent(
+    return build_role_agent(
         "principal",
         mcp_server=servers["principal"],
         handoffs=mixed_handoffs,
         extra_instructions=_PRINCIPAL_ROUTING_INSTRUCTIONS,
     )
-    return live_principal, manager
 
 
 async def run(query: str) -> str:
-    from agent.mcp_roles import ProvenanceTrackingContext
+    from agent.mcp_roles import ProvenanceTrackingContext, build_role_mcp_server
 
-    live_principal, manager = await _build_live_principal()
+    servers = {key: build_role_mcp_server(key) for key in _LIVE_MCP_ROLE_KEYS}
+    manager = MCPServerManager(list(servers.values()), strict=True)
+    # Everything that can spawn or hold a subprocess belongs inside this try:
+    # the connect and the agent construction that follows it both run against
+    # already-live servers, so an exception in either would otherwise strand
+    # them. Connecting is eager and unconditional rather than deferred until a
+    # handoff picks a role, because the SDK re-fetches an agent's MCP tools on
+    # every turn -- a handoff target's server must already be live by the time
+    # its own turn arrives, and nothing hooks handoff selection to connect it.
     try:
-        result = await Runner.run(live_principal, query, context=ProvenanceTrackingContext())
+        await manager.connect_all()
+        result = await Runner.run(
+            _build_live_principal(servers), query, context=ProvenanceTrackingContext()
+        )
     finally:
-        # Always release the three connected MCPServerStdio subprocesses,
-        # success or failure -- mirrors this repo's own "no print, no
-        # order, no release [without cleanup]" fail-closed instinct applied
-        # to a subprocess resource rather than a manufacturing action.
         await manager.cleanup_all()
 
-    # Issue #158, now issue #377's own headline correctness requirement:
-    # this check stays the AUTHORITATIVE enforcement point regardless of
-    # which construction (OLD ROLES[...] or NEW build_role_agent()) actually
-    # produced the answer. Native handoffs (route_to_<role>_role, either
-    # style) keep the whole routed exchange in this one top-level
-    # RunResult -- new_items accumulates across the handoff -- so this
-    # single check covers the principal's own final answer AND any
-    # specialist's handed-off answer, old-style or new, uniformly. It does
-    # NOT depend on whether the answering agent had agent/mcp_roles.
-    # provenance_integrity_guardrail wired onto it (only the two NEW-style
-    # specialists do; microwave/antenna/test never have and still don't,
-    # issue #376) -- unlike that guardrail, this reads result.new_items
-    # directly, so a real tool call is recognized regardless of which
-    # construction made it. See agent/mcp_roles.py's module docstring,
-    # "THE PROVENANCE-GUARDRAIL GAP THIS MIXING CREATES", for the full
-    # account of why both checks are kept, and
-    # tests/test_agent_roles.py's scripted-fake-model tests for the proof.
+    # Load-bearing despite `provenance_integrity_guardrail` covering the same
+    # condition: that guardrail only ever runs for the agent it is attached to,
+    # and microwave/antenna/test carry none. This reads the finished
+    # RunResult instead, so it is the only check that sees a claim one of them
+    # produced after a handoff.
     _assert_calculated_provenance_is_tool_backed(result)
     return result.final_output
 

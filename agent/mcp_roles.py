@@ -12,20 +12,17 @@ narrowly on purpose: build the new construction ALONGSIDE `agent/main.py`'s
 existing one, prove its per-role tool-filter allow-lists exactly match what
 `ROLES`/`_PRINCIPAL_DIRECT_TOOLS` already grant today, and give issue #158's
 provenance-integrity guardrail a working home in the new shape -- WITHOUT
-touching a single line of `agent/main.py`'s own construction. As of issue
-#318 (and until #377 below), nothing here was wired into `agent/main.py`'s
-`run()`, `ROLES`, or `SPECIALIST_HANDOFFS`; those stayed exactly as they were
-before this file existed.
+touching a single line of `agent/main.py`'s own construction.
 
-WHAT THIS DID NOT DO AS OF #318 (see ADR-0032's own "Consequences" section --
-these were explicitly future work, not gaps that ticket silently left): it
-did not migrate production traffic onto this path, it did not delete or
-deprecate any of `agent/main.py`'s 87+ wrappers, and it had not been
-live-tested end to end against a real model the way `agent/main.py`'s
-`.as_tool()` -> `handoffs=[...]` redesign was (see `agent/main.py`'s own
-routing-section comment for that history) -- the ADR's own "Needs a live
-behavior check before it ships" consequence was still open. What WAS proven
-there, by test: each role's `create_static_tool_filter` allow-list is
+`agent/main.py`'s `run()` now drives this construction live for principal,
+systems and verification. microwave, antenna and test stay on
+`agent/main.py`'s own `ROLES` construction, because they hold every
+subprocess-shelling tool, and those hang indefinitely over this transport on
+native Windows (see `tests/test_mcp_tool_call_parity.py`'s module docstring).
+`agent/main.py`'s 87+ `@function_tool` wrappers are all still in place, and
+still the only construction microwave/antenna/test use.
+
+What is proven by test: each role's `create_static_tool_filter` allow-list is
 BYTE-FOR-BYTE the same tool-name set `agent/main.py` already grants that
 role today (derived from the same source objects, not hand-copied --
 copying the list a second time here would just recreate the exact
@@ -35,76 +32,14 @@ real MCP-protocol round trip proving the filter actually restricts
 the provenance guardrail fires under exactly the same condition
 `agent/main.py`'s `_assert_calculated_provenance_is_tool_backed` does today.
 
-ISSUE #377 (this update): `build_role_agent()` is now wired into a REAL,
-LIVE `agent/main.py::run()` for exactly three roles -- principal, systems,
-verification (see `agent/main.py`'s own module comment above `run()` for the
-full account, and issue #376 for why microwave/antenna/test stay on the OLD
-`agent/main.py::ROLES` construction: they hold every Windows-hanging
-subprocess-shelling tool, #372). `build_role_agent()` gained three new,
-all-optional keyword parameters to make this possible WITHOUT changing its
-existing signature's observable behavior for any current caller
-(`tests/test_mcp_roles.py`, `tests/test_mcp_tool_call_parity.py`):
-
-  - `mcp_server`: an already-CONNECTED `MCPServerStdio` to attach instead of
-    building (and leaving unconnected) a fresh one via
-    `build_role_mcp_server(role_key)`. `run()` needs this because connecting
-    a server is `async` (`MCPServerManager.connect_all()`), and this
-    function itself is not -- the caller connects first, this function just
-    wires the already-live instance onto the `Agent`. Omitted (the default,
-    `None`): unchanged behavior, a fresh unconnected server every call, same
-    as before this parameter existed.
-  - `handoffs`: this role's own `route_to_<role>_role` targets. Needed
-    because the LIVE principal's handoffs are a MIXED list -- the two other
-    NEW-style Agents this same function just built (systems, verification)
-    plus the three EXISTING, unchanged `agent/main.py::ROLES` Agent objects
-    for microwave/antenna/test (old-style, `tools=[...]`, no MCP server at
-    all) -- something no single per-role call to this function could express
-    on its own. Omitted (the default, `None`): unchanged behavior, no
-    handoffs, same as `Agent`'s own default.
-  - `extra_instructions`: text inserted between the shared `## Role scope`
-    domain note and the local-reasoning output tail. Needed because the
-    LIVE principal carries an extra "## Routing to a specialist" section
-    (`agent/main.py::_PRINCIPAL_ROUTING_INSTRUCTIONS`) that no other role's
-    `domain_note` needs. Omitted (the default, `""`): unchanged instructions
-    text, same as before this parameter existed.
-
-Confirmed directly against `agents/run.py`'s own turn loop (not assumed):
-`get_all_tools(execution_agent, ...)` is called inside the `while True:`
-per-turn loop, rebound to whatever `current_agent` is that iteration, every
-single turn -- including the turn immediately after a handoff. This is WHY
-mixing an old-style (no MCP server) and a new-style (`mcp_servers=[server]`)
-handoff target on the same principal is safe: an old-style target is never
-asked for MCP tools at all (`Agent.get_mcp_tools()` only iterates
-`self.mcp_servers`, which is empty for `agent/main.py::ROLES[...]`), and a
-new-style target's server only needs to already be connected by the time
-ITS OWN turn arrives -- which eager connect-everything-up-front at `run()`
-start (via `agents.mcp.MCPServerManager`, `strict=True`) guarantees for
-every query, regardless of which role the query actually reaches.
-
-THE PROVENANCE-GUARDRAIL GAP THIS MIXING CREATES, AND WHY IT'S NOT A
-REGRESSION: `provenance_integrity_guardrail` (below) is an
-`Agent.output_guardrails` entry -- it only ever runs when the AGENT IT IS
-ATTACHED TO produces the run's final output. An old-style specialist
-(microwave/antenna/test) has no `output_guardrails` and no
-`_ProvenanceTrackingHooks` wired onto it at all (unchanged, per #376's own
-scope), so if the principal hands off to one and IT calls a real
-calculation tool and produces the final answer, this module's own guardrail
-never runs for that turn -- it was never attached to that agent. This is not
-a gap `run()` silently accepts: `agent/main.py`'s existing, OLDER
-`_assert_calculated_provenance_is_tool_backed(result)` reads the whole
-finished `RunResult.new_items` regardless of which agent in the handoff
-chain produced which item, so it already covers this path (and every other
-handoff path, old-style or new) correctly -- it does not care whether the
-tool-calling agent had a guardrail wired onto it, only whether a real
-calculation-category `tool_call_item` exists anywhere in the run. `run()`
-keeps calling it, unconditionally, on every run's `RunResult`, as the
-authoritative enforcement point; this module's own guardrail is an
-additional, EARLIER line of defense for the NEW-style agents it is actually
-attached to (principal/systems/verification answering directly), not a
-replacement for the post-hoc check. See
-`tests/test_agent_roles.py::test_calculated_claim_backed_by_a_real_tool_call_through_an_old_style_specialist_handoff_is_accepted`
-and its sibling `..._mislabeled_..._still_trips` for the scripted-fake-model
-proof of both halves of this claim.
+WHY A PRINCIPAL CAN MIX OLD-STYLE AND NEW-STYLE HANDOFF TARGETS: read
+directly off `agents/run.py`'s own turn loop, `get_all_tools(execution_agent,
+...)` is called inside the `while True:` loop, rebound to whatever
+`current_agent` is that iteration -- including the turn immediately after a
+handoff. So an old-style target is never asked for MCP tools at all
+(`Agent.get_mcp_tools()` only iterates `self.mcp_servers`, empty for
+`agent/main.py::ROLES[...]`), and a new-style target's server only has to be
+connected by the time ITS OWN turn arrives.
 
 WHY SIX MCPServerStdio INSTANCES, NOT ONE SHARED SERVER WITH A CALLABLE
 FILTER: the Agents SDK also supports a dynamic/callable `tool_filter` keyed
@@ -284,7 +219,7 @@ def build_role_mcp_server(role_key: str) -> MCPServerStdio:
 # this construction (issue #318's own acceptance criteria).
 #
 # WHY A CONTEXT + AgentHooks PAIR, NOT A DIRECT PORT: agent/main.py's
-# `_assert_calculated_provenance_is_tool_backed` runs AFTER `Runner.run_sync`
+# `_assert_calculated_provenance_is_tool_backed` runs after `Runner.run`
 # returns, reading the finished `RunResult.new_items` for a calculation-
 # category `tool_call_item`. An `Agent.output_guardrails` entry is different
 # in a way that matters here: its `OutputGuardrail.guardrail_function` is
@@ -418,22 +353,11 @@ def build_role_agent(
     `agent.main.ROLES` -- nothing in `agent/main.py` changes or is read back
     into by this function.
 
-    Three all-optional keyword-only parameters, added for issue #377's live
-    `run()` wiring, each defaulting to exactly the pre-#377 behavior so no
-    existing caller (`tests/test_mcp_roles.py`, `tests/test_mcp_tool_call_
-    parity.py`) sees any change when it doesn't pass them -- see this
-    module's own docstring, "ISSUE #377 (this update)", for the full
-    rationale on why each one exists:
-
-    mcp_server: an already-connected `MCPServerStdio` to attach instead of
-        building (and leaving unconnected) a fresh one. `None` (default):
-        calls `build_role_mcp_server(role_key)`, unchanged.
-    handoffs: this Agent's own `route_to_<role>_role` targets -- a mix of
-        old- and new-style Agents is fine (see this module's docstring for
-        why). `None` (default): no handoffs, matching `Agent`'s own default.
-    extra_instructions: appended after the shared domain note and before
-        the local-reasoning output tail. `""` (default): no change to the
-        instructions text.
+    `mcp_server` must be an ALREADY-CONNECTED server: connecting is `async`
+    and this function is not, so a caller that needs a live Agent connects
+    first and passes the live instance in. Left at `None`, this builds a
+    fresh, UNCONNECTED one, which is enough to inspect the Agent's shape but
+    will fail the moment a run asks it for tools.
     """
     spec = _SPEC_BY_KEY[role_key]
     server = mcp_server if mcp_server is not None else build_role_mcp_server(role_key)

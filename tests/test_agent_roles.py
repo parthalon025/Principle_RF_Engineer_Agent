@@ -23,17 +23,17 @@ behavior: the principal now routes to ONE specialist per question, and that
 specialist's own answer becomes the run's final output directly, with no
 principal-side re-synthesis step.
 
-These tests exercise the routing mechanism's wiring at the level that is
-genuinely testable without a configured OPENAI_API_KEY / local LLM backend
-in this environment (see test_literature_corpus.py for the same
-missing-credential constraint elsewhere in this repo). A full live routed
-query through Runner.run_sync is NOT exercised here for that reason --
-the real, live re-test (against real Ollama/qwen3.8) that validated this
-redesign in the first place lives outside this repo's automated suite (see
-this session's own record, not a file in this tree). What IS verified:
-the principal role has exactly one handoff registered per specialist role,
-each handoff targets the correct specialist Agent, and the principal's own
-direct tool list holds only what's genuinely principal-exclusive.
+Most tests here exercise the routing mechanism's wiring: the principal role
+has exactly one handoff registered per specialist role, each handoff targets
+the correct specialist Agent, and the principal's own direct tool list holds
+only what's genuinely principal-exclusive.
+
+Beyond wiring, the tests at the end of this file drive real `Runner.run()`
+conversations -- through a real handoff, over a really-connected MCP server
+-- with a scripted `agents.Model` subclass standing in for the model, so
+they need no API key or local backend. `tests/test_live_model_run.py` runs
+the same paths against a real local model, and skips when one isn't
+reachable.
 """
 
 import asyncio
@@ -42,6 +42,7 @@ from types import SimpleNamespace
 
 import pytest
 from agents import Agent, Model, ModelResponse, Runner, Usage
+from agents.exceptions import OutputGuardrailTripwireTriggered
 from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
@@ -827,13 +828,10 @@ def test_no_role_has_a_tool_outside_all_currently_wired_tools():
 # `Agent(handoffs=[...])` transfers control to the target agent within the
 # SAME Runner.run() call -- there is no nested Runner.run(), so there is no
 # live-model-call requirement to work around the way `Agent.as_tool()`
-# testing had to (see this file's git history for that prior constraint).
-# What's tested here is still just the wiring: each handoff targets the
-# correct specialist Agent, with the right tool name and description. A
-# full live routed query through Runner.run/Runner.run_sync is still not
-# exercised in this automated suite (same missing-credential constraint as
-# ever in this environment) -- that verification happened live against a
-# real Ollama/qwen3.8 backend outside this repo's test suite.
+# testing had to. What's tested in this section is just the wiring: each
+# handoff targets the correct specialist Agent, with the right tool name and
+# description. Routed queries actually driven through Runner.run() live at
+# the end of this file.
 # ---------------------------------------------------------------------------
 
 _SPECIALIST_KEYS = ["systems", "microwave", "antenna", "test", "verification"]
@@ -1050,61 +1048,14 @@ def test_calculated_claim_accepted_across_a_simulated_handoff():
     _assert_calculated_provenance_is_tool_backed(stub_result)  # must not raise
 
 
-# ---------------------------------------------------------------------------
-# Issue #377: run() becomes async, and wires principal/systems/verification
-# through agent/mcp_roles.build_role_agent() while microwave/antenna/test
-# stay on this module's own unchanged ROLES construction (issue #376/#372).
-#
-# Two kinds of proof, deliberately, matching this file's own established
-# split (structural wiring vs. live behavior) and this repo's "no live-
-# model-credential in the automated suite" constraint (module docstring):
-#
-# 1. Structural wiring tests below (_build_live_principal, run() itself)
-#    monkeypatch agent.mcp_roles.build_role_mcp_server/build_role_agent and
-#    agent.main.MCPServerManager/Runner.run so they run with NO real
-#    subprocess spawn and NO real model call -- these check run()'s own
-#    ASSEMBLY logic (which roles get connected, how handoffs mix, that
-#    context/cleanup happen), not live behavior.
-# 2. The scripted-fake-model tests further below are NOT credential-gated
-#    (a scripted `agents.Model` subclass makes no network call and needs no
-#    API key/local-model setup -- unlike the qwen3.8:27b/Ollama live pass
-#    this file's own module docstring says happens outside the automated
-#    suite) and so run for real here: a genuine `Runner.run()` call, a
-#    genuinely CONNECTED principal MCP server (agent/mcp_roles.build_role_
-#    agent's own construction, unmocked), and a real handoff to this
-#    module's own unchanged ROLES["microwave"] Agent. This is the ticket's
-#    own headline correctness requirement (the provenance-guardrail trap):
-#    does agent/main.py's EXISTING, unconditional post-hoc check still
-#    correctly recognize a real calculation-tool call made by an OLD-style
-#    specialist that this ticket's NEW per-agent guardrail was never wired
-#    onto? See agent/mcp_roles.py's module docstring, "THE PROVENANCE-
-#    GUARDRAIL GAP THIS MIXING CREATES", for the full account.
-# ---------------------------------------------------------------------------
-
-
-def test_run_is_now_an_async_function():
+def test_run_is_an_async_function():
     assert inspect.iscoroutinefunction(agent_main.run)
 
 
-def test_build_live_principal_wires_new_and_old_style_handoffs_and_uses_a_strict_manager(
-    monkeypatch,
-):
-    """Pure wiring check, no real subprocess/model: _build_live_principal
-    must (a) build exactly the three NEW-style roles (systems, verification,
-    principal) via agent/mcp_roles.build_role_agent, (b) connect them
-    through a strict=True MCPServerManager, and (c) hand the resulting
-    principal a MIXED handoffs list -- the two just-built NEW-style Agents
-    plus this module's own EXISTING, unchanged SPECIALIST_HANDOFFS entries
-    for microwave/antenna/test (same objects, not rebuilt copies)."""
+def test_build_live_principal_mixes_new_and_old_style_handoffs(monkeypatch):
     import agent.mcp_roles as mcp_roles_module
 
-    built_servers = []
     built_agent_calls = []
-
-    def fake_build_role_mcp_server(role_key):
-        server = SimpleNamespace(role_key=role_key)
-        built_servers.append(server)
-        return server
 
     def fake_build_role_agent(role_key, *, mcp_server=None, handoffs=None, extra_instructions=""):
         fake_agent = Agent(name=f"fake-{role_key}", handoffs=list(handoffs or []))
@@ -1118,53 +1069,22 @@ def test_build_live_principal_wires_new_and_old_style_handoffs_and_uses_a_strict
         )
         return fake_agent
 
-    manager_instances = []
-
-    class _FakeManager:
-        def __init__(self, servers, *, strict):
-            self.servers = list(servers)
-            self.strict = strict
-            self.connect_all_called = False
-            manager_instances.append(self)
-
-        async def connect_all(self):
-            self.connect_all_called = True
-
-        async def cleanup_all(self):
-            pass
-
-    monkeypatch.setattr(mcp_roles_module, "build_role_mcp_server", fake_build_role_mcp_server)
     monkeypatch.setattr(mcp_roles_module, "build_role_agent", fake_build_role_agent)
-    monkeypatch.setattr(agent_main, "MCPServerManager", _FakeManager)
 
-    live_principal, manager = asyncio.run(agent_main._build_live_principal())
+    servers = {key: SimpleNamespace(role_key=key) for key in agent_main._LIVE_MCP_ROLE_KEYS}
+    live_principal = agent_main._build_live_principal(servers)
 
-    # (a) exactly the three NEW-style roles were built via build_role_agent.
     assert {call["role_key"] for call in built_agent_calls} == {
         "systems",
         "verification",
         "principal",
     }
-    assert {server.role_key for server in built_servers} == {"systems", "verification", "principal"}
 
-    # (b) a strict manager connected all three before anything else happened.
-    assert len(manager_instances) == 1
-    assert manager is manager_instances[0]
-    assert manager.strict is True
-    assert manager.connect_all_called is True
-    assert {id(server) for server in manager.servers} == {id(server) for server in built_servers}
-
-    # The principal call received its own connected server and the routing
-    # instructions text, matching agent/mcp_roles.build_role_agent's own
-    # documented contract for these two parameters.
     principal_call = next(c for c in built_agent_calls if c["role_key"] == "principal")
-    assert principal_call["mcp_server"].role_key == "principal"
+    assert principal_call["mcp_server"] is servers["principal"]
     assert principal_call["extra_instructions"] == agent_main._PRINCIPAL_ROUTING_INSTRUCTIONS
     assert live_principal is principal_call["agent"]
 
-    # (c) MIXED handoffs: the two fake NEW-style agents just built, plus
-    # this module's own EXISTING, unchanged SPECIALIST_HANDOFFS objects for
-    # microwave/antenna/test -- not rebuilt copies.
     handoffs_by_tool_name = {h.tool_name: h for h in live_principal.handoffs}
     assert set(handoffs_by_tool_name) == {
         "route_to_systems_role",
@@ -1173,6 +1093,8 @@ def test_build_live_principal_wires_new_and_old_style_handoffs_and_uses_a_strict
         "route_to_antenna_role",
         "route_to_test_role",
     }
+    # The three old-style entries must be the SAME Handoff objects
+    # SPECIALIST_HANDOFFS holds, not separately-rebuilt copies.
     assert handoffs_by_tool_name["route_to_microwave_role"] is SPECIALIST_HANDOFFS["microwave"]
     assert handoffs_by_tool_name["route_to_antenna_role"] is SPECIALIST_HANDOFFS["antenna"]
     assert handoffs_by_tool_name["route_to_test_role"] is SPECIALIST_HANDOFFS["test"]
@@ -1189,28 +1111,74 @@ def test_build_live_principal_wires_new_and_old_style_handoffs_and_uses_a_strict
     )
 
 
-def test_run_passes_a_provenance_tracking_context_and_cleans_up_the_manager(monkeypatch):
-    """Pure wiring check for run() itself: _build_live_principal and
-    Runner.run are both mocked (no real subprocess/model), so this only
-    confirms run() (a) calls Runner.run with a fresh
-    agent.mcp_roles.ProvenanceTrackingContext, (b) always cleans up the
-    manager afterward, and (c) still runs the existing post-hoc check on
-    whatever RunResult Runner.run hands back."""
+class _FakeManager:
+    """Stands in for MCPServerManager where the test cares only about the
+    connect/cleanup call sequence, not about real subprocesses."""
+
+    instances: list["_FakeManager"] = []
+
+    def __init__(self, servers, *, strict=False):
+        self.servers = list(servers)
+        self.strict = strict
+        self.connect_all_called = False
+        self.cleanup_called = False
+        _FakeManager.instances.append(self)
+
+    async def connect_all(self):
+        self.connect_all_called = True
+
+    async def cleanup_all(self):
+        self.cleanup_called = True
+
+
+@pytest.fixture
+def fake_manager(monkeypatch):
+    _FakeManager.instances = []
+    monkeypatch.setattr(agent_main, "MCPServerManager", _FakeManager)
+    yield _FakeManager
+    _FakeManager.instances = []
+
+
+def _stub_live_servers(monkeypatch):
+    import agent.mcp_roles as mcp_roles_module
+
+    monkeypatch.setattr(
+        mcp_roles_module,
+        "build_role_mcp_server",
+        lambda role_key: SimpleNamespace(role_key=role_key),
+    )
+
+
+def test_run_connects_every_live_role_through_a_strict_manager(monkeypatch, fake_manager):
+    _stub_live_servers(monkeypatch)
+    monkeypatch.setattr(agent_main, "_build_live_principal", lambda servers: Agent(name="fake"))
+
+    async def fake_runner_run(*a, **kw):
+        return SimpleNamespace(final_output="ok", new_items=[])
+
+    monkeypatch.setattr(agent_main.Runner, "run", fake_runner_run)
+
+    asyncio.run(agent_main.run("anything"))
+
+    assert len(fake_manager.instances) == 1
+    manager = fake_manager.instances[0]
+    assert manager.strict is True
+    assert manager.connect_all_called is True
+    assert {server.role_key for server in manager.servers} == {
+        "systems",
+        "verification",
+        "principal",
+    }
+
+
+def test_run_passes_a_provenance_tracking_context_and_cleans_up_the_manager(
+    monkeypatch, fake_manager
+):
     from agent.mcp_roles import ProvenanceTrackingContext
 
+    _stub_live_servers(monkeypatch)
     fake_principal = Agent(name="fake-live-principal")
-
-    class _FakeManager:
-        def __init__(self):
-            self.cleanup_called = False
-
-        async def cleanup_all(self):
-            self.cleanup_called = True
-
-    fake_manager = _FakeManager()
-
-    async def fake_build_live_principal():
-        return fake_principal, fake_manager
+    monkeypatch.setattr(agent_main, "_build_live_principal", lambda servers: fake_principal)
 
     captured = {}
 
@@ -1223,7 +1191,6 @@ def test_run_passes_a_provenance_tracking_context_and_cleans_up_the_manager(monk
             new_items=[SimpleNamespace(type="tool_call_item", tool_name="calculate_wavelength")],
         )
 
-    monkeypatch.setattr(agent_main, "_build_live_principal", fake_build_live_principal)
     monkeypatch.setattr(agent_main.Runner, "run", fake_runner_run)
 
     output = asyncio.run(agent_main.run("what is the wavelength at 1 GHz?"))
@@ -1232,53 +1199,90 @@ def test_run_passes_a_provenance_tracking_context_and_cleans_up_the_manager(monk
     assert captured["agent"] is fake_principal
     assert captured["query"] == "what is the wavelength at 1 GHz?"
     assert isinstance(captured["context"], ProvenanceTrackingContext)
-    assert fake_manager.cleanup_called is True
+    assert fake_manager.instances[0].cleanup_called is True
 
 
-def test_run_cleans_up_the_manager_even_when_runner_run_raises(monkeypatch):
-    """The manager's subprocess connections must not leak if the run itself
-    fails -- cleanup_all() must run inside a `finally`, not only on the
-    success path."""
-
-    class _FakeManager:
-        def __init__(self):
-            self.cleanup_called = False
-
-        async def cleanup_all(self):
-            self.cleanup_called = True
-
-    fake_manager = _FakeManager()
-    fake_principal = Agent(name="fake-live-principal")
-
-    async def fake_build_live_principal():
-        return fake_principal, fake_manager
+def test_run_cleans_up_the_manager_even_when_runner_run_raises(monkeypatch, fake_manager):
+    _stub_live_servers(monkeypatch)
+    monkeypatch.setattr(agent_main, "_build_live_principal", lambda servers: Agent(name="fake"))
 
     async def fake_runner_run(*a, **kw):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(agent_main, "_build_live_principal", fake_build_live_principal)
     monkeypatch.setattr(agent_main.Runner, "run", fake_runner_run)
 
     with pytest.raises(RuntimeError, match="boom"):
         asyncio.run(agent_main.run("anything"))
 
-    assert fake_manager.cleanup_called is True
+    assert fake_manager.instances[0].cleanup_called is True
 
 
-def test_run_raises_provenance_integrity_error_for_a_mislabeled_result(monkeypatch):
-    """The post-hoc check still fires from inside run() itself, even with
-    everything else mocked -- a genuinely mislabeled CALCULATED claim must
-    still surface as ProvenanceIntegrityError, not a silently accepted
-    output."""
+@pytest.mark.parametrize(
+    "raised",
+    [RuntimeError("agent construction blew up"), KeyboardInterrupt()],
+    ids=["exception", "base-exception"],
+)
+def test_run_cleans_up_the_manager_when_agent_construction_raises(
+    monkeypatch, fake_manager, raised
+):
+    """The connect happens before the principal is assembled, so anything
+    that raises in between -- a bad model config, a KeyboardInterrupt --
+    would strand the connected servers unless cleanup covers it too."""
+    _stub_live_servers(monkeypatch)
 
-    class _FakeManager:
-        async def cleanup_all(self):
-            pass
+    def exploding_build_live_principal(servers):
+        raise raised
 
-    fake_principal = Agent(name="fake-live-principal")
+    monkeypatch.setattr(agent_main, "_build_live_principal", exploding_build_live_principal)
 
-    async def fake_build_live_principal():
-        return fake_principal, _FakeManager()
+    async def unreachable_runner_run(*a, **kw):
+        raise AssertionError("Runner.run must not be reached")
+
+    monkeypatch.setattr(agent_main.Runner, "run", unreachable_runner_run)
+
+    with pytest.raises(type(raised)):
+        asyncio.run(agent_main.run("anything"))
+
+    manager = fake_manager.instances[0]
+    assert manager.connect_all_called is True
+    assert manager.cleanup_called is True
+
+
+def test_run_cleans_up_a_real_manager_when_agent_construction_raises(monkeypatch):
+    """The same leak, checked against a REAL MCPServerManager holding REAL
+    connected stdio subprocesses: the manager's own connected-server
+    bookkeeping must be empty afterwards, and every server's session closed.
+    """
+    import agent.mcp_roles as mcp_roles_module
+
+    managers = []
+
+    class _SpyManager(agent_main.MCPServerManager):
+        def __init__(self, servers, **kwargs):
+            super().__init__(servers, **kwargs)
+            managers.append(self)
+
+    monkeypatch.setattr(agent_main, "MCPServerManager", _SpyManager)
+
+    def exploding_build_role_agent(*a, **kw):
+        raise RuntimeError("agent construction blew up")
+
+    monkeypatch.setattr(mcp_roles_module, "build_role_agent", exploding_build_role_agent)
+
+    with pytest.raises(RuntimeError, match="agent construction blew up"):
+        asyncio.run(agent_main.run("anything"))
+
+    assert len(managers) == 1
+    manager = managers[0]
+    assert len(manager.all_servers) == 3
+    # Every server really did connect, and none is still holding a session.
+    assert manager._connected_servers == set()
+    assert all(server.session is None for server in manager.all_servers)
+
+
+def test_run_raises_provenance_integrity_error_for_a_mislabeled_result(monkeypatch, fake_manager):
+    _stub_live_servers(monkeypatch)
+    monkeypatch.setattr(agent_main, "_build_live_principal", lambda servers: Agent(name="fake"))
 
     async def fake_runner_run(*a, **kw):
         return SimpleNamespace(
@@ -1286,7 +1290,6 @@ def test_run_raises_provenance_integrity_error_for_a_mislabeled_result(monkeypat
             new_items=[SimpleNamespace(type="message_output_item", tool_name=None)],
         )
 
-    monkeypatch.setattr(agent_main, "_build_live_principal", fake_build_live_principal)
     monkeypatch.setattr(agent_main.Runner, "run", fake_runner_run)
 
     with pytest.raises(ProvenanceIntegrityError):
@@ -1294,17 +1297,12 @@ def test_run_raises_provenance_integrity_error_for_a_mislabeled_result(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# THE PROVENANCE-GUARDRAIL TRAP (issue #377's own headline correctness
-# requirement): a real, scripted-fake-model conversation, no mocks on the
-# Agents SDK/MCP layer at all -- a genuinely CONNECTED, real
-# agent/mcp_roles.build_role_agent()-built principal (its own MCP server
-# subprocess really spawned and connected), a real Handoff to this module's
-# own EXISTING, UNCHANGED ROLES["microwave"] Agent (no output_guardrails, no
-# _ProvenanceTrackingHooks -- issue #376's scope leaves it exactly as it
-# was), and a real tool call landing in RunResult.new_items the normal way.
-# Only the MODEL is fake (a scripted agents.Model subclass -- no network
-# call, no credential, safe for the automated suite unlike this file's own
-# qwen3.8:27b/Ollama live pass).
+# Real Runner.run() conversations over a really-connected MCP server, with
+# only the MODEL scripted. The trap these exist for: a principal built by
+# agent/mcp_roles.build_role_agent carries provenance_integrity_guardrail,
+# but an output guardrail only ever runs for the agent it is attached to --
+# so a claim produced by ROLES["microwave"] after a handoff is seen by
+# agent/main.py's post-hoc RunResult check alone.
 # ---------------------------------------------------------------------------
 
 
@@ -1325,11 +1323,10 @@ def _scripted_message(text: str):
 
 
 class _ScriptedTurnModel(Model):
-    """A fake `agents.Model` that returns one pre-scripted `ModelResponse`
-    per `get_response()` call, in order -- no network call, no credential,
-    driving a REAL `Runner.run()` through a REAL handoff and a REAL tool
-    call exactly as a genuine model would, just with the model's own
-    decision-making replaced by a fixed script for this test's purposes."""
+    """Returns one pre-scripted `ModelResponse` per `get_response()` call, in
+    order -- no network call and no credential, so a real `Runner.run()` can
+    be driven through a real handoff and a real tool call deterministically.
+    """
 
     def __init__(self, turns: list[list]):
         self._turns = list(turns)
@@ -1358,24 +1355,16 @@ class _ScriptedTurnModel(Model):
 
 
 async def _run_mixed_handoff_scenario(turns: list[list]):
-    """Build a NEW-style principal (agent/mcp_roles.build_role_agent, its
-    own real MCP server connected for real) whose only handoff targets this
-    module's own EXISTING, unchanged ROLES["microwave"] Agent -- the exact
-    OLD-style-specialist-behind-a-NEW-style-principal shape issue #377's
-    provenance-guardrail trap is about -- drives it through a real
-    Runner.run() with the given scripted model turns, and returns the
-    RunResult for the caller to both read result.final_output/new_items
-    from AND feed to agent.main's own unconditional post-hoc check."""
+    """Drive a new-style principal whose only handoff target is the old-style
+    ROLES["microwave"] Agent, and hand back the RunResult."""
     from agent.mcp_roles import ProvenanceTrackingContext, build_role_agent
-
-    scripted_model = _ScriptedTurnModel(turns)
 
     live_principal = build_role_agent(
         "principal",
         handoffs=[SPECIALIST_HANDOFFS["microwave"]],
         extra_instructions=agent_main._PRINCIPAL_ROUTING_INSTRUCTIONS,
     )
-    live_principal.model = scripted_model
+    live_principal.model = _ScriptedTurnModel(turns)
 
     async with live_principal.mcp_servers[0]:
         return await Runner.run(
@@ -1389,14 +1378,6 @@ async def _run_mixed_handoff_scenario(turns: list[list]):
 async def test_calculated_claim_backed_by_a_real_tool_call_through_an_old_style_handoff_is_accepted(
     monkeypatch,
 ):
-    """THE ACCEPT HALF of the trap: principal (NEW construction) hands off
-    to microwave (OLD-style, no guardrail of its own), microwave genuinely
-    calls a real calculation-category tool (calculate_vswr), and the
-    labeled CALCULATED final answer must be accepted -- by
-    agent/main.py's EXISTING, unconditional post-hoc check, which must
-    recognize the tool call happened via new_items exactly as it always
-    has, with NOTHING about this path routed through the new per-agent
-    provenance_integrity_guardrail (microwave was never given one)."""
     monkeypatch.setattr(
         ROLES["microwave"],
         "model",
@@ -1427,9 +1408,6 @@ async def test_calculated_claim_backed_by_a_real_tool_call_through_an_old_style_
     assert "calculate_vswr" in tool_call_names
     assert category_for("calculate_vswr") == "calculation"
 
-    # THE authoritative check -- must NOT raise for this genuinely
-    # tool-backed CALCULATED claim, reached entirely through an old-style
-    # specialist that was never wired onto the new per-agent guardrail.
     _assert_calculated_provenance_is_tool_backed(result)
 
 
@@ -1437,16 +1415,6 @@ async def test_calculated_claim_backed_by_a_real_tool_call_through_an_old_style_
 async def test_calculated_claim_mislabeled_through_the_same_old_style_handoff_still_trips(
     monkeypatch,
 ):
-    """THE REJECT HALF of the trap: the SAME path (principal hands off to
-    microwave, an OLD-style specialist with no guardrail of its own) but
-    this time microwave answers CALCULATED purely from its own reasoning,
-    with NO calculation-tool call at all. Because microwave has no
-    output_guardrails, the new per-agent provenance_integrity_guardrail
-    literally never runs for this turn -- if the OLD, unconditional
-    post-hoc check were ever removed or treated as redundant with the new
-    guardrail (exactly what this ticket was told not to do), this
-    mislabeled claim would reach the caller uncaught. It must still trip
-    here."""
     monkeypatch.setattr(
         ROLES["microwave"],
         "model",
@@ -1462,3 +1430,21 @@ async def test_calculated_claim_mislabeled_through_the_same_old_style_handoff_st
 
     with pytest.raises(ProvenanceIntegrityError):
         _assert_calculated_provenance_is_tool_backed(result)
+
+
+def test_run_surfaces_a_new_style_agents_own_guardrail_tripwire(monkeypatch):
+    """A mislabeled CALCULATED claim from the principal itself (no handoff)
+    is caught by its own output guardrail, which raises from inside
+    Runner.run -- a different exception on a different path than the
+    post-hoc check, and one run() must not swallow."""
+    from agent.mcp_roles import build_role_agent
+
+    def scripted_principal(servers):
+        live_principal = build_role_agent("principal", mcp_server=servers["principal"])
+        live_principal.model = _ScriptedTurnModel([[_scripted_message("VSWR: 1.50 (CALCULATED).")]])
+        return live_principal
+
+    monkeypatch.setattr(agent_main, "_build_live_principal", scripted_principal)
+
+    with pytest.raises(OutputGuardrailTripwireTriggered):
+        asyncio.run(agent_main.run("what is the VSWR for a reflection coefficient of 0.2?"))
