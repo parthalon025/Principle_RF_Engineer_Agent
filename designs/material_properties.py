@@ -750,6 +750,19 @@ def resolve_material_property_from_db(
 
 _SHORTLIST = "docs/xband-absorber-substrate-shortlist.md section 1"
 
+# A citation names a DOCUMENT a reader can go and check, not the activity that
+# found it. These two strings say which document, which table inside it, and --
+# honestly -- that the vendor PDF's revision was never captured, so a reader
+# knows the one thing they must re-verify rather than discovering it later.
+# ADR-0015's rule is that "the library never parses a document itself, only
+# cites it"; a citation that cannot be followed back to a document fails that
+# rule even when the number itself is right.
+_ROGERS_DESIGN_DK_CITATION = (
+    "Rogers RO4000-series laminate datasheet, Design Dk table -- transcribed in the "
+    "2026-09-09 datasheet sweep for issue #337; the vendor PDF revision was not "
+    "captured, so re-verify against the current datasheet before relying on it"
+)
+
 SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
     # 1. Silicone sheet, 60 Shore A (Polymax SILONA GP/FDA)
     add_entry(
@@ -956,7 +969,14 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         "40 GHz that difference moves a predicted resonance by roughly 1-1.4 GHz. Design Dk "
         'falls by about 0.1 from 0.020" to 0.004" core, and the library has no thickness '
         "field, so a thin-core part needs this checked against the datasheet directly",
-        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+        # NOT cited via _SHORTLIST. docs/xband-absorber-substrate-shortlist.md
+        # records only this laminate's Process Dk (3.48) and its 10 GHz
+        # tan_delta (0.0037) -- the strings "3.66" and "Design Dk" appear
+        # nowhere in it. Citing it here would point a reader at a document that
+        # does not contain the value, which is the exact failure this library
+        # exists to prevent (ADR-0015: "the library never parses a document
+        # itself, only cites it").
+        citation=_ROGERS_DESIGN_DK_CITATION,
     ),
     # Loss tangent is entered at BOTH published test frequencies rather than
     # only the 10 GHz one. tan_delta disperses far more strongly than eps_r,
@@ -975,7 +995,9 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
         method="datasheet, 2.5 GHz / 23 degrees C",
         note="Second published point, entered alongside the 10 GHz value (0.0037) so the "
         "frequency dependence is visible rather than inferred",
-        citation=f"Rogers RO4350B datasheet, via {_SHORTLIST}",
+        # Also NOT via _SHORTLIST -- that document carries only the 10 GHz
+        # tan_delta (0.0037), not this 2.5 GHz one. See the Design Dk entry above.
+        citation=_ROGERS_DESIGN_DK_CITATION,
     ),
     add_entry(
         material="Rogers RO4350B",
@@ -1030,7 +1052,9 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
 # Kapton's published loss tangent is ~5-6x too LOW against a 9.975 GHz
 # measurement, while TPU's published permittivity is up to 2.2x too HIGH
 # against a 5.1-18 GHz sweep. Entering them keyed at their own kHz/MHz band
-# means a 2-50 GHz lookup MISSES them and returns no_data, rather than either
+# means a 2-50 GHz lookup MISSES them -- returning no_data when the caller
+# supplies no family bracket, or that family's cited MIN/MAX range when they do,
+# but NEVER this entry's out-of-band number either way -- rather than either
 # silently returning a wrong number or leaving the value to be rediscovered
 # and misused. This is the pattern the library already applies to Melinex
 # ST505 (see SUBSTRATE_SEED_ENTRIES).
@@ -1045,7 +1069,18 @@ SUBSTRATE_SEED_ENTRIES: list[dict[str, Any]] = [
 # not a number.
 # ---------------------------------------------------------------------------
 
-_DATASHEET_SWEEP = "2026-09-09 datasheet sweep for issue #337"
+# Every citation below reads "<vendor> <document>, via {_DATASHEET_SWEEP}". The
+# leading half is the document a reader checks; this trailing half says how it
+# reached us and what is missing from it. Naming the sweep ALONE would be a
+# provenance smell -- an activity is not a retrievable document -- so the vendor
+# document is always named first, and this string exists to record honestly that
+# the PDF revision was not captured. Where a revision IS known it is written
+# into the citation directly (see the Intexar PE874 entry, which cites
+# "TDS K-29701"); that is the shape every entry here should eventually take.
+_DATASHEET_SWEEP = (
+    "2026-09-09 datasheet sweep for issue #337 -- vendor document revision not "
+    "captured, re-verify before relying on the value"
+)
 
 DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
     # -- Isola Astra MT77: the only genuinely MULTI-POINT manufacturer dataset
@@ -1053,6 +1088,18 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
     #    one laminate, which is what makes dispersion visible instead of
     #    inferred. Entered as five entries, not one wide band, because the
     #    vendor measured five points and did not claim the values in between.
+    #
+    #    THIS IS WHY ISOLA IS FIVE POINTS AND ROGERS' DESIGN Dk IS ONE WIDE
+    #    BAND, which otherwise looks inconsistent: a query at 12 GHz misses
+    #    Isola entirely but returns Rogers' 3.55. The difference is in what the
+    #    vendor claimed, not in how this file treats them. Isola publishes five
+    #    discrete test points; Rogers publishes Design Dk as a value asserted
+    #    ACROSS 8-40 GHz. Storing Isola as a band would invent coverage the
+    #    vendor never claimed, and storing Rogers as points would discard
+    #    coverage it did. An entry's frequency band is meant to be the interval
+    #    the citation is valid over -- see this module's docstring's "WHY AN
+    #    ENTRY'S FREQUENCY IS A BAND" section -- so both shapes are that same
+    #    rule applied to two differently-shaped claims.
     *[
         add_entry(
             material="Isola Astra MT77",
@@ -1259,7 +1306,11 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
         note="Cure: resistivity row states 135 C for 15 min; recommended process cure is 15 min "
         "at >=120 C. Never electrically thick anywhere in 2-50 GHz at any printable thickness, "
         "which is the intended behaviour for a deliberately resistive layer and the one case "
-        "where the thin-film form Rs = 1/(sigma*t) is actually valid",
+        "where the thin-film form Rs = 1/(sigma*t) is actually valid. A LOWER BOUND, not a "
+        "typical value: the vendor publishes an upper bound on resistivity (< 0.6 ohm.cm), so "
+        "the real cured ink is at least this conductive and may be more. The library's "
+        "`uncertainty` field takes a single symmetric error bar and cannot express a one-sided "
+        "bound, so the direction is stated here instead of being silently dropped",
         citation=f"ACI Materials SC1502 datasheet, via {_DATASHEET_SWEEP}",
     ),
     add_entry(
@@ -1277,7 +1328,11 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
         "as NOVA-compatible. At its typical 8-12 um cured thickness this is only 0.6-1.0 skin "
         "depths at 2 GHz and does not reach 3 skin depths until roughly 20-45 GHz -- i.e. NOT "
         "safely a good conductor over most of the band in a single pass. Two passes moves that "
-        "crossover down to ~5-7 GHz",
+        "crossover down to ~5-7 GHz. A LOWER BOUND, not a typical value: the vendor publishes "
+        "sheet resistance as '< 50 mOhm/sq', an upper bound, so the cured ink is at least this "
+        "conductive and may be more -- which also means the skin-depth figures above are the "
+        "PESSIMISTIC end and the real film may cross into good-conductor behaviour lower in "
+        "the band than stated",
         citation=f"DuPont/Celanese Intexar PE874 TDS K-29701, via {_DATASHEET_SWEEP}",
     ),
 ]
