@@ -18,11 +18,21 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from string import Template
+from urllib.parse import urlsplit
 
 import psycopg
 from dotenv import load_dotenv
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+
+
+def _redact(database_url: str) -> str:
+    """Drop the credentials from a connection string, keeping only what's
+    safe to print (scheme/host/port/dbname) -- issue #367: the full URL,
+    password included, was landing in stdout here."""
+    parts = urlsplit(database_url)
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://{parts.hostname or ''}{port}{parts.path}"
 
 
 def render_schema() -> str:
@@ -43,4 +53,4 @@ def apply_schema(database_url: str) -> None:
 if __name__ == "__main__":
     load_dotenv()
     apply_schema(os.environ["DATABASE_URL"])
-    print(f"Applied {SCHEMA_PATH} to {os.environ['DATABASE_URL']}")
+    print(f"Applied {SCHEMA_PATH} to {_redact(os.environ['DATABASE_URL'])}")

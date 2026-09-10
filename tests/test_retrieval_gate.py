@@ -82,6 +82,15 @@ def corpus_documents():
     tests/test_literature_corpus.py. A file already present from an earlier
     test returns status "duplicate"; its id is still needed for the mapping
     but must not be deleted here, since this test did not create it.
+
+    Deletes one row at a time in REVERSED (LIFO) append order, not a single
+    bulk `WHERE id = ANY(%s)` statement -- see tests/test_ingest.py's
+    identical fixture docstring for why a single bulk `ANY(%s)` DELETE risks
+    a self-referential (supersedes_document_id) FK violation. This fixture
+    never passes supersedes_document_id to ingest_document today, so the
+    bulk form happened not to trigger it -- but the LIFO form costs nothing
+    and stays correct the day a supersession case is added here (issue
+    #367).
     """
     mapping: dict[int, str] = {}
     created: list[int] = []
@@ -102,7 +111,8 @@ def corpus_documents():
         conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
         try:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM documents WHERE id = ANY(%s)", (created,))
+                for doc_id in reversed(created):
+                    cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
         finally:
             conn.close()
 
