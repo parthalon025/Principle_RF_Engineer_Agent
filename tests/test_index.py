@@ -49,16 +49,25 @@ def cleanup_documents():
         conn.close()
 
 
-def _seed_document(classification: Classification, checksum: str, n_chunks: int = 2) -> int:
+def _seed_document(
+    classification: Classification,
+    checksum: str,
+    n_chunks: int = 2,
+    metadata: dict | None = None,
+) -> int:
     """Insert and commit a document with `n_chunks` chunks, for index_document
-    (on its own connection) to see."""
+    (on its own connection) to see. `metadata` defaults to today's
+    `{"classification": ...}` shape; pass `metadata={}` to seed a document
+    whose metadata carries no "classification" key at all (Issue #407's
+    regression tests use this to prove the routing floor reads
+    `documents.classification`, not the JSONB blob)."""
     draft = DocumentDraft(
         title=f"Seeded Doc {checksum}",
         source_type=SourceType.DATASHEET,
         classification=classification,
         license="manufacturer-datasheet",
         checksum_sha256=checksum,
-        metadata={"classification": classification.value},
+        metadata=metadata if metadata is not None else {"classification": classification.value},
     )
     conn = psycopg.connect(os.environ["DATABASE_URL"])
     try:
@@ -237,23 +246,7 @@ def test_restricted_routing_reads_the_classification_column_not_metadata(cleanup
     storage-location change: the routing behavior itself must be identical
     to test_restricted_document_uses_local_only/
     test_restricted_document_rejects_explicit_external_request above."""
-    draft = DocumentDraft(
-        title="No Metadata Classification Key",
-        source_type=SourceType.DATASHEET,
-        classification=Classification.RESTRICTED,
-        license="manufacturer-datasheet",
-        checksum_sha256="d8" * 32,
-        metadata={},  # deliberately no "classification" key
-    )
-    conn = psycopg.connect(os.environ["DATABASE_URL"])
-    try:
-        row = db.insert_document(conn, draft, authority_rank=20)
-        chunks = [ChunkDraft(chunk_index=0, content="chunk 0", section=None, page_number=1)]
-        db.insert_chunks(conn, row["id"], chunks)
-        conn.commit()
-        doc_id = row["id"]
-    finally:
-        conn.close()
+    doc_id = _seed_document(Classification.RESTRICTED, "d8" * 32, n_chunks=1, metadata={})
     cleanup_documents.append(doc_id)
 
     # The floor still rejects an explicit external request...

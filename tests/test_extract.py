@@ -42,14 +42,20 @@ def _seed_document(
     checksum: str,
     source_type: SourceType = SourceType.DATASHEET,
     n_chunks: int = 1,
+    metadata: dict | None = None,
 ) -> int:
+    """`metadata` defaults to today's `{"classification": ...}` shape; pass
+    `metadata={}` to seed a document whose metadata carries no
+    "classification" key at all (Issue #407's regression test uses this to
+    prove the routing floor reads `documents.classification`, not the JSONB
+    blob)."""
     draft = DocumentDraft(
         title=f"Seeded Doc {checksum}",
         source_type=source_type,
         classification=classification,
         license="manufacturer-datasheet",
         checksum_sha256=checksum,
-        metadata={"classification": classification.value},
+        metadata=metadata if metadata is not None else {"classification": classification.value},
     )
     conn = psycopg.connect(os.environ["DATABASE_URL"])
     try:
@@ -312,23 +318,7 @@ def test_restricted_routing_reads_the_classification_column_not_metadata(cleanup
     metadata carries no 'classification' key at all and confirming the
     floor is still enforced, exactly like tests/test_index.py's identical
     regression test for `index_document`."""
-    draft = DocumentDraft(
-        title="No Metadata Classification Key",
-        source_type=SourceType.DATASHEET,
-        classification=Classification.RESTRICTED,
-        license="manufacturer-datasheet",
-        checksum_sha256="e9" * 32,
-        metadata={},  # deliberately no "classification" key
-    )
-    conn = psycopg.connect(os.environ["DATABASE_URL"])
-    try:
-        row = db.insert_document(conn, draft, authority_rank=20)
-        chunks = [ChunkDraft(chunk_index=0, content="chunk 0", section=None, page_number=1)]
-        db.insert_chunks(conn, row["id"], chunks)
-        conn.commit()
-        doc_id = row["id"]
-    finally:
-        conn.close()
+    doc_id = _seed_document(Classification.RESTRICTED, "e9" * 32, metadata={})
     cleanup_documents.append(doc_id)
 
     with pytest.raises(RestrictedBackendViolation):
