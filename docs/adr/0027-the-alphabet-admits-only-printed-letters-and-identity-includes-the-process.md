@@ -223,3 +223,211 @@ This is an **amendment, not a supersede** (ADR-0020): the decision that a
 literature element enters as a candidate/hypothesis, never as a library
 entry, until printed, is unchanged. Only the label naming *why* a
 not-yet-buildable element is not yet an entry was wrong.
+
+### 2026-09-10 — the Process record drops two of the six variables this ADR called "must derive", and §5's family test is stale by one plug-in
+
+**The Decision stands, and neither item below moves it.** *"Only a printed
+letter is in the library"* is untouched, and so is *"entries never expire;
+they stop matching."* Point (a) below is about a **rotting artifact**, and
+a rotting artifact argues **for** keeping the day-0 entry, not for deleting
+it: if an ink is a different material at six months than it was on the day
+it was opened, the entry printed on day 0 records something that is still
+true about day-0 ink, and what is missing is the field saying *which day it
+was*. Point (b) corrects a count in the family test, not the test's basis
+in function-over-shape. Only the reasoning moved.
+
+---
+
+#### (a) The Process record holds four of the six process variables this ADR's own motivation named
+
+**What this ADR said** (§4, and reproduced verbatim in `CONTEXT.md:659-661`):
+
+> The key becomes `(element family, symbol, band, incidence-angle range,
+> process)`. A **Process record** holds machine, ink and grade, substrate
+> stack, pass count, achieved film thickness, and cure schedule.
+
+**And what this ADR said four paragraphs earlier**, reproducing
+`docs/element-library-prior-art.md:356` as the motivation for needing a
+Process record at all:
+
+> published element libraries are implicitly bound to a named laminate
+> with **no stated rule for what invalidates an entry**, and this repo's
+> process variables (ink, cure schedule, pass count, ink age, MXene
+> oxidation) *"have no analogue in etched-copper practice, so no analogue
+> policy exists to copy. Must derive."*
+
+**Why that was wrong.** The source names **six** process variables — *"ink,
+substrate, cure schedule, pass count, ink age and MXene oxidation"*
+(`docs/element-library-prior-art.md:356`; this ADR's own parenthetical
+reproduces five of them, dropping `substrate`, which the record *does*
+carry). **The Process record carries four.** **Ink age and MXene oxidation
+are absent** — the two that this ADR itself singled out in bold as having
+no analogue in etched-copper practice, i.e. precisely the two that could
+not be copied and had to be derived here.
+
+The shipped table confirms it. `db/schema.sql:329-339`:
+
+```sql
+CREATE TABLE IF NOT EXISTS process_records (
+    id BIGSERIAL PRIMARY KEY,
+    machine TEXT NOT NULL,
+    ink TEXT NOT NULL,
+    ink_grade TEXT NOT NULL,
+    substrate_stack TEXT NOT NULL,
+    pass_count DOUBLE PRECISION NOT NULL,
+    achieved_film_thickness_m DOUBLE PRECISION NOT NULL,
+    cure_schedule TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+No ink lot. No receipt or open date. No print date. No measurement date.
+The only time in the table is `created_at`, which is a row-insert
+timestamp and **makes no claim about the artifact** — a coupon printed in
+March and entered in September gets a September stamp, and nothing in the
+schema says otherwise.
+
+**What is true instead — and the clean split runs along this ADR's own
+line.** §4 already separates *"where it came from"* from *"what it is good
+for"*, and the two age questions fall on opposite sides of it:
+
+- **Age-at-print** — how old the ink was when the artifact was made —
+  belongs to the **Process record**. It is a fact about how the thing was
+  made, alongside pass count and cure schedule.
+- **Age-at-measurement**, and any usable shelf life derived from it,
+  belong to the **Validity box**. They are facts about where the response
+  may be *used*, alongside band and incidence angle.
+
+*In plain terms: "the ink was three weeks old when we printed this" is part
+of the recipe. "This measurement is good for six months" is part of the
+label. They are different fields on different objects and merging them
+would undo the distinction §4 is built on.*
+
+**Urgency, stated honestly and conditionally — this is worth doing cheaply
+now, not urgently.** The three configured ACI inks (SS1109 silver, SC1502
+carbon, SI3104 insulator) do not measurably rot on this programme's
+horizon, so nothing in the shop today is losing data to the gap. MXene is
+the material where oxidation is a real, documented mechanism, and MXene is
+**not stocked, not on Voltera's ink list, never printed on a NOVA**
+(`docs/mxene-voltera-nova-printability.md` §6) and has **no row in the
+shipped material-property seed data** — it is a candidate ADR-0044 keeps
+live and scored on merit, not a material in inventory. So the cost of
+waiting is currently near zero.
+
+**What is not near zero is the cost of waiting past the first print.**
+These fields **cannot be retrofitted onto a coupon that has already been
+printed**: nobody can recover in October how old the ink was in September.
+That is the whole argument for landing them before **#132**'s
+characterisation run puts anything on a substrate — a cheap schema change
+now, or an un-closable hole in the first entries the library ever holds.
+
+**Raised by:** [#447](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/447)
+("Does a library entry record when it was made, and how old it was when it
+was measured?").
+
+---
+
+#### (b) §5's family test names three per-family plug-ins; the shipped registry has four
+
+**What this ADR said:**
+
+> **5. A new family is decided by function, not by shape.** An import is a
+> new **family** if and only if it needs a different `physical_bound`,
+> `optimizer_class` or `simulation_adapter` (ADR-0018's three per-family
+> plug-ins). Otherwise it is a new **letter**, however unfamiliar it looks.
+
+**Why that was wrong.** `DesignFamily` carries a **fourth** per-family
+slot, `analysis_model` (`designs/design_families.py:316-347`). It is not
+optional and not incidental — it is **required with no default,
+deliberately**, and the code says why:
+
+> Required, with no default, deliberately (#239): a family that forgets to
+> state which analysis it needs cannot be constructed at all, rather than
+> quietly inheriting another family's model.
+
+The same file's docstring already lists all four together — *"the
+family-specific parts (`physical_bound`, `analysis_model`,
+`optimizer_class`, `simulation_adapter`) are declared as open values"* —
+so the registry has been four-slotted since #239 and §5's *"if and only
+if … three"* has been stale ever since.
+
+**What is true instead.** §5's operative text is now:
+
+> An import is a new **family** if and only if it needs a different
+> `physical_bound`, `analysis_model`, `optimizer_class` or
+> `simulation_adapter` (ADR-0018's per-family plug-ins, four as of #239).
+> Otherwise it is a new **letter**, however unfamiliar it looks.
+
+**This is not bookkeeping — the missing fourth slot has a live victim.** A
+transmit-type bandpass FSS — a radome, a radar-transparent window — reuses
+**all three of the named plug-ins**: it needs no different
+`physical_bound` (a transmissive screen's thickness/bandwidth bound is
+`UnreadPhysicalBound` here, exactly as `ABSORBER_TRANSMISSIVE`'s already
+is), no different `simulation_adapter` (a periodic unit cell needs
+`MEEP_FLOQUET` either way), and no `optimizer_class` at all (neither has
+one). **So the test as written files it as a *letter* under
+`ABSORBER_TRANSMISSIVE`** — whose `analysis_model`,
+`TRANSMISSIVE_ABSORBER_BAND_RESPONSE`, scores *"what fraction of the
+incident power this surface turns into heat at the single worst frequency
+in the required band"*, i.e. worst-in-band **absorptivity**.
+
+A radome wants transmission **maximised** and absorption **minimised**. So
+the loop would **rank the best radome last** — the same shape of
+confidently-wrong number #239 exists to prevent, one family over.
+
+**The arithmetic, on the real measured case.** A screen-printed Ti₃C₂Tₓ
+chessboard FSS reported at X-band average radar **transmittance 78%** and
+**reflectivity as low as 16%** (*J. Alloys Compd.*, PII S0925838826025946;
+recorded on [#453](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/453),
+provenance `UNVERIFIED` — the primary paper has not been read here) has
+absorptivity
+
+```
+A = 1 − |S₁₁|² − |S₂₁|²  =  1 − 0.16 − 0.78  =  0.06
+```
+
+Scored against the field's **−10 dB / A ≥ 0.900** absorber default
+(`docs/absorber-scoring-conventions.md` §2, §11 — the two are the same
+number when transmission is zero), **A = 0.06 reads as a catastrophic
+failure: 6% of the bar.** It is in fact a near-ideal radome — 78% of the
+radar energy goes straight through, which is the entire point of the part.
+
+*In plain terms: a radar-see-through window and a radar absorber want
+opposite things. One wants the energy to pass; the other wants it eaten.
+Measuring the window with the absorber's ruler says it eats 6% of the
+energy when it needs to eat 90%, and marks it a near-total failure — when
+6% eaten is exactly what a good window does.*
+
+**Why a reader could not have known.** Before this correction block,
+`analysis_model` **appeared in no ADR and in no `CONTEXT.md` entry** —
+grep across `docs/adr/` and `CONTEXT.md` returned zero hits in either, and
+this block is now the first mention in any ADR. A reader applying the documented test
+has no way to learn a fourth slot exists; the only place it is written down
+is the dataclass. Which is why the amendment lands, and why the vocabulary
+gap is worth closing separately.
+
+**Deliberately not amended alongside this: ADR-0018.** It would be easy to
+assume the same staleness reaches back to the ADR the test cites, and it
+does not. ADR-0018 names `physical_bound` as *"the deciding factor"* and
+says only that *"`optimizer_class` and `simulation_adapter` follow the same
+open-value pattern … since both have a credible third value on the
+horizon."* It makes **no exhaustive-list claim** anywhere, so a fourth
+plug-in appearing falsifies nothing in it — that is ADR-0018's *"open
+interface, not a fixed schema"* decision working exactly as designed.
+ADR-0027 §5's *"if and only if … three"* **does** make that claim, which is
+why the correction belongs here and only here. Stated so a later reader
+does not conclude ADR-0018 was overlooked.
+
+**Raised by:** [#453](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/453)
+("Does a radar-transparent bandpass architecture need its own family, or is
+it `ABSORBER_TRANSMISSIVE` with an inverted objective?"). The related
+question of which *other* registry fields the documented vocabulary is
+missing is [#455](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/455).
+
+---
+
+**Both are amendments, not a supersede** (ADR-0020). Neither Decision
+paragraph is rewritten: (a) adds two fields to an object §4 already
+defines and splits a third across a boundary §4 already draws, and (b)
+corrects a count in a test whose basis — function, not shape — is
+unchanged.
