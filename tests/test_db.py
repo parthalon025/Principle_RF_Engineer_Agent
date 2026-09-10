@@ -280,3 +280,34 @@ def test_get_component_null_manufacturer_matches_null_manufacturer(db_conn):
 
     assert found is not None
     assert found["manufacturer"] is None
+
+
+def test_delete_document_clears_component_datasheet_reference(db_conn):
+    """Issue #402: deleting a document referenced by a component should
+    set the component's datasheet_document_id to NULL instead of raising."""
+    # Create a document
+    draft = _draft(checksum_sha256="zz" + "1" * 62)
+    doc_row = insert_document(db_conn, draft, authority_rank=20)
+
+    # Create a component referencing this document
+    specs = {"gain_db": {"value": 20.0, "unit": "dB", "provenance": "MANUFACTURER-SPECIFIED"}}
+    component = upsert_component(
+        db_conn,
+        manufacturer="Test RF",
+        part_number="TEST-PART-402",
+        category="amplifier",
+        specifications=specs,
+        datasheet_document_id=doc_row["id"],
+    )
+
+    assert component["datasheet_document_id"] == doc_row["id"]
+
+    # Delete the document
+    with db_conn.cursor() as cur:
+        cur.execute("DELETE FROM documents WHERE id = %s", (doc_row["id"],))
+        db_conn.commit()
+
+    # Verify the component still exists but has datasheet_document_id = NULL
+    found = get_component(db_conn, "Test RF", "TEST-PART-402")
+    assert found is not None
+    assert found["datasheet_document_id"] is None
