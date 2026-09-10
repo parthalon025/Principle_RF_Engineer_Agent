@@ -50,8 +50,9 @@ Numerically it offers arbitrary high-order finite elements, curvilinear
 GPU acceleration on NVIDIA/AMD hardware (CUDA, HIP, MAGMA) with multi-GPU
 parallelism, on top of CPU-side matrix-free p-multigrid, sparse direct, and
 algebraic-multigrid solvers [2][3]. Boundary conditions include the periodic
-and Floquet-port pair this repo uses, plus (not used here) lumped/wave ports,
-PEC/PMC, absorbing/PML, and surface-impedance boundaries [3][5]. Mesh input
+and Floquet-port pair this repo uses, plus PEC (now also used here, for
+embedded conductor patches — see below) and, not used here, lumped/wave
+ports, PMC, absorbing/PML, and surface-impedance boundaries [3][5]. Mesh input
 supports MFEM's native format plus Nastran and COMSOL formats, driven by a
 JSON configuration file with five top-level sections — Problem, Model,
 Domains, Boundaries, Solver — validated against a published JSON Schema
@@ -83,11 +84,18 @@ Concretely, wired up:
 
 - **`generate_palace_mesh()`** builds a structured hexahedral mesh (MFEM
   `.mesh` v1.0 ASCII) of a single rectangular periodic unit cell, with zero
-  or more embedded axis-aligned dielectric material boxes.
+  or more embedded axis-aligned dielectric material boxes, plus zero or more
+  embedded axis-aligned PEC conductor patches (`geometry["pec_patches"]`,
+  issue #252) — the patterned-metal-on-dielectric case (a patch, slot, or
+  ring on/in a substrate) — each meshed as its own interior boundary-attribute
+  assignment, distinct from the dielectric material boxes and the six
+  unit-cell faces.
 - **`generate_palace_config()`** emits the JSON config for a frequency-domain
   **Driven** solve only, with `config["Boundaries"]["Periodic"]` (the
-  x/y-normal side faces) and two `FloquetPort` entries (the z-normal faces,
-  port 1 excited).
+  x/y-normal side faces), two `FloquetPort` entries (the z-normal faces,
+  port 1 excited; or one Floquet port plus a PEC-backed ground plane via
+  `geometry["ground_backed"]`), and a `config["Boundaries"]["PEC"]` entry
+  referencing any `pec_patches` attributes.
 - **`PalaceSimulator.run()`** shells out to the real `palace` binary
   (`-np <N> config.json`) via `subprocess`, matching Palace's documented CLI
   contract.
@@ -102,22 +110,31 @@ matching Palace's published reference output to within 0.056 dB / 0.91° on
 the propagating modes (module docstring, "VALIDATED AGAINST A REAL PALACE
 BINARY" section).
 
+Embedded PEC conductor patches (`geometry["pec_patches"]`, issue #252) are
+also implemented — meshed as an interior boundary attribute and referenced
+by a `config["Boundaries"]["PEC"]` entry — but that geometry has never itself
+been run through a real Palace binary, so the exact `"PEC"` config key
+name/shape is confirmed only against Palace's own documented schema, not
+against a real solve the way `FloquetPort`/`Periodic` were (issue #210).
+Validating it against a real binary is tracked separately (issue #347).
+
 **Explicitly NOT implemented**: eigenmode, electrostatic, magnetostatic, and
-time-domain solves; non-periodic ports (lumped/wave); embedded PEC conductor
-patches in the unit cell (the metallic-metasurface case — only all-dielectric
-unit cells are supported today); adaptive mesh refinement; GPU execution;
-curvilinear (curved) mesh elements; and multi-process values above
-`num_processes=1` are plumbed through but not exercised in the validated run.
+time-domain solves; non-periodic ports (lumped/wave); adaptive mesh
+refinement; GPU execution; curvilinear (curved) mesh elements; and
+multi-process values above `num_processes=1` are plumbed through but not
+exercised in the validated run.
 
 ## Capabilities not yet used here
 
-The single biggest gap for this repo's actual purpose (thin conformal
-metasurfaces/FSS/absorbers) is **embedded PEC conductor support in the
-periodic unit cell** — the module docstring calls this out explicitly as
-unimplemented, "not a silent omission." Most real metasurface/FSS unit cells
-*are* patterned metal (patches, slots, rings) on or in a dielectric, not an
-all-dielectric grating, so this gap blocks the most common design case Palace
-was integrated for. Beyond that: **eigenmode solves** could characterize a
+**Embedded PEC conductor support in the periodic unit cell** — the case most
+real metasurface/FSS unit cells actually need (patterned metal: patches,
+slots, or rings on or in a dielectric, rather than a bare grating) — used to
+be the single biggest gap here; it is now implemented
+(`geometry["pec_patches"]`, issue #252) rather than a gap. What remains is
+that it has never met a real Palace binary: the only run this module has
+validated end to end is an all-dielectric grating with no metal, so whether
+the inferred `"PEC"` boundary config actually works is still open (issue
+#347). Beyond that: **eigenmode solves** could characterize a
 unit cell's resonant behavior directly (useful for absorber/FSS resonance
 design) instead of only reading it off a driven S-parameter sweep;
 **electrostatic/magnetostatic** solves are irrelevant to this repo's RF work;
