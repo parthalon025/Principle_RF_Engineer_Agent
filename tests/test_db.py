@@ -14,6 +14,19 @@ from knowledge.db import (
 from knowledge.models import ChunkDraft, Classification, DocumentDraft, SourceType
 
 
+def _insert_raw_document(cur, title: str, checksum: str, supersedes_id: int) -> None:
+    """Insert a document row via raw SQL, bypassing `insert_document` and its
+    own check-then-insert entirely -- used to simulate a concurrent racing
+    insert that lands after `insert_document`'s own SELECT has already run."""
+    cur.execute(
+        """
+        INSERT INTO documents (title, source_type, checksum_sha256, supersedes_document_id)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (title, SourceType.DATASHEET.value, checksum, supersedes_id),
+    )
+
+
 def _draft(**overrides) -> DocumentDraft:
     defaults = dict(
         title="LM7805 Voltage Regulator",
@@ -159,26 +172,12 @@ def test_documents_supersedes_document_id_has_unique_index(db_conn):
     target = insert_document(db_conn, _draft(checksum_sha256="2" * 64), authority_rank=20)
 
     with db_conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO documents (title, source_type, checksum_sha256, supersedes_document_id)
-            VALUES (%s, %s, %s, %s)
-            """,
-            ("Racing revision B", SourceType.DATASHEET.value, "aa" * 32, target["id"]),
-        )
+        _insert_raw_document(cur, "Racing revision B", "aa" * 32, target["id"])
 
     with pytest.raises(psycopg.errors.UniqueViolation):
         with db_conn.transaction():
             with db_conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO documents (
-                        title, source_type, checksum_sha256, supersedes_document_id
-                    )
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    ("Racing revision C", SourceType.DATASHEET.value, "bb" * 32, target["id"]),
-                )
+                _insert_raw_document(cur, "Racing revision C", "bb" * 32, target["id"])
 
 
 def test_insert_document_reports_supersession_race_not_duplicate_checksum(db_conn):
@@ -195,13 +194,7 @@ def test_insert_document_reports_supersession_race_not_duplicate_checksum(db_con
     target = insert_document(db_conn, _draft(checksum_sha256="9" * 64), authority_rank=20)
 
     with db_conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO documents (title, source_type, checksum_sha256, supersedes_document_id)
-            VALUES (%s, %s, %s, %s)
-            """,
-            ("Racing revision", SourceType.DATASHEET.value, "cc" * 32, target["id"]),
-        )
+        _insert_raw_document(cur, "Racing revision", "cc" * 32, target["id"])
 
     draft = _draft(checksum_sha256="dd" * 32, supersedes_document_id=target["id"])
     with pytest.raises(InvalidSupersessionError) as exc_info:
