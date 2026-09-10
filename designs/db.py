@@ -201,14 +201,22 @@ def record_decision(
 
     `capability_warnings` (issue #324; ADR-0025's 2026-09-09 correction;
     CONTEXT.md's "Capability warning") is optional, defaulting to `[]` --
-    its own column, wholly separate from `considered_and_dropped` above (a
-    design candidate carrying a Capability warning stays `kept`; it is
-    never one of that ledger's entries). Same "only a design-loop
-    ARCHITECTURE/REDESIGN_DECISION call ever states one" shape, and stored
-    verbatim for the same reason: the shape check (issue #324) is enforced
-    upstream, by `orchestration.design_loop`'s step validation. NOT moved to
-    its own table by this ticket -- that is sibling issue #397's separate,
-    independently-scoped work.
+    wholly separate from `considered_and_dropped` above (a design candidate
+    carrying a Capability warning stays `kept`; it is never one of that
+    ledger's entries). Same "only a design-loop ARCHITECTURE/
+    REDESIGN_DECISION call ever states one" shape as `considered_and_dropped`,
+    and stored the same way (issue #397; parent #393): each entry becomes its
+    own row in `capability_warning_entries`, FK'd to this `decision_records`
+    row, in the SAME transaction as the insert below -- not a JSON blob on
+    the row itself. `decision_records.capability_warnings` (the column) is
+    no longer written with real content here; it is left at its schema
+    default (`[]`) and is no longer authoritative for this data (issue #393:
+    "nothing should read them as authoritative after this ships") --
+    `read_design` reconstructs the equivalent list by reading the child
+    table instead, so a caller of this function or of `read_design` sees the
+    exact same shape as before. The shape check (issue #324) is enforced
+    upstream, by `orchestration.design_loop`'s step validation -- this
+    function stores each entry verbatim, just in a different place.
     """
     existing = find_decision_by_record_key(conn, record_key)
     if existing is not None:
@@ -220,9 +228,8 @@ def record_decision(
             INSERT INTO decision_records
                 (design_id, record_key, decision, alternatives, rationale,
                  evidence, design_family, design_family_canonical,
-                 capability_warnings,
                  approval_required, approval_status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -234,13 +241,41 @@ def record_decision(
                 Json(evidence),
                 design_family,
                 design_family_canonical,
-                Json(capability_warnings if capability_warnings is not None else []),
                 approval_required,
                 "PENDING",
             ),
         )
         row = cur.fetchone()
         assert row is not None
+
+        if capability_warnings:
+            cur.executemany(
+                """
+                INSERT INTO capability_warning_entries
+                    (decision_record_id, family, capability_kind, capability_property,
+                     value, comparator, unit, reason)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    (
+                        row["id"],
+                        entry["family"],
+                        entry["capability_kind"],
+                        entry["capability_property"],
+                        entry["value"],
+                        entry["comparator"],
+                        entry["unit"],
+                        entry["reason"],
+                    )
+                    for entry in capability_warnings
+                ],
+            )
+
+    # The RETURNING * above reflects the (now-inert) schema default for this
+    # column, not what was actually recorded -- fill in what this call
+    # actually just wrote, so a caller of record_decision itself (not just
+    # of read_design) sees the real entries without a second round trip.
+    row["capability_warnings"] = copy.deepcopy(capability_warnings) if capability_warnings else []
 
     _insert_considered_and_dropped_entries(conn, row["id"], considered_and_dropped or [])
     row["considered_and_dropped"] = _read_considered_and_dropped_entries(conn, [row["id"]]).get(
@@ -635,6 +670,12 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
     possible before #19/#20 land) comes back with those as empty lists,
     never an error -- nothing here assumes any of the three related tables
     holds rows for this design.
+
+    Each decision record's `capability_warnings` (issue #397) is
+    reconstructed from `capability_warning_entries` rather than read
+    straight off the `decision_records` column -- see that table's own
+    schema comment and `record_decision`'s docstring for why. Everything
+    else about this function's output is unchanged.
     """
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM designs WHERE id = %s", (design_id,))
@@ -661,6 +702,32 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
             (design_id,),
         )
         decision_records = cur.fetchall()
+
+        # Issue #397: `decision_records.capability_warnings` (selected above)
+        # is no longer written with real content by `record_decision` --
+        # replace it here with the equivalent list read back from
+        # `capability_warning_entries`, so this function's OUTPUT shape is
+        # unchanged even though the underlying storage moved to its own
+        # table. Skipped entirely when there are no decision_records rows to
+        # join against (an empty `ANY(%s)` array parameter is legal SQL but
+        # pointless to send).
+        capability_warnings_by_decision_id: dict[int, list[dict[str, Any]]] = {}
+        decision_record_ids = [row["id"] for row in decision_records]
+        if decision_record_ids:
+            cur.execute(
+                "SELECT decision_record_id, family, capability_kind, capability_property, "
+                "value, comparator, unit, reason "
+                "FROM capability_warning_entries "
+                "WHERE decision_record_id = ANY(%s) ORDER BY id",
+                (decision_record_ids,),
+            )
+            for entry_row in cur.fetchall():
+                decision_record_id = entry_row.pop("decision_record_id")
+                capability_warnings_by_decision_id.setdefault(decision_record_id, []).append(
+                    entry_row
+                )
+        for row in decision_records:
+            row["capability_warnings"] = capability_warnings_by_decision_id.get(row["id"], [])
 
         cur.execute(
             "SELECT id, requirement_id, requirement, method, expected, actual, status, "
@@ -693,6 +760,54 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
         "decision_records": [_serialize_row(r) for r in decision_records],
         "verification_items": verification_items,
     }
+
+
+def read_capability_warning_entries(
+    conn: psycopg.Connection, design_id: int
+) -> list[dict[str, Any]] | None:
+    """Return every persisted `capability_warning_entries` row for
+    `design_id`, joined to its parent `decision_records` row for
+    `record_key` -- the direct-table read `orchestration.tooling.
+    reevaluate_capability_warnings` (issue #397) queries, replacing that
+    function's old approach of calling `read_design` and looping over each
+    decision record's aggregated (JSON) `capability_warnings` list in
+    Python.
+
+    Returns `None` if no `designs` row matches `design_id` at all -- mirrors
+    `read_design`'s own not-found signal, so a caller (`reevaluate_
+    capability_warnings`) can distinguish "this design doesn't exist" from
+    "this design exists but has no capability_warnings entries" (`[]`,
+    e.g. no decision_records yet, or none of them carry any). Checked
+    directly against `designs` rather than inferred from an empty join
+    result, since the latter cannot tell those two cases apart.
+
+    One dict per entry -- `record_key`, `family`, `capability_kind`,
+    `capability_property`, `value`, `comparator`, `unit`, `reason` -- the
+    same shape a `capability_warnings` entry has always had, ordered by
+    entry id (write order, matching the order the old JSON array held them
+    in). Every field `orchestration.design_loop.capability_warning_holds`
+    reads (`capability_kind`/`capability_property`/`comparator`/`value`) is
+    present, so a caller can pass a returned dict straight into that
+    function unchanged.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM designs WHERE id = %s", (design_id,))
+        if cur.fetchone() is None:
+            return None
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT dr.record_key, cwe.family, cwe.capability_kind, cwe.capability_property,
+                   cwe.value, cwe.comparator, cwe.unit, cwe.reason
+            FROM capability_warning_entries cwe
+            JOIN decision_records dr ON dr.id = cwe.decision_record_id
+            WHERE dr.design_id = %s
+            ORDER BY cwe.id
+            """,
+            (design_id,),
+        )
+        return cur.fetchall()
 
 
 def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
