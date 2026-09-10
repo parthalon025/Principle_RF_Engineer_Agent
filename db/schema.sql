@@ -687,3 +687,60 @@ ALTER TABLE designs
 -- extending tables that predate the column (see `documents.status` /
 -- `documents.supersedes_document_id` above).
 ALTER TABLE designs ADD COLUMN IF NOT EXISTS supersedes_design_id BIGINT REFERENCES designs(id);
+
+-- Issue #395 (duplicate of #392's identical deliverable; both closed by
+-- this table). A 9-reviewer DB architecture-soundness review found the
+-- same gap from five independent angles: `designs.architecture` names
+-- which real, orderable `components` row backs each functional block
+-- (`designs.validation.extract_component_refs`'s walk), but that link was
+-- only ever checked once, at `create_design` time, and never again --
+-- `architecture` is a JSON blob, so Postgres itself had no way to see or
+-- protect the link. Nothing stopped a referenced component from being
+-- deleted out from under a live design, and "which designs use component
+-- X" had no answer short of scanning every design's JSON by hand.
+--
+-- `component_id` deliberately carries no `ON DELETE` action -- default
+-- `RESTRICT` -- so a `components` row a live design still references
+-- cannot be deleted out from under it; a caller that genuinely needs to
+-- remove a component must first remove or repoint every design that
+-- references it (proven live in tests/test_designs_db.py against the real
+-- constraint, not mocked -- the same discipline
+-- tests/test_element_alphabet.py already applies to
+-- symbol_alphabet_entries.process_id). `design_id` is `ON DELETE CASCADE`,
+-- matching every other design-scoped child table in this file
+-- (`engineering_results`, `verification_items`, `decision_records`, ...):
+-- once the `designs` row itself is gone, its component references go
+-- with it.
+--
+-- `UNIQUE(design_id, block)` -- `block` is the architecture block name
+-- (`designs.validation._iter_component_refs`'s nearest-enclosing-dict-key
+-- label, e.g. "lna"/"mixer"); today's architecture shape never repeats a
+-- block name within one design's own JSON (each is a distinct dict key),
+-- so this also catches a future write path silently double-inserting the
+-- same block.
+--
+-- Populated by `designs.db.create_design` in the same transaction as the
+-- `designs`/`architecture` write it describes, reusing the already-
+-- validated `component_id` list `_find_dangling_component_refs` computes
+-- today -- no second validation pass, no new seam. No path exists yet for
+-- updating an existing design's `architecture` after creation (every
+-- design-loop-created design is created with `architecture={}` and
+-- nothing ever updates it afterward), so `create_design` is this table's
+-- only writer for now; a future architecture-update path must keep this
+-- table in step the same way, not just write `architecture`'s JSON.
+CREATE TABLE IF NOT EXISTS design_component_refs (
+    id BIGSERIAL PRIMARY KEY,
+    design_id BIGINT NOT NULL REFERENCES designs(id) ON DELETE CASCADE,
+    component_id BIGINT NOT NULL REFERENCES components(id),
+    block TEXT NOT NULL,
+    UNIQUE(design_id, block)
+);
+
+-- The new "which designs use component X" query direction
+-- (`designs.db.find_designs_referencing_component`) -- the primary key
+-- above indexes `id`, and `UNIQUE(design_id, block)` indexes `design_id`
+-- as its leftmost column, but neither covers a `component_id`-first
+-- lookup, which is the one this table exists to make fast and indexed
+-- instead of a full-table JSON scan.
+CREATE INDEX IF NOT EXISTS design_component_refs_component_id_idx
+ON design_component_refs (component_id);

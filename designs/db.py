@@ -68,15 +68,24 @@ class DanglingComponentReferenceError(Exception):
 
 
 def _find_dangling_component_refs(
-    conn: psycopg.Connection, architecture: dict[str, Any]
+    conn: psycopg.Connection, component_refs: list[tuple[str, int]]
 ) -> list[dict[str, Any]]:
     """Return `{"block": ..., "component_id": ...}` for every `component_id`
-    referenced in `architecture` that has no matching `components` row, in
-    the order `extract_component_refs` encountered them. Empty list ->
-    every reference resolves (including when there are none at all)."""
-    component_ids = extract_component_refs(architecture)
-    if not component_ids:
+    in `component_refs` that has no matching `components` row, in the order
+    `component_refs` lists them. Empty list -> every reference resolves
+    (including when there are none at all).
+
+    `component_refs` is the caller's own already-computed
+    `designs.validation._iter_component_refs(architecture)` walk -- a list
+    of `(block, component_id)` pairs -- passed in rather than an
+    `architecture` dict this function would have to walk itself, so
+    `create_design` can walk `architecture` exactly once and reuse the
+    result both for this existence check and for its own
+    `design_component_refs` insert.
+    """
+    if not component_refs:
         return []
+    component_ids = [component_id for _, component_id in component_refs]
 
     with conn.cursor() as cur:
         cur.execute(
@@ -90,7 +99,7 @@ def _find_dangling_component_refs(
         return []
     return [
         {"block": block, "component_id": component_id}
-        for block, component_id in _iter_component_refs(architecture)
+        for block, component_id in component_refs
         if component_id in missing
     ]
 
@@ -274,10 +283,25 @@ def create_design(
       dangling reference raises `DanglingComponentReferenceError` naming
       every offending block; no `designs` or `verification_items` row is
       created.
-    - The `designs` insert and its `verification_items` auto-creation are
-      two statements on the same connection with no commit between them,
-      so they share whatever transaction the caller is already in --
-      never left half-done. (Deliberately *not* wrapped in its own nested
+    - Every `(block, component_id)` pair the same walk found (issue
+      #395/#392) is also written to `design_component_refs` -- the real,
+      database-enforced link a caller uses via
+      `find_designs_referencing_component` to ask "which designs use
+      component X", and that Postgres itself uses to refuse deleting a
+      `components` row a live design still references
+      (`db/schema.sql`'s `component_id` FK, default `RESTRICT`).
+      `architecture` is walked via `_iter_component_refs` exactly once,
+      up front; that one list feeds both `_find_dangling_component_refs`'s
+      existence check above and this insert -- no second walk of
+      `architecture` to re-derive the same `(block, component_id)` pairs.
+      `architecture={}` (every design-loop-created design today) writes no
+      rows here, same as it creates no `verification_items` rows when
+      `requirements={}`.
+    - The `designs` insert, its `verification_items` auto-creation, and its
+      `design_component_refs` auto-creation are all statements on the same
+      connection with no commit between them, so they share whatever
+      transaction the caller is already in -- never left half-done.
+      (Deliberately *not* wrapped in its own nested
       `with conn.transaction():`: psycopg treats that as a genuine
       top-level transaction -- auto-committing on a clean exit -- unless
       some earlier statement on this connection already opened one, which
@@ -297,7 +321,8 @@ def create_design(
 
     validate_requirements(requirements)
 
-    offending = _find_dangling_component_refs(conn, architecture)
+    component_refs = _iter_component_refs(architecture)
+    offending = _find_dangling_component_refs(conn, component_refs)
     if offending:
         raise DanglingComponentReferenceError(offending)
 
@@ -344,7 +369,48 @@ def create_design(
                 ],
             )
 
+        if component_refs:
+            cur.executemany(
+                """
+                INSERT INTO design_component_refs (design_id, component_id, block)
+                VALUES (%s, %s, %s)
+                """,
+                [(design_row["id"], component_id, block) for block, component_id in component_refs],
+            )
+
     return design_row
+
+
+def find_designs_referencing_component(
+    conn: psycopg.Connection, component_id: int
+) -> list[dict[str, Any]]:
+    """Return `{"id": ..., "design_key": ..., "revision": ..., "block": ...}`
+    for every `design_component_refs` row naming this `component_id` (issue
+    #395/#392) -- the "which designs use component X" lookup `db/schema.sql`'s
+    `design_component_refs_component_id_idx` exists to make a fast, indexed
+    query instead of a full-table scan of every design's `architecture`
+    JSON. Ordered by design id then block, so a component referenced from
+    several blocks of the same design, or from several different designs,
+    comes back in a stable order. Returns `[]` for a `component_id`
+    referenced by no design (including one that doesn't exist) -- never
+    raises, mirroring this module's other plain-read functions
+    (`read_engineering_results_for_scoring`).
+
+    Read-only counterpart to `create_design`'s write into the same table --
+    this function only ever SELECTs.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT d.id, d.design_key, d.revision, dcr.block
+            FROM design_component_refs dcr
+            JOIN designs d ON d.id = dcr.design_id
+            WHERE dcr.component_id = %s
+            ORDER BY d.id, dcr.block
+            """,
+            (component_id,),
+        )
+        return cur.fetchall()
 
 
 def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | None:
