@@ -462,7 +462,13 @@ def test_flush_target_for_folds_decision_input_into_engineering_result_value(ste
     )
 
     target = _flush_target_for(
-        decision, design_id=1, design_key="X", loop_id="loop-1", iteration=1, design_family=None
+        decision,
+        design_id=1,
+        design_key="X",
+        loop_id="loop-1",
+        iteration=1,
+        design_family=None,
+        design_family_canonical=None,
     )
 
     assert target is not None
@@ -494,7 +500,13 @@ def test_flush_target_for_engineering_result_value_keeps_the_scored_field_readab
     )
 
     target = _flush_target_for(
-        decision, design_id=1, design_key="X", loop_id="loop-1", iteration=1, design_family=None
+        decision,
+        design_id=1,
+        design_key="X",
+        loop_id="loop-1",
+        iteration=1,
+        design_family=None,
+        design_family_canonical=None,
     )
 
     value = target.kwargs["value"]
