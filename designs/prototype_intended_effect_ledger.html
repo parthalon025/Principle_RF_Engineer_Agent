@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PROTOTYPE — Intended Effect &amp; the Considered-and-Dropped Ledger</title>
+<style>
+  :root {
+    --accent: #1f6f78;
+    --accent-light: #e4f1f2;
+    --ink: #1c2320;
+    --muted: #5b6663;
+    --border: #d8dedc;
+    --bg: #fbfbfa;
+    --card: #ffffff;
+    --bad: #a3402f;
+    --good: #2f7a4f;
+    --warn: #a3782f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    margin: 0;
+    padding: 2rem 3vw 6rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 .75rem; color: var(--accent); }
+  h3 { font-size: .95rem; margin: 0 0 .4rem; }
+  .badge {
+    display: inline-block; font-size: .7rem; letter-spacing: .05em;
+    text-transform: uppercase; background: var(--bad); color: white;
+    padding: .15rem .5rem; border-radius: .25rem; margin-bottom: .6rem;
+  }
+  .question {
+    max-width: 78ch; color: var(--muted); background: var(--card);
+    border: 1px solid var(--border); border-left: 4px solid var(--accent);
+    padding: 1rem 1.25rem; border-radius: .4rem; margin-bottom: 1.5rem;
+  }
+  .question strong { color: var(--ink); }
+  .grid {
+    display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr);
+    gap: 1.5rem; align-items: start;
+  }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  section.card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: .5rem; padding: 1.1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; }
+  tr:last-child td { border-bottom: none; }
+  .empty-row td { color: var(--muted); font-style: italic; }
+  .pill {
+    display: inline-block; font-size: .7rem; padding: .1rem .45rem;
+    border-radius: 999px; border: 1px solid currentColor;
+  }
+  .pill.kept { color: var(--good); }
+  .pill.active { color: var(--bad); }
+  .pill.reconsider { color: var(--warn); background: #fbf3e2; }
+  .pill.human-decision { color: var(--bad); }
+  .pill.capability-verdict { color: var(--warn); }
+  .pill.engineering-judgment { color: var(--accent); }
+  .chip {
+    display: inline-block; background: var(--accent-light); color: var(--accent);
+    border-radius: .3rem; padding: .1rem .5rem; font-size: .8rem; margin: .15rem .3rem .15rem 0;
+  }
+  .field-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .55rem; align-items: center; }
+  .field-row label { font-size: .78rem; color: var(--muted); display: flex; flex-direction: column; gap: .2rem; flex: 1 1 auto; min-width: 120px; }
+  input, select, textarea {
+    font: inherit; font-size: .85rem; padding: .35rem .5rem; border: 1px solid var(--border);
+    border-radius: .3rem; background: white; width: 100%;
+  }
+  button {
+    font: inherit; font-size: .82rem; background: var(--accent); color: white; border: none;
+    padding: .5rem .9rem; border-radius: .35rem; cursor: pointer;
+  }
+  button.secondary { background: white; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { background: #cfd6d4; color: #798581; cursor: not-allowed; border: none; }
+  button.step { display: block; width: 100%; text-align: left; margin-bottom: .4rem; }
+  fieldset { border: 1px dashed var(--border); border-radius: .4rem; padding: .7rem .8rem; margin-bottom: .8rem; }
+  legend { font-size: .78rem; color: var(--muted); padding: 0 .3rem; }
+  .suggestion { font-size: .75rem; color: var(--muted); margin-top: -.3rem; }
+  .suggestion b { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; }
+  .tabs button { background: white; color: var(--muted); border: 1px solid var(--border); }
+  .tabs button.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .scenario-desc { color: var(--muted); font-size: .85rem; margin-bottom: .8rem; }
+  .log { max-height: 340px; overflow-y: auto; font-size: .8rem; }
+  .log div { padding: .4rem 0; border-bottom: 1px solid var(--border); }
+  .log div:last-child { border-bottom: none; }
+  .muted { color: var(--muted); }
+  .small { font-size: .78rem; color: var(--muted); }
+  code { background: var(--accent-light); padding: .05rem .3rem; border-radius: .2rem; font-size: .82em; }
+</style>
+</head>
+<body>
+
+<span class="badge">Prototype — throwaway, not production</span>
+<h1>Intended Effect &amp; the Considered-and-Dropped Ledger</h1>
+
+<div class="question">
+  <p><strong>The question this demo pushes on:</strong> ADR-0030 adds "intended effect"
+  — a free-text note of what the customer wants done to the radio wave (absorbed,
+  reflected, transmitted...) — as a key on a Customer requirement, specifically so the
+  <strong>Considered-and-dropped ledger</strong> (which design families got tried and
+  rejected, and why) becomes comparable across designs. Grilling that decision surfaced
+  four open questions about the state model:</p>
+  <ol style="margin:.4rem 0 0 1.1rem; padding:0;">
+    <li><strong>Q1</strong> — one ledger reason, <code>capability-verdict</code>, was being asked to mean
+      two things that expire on two different triggers (shop equipment vs. a requirement's own curvature).
+      <strong>Resolved while prototyping:</strong> equipment/inventory unavailability is a <em>warning</em>,
+      never a reason to drop a candidate — the charter says present equipment "shape[s] the ranking and the
+      warnings, never the search." So <code>capability-verdict</code> now only ever means "outside this
+      element's characterized validity box" (e.g. curvature) — a genuine exclusion, not a supply problem.
+      The sub-field question disappears because the ambiguity it was solving no longer exists.</li>
+    <li><strong>Q2</strong> — intended effect is deliberately free text with no closed list. Does a
+      soft, suggestion-only "house style" registry actually stop two designs asking for the same thing
+      from becoming invisible to each other — or does typing something slightly different still break it?</li>
+    <li><strong>Q3</strong> — should the system refuse to run the ARCHITECTURE step (where the ledger gets
+      written) until every requirement has a stated intended effect, the same way it already refuses
+      without a stated design family?</li>
+    <li><strong>Q4</strong> — if a customer wants two different things at once, does forcing that into
+      <em>two requirement rows</em> (rather than a list on one row) actually hold up, or does the model
+      let someone cram two wishes into one label anyway?</li>
+  </ol>
+  <p>Free-play with the buttons below, or run a guided scenario — each one is built to make one of
+  these four questions concrete. Watch the log at the bottom for what the model actually did and why.</p>
+</div>
+
+<div class="grid">
+
+  <div>
+    <section class="card">
+      <h2>Guided walkthroughs</h2>
+      <div class="tabs" id="tabs"></div>
+      <div id="scenario-body"></div>
+    </section>
+
+    <section class="card">
+      <h2>Free play</h2>
+
+      <fieldset>
+        <legend>0 — Manufacturing setup (equipment, ink, material — shop-wide, not per design)</legend>
+        <div class="field-row">
+          <label>Machine <input id="f-setup-machine" placeholder="e.g. Voltera V-One"></label>
+          <label>Finest feature size (mm) <input id="f-setup-feature" type="number" step="0.01" value="0.5"></label>
+          <label>Cure ceiling (°C) <input id="f-setup-cure" type="number" value="150"></label>
+        </div>
+        <div class="field-row">
+          <label>Ink
+            <select id="f-setup-ink">
+              <option>Generic silver ink</option>
+              <option>Carbon ink</option>
+              <option>MXene ink</option>
+            </select>
+          </label>
+          <label>Substrate / material
+            <select id="f-setup-material">
+              <option>PET film</option>
+              <option>Polyimide (Kapton)</option>
+              <option>Generic polymer</option>
+            </select>
+          </label>
+          <label style="flex-direction:row;align-items:center;gap:.4rem;margin-top:1.1rem">
+            <input type="checkbox" id="f-setup-laminate" style="width:auto" checked> Can laminate
+          </label>
+        </div>
+        <button onclick="uiUpdateSetup()">Update manufacturing setup</button>
+        <p class="small" style="margin:.5rem 0 0">Only finest feature size drives an auto-checked warning below
+          in this prototype — cure ceiling, lamination, ink and material are recorded and shown, but nothing
+          here yet checks a family's cure or ink requirement against them.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>1 — Create a design</legend>
+        <div class="field-row">
+          <label>Design name
+            <input id="f-design-name" placeholder="e.g. Skin A">
+          </label>
+          <button onclick="uiCreateDesign()">Create design</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>2 — Add a requirement to a design</legend>
+        <div class="field-row">
+          <label>Design <select id="f-req-design"></select></label>
+          <label>Description <input id="f-req-desc" placeholder="e.g. reduce radar return in X-band"></label>
+        </div>
+        <div class="field-row">
+          <label>Band <input id="f-req-band" placeholder="e.g. 10 GHz"></label>
+          <label>Curvature radius (mm) <input id="f-req-curv" type="number" value="200"></label>
+          <button onclick="uiAddRequirement()">Add requirement</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>3 — State the intended effect (what the customer wants)</legend>
+        <div class="field-row">
+          <label>Design <select id="f-eff-design" onchange="uiRefreshEffectReqs()"></select></label>
+          <label>Requirement <select id="f-eff-req"></select></label>
+        </div>
+        <div class="field-row">
+          <label>Intended effect
+            <input id="f-eff-value" placeholder="e.g. absorb" oninput="uiSuggest()">
+          </label>
+          <button onclick="uiSetEffect()">Set intended effect</button>
+        </div>
+        <div class="suggestion" id="f-eff-suggest"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>4 — Run the ARCHITECTURE step</legend>
+        <div class="field-row">
+          <label>Design <select id="f-arch-design"></select></label>
+          <button id="f-arch-btn" onclick="uiRunArchitecture()">Run architecture</button>
+        </div>
+        <div class="small" id="f-arch-hint"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>5 — Consider a design family (writes a ledger entry)</legend>
+        <div class="field-row">
+          <label>Design <select id="f-fam-design" onchange="uiRefreshFamilyReqs()"></select></label>
+          <label>Requirement <select id="f-fam-req"></select></label>
+          <label>Family name <input id="f-fam-name" placeholder="e.g. diffusive_coding"></label>
+        </div>
+        <div class="field-row">
+          <label>Verdict
+            <select id="f-fam-kept" onchange="uiToggleFamilyReason()">
+              <option value="true" selected>Kept</option>
+              <option value="false">Dropped</option>
+            </select>
+          </label>
+          <label>Reason <input id="f-fam-reason" placeholder="e.g. exceeds thickness budget"></label>
+        </div>
+        <div class="field-row" id="f-fam-reasonkind-row">
+          <label>Reason kind (a real exclusion — never equipment/ink/material)
+            <select id="f-fam-reasonkind" onchange="uiToggleFamilyReason()">
+              <option value="human-decision">human-decision (permanent)</option>
+              <option value="capability-verdict" selected>capability-verdict — outside validity box, e.g. curvature (auto re-checked)</option>
+              <option value="engineering-judgment">engineering-judgment (overridable)</option>
+            </select>
+          </label>
+          <label>Needed curvature radius (mm) <input id="f-fam-capneeded" type="number" value="500"></label>
+        </div>
+        <div class="field-row">
+          <label style="flex-direction:row;align-items:center;gap:.4rem">
+            <input type="checkbox" id="f-fam-fabflag" style="width:auto" onchange="uiToggleFamilyReason()">
+            Flag a fabrication warning against the current manufacturing setup (never removes the candidate)
+          </label>
+        </div>
+        <div class="field-row" id="f-fam-fabneeded-row" style="display:none">
+          <label>Needed feature size (mm) <input id="f-fam-fabneeded" type="number" step="0.01" value="0.2"></label>
+        </div>
+        <p class="small" style="margin:.2rem 0 .6rem">Equipment/ink/material the shop doesn't currently have
+          loaded is a <strong>warning</strong> on the entry above, never a reason to drop it — matches the
+          charter's "present equipment... shape[s] the ranking and the warnings, never the search." Only
+          "capability-verdict" (an actual physical validity-box violation) removes a candidate.</p>
+        <button onclick="uiProposeFamily()">Record this verdict</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>6 — Change a requirement, then re-evaluate</legend>
+        <p class="small" style="margin:0 0 .5rem">To change the manufacturing setup instead, use fieldset 0
+          above, then re-evaluate a design's ledger below.</p>
+        <div class="field-row">
+          <label>Design <select id="f-curv-design" onchange="uiRefreshCurvReqs()"></select></label>
+          <label>Requirement <select id="f-curv-req"></select></label>
+          <label>New curvature radius (mm) <input id="f-curv-value" type="number" value="500"></label>
+          <button onclick="uiRelaxCurvature()">Update requirement</button>
+        </div>
+        <div class="field-row">
+          <label>Design <select id="f-reeval-design"></select></label>
+          <button onclick="uiReevaluate()">Re-evaluate its ledger</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>7 — Override or split</legend>
+        <div class="field-row">
+          <label>Design <select id="f-override-design" onchange="uiRefreshOverrideEntries()"></select></label>
+          <label>Ledger entry <select id="f-override-entry"></select></label>
+          <button onclick="uiOverride()">Try to override</button>
+        </div>
+        <div class="field-row">
+          <label>Design <select id="f-split-design" onchange="uiRefreshSplitReqs()"></select></label>
+          <label>Requirement to split <select id="f-split-req"></select></label>
+        </div>
+        <div class="field-row">
+          <label>Effect A <input id="f-split-effa" placeholder="absorb"></label>
+          <label>Band A <input id="f-split-banda" placeholder="10 GHz"></label>
+          <label>Effect B <input id="f-split-effb" placeholder="transmit"></label>
+          <label>Band B <input id="f-split-bandb" placeholder="24 GHz"></label>
+          <button onclick="uiSplit()">Split into two requirements</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>8 — Query across every design</legend>
+        <div class="field-row">
+          <label>Intended effect to search for <input id="f-query-value" placeholder="e.g. reduce radar return"></label>
+          <button onclick="uiQuery()">Search all ledgers</button>
+        </div>
+      </fieldset>
+
+      <button class="secondary" onclick="uiReset()">Reset everything</button>
+    </section>
+  </div>
+
+  <div>
+    <section class="card">
+      <h2>Current state</h2>
+      <label class="small">Viewing design
+        <select id="view-design" onchange="render()" style="margin-top:.25rem"></select>
+      </label>
+      <h3 style="margin-top:1rem">Requirements</h3>
+      <table id="req-table"><thead>
+        <tr><th>Description</th><th>Band</th><th>Curvature</th><th>Intended effect</th></tr>
+      </thead><tbody></tbody></table>
+
+      <h3 style="margin-top:1.1rem">Considered-and-dropped ledger</h3>
+      <table id="ledger-table"><thead>
+        <tr><th>Family</th><th>Intended effect</th><th>Verdict</th><th>Reason kind</th><th>Status</th><th>Fabrication warning</th></tr>
+      </thead><tbody></tbody></table>
+
+      <h3 style="margin-top:1.1rem">Manufacturing setup (shop-wide)</h3>
+      <p class="small" style="margin:0 0 .3rem" id="setup-summary"></p>
+      <h3 style="margin-top:1.1rem">Global state</h3>
+      <p class="small" style="margin:0 0 .3rem">House-style intended-effect registry (suggestions only, nothing is blocked):</p>
+      <div id="registry-chips"></div>
+    </section>
+
+    <section class="card">
+      <h2>What just happened</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </div>
+
+</div>
+
+<script>
+/* =========================================================================
+   PURE MODEL — no DOM, no globals besides what's passed in. This is the
+   part meant to survive the prototype: it encodes the answers to Q1–Q4
+   as actual rules, not just prose. If this feels right, the equivalent
+   rules get written into designs/requirement_targets.py and
+   orchestration/tooling.py's flush path for real, in Python.
+   ========================================================================= */
+const Model = (() => {
+
+  function initialState() {
+    return {
+      nextId: 1,
+      designOrder: [],
+      designs: {},
+      // The (machine, ink, material) triple this project's Fabrication capability /
+      // Ink-property / Material-property libraries split apart. Shop-wide, not per design.
+      // Default matches Voltera's own published spec: minimum trace width is 8 mil / 0.2 mm
+      // (docs.voltera.io circuit design guidelines). Not a guess.
+      manufacturingSetup: {
+        machine: 'Voltera V-One',
+        minFeatureSize_mm: 0.2,
+        cureCeiling_C: 150,
+        canLaminate: true,
+        ink: 'Generic silver ink',
+        material: 'PET film',
+      },
+      intendedEffectRegistry: [],
+    };
+  }
+
+  function clone(state) { return JSON.parse(JSON.stringify(state)); }
+
+  function newId(state) {
+    const id = String(state.nextId);
+    state.nextId += 1;
+    return id;
+  }
+
+  // ---- selectors (pure, read-only) ----
+
+  function canRunArchitecture(state, designId) {
+    const design = state.designs[designId];
+    const missing = Object.values(design.requirements).filter(r => !r.intendedEffect);
+    return { ok: missing.length === 0, missing };
+  }
+
+  function getSuggestions(value, registry) {
+    const v = value.trim().toLowerCase();
+    if (!v) return [];
+    return registry.filter(r => r.toLowerCase() !== v &&
+      (r.toLowerCase().includes(v) || v.includes(r.toLowerCase())));
+  }
+
+  // Deliberately naive: exact, case-insensitive match only. This is the
+  // point of Q2 — no fuzzy matching bails the model out of a bad spelling.
+  function queryByIntendedEffect(state, value) {
+    const v = value.trim().toLowerCase();
+    const hits = [];
+    for (const designId of state.designOrder) {
+      const design = state.designs[designId];
+      for (const entry of design.ledger) {
+        if (entry.intendedEffect.trim().toLowerCase() === v) {
+          hits.push({ designName: design.name, ...entry });
+        }
+      }
+    }
+    return hits;
+  }
+
+  function lastDesignId(state) { return state.designOrder[state.designOrder.length - 1]; }
+  function lastRequirementId(state, designId) {
+    const ids = Object.keys(state.designs[designId].requirements);
+    return ids[ids.length - 1];
+  }
+  function lastLedgerEntry(state, designId, family) {
+    const entries = state.designs[designId].ledger.filter(e => e.family === family);
+    return entries[entries.length - 1];
+  }
+
+  // ---- reducer ----
+  // reduce(state, action) -> { state, message, error }
+
+  function reduce(stateIn, action) {
+    const state = clone(stateIn);
+
+    switch (action.type) {
+
+      case 'RESET':
+        return { state: initialState(), message: 'Reset to a blank slate.' };
+
+      case 'CREATE_DESIGN': {
+        const id = newId(state);
+        state.designs[id] = { id, name: action.name, requirements: {}, architectureRun: false, ledger: [] };
+        state.designOrder.push(id);
+        return { state, message: `Created design "${action.name}".`, focusDesign: id };
+      }
+
+      case 'ADD_REQUIREMENT': {
+        const design = state.designs[action.designId];
+        if (!design) return { state: stateIn, error: 'No such design.' };
+        const id = newId(state);
+        design.requirements[id] = {
+          id, description: action.description, band: action.band,
+          curvatureRadius_mm: action.curvatureRadius_mm, intendedEffect: null,
+        };
+        return {
+          state,
+          message: `Added requirement to "${design.name}": "${action.description}" ` +
+            `(${action.band}, bends to a ${action.curvatureRadius_mm} mm radius). ` +
+            `No intended effect yet — Architecture will refuse to run on this design until it has one.`,
+        };
+      }
+
+      case 'SET_INTENDED_EFFECT': {
+        const design = state.designs[action.designId];
+        const req = design && design.requirements[action.requirementId];
+        if (!req) return { state: stateIn, error: 'No such requirement.' };
+        req.intendedEffect = action.value;
+        const already = state.intendedEffectRegistry.some(
+          r => r.toLowerCase() === action.value.trim().toLowerCase());
+        let note;
+        if (already) {
+          note = `matches a phrase already on the house-style list, so ledger entries for this ` +
+            `requirement will group with every other design that used the same phrase.`;
+        } else {
+          state.intendedEffectRegistry.push(action.value);
+          note = `this exact phrase is new — added to the house-style list. Nothing forced it to ` +
+            `match an existing one; if it's really the same wish as an existing phrase spelled ` +
+            `differently, this new entry will NOT group with it.`;
+        }
+        return {
+          state,
+          message: `"${design.name}" / requirement "${req.description}" now says the customer wants: ` +
+            `"${action.value}" — ${note}`,
+        };
+      }
+
+      case 'SPLIT_REQUIREMENT': {
+        const design = state.designs[action.designId];
+        const req = design && design.requirements[action.requirementId];
+        if (!req) return { state: stateIn, error: 'No such requirement.' };
+        delete design.requirements[action.requirementId];
+        const idA = newId(state);
+        const idB = newId(state);
+        design.requirements[idA] = {
+          id: idA, description: `${req.description} (split A)`, band: action.bandA,
+          curvatureRadius_mm: req.curvatureRadius_mm, intendedEffect: action.effectA,
+        };
+        design.requirements[idB] = {
+          id: idB, description: `${req.description} (split B)`, band: action.bandB,
+          curvatureRadius_mm: req.curvatureRadius_mm, intendedEffect: action.effectB,
+        };
+        return {
+          state,
+          message: `Split "${req.description}" into two requirement rows: one wants ` +
+            `"${action.effectA}" at ${action.bandA}, the other wants "${action.effectB}" at ` +
+            `${action.bandB}. The original single-row requirement no longer exists — each wish now ` +
+            `has its own clean ledger key.`,
+        };
+      }
+
+      case 'RUN_ARCHITECTURE': {
+        const design = state.designs[action.designId];
+        if (!design) return { state: stateIn, error: 'No such design.' };
+        const check = canRunArchitecture(stateIn, action.designId);
+        if (!check.ok) {
+          const names = check.missing.map(r => `"${r.description}"`).join(', ');
+          return {
+            state: stateIn,
+            error: `Blocked: ${names} — no intended effect yet. Architecture cannot start until ` +
+              `every requirement on this design says what the customer wants, the same gate that ` +
+              `already applies to naming a design family.`,
+          };
+        }
+        design.architectureRun = true;
+        return { state, message: `Architecture started for "${design.name}" — every requirement ` +
+          `has a stated intended effect, so the gate passed. Family verdicts can now be recorded.` };
+      }
+
+      case 'PROPOSE_FAMILY': {
+        const design = state.designs[action.designId];
+        const req = design && design.requirements[action.requirementId];
+        if (!design || !req) return { state: stateIn, error: 'No such design or requirement.' };
+        if (!design.architectureRun) {
+          return { state: stateIn, error: 'Blocked: Architecture has not run for this design yet — ' +
+            'there is no ledger to write a family verdict into.' };
+        }
+        const id = newId(state);
+        // reasonKind === 'capability-verdict' means exactly one thing: this family's characterized
+        // validity box does not cover the stated requirement (e.g. curvature) -- a genuine exclusion.
+        // Equipment/ink/material availability is NEVER a reason to drop -- see warnings below, which
+        // attach to a KEPT entry and never remove it.
+        const entry = {
+          id, requirementId: req.id, requirementDescription: req.description,
+          intendedEffect: req.intendedEffect, family: action.family, kept: action.kept,
+          reason: action.kept ? '' : action.reason,
+          reasonKind: action.kept ? null : action.reasonKind,
+          blocking: (!action.kept && action.reasonKind === 'capability-verdict')
+            ? { neededValue_mm: action.neededValue_mm } : null,
+          status: (!action.kept && action.reasonKind === 'capability-verdict') ? 'active' : null,
+          warnings: [],
+        };
+        if (action.fabricationNeeded_mm) {
+          const setup = state.manufacturingSetup;
+          entry.warnings.push({
+            id: newId(state), kind: 'fabrication',
+            neededValue_mm: action.fabricationNeeded_mm,
+            resolved: setup.minFeatureSize_mm <= action.fabricationNeeded_mm,
+          });
+        }
+        design.ledger.push(entry);
+
+        let kindNote = '';
+        if (!action.kept && action.reasonKind === 'human-decision') {
+          kindNote = ' Reason kind: human-decision — this never gets reconsidered automatically.';
+        } else if (!action.kept && action.reasonKind === 'engineering-judgment') {
+          kindNote = ' Reason kind: engineering-judgment — carries forward, but a human can override it.';
+        } else if (!action.kept && action.reasonKind === 'capability-verdict') {
+          kindNote = ` Reason kind: capability-verdict — this element's characterized validity box does ` +
+            `not cover the stated requirement (needs at least ${action.neededValue_mm} mm radius of ` +
+            `curvature). Using it outside that box means the measured response can't be trusted, so this ` +
+            `is a real exclusion, not a warning. Re-checked automatically if this requirement's stated ` +
+            `curvature changes.`;
+        }
+        let warningNote = '';
+        if (entry.warnings.length) {
+          const w = entry.warnings[0];
+          const setup = state.manufacturingSetup;
+          warningNote = w.resolved
+            ? ` No fabrication concern — the currently loaded setup (${setup.machine}, ${setup.ink}) ` +
+              `already achieves the ${w.neededValue_mm} mm features this needs.`
+            : ` WARNING, not a stop: this needs ${w.neededValue_mm} mm features, and the currently loaded ` +
+              `equipment (${setup.machine} running ${setup.ink} on ${setup.material}) can only achieve ` +
+              `${setup.minFeatureSize_mm} mm today. That does not remove the candidate — it stays ` +
+              `${action.kept ? 'KEPT' : 'in the record'}, flagged so a human can see this needs different ` +
+              `equipment or ink, not different physics.`;
+        }
+        return {
+          state,
+          message: `"${design.name}" considered "${action.family}" for "${req.description}" ` +
+            `(wants: "${req.intendedEffect}") — ${action.kept ? 'KEPT' : 'DROPPED'}.${kindNote}${warningNote}`,
+        };
+      }
+
+      case 'UPDATE_MANUFACTURING_SETUP': {
+        const before = { ...state.manufacturingSetup };
+        state.manufacturingSetup = { ...state.manufacturingSetup, ...action.patch };
+        const changes = Object.keys(action.patch)
+          .filter(k => before[k] !== action.patch[k])
+          .map(k => `${k}: ${before[k]} → ${action.patch[k]}`);
+        return {
+          state,
+          message: changes.length
+            ? `Manufacturing setup changed (${changes.join(', ')}). This is a global, cross-design fact ` +
+              `(the (machine, ink, material) triple every design's fabrication warnings are checked ` +
+              `against) — every design becomes eligible for re-evaluation, not just one.`
+            : `Manufacturing setup unchanged.`,
+        };
+      }
+
+      case 'RELAX_REQUIREMENT_CURVATURE': {
+        const design = state.designs[action.designId];
+        const req = design && design.requirements[action.requirementId];
+        if (!req) return { state: stateIn, error: 'No such requirement.' };
+        const old = req.curvatureRadius_mm;
+        req.curvatureRadius_mm = action.curvatureRadius_mm;
+        return {
+          state,
+          message: `"${design.name}" / "${req.description}" curvature updated: now ` +
+            `${action.curvatureRadius_mm} mm radius (was ${old} mm). This is a fact about ONE ` +
+            `requirement, not the shop — it can only ever affect that requirement's own ledger entries.`,
+        };
+      }
+
+      case 'REEVALUATE_LEDGER': {
+        const design = state.designs[action.designId];
+        if (!design) return { state: stateIn, error: 'No such design.' };
+        const notes = [];
+        design.ledger = design.ledger.map(entry => {
+          let changedEntry = entry;
+
+          // Curvature-based exclusions -- the only thing capability-verdict still means.
+          if (!entry.kept && entry.reasonKind === 'capability-verdict') {
+            const req = design.requirements[entry.requirementId];
+            const ok = req && req.curvatureRadius_mm >= entry.blocking.neededValue_mm;
+            const newStatus = ok ? 'reconsider' : 'active';
+            notes.push(newStatus !== entry.status
+              ? `"${entry.family}" (excluded, capability-verdict) moved to ${newStatus.toUpperCase()} — ` +
+                `this requirement's curvature now clears the ${entry.blocking.neededValue_mm} mm bar it ` +
+                `previously failed.`
+              : `"${entry.family}" (excluded, capability-verdict) stayed ${entry.status.toUpperCase()} — ` +
+                `this requirement's curvature hasn't changed enough.`);
+            changedEntry = { ...changedEntry, status: newStatus };
+          }
+
+          // Fabrication warnings -- checked against the manufacturing setup, never move whether
+          // a candidate is kept, only whether the warning still applies.
+          if (entry.warnings.length) {
+            const setup = state.manufacturingSetup;
+            const newWarnings = entry.warnings.map(w => {
+              if (w.kind !== 'fabrication') return w;
+              const nowResolved = setup.minFeatureSize_mm <= w.neededValue_mm;
+              if (nowResolved !== w.resolved) {
+                const verb = nowResolved ? 'now achieves' : 'no longer achieves';
+                notes.push(`"${entry.family}"'s fabrication warning ${nowResolved ? 'CLEARED' : 'RE-APPEARED'} ` +
+                  `— the loaded setup (${setup.machine}, ${setup.ink}) ${verb} the ${w.neededValue_mm} mm ` +
+                  `this needs. It was never excluded either way.`);
+              }
+              return { ...w, resolved: nowResolved };
+            });
+            changedEntry = { ...changedEntry, warnings: newWarnings };
+          }
+
+          return changedEntry;
+        });
+        const untouched = design.ledger.filter(e => e.reasonKind !== 'capability-verdict' && !e.warnings.length).length;
+        return {
+          state,
+          message: `Re-evaluated "${design.name}"'s ledger. ` +
+            (notes.length ? notes.join(' ') : 'Nothing to re-check — no capability-verdict exclusions or fabrication warnings on this ledger.') +
+            (untouched ? ` (${untouched} entr${untouched === 1 ? 'y' : 'ies'} with no exclusion or warning ` +
+              `left untouched.)` : ''),
+        };
+      }
+
+      case 'OVERRIDE_LEDGER_ENTRY': {
+        const design = state.designs[action.designId];
+        const entry = design && design.ledger.find(e => e.id === action.entryId);
+        if (!entry) return { state: stateIn, error: 'No such ledger entry.' };
+        if (entry.reasonKind === 'human-decision') {
+          return { state: stateIn, error: `Can't override "${entry.family}" — it's a human-decision. ` +
+            `There is deliberately no override control for this reason kind; a recorded human refusal ` +
+            `is permanent unless a new human decision replaces it outright.` };
+        }
+        if (entry.reasonKind === 'capability-verdict') {
+          return { state: stateIn, error: `Can't override "${entry.family}" — it's a capability-verdict. ` +
+            `Those only change automatically, via re-evaluation against the current capability, never by ` +
+            `manual override.` };
+        }
+        entry.status = 'reconsider';
+        return {
+          state,
+          message: `A human overrode the engineering-judgment drop on "${entry.family}" — marked for ` +
+            `reconsideration. This is the one reason kind that's built to be manually revisited.`,
+        };
+      }
+
+      case 'QUERY': {
+        const hits = queryByIntendedEffect(stateIn, action.value);
+        const summary = hits.length === 0
+          ? 'no ledger entries anywhere use that exact phrase.'
+          : hits.map(h => `${h.designName}: "${h.family}" (${h.kept ? 'kept' : 'dropped'})`).join('; ');
+        return {
+          state: stateIn,
+          message: `Searched every design's ledger for the exact phrase "${action.value}" — ${summary}`,
+        };
+      }
+
+      default:
+        return { state: stateIn, error: 'Unknown action.' };
+    }
+  }
+
+  return { initialState, reduce, canRunArchitecture, getSuggestions, queryByIntendedEffect, lastDesignId, lastRequirementId, lastLedgerEntry };
+})();
+
+/* =========================================================================
+   PAGE — everything below is throwaway UI wiring. It only ever calls into
+   Model; nothing flows the other way.
+   ========================================================================= */
+let state = Model.initialState();
+let logEntries = [];
+let viewingDesignId = null;
+
+function dispatch(action) {
+  const result = Model.reduce(state, action);
+  state = result.state;
+  if (result.focusDesign) viewingDesignId = result.focusDesign;
+  logEntries.unshift({ ok: !result.error, text: result.error || result.message });
+  render();
+  return result;
+}
+
+function designOptions(selectEl, currentVal) {
+  selectEl.innerHTML = state.designOrder.map(id =>
+    `<option value="${id}">${state.designs[id].name}</option>`).join('');
+  if (currentVal && state.designs[currentVal]) selectEl.value = currentVal;
+}
+function requirementOptions(selectEl, designId) {
+  if (!designId || !state.designs[designId]) { selectEl.innerHTML = ''; return; }
+  const reqs = Object.values(state.designs[designId].requirements);
+  selectEl.innerHTML = reqs.map(r =>
+    `<option value="${r.id}">${r.description}${r.intendedEffect ? '' : '  (no intended effect)'}</option>`).join('');
+}
+
+function render() {
+  // design pickers across all forms
+  ['f-req-design', 'f-eff-design', 'f-arch-design', 'f-fam-design',
+   'f-curv-design', 'f-reeval-design', 'f-override-design', 'f-split-design', 'view-design']
+    .forEach(id => designOptions(document.getElementById(id), id === 'view-design' ? viewingDesignId : null));
+
+  if (!viewingDesignId && state.designOrder.length) viewingDesignId = state.designOrder[0];
+  if (viewingDesignId) document.getElementById('view-design').value = viewingDesignId;
+
+  uiRefreshEffectReqs();
+  uiRefreshFamilyReqs();
+  uiRefreshCurvReqs();
+  uiRefreshOverrideEntries();
+  uiRefreshSplitReqs();
+  uiToggleFamilyReason();
+
+  // keep the setup form in sync with state, unless the user is mid-edit of that exact field
+  if (document.activeElement.id !== 'f-setup-machine') document.getElementById('f-setup-machine').value = state.manufacturingSetup.machine;
+  if (document.activeElement.id !== 'f-setup-feature') document.getElementById('f-setup-feature').value = state.manufacturingSetup.minFeatureSize_mm;
+  if (document.activeElement.id !== 'f-setup-cure') document.getElementById('f-setup-cure').value = state.manufacturingSetup.cureCeiling_C;
+  document.getElementById('f-setup-ink').value = state.manufacturingSetup.ink;
+  document.getElementById('f-setup-material').value = state.manufacturingSetup.material;
+  document.getElementById('f-setup-laminate').checked = state.manufacturingSetup.canLaminate;
+
+  // Architecture button state
+  const archDesign = document.getElementById('f-arch-design').value;
+  const btn = document.getElementById('f-arch-btn');
+  const hint = document.getElementById('f-arch-hint');
+  if (archDesign && state.designs[archDesign]) {
+    const check = Model.canRunArchitecture(state, archDesign);
+    btn.disabled = !check.ok;
+    hint.textContent = check.ok
+      ? 'Every requirement has an intended effect — ready to run.'
+      : `Blocked — missing intended effect on: ${check.missing.map(r => r.description).join(', ')}`;
+  } else { btn.disabled = true; hint.textContent = ''; }
+
+  // state panel
+  const req_tbody = document.querySelector('#req-table tbody');
+  const ledger_tbody = document.querySelector('#ledger-table tbody');
+  const design = viewingDesignId && state.designs[viewingDesignId];
+  if (!design) {
+    req_tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No design yet — create one to begin.</td></tr>';
+    ledger_tbody.innerHTML = '<tr class="empty-row"><td colspan="6">—</td></tr>';
+  } else {
+    const reqs = Object.values(design.requirements);
+    req_tbody.innerHTML = reqs.length ? reqs.map(r => `<tr>
+        <td>${r.description}</td><td>${r.band}</td><td>${r.curvatureRadius_mm} mm</td>
+        <td>${r.intendedEffect ? r.intendedEffect : '<span class="muted">— none yet —</span>'}</td>
+      </tr>`).join('') : '<tr class="empty-row"><td colspan="4">No requirements yet.</td></tr>';
+
+    ledger_tbody.innerHTML = design.ledger.length ? design.ledger.map(e => `<tr>
+        <td>${e.family}</td><td>${e.intendedEffect}</td>
+        <td><span class="pill ${e.kept ? 'kept' : 'active'}">${e.kept ? 'kept' : 'dropped'}</span></td>
+        <td>${e.reasonKind ? `<span class="pill ${e.reasonKind}">${e.reasonKind}</span>` : '—'}</td>
+        <td>${e.kept ? '—' : `<span class="pill ${e.status}">${e.status}</span>`}</td>
+        <td>${e.warnings.length ? e.warnings.map(w =>
+            `<span class="pill ${w.resolved ? 'kept' : 'active'}">${w.resolved ? '✓ resolved' : '⚠ needs ' + w.neededValue_mm + ' mm'}</span>`
+          ).join(' ') : '—'}</td>
+      </tr>`).join('') : '<tr class="empty-row"><td colspan="6">Nothing considered yet.</td></tr>';
+  }
+
+  const s = state.manufacturingSetup;
+  document.getElementById('setup-summary').innerHTML =
+    `<strong>${s.machine}</strong> — finest feature ${s.minFeatureSize_mm} mm, cure ceiling ${s.cureCeiling_C}°C, ` +
+    `${s.canLaminate ? 'can laminate' : 'cannot laminate'}<br>Ink: ${s.ink} &nbsp;|&nbsp; Substrate: ${s.material}`;
+  document.getElementById('registry-chips').innerHTML = state.intendedEffectRegistry.length
+    ? state.intendedEffectRegistry.map(r => `<span class="chip">${r}</span>`).join('')
+    : '<span class="muted small">empty so far</span>';
+
+  document.getElementById('log').innerHTML = logEntries.slice(0, 40).map(l =>
+    `<div style="color:${l.ok ? 'inherit' : 'var(--bad)'}">${l.ok ? '' : '⚠ '}${l.text}</div>`).join('')
+    || '<div class="muted">Nothing yet.</div>';
+
+  renderScenarioTab();
+}
+
+// --- free-play handlers ---
+
+function uiCreateDesign() {
+  const name = document.getElementById('f-design-name').value.trim() || `Design ${state.nextId}`;
+  document.getElementById('f-design-name').value = '';
+  dispatch({ type: 'CREATE_DESIGN', name });
+}
+function uiAddRequirement() {
+  const designId = document.getElementById('f-req-design').value;
+  const description = document.getElementById('f-req-desc').value.trim() || 'unnamed requirement';
+  const band = document.getElementById('f-req-band').value.trim() || 'unspecified band';
+  const curvatureRadius_mm = Number(document.getElementById('f-req-curv').value) || 0;
+  document.getElementById('f-req-desc').value = '';
+  dispatch({ type: 'ADD_REQUIREMENT', designId, description, band, curvatureRadius_mm });
+}
+function uiRefreshEffectReqs() {
+  requirementOptions(document.getElementById('f-eff-req'), document.getElementById('f-eff-design').value);
+}
+function uiSuggest() {
+  const val = document.getElementById('f-eff-value').value;
+  const suggestions = Model.getSuggestions(val, state.intendedEffectRegistry);
+  const box = document.getElementById('f-eff-suggest');
+  box.innerHTML = suggestions.length
+    ? 'Similar phrase already in use: ' + suggestions.map(s => `<b onclick="document.getElementById('f-eff-value').value='${s}';uiSuggest()">${s}</b>`).join(', ')
+    : '';
+}
+function uiSetEffect() {
+  const designId = document.getElementById('f-eff-design').value;
+  const requirementId = document.getElementById('f-eff-req').value;
+  const value = document.getElementById('f-eff-value').value.trim();
+  if (!designId || !requirementId || !value) return;
+  document.getElementById('f-eff-value').value = '';
+  document.getElementById('f-eff-suggest').innerHTML = '';
+  dispatch({ type: 'SET_INTENDED_EFFECT', designId, requirementId, value });
+}
+function uiRunArchitecture() {
+  const designId = document.getElementById('f-arch-design').value;
+  dispatch({ type: 'RUN_ARCHITECTURE', designId });
+}
+function uiRefreshFamilyReqs() {
+  requirementOptions(document.getElementById('f-fam-req'), document.getElementById('f-fam-design').value);
+}
+function uiToggleFamilyReason() {
+  const kept = document.getElementById('f-fam-kept').value === 'true';
+  document.getElementById('f-fam-reasonkind-row').style.display = kept ? 'none' : 'flex';
+  const fabFlag = document.getElementById('f-fam-fabflag').checked;
+  document.getElementById('f-fam-fabneeded-row').style.display = fabFlag ? 'flex' : 'none';
+}
+function uiProposeFamily() {
+  const designId = document.getElementById('f-fam-design').value;
+  const requirementId = document.getElementById('f-fam-req').value;
+  const family = document.getElementById('f-fam-name').value.trim() || 'unnamed_family';
+  const kept = document.getElementById('f-fam-kept').value === 'true';
+  const reason = document.getElementById('f-fam-reason').value.trim();
+  const reasonKind = document.getElementById('f-fam-reasonkind').value;
+  const neededValue_mm = Number(document.getElementById('f-fam-capneeded').value) || 0;
+  const fabricationNeeded_mm = document.getElementById('f-fam-fabflag').checked
+    ? (Number(document.getElementById('f-fam-fabneeded').value) || 0) : null;
+  document.getElementById('f-fam-name').value = '';
+  document.getElementById('f-fam-reason').value = '';
+  document.getElementById('f-fam-fabflag').checked = false;
+  dispatch({ type: 'PROPOSE_FAMILY', designId, requirementId, family, kept, reason, reasonKind, neededValue_mm, fabricationNeeded_mm });
+}
+function uiUpdateSetup() {
+  const patch = {
+    machine: document.getElementById('f-setup-machine').value.trim() || state.manufacturingSetup.machine,
+    minFeatureSize_mm: Number(document.getElementById('f-setup-feature').value),
+    cureCeiling_C: Number(document.getElementById('f-setup-cure').value),
+    canLaminate: document.getElementById('f-setup-laminate').checked,
+    ink: document.getElementById('f-setup-ink').value,
+    material: document.getElementById('f-setup-material').value,
+  };
+  dispatch({ type: 'UPDATE_MANUFACTURING_SETUP', patch });
+}
+function uiRefreshCurvReqs() {
+  requirementOptions(document.getElementById('f-curv-req'), document.getElementById('f-curv-design').value);
+}
+function uiRelaxCurvature() {
+  const designId = document.getElementById('f-curv-design').value;
+  const requirementId = document.getElementById('f-curv-req').value;
+  const curvatureRadius_mm = Number(document.getElementById('f-curv-value').value);
+  dispatch({ type: 'RELAX_REQUIREMENT_CURVATURE', designId, requirementId, curvatureRadius_mm });
+}
+function uiReevaluate() {
+  const designId = document.getElementById('f-reeval-design').value;
+  dispatch({ type: 'REEVALUATE_LEDGER', designId });
+}
+function uiRefreshOverrideEntries() {
+  const designId = document.getElementById('f-override-design').value;
+  const sel = document.getElementById('f-override-entry');
+  const design = state.designs[designId];
+  sel.innerHTML = design ? design.ledger.filter(e => !e.kept).map(e =>
+    `<option value="${e.id}">${e.family} (${e.reasonKind})</option>`).join('') : '';
+}
+function uiOverride() {
+  const designId = document.getElementById('f-override-design').value;
+  const entryId = document.getElementById('f-override-entry').value;
+  dispatch({ type: 'OVERRIDE_LEDGER_ENTRY', designId, entryId });
+}
+function uiRefreshSplitReqs() {
+  requirementOptions(document.getElementById('f-split-req'), document.getElementById('f-split-design').value);
+}
+function uiSplit() {
+  const designId = document.getElementById('f-split-design').value;
+  const requirementId = document.getElementById('f-split-req').value;
+  const effectA = document.getElementById('f-split-effa').value.trim() || 'effect A';
+  const bandA = document.getElementById('f-split-banda').value.trim() || 'band A';
+  const effectB = document.getElementById('f-split-effb').value.trim() || 'effect B';
+  const bandB = document.getElementById('f-split-bandb').value.trim() || 'band B';
+  dispatch({ type: 'SPLIT_REQUIREMENT', designId, requirementId, effectA, bandA, effectB, bandB });
+}
+function uiQuery() {
+  const value = document.getElementById('f-query-value').value.trim();
+  if (!value) return;
+  dispatch({ type: 'QUERY', value });
+}
+function uiReset() {
+  logEntries = [];
+  viewingDesignId = null;
+  dispatch({ type: 'RESET' });
+}
+
+/* =========================================================================
+   GUIDED SCENARIOS — each resets to a blank slate, then walks through
+   fixed, ordered steps. Steps reference "the design/requirement I just
+   made" rather than hardcoded ids, so they work no matter what ran before.
+   ========================================================================= */
+const scenarios = [
+  {
+    title: '1. Happy path — same wish, spelled the same way',
+    tackles: 'Q2 (vocabulary), Q1 setup',
+    description: 'Two separate designs ask for the same real thing. The second one ' +
+      'reuses the exact phrase the first one coined — watch the cross-design query ' +
+      'actually find the first design\'s ledger before the second design even runs Architecture.',
+    steps: [
+      { label: 'Create design "Skin A"', build: () => ({ type: 'CREATE_DESIGN', name: 'Skin A' }) },
+      { label: 'Add requirement: reduce radar return, X-band, 200 mm bend', build: (s) => ({
+          type: 'ADD_REQUIREMENT', designId: Model.lastDesignId(s),
+          description: 'Reduce radar return in X-band', band: '10 GHz', curvatureRadius_mm: 200 }) },
+      { label: 'State intended effect: "reduce radar return"', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SET_INTENDED_EFFECT', designId: d, requirementId: Model.lastRequirementId(s, d), value: 'reduce radar return' }; } },
+      { label: 'Run Architecture on Skin A', build: (s) => ({ type: 'RUN_ARCHITECTURE', designId: Model.lastDesignId(s) }) },
+      { label: 'Consider "diffusive_coding" — KEEP it', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'PROPOSE_FAMILY', designId: d, requirementId: Model.lastRequirementId(s, d),
+            family: 'diffusive_coding', kept: true, reason: '', reasonKind: null, neededValue_mm: 0, fabricationNeeded_mm: null }; } },
+      { label: 'Consider "absorber_rozanov" — DROP (engineering-judgment)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'PROPOSE_FAMILY', designId: d, requirementId: Model.lastRequirementId(s, d),
+            family: 'absorber_rozanov', kept: false, reason: 'exceeds the 2 mm thickness budget',
+            reasonKind: 'engineering-judgment', neededValue_mm: 0, fabricationNeeded_mm: null }; } },
+      { label: 'Create design "Skin B" — a different program, same ask', build: () => ({ type: 'CREATE_DESIGN', name: 'Skin B' }) },
+      { label: 'Add requirement: same real ask, different band/curvature', build: (s) => ({
+          type: 'ADD_REQUIREMENT', designId: Model.lastDesignId(s),
+          description: 'Suppress radar signature near X-band', band: '9.5 GHz', curvatureRadius_mm: 150 }) },
+      { label: 'State intended effect using the SAME phrase as Skin A', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SET_INTENDED_EFFECT', designId: d, requirementId: Model.lastRequirementId(s, d), value: 'reduce radar return' }; } },
+      { label: 'Query "reduce radar return" across every design', build: () => ({ type: 'QUERY', value: 'reduce radar return' }) },
+    ],
+  },
+  {
+    title: '2. Vocabulary drift — same wish, different spelling',
+    tackles: 'Q2',
+    description: 'A third design wants the exact same thing as scenario 1, but whoever wrote it ' +
+      'up didn\'t check the house-style list first. Watch the query go blind in both directions — ' +
+      'this is the honest limit of a suggestion-only registry: it helps if someone reads it, and ' +
+      'does nothing if they don\'t.',
+    steps: [
+      { label: 'Create design "Skin C"', build: () => ({ type: 'CREATE_DESIGN', name: 'Skin C' }) },
+      { label: 'Add requirement: same real ask as before', build: (s) => ({
+          type: 'ADD_REQUIREMENT', designId: Model.lastDesignId(s),
+          description: 'Lower the platform\'s radar cross section', band: '9.8 GHz', curvatureRadius_mm: 180 }) },
+      { label: 'State intended effect: "lower RCS" (a different spelling of the same wish)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SET_INTENDED_EFFECT', designId: d, requirementId: Model.lastRequirementId(s, d), value: 'lower RCS' }; } },
+      { label: 'Run Architecture on Skin C', build: (s) => ({ type: 'RUN_ARCHITECTURE', designId: Model.lastDesignId(s) }) },
+      { label: 'Consider "absorber_rozanov" again — DROP (engineering-judgment)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'PROPOSE_FAMILY', designId: d, requirementId: Model.lastRequirementId(s, d),
+            family: 'absorber_rozanov', kept: false, reason: 'exceeds thickness budget, same issue as before',
+            reasonKind: 'engineering-judgment', neededValue_mm: 0, fabricationNeeded_mm: null }; } },
+      { label: 'Query "reduce radar return" — does it find Skin C?', build: () => ({ type: 'QUERY', value: 'reduce radar return' }) },
+      { label: 'Query "lower RCS" — does it find Skins A or B?', build: () => ({ type: 'QUERY', value: 'lower RCS' }) },
+    ],
+  },
+  {
+    title: '3. Warning vs. stop',
+    tackles: 'Q1, resolved: equipment warns, it never excludes',
+    description: 'One family only needs finer features than the shop currently has loaded — that\'s a ' +
+      'warning, and it stays KEPT the whole time. A second family is genuinely outside its characterized ' +
+      'validity box for this curvature — that\'s a real exclusion. Upgrading the printer clears the first ' +
+      'family\'s warning without it ever having been removed; only relaxing the curvature brings the ' +
+      'second family back.',
+    steps: [
+      { label: 'Create design "Skin D"', build: () => ({ type: 'CREATE_DESIGN', name: 'Skin D' }) },
+      { label: 'Add requirement: reflect-in-phase, 300 mm bend radius', build: (s) => ({
+          type: 'ADD_REQUIREMENT', designId: Model.lastDesignId(s),
+          description: 'Reflect with 0° phase shift over the band', band: '5.8 GHz', curvatureRadius_mm: 300 }) },
+      { label: 'State intended effect: "reflect-in-phase"', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SET_INTENDED_EFFECT', designId: d, requirementId: Model.lastRequirementId(s, d), value: 'reflect-in-phase' }; } },
+      { label: 'Run Architecture', build: (s) => ({ type: 'RUN_ARCHITECTURE', designId: Model.lastDesignId(s) }) },
+      { label: 'Consider "coded_surface_A" — KEEP it, flag it needs 0.2 mm features (current setup only does 0.5 mm)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'PROPOSE_FAMILY', designId: d, requirementId: Model.lastRequirementId(s, d),
+            family: 'coded_surface_A', kept: true, reason: '', reasonKind: null, neededValue_mm: 0,
+            fabricationNeeded_mm: 0.2 }; } },
+      { label: 'Drop "coded_surface_B" — capability-verdict, outside its validity box at this curvature (needs ≥500 mm)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'PROPOSE_FAMILY', designId: d, requirementId: Model.lastRequirementId(s, d),
+            family: 'coded_surface_B', kept: false, reason: 'element\'s angular stability limit is violated at this curvature',
+            reasonKind: 'capability-verdict', neededValue_mm: 500, fabricationNeeded_mm: null }; } },
+      { label: 'Re-evaluate now — nothing has changed yet', build: (s) => ({ type: 'REEVALUATE_LEDGER', designId: Model.lastDesignId(s) }) },
+      { label: 'Upgrade the manufacturing setup to 0.15 mm features', build: () => ({ type: 'UPDATE_MANUFACTURING_SETUP', patch: { minFeatureSize_mm: 0.15 } }) },
+      { label: 'Re-evaluate — "coded_surface_A" was never excluded, so what actually changes?', build: (s) => ({ type: 'REEVALUATE_LEDGER', designId: Model.lastDesignId(s) }) },
+      { label: 'Relax this requirement\'s curvature to 520 mm', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'RELAX_REQUIREMENT_CURVATURE', designId: d, requirementId: Model.lastRequirementId(s, d), curvatureRadius_mm: 520 }; } },
+      { label: 'Re-evaluate again — now "coded_surface_B" comes back too', build: (s) => ({ type: 'REEVALUATE_LEDGER', designId: Model.lastDesignId(s) }) },
+    ],
+  },
+  {
+    title: '4. Illegal move — skipping the interview',
+    tackles: 'Q3',
+    description: 'Try to run Architecture before anyone has said what the customer actually wants. ' +
+      'The button should refuse, the same way it already refuses without a stated design family.',
+    steps: [
+      { label: 'Create design "Skin E"', build: () => ({ type: 'CREATE_DESIGN', name: 'Skin E' }) },
+      { label: 'Add requirement, leave intended effect blank', build: (s) => ({
+          type: 'ADD_REQUIREMENT', designId: Model.lastDesignId(s),
+          description: 'Shield the enclosure above 5 GHz', band: '5 GHz', curvatureRadius_mm: 100 }) },
+      { label: 'Try to run Architecture — watch it get blocked', build: (s) => ({ type: 'RUN_ARCHITECTURE', designId: Model.lastDesignId(s) }) },
+      { label: 'Now state the intended effect: "shield"', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SET_INTENDED_EFFECT', designId: d, requirementId: Model.lastRequirementId(s, d), value: 'shield' }; } },
+      { label: 'Try Architecture again — should succeed now', build: (s) => ({ type: 'RUN_ARCHITECTURE', designId: Model.lastDesignId(s) }) },
+    ],
+  },
+  {
+    title: '5. One ask, two wishes',
+    tackles: 'Q4',
+    description: 'A customer wants two different things from the same wave at once. See what ' +
+      'happens if you cram both into one label, then do it the model\'s intended way instead.',
+    steps: [
+      { label: 'Create design "Skin F"', build: () => ({ type: 'CREATE_DESIGN', name: 'Skin F' }) },
+      { label: 'Add one requirement covering both wishes', build: (s) => ({
+          type: 'ADD_REQUIREMENT', designId: Model.lastDesignId(s),
+          description: 'Absorb at 10 GHz and stay transparent at 24 GHz', band: '10/24 GHz', curvatureRadius_mm: 250 }) },
+      { label: 'Try cramming both into one label: "absorb-and-transmit"', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SET_INTENDED_EFFECT', designId: d, requirementId: Model.lastRequirementId(s, d), value: 'absorb-and-transmit' }; } },
+      { label: 'Query "absorb" — does this compound label match it?', build: () => ({ type: 'QUERY', value: 'absorb' }) },
+      { label: 'Instead: split into two clean requirement rows', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SPLIT_REQUIREMENT', designId: d, requirementId: Model.lastRequirementId(s, d),
+            effectA: 'absorb', bandA: '10 GHz', effectB: 'transmit', bandB: '24 GHz' }; } },
+      { label: 'Run Architecture — both rows now have one clean effect each', build: (s) => ({ type: 'RUN_ARCHITECTURE', designId: Model.lastDesignId(s) }) },
+    ],
+  },
+  {
+    title: '6. Permanent no vs. reconsiderable no',
+    tackles: 'Contrast check — does the ledger still hang together?',
+    description: 'A human-decision refusal and an engineering-judgment refusal sit side by side. ' +
+      'Blast both with a huge equipment upgrade and a huge curvature relaxation — neither should ' +
+      'move automatically. Then show the one manual lever that exists, and the one that deliberately doesn\'t.',
+    steps: [
+      { label: 'Create design "Skin G"', build: () => ({ type: 'CREATE_DESIGN', name: 'Skin G' }) },
+      { label: 'Add requirement: steer the beam, 300 mm bend', build: (s) => ({
+          type: 'ADD_REQUIREMENT', designId: Model.lastDesignId(s),
+          description: 'Steer the main beam 20° off boresight', band: '10 GHz', curvatureRadius_mm: 300 }) },
+      { label: 'State intended effect: "steer"', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'SET_INTENDED_EFFECT', designId: d, requirementId: Model.lastRequirementId(s, d), value: 'steer' }; } },
+      { label: 'Run Architecture', build: (s) => ({ type: 'RUN_ARCHITECTURE', designId: Model.lastDesignId(s) }) },
+      { label: 'Drop "patch_array" — human-decision (customer\'s engineer flatly refused it)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'PROPOSE_FAMILY', designId: d, requirementId: Model.lastRequirementId(s, d),
+            family: 'patch_array', kept: false, reason: 'customer\'s engineer refused a patch array on this program',
+            reasonKind: 'human-decision', neededValue_mm: 0, fabricationNeeded_mm: null }; } },
+      { label: 'Drop "coded_surface_C" — engineering-judgment (marginal bandwidth margin)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'PROPOSE_FAMILY', designId: d, requirementId: Model.lastRequirementId(s, d),
+            family: 'coded_surface_C', kept: false, reason: 'bandwidth margin looked thin',
+            reasonKind: 'engineering-judgment', neededValue_mm: 0, fabricationNeeded_mm: null }; } },
+      { label: 'Upgrade the manufacturing setup drastically (to 0.01 mm)', build: () => ({ type: 'UPDATE_MANUFACTURING_SETUP', patch: { minFeatureSize_mm: 0.01 } }) },
+      { label: 'Relax this requirement\'s curvature drastically (to 5000 mm)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'RELAX_REQUIREMENT_CURVATURE', designId: d, requirementId: Model.lastRequirementId(s, d), curvatureRadius_mm: 5000 }; } },
+      { label: 'Re-evaluate — do either of these two entries move?', build: (s) => ({ type: 'REEVALUATE_LEDGER', designId: Model.lastDesignId(s) }) },
+      { label: 'Manually override "coded_surface_C" (engineering-judgment)', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'OVERRIDE_LEDGER_ENTRY', designId: d, entryId: Model.lastLedgerEntry(s, d, 'coded_surface_C').id }; } },
+      { label: 'Try to manually override "patch_array" (human-decision) — should be refused', build: (s) => {
+          const d = Model.lastDesignId(s);
+          return { type: 'OVERRIDE_LEDGER_ENTRY', designId: d, entryId: Model.lastLedgerEntry(s, d, 'patch_array').id }; } },
+    ],
+  },
+];
+
+let activeScenario = 0;
+let scenarioStep = 0; // number of steps already executed in the active run
+
+function renderTabs() {
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = scenarios.map((sc, i) =>
+    `<button class="${i === activeScenario ? 'active' : ''}" onclick="selectScenario(${i})">${sc.title}</button>`).join('');
+}
+function selectScenario(i) {
+  activeScenario = i;
+  scenarioStep = 0;
+  renderScenarioTab();
+}
+function startScenario() {
+  scenarioStep = 0;
+  logEntries = [];
+  viewingDesignId = null;
+  state = Model.initialState();
+  render();
+}
+function runScenarioStep(i) {
+  const sc = scenarios[activeScenario];
+  if (i !== scenarioStep) return;
+  const action = sc.steps[i].build(state);
+  dispatch(action);
+  scenarioStep += 1;
+  renderScenarioTab();
+}
+function renderScenarioTab() {
+  renderTabs();
+  const sc = scenarios[activeScenario];
+  const body = document.getElementById('scenario-body');
+  body.innerHTML = `
+    <p class="scenario-desc"><strong>Tackles:</strong> ${sc.tackles}<br>${sc.description}</p>
+    <button class="secondary" onclick="startScenario()" style="margin-bottom:.75rem">Start / restart this scenario</button>
+    ${sc.steps.map((step, i) => `
+      <button class="step" ${i === scenarioStep ? '' : 'disabled'} onclick="runScenarioStep(${i})">
+        ${i < scenarioStep ? '✓ ' : `Step ${i + 1}: `}${step.label}
+      </button>`).join('')}
+    ${scenarioStep === sc.steps.length ? '<p class="small">Scenario complete — free-play from here, or restart.</p>' : ''}
+  `;
+}
+
+render();
+</script>
+</body>
+</html>
