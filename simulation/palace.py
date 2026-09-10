@@ -347,8 +347,10 @@ own schema and source, not guessed):
     split-ring resonator or other curved/non-rectangular metasurface
     element needs true conformal meshing (e.g. via an external mesher this
     project does not currently depend on) and remains a separate, later
-    gap (issue #289) -- this pass proves the boundary-attribute/
-    conductivity mechanism, not arbitrary shape.
+    gap (non-rectangular elements into MEEP/Palace: issue #362; conformal
+    geometry through to Palace specifically: issue #361) -- this pass
+    proves the boundary-attribute/conductivity mechanism, not arbitrary
+    shape.
 """
 
 import csv

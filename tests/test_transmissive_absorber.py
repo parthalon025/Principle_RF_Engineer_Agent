@@ -34,6 +34,7 @@ import pytest
 
 from designs.design_families import ABSORBER, ABSORBER_TRANSMISSIVE, PATCH
 from rf_tools.absorber import absorptivity as ground_backed_absorptivity
+from rf_tools.calculations import min_overlay_sheet_resistance_ohm_sq
 from rf_tools.transmissive_absorber import (
     ETA0_OHM,
     MATCHED_SHEET_RESISTANCE_OHM_SQ,
@@ -366,6 +367,42 @@ def test_cascade_of_nothing_is_the_identity_and_order_is_preserved():
     assert cascade() == ((1, 0), (0, 1))
     assert cascade(sheet) == sheet
     assert cascade(sheet, slab) != cascade(slab, sheet)
+
+
+def test_a_resistive_only_reading_can_pass_while_the_complex_sheet_fails():
+    """rf_tools/calculations.py's min_overlay_sheet_resistance_ohm_sq is
+    RESISTIVE-ONLY (its own docstring now says so): clearing its threshold is
+    necessary but not sufficient for a resonant PATTERNED overlay, which is a
+    complex sheet admittance Y = G + jB, not a resistor.
+
+    Worked counter-example, from a measured screen-printed Ti3C2Tx MXene
+    chessboard FSS (T=0.78, R=0.16, so A=1-T-R=0.06 dissipated in the sheet
+    itself): its equivalent normalized shunt admittance is y=0.077+j0.90.
+    Reading only Re(y) makes the sheet look like a Z0/Re(y) ~= 4,893 ohm/sq
+    resistor -- twelve times min_overlay_sheet_resistance_ohm_sq(0.90)'s own
+    ~407 ohm/sq floor, so a resistive-only check waves it through, and a
+    truly resistive 4,893 ohm/sq sheet placed over a matched absorber would
+    indeed leave ~99.9 % absorption intact. Carrying the sheet's actual
+    susceptance over that same matched absorber tells a different story: only
+    ~84 % absorption survives, below the 90 % floor the resistive-only
+    reading thought it cleared with room to spare."""
+    y = complex(0.077, 0.90)  # normalized to Y0 = 1/ETA0_OHM
+    rs_min_90 = min_overlay_sheet_resistance_ohm_sq(0.90)
+
+    equivalent_resistance_ohm_sq = ETA0_OHM / y.real
+    assert equivalent_resistance_ohm_sq == pytest.approx(4892.6, rel=1e-3)
+    assert equivalent_resistance_ohm_sq > 10 * rs_min_90  # "passes twelve times over"
+
+    resistive_only_s11, _ = s_parameters(
+        shunt_sheet_abcd(1 / equivalent_resistance_ohm_sq), ETA0_OHM, ETA0_OHM
+    )
+    resistive_only_absorption = 1 - abs(resistive_only_s11) ** 2
+    assert resistive_only_absorption == pytest.approx(0.9986, abs=1e-3)
+
+    complex_s11, _ = s_parameters(shunt_sheet_abcd(y / ETA0_OHM), ETA0_OHM, ETA0_OHM)
+    complex_absorption = 1 - abs(complex_s11) ** 2
+    assert complex_absorption == pytest.approx(0.841, abs=1e-3)
+    assert complex_absorption < 0.90  # fails the 90% floor the resistive-only reading passed
 
 
 # ---------------------------------------------------------------------------

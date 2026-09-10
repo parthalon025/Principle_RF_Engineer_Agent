@@ -1060,6 +1060,17 @@ def grid_effective_permittivity(eps_r: float) -> float:
     Not an approximation of the substrate's own permittivity -- the gap
     field genuinely straddles both media, so a grid printed on eps_r = 3
     behaves as though the gap sat in eps_eff = 2.
+
+    ASSUMPTION: AIR ABOVE. The "+ 1" is eps_r of air/vacuum, hardcoded
+    because this grid was assumed bare. That fails for a grid with an
+    encapsulation or coverlay layer on top instead of open air -- the gap
+    field then straddles substrate and coverlay, not substrate and air. The
+    general form is eps_eff = (eps_above + eps_below) / 2, valid while each
+    bounding layer is thicker than roughly 0.3-0.5x the cell period (thinner
+    than that, the field reaches through to whatever is beyond it too, and
+    even the two-layer average stops holding). See
+    docs/encapsulation-em-coupling.md for how encapsulation is meant to enter
+    this stack; this function does not yet take an `eps_above` argument.
     """
     if eps_r < 1:
         raise ValueError(f"eps_r must be >= 1; got {eps_r!r}.")
@@ -1451,6 +1462,39 @@ def min_overlay_sheet_resistance_ohm_sq(
     99 % -- the thresholds that turn "will an IR layer ruin the radar
     absorber?" from a hand-wave into a design rule. An overlay BELOW the
     returned value degrades the absorber; above it, the absorber survives.
+
+    SCOPE: THIS MODEL IS RESISTIVE-ONLY, AND THAT MAKES PASSING IT NECESSARY
+    BUT NOT SUFFICIENT. `Gamma = -Z_0/(2*R_s+Z_0)` treats the overlay as a
+    pure resistance R_s with no reactive part -- true for a uniform,
+    non-resonant conductive film, but NOT true for a resonant PATTERNED
+    overlay (an FSS, a metal grid tuned near a wavelength): that is a complex
+    sheet ADMITTANCE Y = G + jB, and this closed form has no term for the
+    susceptance B. A real patterned layer can clear this function's
+    resistance floor by an order of magnitude and still fail the absorption
+    target on susceptance alone -- the general case needs the full two-port
+    ABCD/S-parameter cascade in `rf_tools/transmissive_absorber.py`
+    (`shunt_sheet_abcd` takes a complex admittance; `cascade`/`s_parameters`
+    turn it into reflection and transmission), not this formula.
+
+    WORKED COUNTER-EXAMPLE, from a measured screen-printed Ti3C2Tx MXene
+    chessboard FSS: transmittance T = 0.78, reflectance R = 0.16, so
+    A = 1 - T - R = 0.06 is dissipated in the sheet itself. The equivalent
+    lumped shunt admittance that reproduces those three numbers is
+    y = 0.077 + j0.90 (normalized to Y_0 = 1/Z_0) -- check:
+    4*Re(y)/|y+2|^2 = 0.0601, matching the measured A = 0.06. Read only
+    Re(y), the sheet looks like a Z_0/Re(y) = ~4,893 ohm/sq resistor --
+    twelve times this function's own 407 ohm/sq floor for a 90 % target, so
+    a resistive-only check would wave it through, and a TRULY resistive
+    4,893 ohm/sq sheet placed over a matched absorber would indeed leave
+    99.86 % absorption intact. But this sheet is not purely resistive:
+    carrying its actual susceptance of 0.90*Y_0 over that same matched
+    absorber (Gamma = -y/(y+2) with the full complex y) leaves only
+    1 - |Gamma|^2 = 84.1 % absorption -- below the 90 % floor this function
+    exists to guarantee. In plain terms: this number only answers "is the
+    sheet resistive enough" -- it says nothing about whether the sheet is
+    also reactive enough to detune the absorber underneath it, and a
+    patterned overlay that passes with room to spare can still ruin the
+    absorber it sits on.
     """
     if not 0 < target_absorption < 1:
         raise ValueError(
