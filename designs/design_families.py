@@ -157,7 +157,28 @@ NO_PHYSICAL_BOUND = _NoPhysicalBound(
         "dissipating or radiating a bounded quantity, so no thickness- or "
         "size-versus-performance inequality of the Rozanov/Chu kind governs it "
         "(ADR-0018: 'one family (diffusive/coding backscatter reduction) has no "
-        "bound at all')."
+        "bound at all'). THIS EXEMPTION IS CONDITIONAL, NOT UNCONDITIONAL -- two "
+        "preconditions, both load-bearing, per "
+        "docs/absorber-thickness-bandwidth-bound.md section 7.3: "
+        "(a) the surface must actually REDISTRIBUTE rather than dissipate -- a "
+        "cell that also absorbs is scored as an absorber for that portion of "
+        "its loss, and that portion IS Rozanov-bounded (section 7.3: 'by "
+        "absorption: it IS the absorber case. Rozanov binds it'); and "
+        "(b) the surface's period must be large enough to actually launch a "
+        "propagating diffracted order (section 7.3: 'a surface with a period "
+        "large enough to launch propagating diffracted orders redistributes "
+        "power ... without absorbing it') -- for a checkerboard at normal "
+        "incidence the diagonal (+/-1,+/-1) orders propagate only when the "
+        "supercell period D >= sqrt(2)*lambda (42.4 mm at 10 GHz, 30.3 mm at "
+        "14 GHz); BELOW that period there is no diffracted channel at all and "
+        "every dB of specular/monostatic reduction must come from absorption, "
+        "which IS fully Rozanov-bounded -- a small-period 'coding' cell does "
+        "not actually clear this exemption. Section 7.3 itself flags this "
+        "whole argument as INFERRED ('from the structure of the sum rule plus "
+        "the grating-lobe restriction, not stated as such by any retrieved "
+        "source') and 'needing confirmation before anything depends on it' -- "
+        "and the CODING alias below now depends on it, unconfirmed (see the "
+        "comment there)."
     )
 )
 
@@ -833,19 +854,28 @@ POLARIZATION_CONVERTER = DesignFamily(
             "noise, in place of a true -18.9 dB reflection). simulation/meep.py "
             "cannot: it computes a single scalar power reflectance with no "
             "polarisation channels at all, so there is no cross-polarised term "
-            "to read. But Palace's adapter cannot yet build a printed metal cell "
-            "('Embedded PEC conductor patches ... are NOT implemented'), and an "
-            "anisotropic printed pattern is what a polarisation converter IS. So "
-            "the destination is clearer here than for REFLECTION_PHASE and "
-            "DIFFUSIVE -- Palace is the only adapter with the observable -- but "
-            "it is still one unbuilt capability away and the loop has no Palace "
-            "handler wired, so this is recorded as unsettled rather than "
-            "declared."
+            "to read. Palace's adapter CAN now mesh a printed metal cell -- "
+            "'Embedded PEC conductor patches can now be meshed' (simulation/"
+            "palace.py, issue #252 tickets 1/2) -- and an anisotropic printed "
+            "pattern is what a polarisation converter IS, so the meshing gap "
+            "this reason once cited is closed. What is still missing is the "
+            "orchestration wiring: orchestration/design_loop.py's PALACE_FLOQUET "
+            "handler is wired for REFLECTION_PHASE/DIFFUSIVE only (#252 ticket "
+            "3) and has no dispatch path that asks for or scores the "
+            "cross-polarised channel this family needs, and this DesignFamily "
+            "still declares UnsettledSimulationAdapter rather than naming "
+            "PALACE_FLOQUET. So the destination is clearer here than for "
+            "REFLECTION_PHASE and DIFFUSIVE -- Palace is the only adapter with "
+            "the observable -- but it is still one unbuilt dispatch path away, "
+            "so this is recorded as unsettled rather than declared."
         ),
         candidates=(
             "PALACE_FLOQUET -- the only adapter reporting a cross-polarised "
-            "channel; cannot yet mesh an embedded metal patch "
-            "(simulation/palace.py SCOPE)",
+            "channel; can already mesh an embedded metal patch (simulation/"
+            "palace.py SCOPE, issue #252 tickets 1/2) but has no orchestration "
+            "dispatch path yet that reads the cross-polarised channel for this "
+            "family (orchestration/design_loop.py wires PALACE_FLOQUET for "
+            "REFLECTION_PHASE/DIFFUSIVE only)",
         ),
         cheapest_test=(
             "hand simulation/palace.py an all-dielectric ANISOTROPIC cell -- a "
@@ -853,7 +883,8 @@ POLARIZATION_CONVERTER = DesignFamily(
             "specular channel climbs out of the noise floor when the cell's two "
             "axes are made unequal and sinks back into it when they are equal. "
             "That settles whether the observable is usable at all before anyone "
-            "spends effort building embedded-PEC meshing."
+            "spends effort wiring the orchestration dispatch path for an "
+            "embedded-PEC anisotropic cell."
         ),
     ),
     description=(
@@ -946,6 +977,16 @@ _ALIASES: dict[str, str] = {
     "REFLECTION_PHASE_STEERING_SURFACE": REFLECTION_PHASE.name,
     "STEERING_SURFACE": REFLECTION_PHASE.name,
     "DIFFUSIVE_BACKSCATTER_SURFACE": DIFFUSIVE.name,
+    # "CODING" lands on DIFFUSIVE, which carries NO_PHYSICAL_BOUND -- an
+    # exemption that is CONDITIONAL on the cell period being large enough to
+    # launch a propagating diffracted order (see NO_PHYSICAL_BOUND's own
+    # reason string above for the D >= sqrt(2)*lambda arithmetic). A "coding"
+    # surface small-period enough to stay below that grating-lobe onset gets
+    # no exemption at all and is fully Rozanov-bounded like an absorber. This
+    # alias does not check the candidate's period against that threshold, so
+    # it can currently route a candidate onto an exemption its own geometry
+    # may void. This is a known, deliberately UNCHANGED routing decision, not
+    # an oversight -- re-routing the alias is a separate ticket, not this fix.
     "CODING": DIFFUSIVE.name,
     "POLARIZATION_CONVERTOR": POLARIZATION_CONVERTER.name,
     "POLARISATION_CONVERTER": POLARIZATION_CONVERTER.name,
