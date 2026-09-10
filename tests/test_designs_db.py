@@ -9,6 +9,7 @@ from designs.db import (
     UnknownDesignError,
     UnknownVerificationItemError,
     create_design,
+    find_capability_verdict_entries,
     find_designs_referencing_component,
     read_design,
     read_engineering_results_for_scoring,
@@ -41,6 +42,23 @@ def _make_component(db_conn, part_number="ACM-AMP-1"):
 
 def _requirements(*ids):
     return {req_id: {"requirement": f"Requirement {req_id}."} for req_id in ids}
+
+
+def _capability_verdict_entry(**overrides):
+    """Duplicated from tests/test_tooling.py's/tests/test_design_loop.py's
+    own helper of the same name, not imported -- matching those suites'
+    existing "duplicated, not imported" per-file convention."""
+    entry = {
+        "family": "reflection_phase_surface",
+        "verdict": "dropped",
+        "reason": "host curvature exceeds this family's angle-stable element validity box",
+        "reason_kind": "capability-verdict",
+        "requirement_id": "R1",
+        "validity_box_property": "curvature",
+        "theta_max_deg": 45.0,
+    }
+    entry.update(overrides)
+    return entry
 
 
 def _make_design(db_conn, design_key="DES-DEC"):
@@ -771,6 +789,165 @@ def test_record_decision_persists_and_round_trips_considered_and_dropped(db_conn
     result = read_design(db_conn, design_id)
     (dr,) = result["decision_records"]
     assert dr["considered_and_dropped"] == ledger
+
+
+def test_record_decision_writes_considered_and_dropped_to_its_own_table_not_the_jsonb_column(
+    db_conn,
+):
+    """Issue #396 acceptance criterion 2: entries land in
+    `considered_and_dropped_entries`, in the SAME transaction as the
+    decision record itself, and no longer in `decision_records.
+    considered_and_dropped` -- that column stays at its own schema default
+    (`'[]'::jsonb`) even though a real ledger was stated. The row
+    `record_decision` returns, and `read_design`'s aggregated view, are
+    both reconstructed from the new table -- see the round-trip test
+    immediately above, which still passes unchanged: this test proves
+    WHERE that round trip's data actually lives now."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-LEDGER-TABLE")
+    ledger = [
+        _capability_verdict_entry(),
+        {
+            "family": "patch_antenna",
+            "verdict": "kept",
+            "reason": "meets band/gain target with a simple, low-cost fabrication",
+            "reason_kind": "engineering-judgment",
+        },
+    ]
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-LEDGER-TABLE-architecture",
+        decision="rectangular microstrip patch on FR4",
+        alternatives=[],
+        rationale="meets band/gain target with a simple, low-cost fabrication",
+        evidence=[],
+        design_family="patch_antenna",
+        considered_and_dropped=ledger,
+    )
+
+    # The raw JSONB column itself was never written to...
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT considered_and_dropped FROM decision_records WHERE id = %s",
+            (row["id"],),
+        )
+        (raw_column_value,) = cur.fetchone()
+    assert raw_column_value == []
+
+    # ...the entries live in the child table instead, one row per entry, in
+    # original list order (entry_index), each carrying the right decision_
+    # record_id.
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT family, verdict, reason, reason_kind, requirement_id, "
+            "validity_box_property, theta_max_deg "
+            "FROM considered_and_dropped_entries "
+            "WHERE decision_record_id = %s ORDER BY entry_index",
+            (row["id"],),
+        )
+        entry_rows = cur.fetchall()
+    assert entry_rows == [
+        (
+            "reflection_phase_surface",
+            "dropped",
+            "host curvature exceeds this family's angle-stable element validity box",
+            "capability-verdict",
+            "R1",
+            "curvature",
+            45.0,
+        ),
+        (
+            "patch_antenna",
+            "kept",
+            "meets band/gain target with a simple, low-cost fabrication",
+            "engineering-judgment",
+            None,
+            None,
+            None,
+        ),
+    ]
+
+
+def test_considered_and_dropped_entries_are_deleted_with_their_decision_record(db_conn):
+    """Issue #396 acceptance criterion 1: `considered_and_dropped_entries`
+    is FK'd to `decision_records` with `ON DELETE CASCADE` -- an entry
+    cannot outlive the decision record it was weighed against. Exercised
+    against the real constraint (no live-DB alternative here: this asserts
+    Postgres's own cascade behavior, not something designs.db could fake)."""
+    design_id = _make_design(db_conn, design_key="DES-DEC-LEDGER-CASCADE")
+    row = record_decision(
+        db_conn,
+        design_id=design_id,
+        record_key="DES-DEC-LEDGER-CASCADE-architecture",
+        decision="rectangular microstrip patch on FR4",
+        alternatives=[],
+        rationale="meets band/gain target with a simple, low-cost fabrication",
+        evidence=[],
+        considered_and_dropped=[_capability_verdict_entry()],
+    )
+
+    with db_conn.cursor() as cur:
+        cur.execute("DELETE FROM decision_records WHERE id = %s", (row["id"],))
+        cur.execute(
+            "SELECT COUNT(*) FROM considered_and_dropped_entries WHERE decision_record_id = %s",
+            (row["id"],),
+        )
+        (count,) = cur.fetchone()
+    assert count == 0
+
+
+def test_find_capability_verdict_entries_is_a_cross_design_query(db_conn):
+    """Issue #396 acceptance criterion 4: ADR-0025's own named payoff query
+    -- "every entry ever dropped as a capability-verdict is exactly what
+    relaxing that requirement unlocks" -- across every design, not just
+    one. `design_id=None` (the default) is the cross-design view; passing
+    `design_id` scopes it to a single design, the query `orchestration.
+    tooling.reevaluate_capability_verdicts` actually runs."""
+    design_a = _make_design(db_conn, design_key="DES-CVE-A")
+    design_b = _make_design(db_conn, design_key="DES-CVE-B")
+
+    engineering_judgment_entry = {
+        "family": "patch_antenna",
+        "verdict": "kept",
+        "reason": "meets band/gain target with a simple, low-cost fabrication",
+        "reason_kind": "engineering-judgment",
+    }
+
+    record_decision(
+        db_conn,
+        design_id=design_a,
+        record_key="DES-CVE-A-architecture",
+        decision="rectangular microstrip patch on FR4",
+        alternatives=[],
+        rationale="r",
+        evidence=[],
+        considered_and_dropped=[_capability_verdict_entry(), engineering_judgment_entry],
+    )
+    record_decision(
+        db_conn,
+        design_id=design_b,
+        record_key="DES-CVE-B-architecture",
+        decision="checkerboard AMC absorber",
+        alternatives=[],
+        rationale="r",
+        evidence=[],
+        considered_and_dropped=[_capability_verdict_entry(family="checkerboard_amc")],
+    )
+
+    all_entries = find_capability_verdict_entries(db_conn)
+    assert {row["design_id"] for row in all_entries} == {design_a, design_b}
+    assert {row["entry"]["family"] for row in all_entries} == {
+        "reflection_phase_surface",
+        "checkerboard_amc",
+    }
+    # Only capability-verdict entries ever come back -- the kept
+    # engineering-judgment entry recorded alongside design_a's is not one.
+    assert all(row["entry"]["reason_kind"] == "capability-verdict" for row in all_entries)
+
+    scoped = find_capability_verdict_entries(db_conn, design_id=design_a)
+    assert [row["design_id"] for row in scoped] == [design_a]
+    assert scoped[0]["record_key"] == "DES-CVE-A-architecture"
+    assert scoped[0]["entry"] == _capability_verdict_entry()
 
 
 def test_record_decision_defaults_capability_warnings_to_empty_list(db_conn):

@@ -201,6 +201,16 @@ ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS design_family_canonical TE
 -- ADR-0011 flush), and recording this ledger is never required (ADR-0025's
 -- "No gate") -- an empty array is the honest default for a decision that
 -- states none.
+--
+-- SUPERSEDED BY issue #396: the entries themselves moved into their own
+-- `considered_and_dropped_entries` table further down this file (a real,
+-- indexed, queryable row per entry instead of a scan over this unindexed
+-- JSONB array). This column is left in place -- dropping a column is not
+-- this file's idempotent-ALTER convention, only adding one is -- but
+-- `designs.db.record_decision` no longer writes into it: every row
+-- recorded from #396 onward carries this column at its own schema default
+-- (`'[]'::jsonb`) regardless of what `considered_and_dropped` the caller
+-- actually stated.
 ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS considered_and_dropped JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- Issue #324 (ADR-0025's 2026-09-09 correction; CONTEXT.md's "Capability
@@ -758,3 +768,68 @@ ON design_component_refs (component_id);
 -- catches the resulting UniqueViolation and raises InvalidSupersessionError.
 CREATE UNIQUE INDEX IF NOT EXISTS documents_supersedes_document_id_key
 ON documents (supersedes_document_id) WHERE supersedes_document_id IS NOT NULL;
+
+-- Issue #396 (parent #393; ADR-0025's Considered-and-dropped ledger). Moves
+-- the ledger's ENTRIES (not the ledger concept itself, which stays exactly
+-- what ADR-0025/CONTEXT.md describe) out of the unindexed
+-- `decision_records.considered_and_dropped` JSONB array above into their
+-- own table, one row per entry, so "has this option already been refused
+-- for this reason" and ADR-0025's own named payoff query -- "every entry
+-- ever dropped as a capability-verdict is exactly what relaxing that
+-- requirement unlocks" -- are real, deterministic database queries
+-- (`designs.db.find_capability_verdict_entries`) instead of a Python-level
+-- scan over `read_design`'s aggregated JSON, which is all issue #322's
+-- original, deliberately simple, first cut could offer.
+--
+-- Columns mirror `orchestration.design_loop`'s own closed entry shape
+-- (`_validate_considered_and_dropped`/`_validate_capability_verdict_entry`)
+-- exactly: `family`/`verdict`/`reason`/`reason_kind` are stated on every
+-- entry; `requirement_id`/`validity_box_property` are stated only on a
+-- `reason_kind='capability-verdict'` entry (that reason kind's own issue
+-- #322 narrowing -- never on `human-decision`/`engineering-judgment`);
+-- `theta_max_deg` only when that entry's `validity_box_property='curvature'`
+-- (the one closed-form validity box this codebase currently characterises,
+-- `capability_verdict_holds`'s own only branch). All three are nullable for
+-- exactly that reason, and `designs.db` omits a NULL one from a
+-- reconstructed entry dict entirely rather than carrying it as an explicit
+-- None, so a plain human-decision/engineering-judgment entry round-trips
+-- through this table byte-for-byte identical to what it was recorded with.
+--
+-- `entry_index` preserves each entry's position within the original
+-- step_input list it arrived in -- `designs.db`'s reconstruction orders on
+-- it, not on `id` -- the same "position, not insertion accident" discipline
+-- `document_chunks.chunk_index` already applies to a document's chunks.
+--
+-- FK'd to `decision_records` `ON DELETE CASCADE`, matching every other
+-- decision/design-scoped child table in this file: an entry cannot outlive
+-- the decision record it was weighed against.
+CREATE TABLE IF NOT EXISTS considered_and_dropped_entries (
+    id BIGSERIAL PRIMARY KEY,
+    decision_record_id BIGINT NOT NULL REFERENCES decision_records(id) ON DELETE CASCADE,
+    entry_index INTEGER NOT NULL,
+    family TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    reason_kind TEXT NOT NULL,
+    requirement_id TEXT,
+    validity_box_property TEXT,
+    theta_max_deg DOUBLE PRECISION,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- `designs.db.record_decision`/`read_design` filter this table by
+-- decision_record_id on every read (one design's decision_records, or one
+-- freshly-inserted row) -- the same "index the column read_design filters
+-- by" convention issue #367 already established for engineering_results/
+-- decision_records above.
+CREATE INDEX IF NOT EXISTS considered_and_dropped_entries_decision_record_id_idx
+ON considered_and_dropped_entries (decision_record_id);
+
+-- Backs ADR-0025's own named payoff query directly:
+-- `find_capability_verdict_entries`'s cross-design `WHERE reason_kind =
+-- 'capability-verdict'` scan (with no decision_record_id/design_id
+-- predicate at all) is a real index scan, not a sequential scan over every
+-- entry this database has ever recorded across every design, as this table
+-- grows.
+CREATE INDEX IF NOT EXISTS considered_and_dropped_entries_reason_kind_idx
+ON considered_and_dropped_entries (reason_kind);
