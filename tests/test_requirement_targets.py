@@ -425,9 +425,7 @@ class TestFetchRequirementsRowLock:
         stored = read_design(design_id)
         assert stored["requirements"]["REQ-1"]["target"]["value"] == 20.0
 
-    def test_fetch_requirements_for_update_blocks_a_concurrent_fetch_until_release(
-        self, design_id
-    ):
+    def test_fetch_requirements_for_update_blocks_a_concurrent_fetch_until_release(self, design_id):
         """The core issue #389 regression test. Without `FOR UPDATE`, two
         proposals against different requirement_ids on the same design can
         both read the `requirements` payload before either writes it back,
