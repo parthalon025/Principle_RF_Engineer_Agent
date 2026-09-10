@@ -494,6 +494,7 @@ prior art, the superposition coupling error bar, and the rest.
 | [`docs/tools/`](docs/tools/README.md) | Per-tool capability research for every external simulator, geometry tool, component-sourcing API, and knowledge-ingestion source this repo wires up — what each can do beyond what its adapter uses today |
 | [`docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`](docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md) | Gap analysis of the knowledge pipeline (embedding-version tracking, chunk dedup, retrieval feedback) |
 | [`verification/README.md`](verification/README.md) | The verification matrix, plus the retrieval-quality gate and simulator reference cases |
+| [`docs/literature-validation-cases.md`](docs/literature-validation-cases.md) | Four published metasurfaces reconstructed and scored against their authors' own measurements — one executed (and failing informatively), three blocked on named missing information, and the scope limits that would apply even if all four passed |
 | [`AGENTS.md`](AGENTS.md) / [`docs/agents/`](docs/agents/) | Repo conventions for AI coding agents |
 
 ---
