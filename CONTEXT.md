@@ -252,6 +252,17 @@ and a glossary that churns with it stops being trustworthy (see
   **Mechanism claim** is a predicted ordering, not a physical effect.
   Designed-for behaviour — describes a family's property, not a customer's
   wish.
+- **Shielding effectiveness (SE)**: how much of an incident wave a material
+  stops from passing *through* it, in dB, measured on a two-port
+  transmission fixture. Not comparable with reflection loss (a one-port,
+  metal-backed quantity) or with absorptivity — different quantities on
+  different fixtures, and citing one as if it were another manufactures a
+  comparison the data doesn't support. For a skin that prints its own
+  reflector (ADR-0017), transmission is zero by construction, so SE is
+  effectively infinite and carries no design information — there is
+  nothing left for a design to trade off. `shielded against` is already a
+  listed **Intended effect** value with no **Design family** behind it — a
+  gap, not a synonym.
 - **Threshold/Objective**: the two values a Requirement target's numeric
   value may carry, adopted from defence-acquisition practice (JCIDS
   Enclosure B, via #122) to settle #117. **Threshold** is the minimum
@@ -615,6 +626,26 @@ and a glossary that churns with it stops being trustworthy (see
   formula with a per-family constant swapped in. Its legal values include
   "none known" — true today for diffusive/coding backscatter-reduction
   surfaces, where no causality-based bound has been published.
+- **Analysis model** (design family field): the one closed-form calculation
+  a family's ANALYSIS step runs to turn its geometry into a predicted
+  response — a patch's resonant frequency; an absorber's worst-in-band
+  absorbed fraction. Declared per family as an open value, required with no
+  default: a family that forgets to state one cannot be constructed at all,
+  rather than silently inheriting another family's model (#239 — the defect
+  it replaces sent every family not named `"ABSORBER"` to the patch-antenna
+  resonant-frequency formula). It is the **fourth** per-family plug-in,
+  alongside **Physical bound**, **Optimizer class** and **Simulation
+  adapter** (`designs/design_families.py`) — a fact recorded in no ADR and,
+  until now, in no glossary entry, which is why ADR-0027 section 5's
+  family-versus-letter test still names only three
+  (`docs/RUNNING-LISTS.md` §3 correction 59). Its legal values include "no
+  closed-form model exists here" (`UndeclaredAnalysisModel`), distinct from
+  a bare `None`, for the same reason Physical bound's two non-bound states
+  are kept apart: a family with no model and a family nobody has modelled
+  yet are different facts.
+  _Avoid_: treating `physical_bound`/`optimizer_class`/`simulation_adapter`
+  as the complete set of what makes an imported shape a new family rather
+  than a new letter — ADR-0027's own test omits this fourth plug-in.
 - **Optimizer class** (design family field): which optimization approach a
   family's OPTIMIZATION step uses — `CONTINUOUS` (gradient-friendly tuning
   of a few dimensions, e.g. a patch's length) or `COMBINATORIAL`
