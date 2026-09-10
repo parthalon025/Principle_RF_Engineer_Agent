@@ -143,7 +143,16 @@ jobs:
       # visible and attributable rather than quietly absent from the count.
 
     steps:
+      # fetch-depth: 0 (full history, not actions/checkout@v4's default
+      # single-commit shallow clone) -- issue #386's
+      # test_every_pinned_commit_is_a_real_commit_in_this_repository resolves
+      # each literature reference case's pinned adapter_commit via `git
+      # cat-file -e <sha>^{commit}`, and a shallow clone cannot see any
+      # commit but the checked-out one, so every pin (all genuinely real,
+      # historical commits) would fail here regardless of correctness.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
