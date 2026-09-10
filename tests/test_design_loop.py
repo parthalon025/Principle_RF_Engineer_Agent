@@ -3065,6 +3065,14 @@ def test_optimization_routes_an_explicitly_continuous_family_the_same_way(monkey
 
 _COMBINATORIAL_SYMBOL_ENTRIES = [
     {
+        # "id" (issue #400): a real designs.element_alphabet.
+        # fetch_symbol_entries row always carries its own BIGSERIAL "id"
+        # (db/schema.sql) -- present here so this hand-built fixture can
+        # exercise SymbolOption.entry_id/CombinatorialPlacementResult.
+        # entry_id_layout threading through _combinatorial_candidate_
+        # options end to end, the same way a real alphabet-library lookup
+        # would.
+        "id": 501,
         "element_family": "interdigital_elc",
         "symbol": "elc_finger_4",
         "frequency_low_hz": 8.0e9,
@@ -3076,6 +3084,7 @@ _COMBINATORIAL_SYMBOL_ENTRIES = [
         "response": [{"frequency_hz": 10.0e9, "magnitude": 0.99, "phase_deg": 0.0}],
     },
     {
+        "id": 502,
         "element_family": "interdigital_elc",
         "symbol": "elc_finger_6",
         "frequency_low_hz": 8.0e9,
@@ -3139,8 +3148,22 @@ def test_optimization_routes_a_combinatorial_family_to_the_real_combinatorial_se
     # search should find the exact assignment with ~zero error.
     assert decision.result["layout"] == [["elc_finger_4", "elc_finger_6"]]
     assert decision.result["achieved_error"] == pytest.approx(0.0, abs=1e-6)
-    # candidate_snapshot is JSON-safe (a list, not a dict keyed by tuples).
+    # Issue #400: entry_id_layout names WHICH matched symbol_alphabet_
+    # entries row (id=501/502 in the fixture above) backed each winning
+    # cell -- not just its bare symbol_id, which "layout" alone reports and
+    # which cannot disambiguate several entries sharing one symbol/band/
+    # process (ADR-0027 point 4).
+    assert decision.result["entry_id_layout"] == [[501, 502]]
+    # candidate_snapshot is JSON-safe (a list, not a dict keyed by tuples),
+    # and each candidate now also names its own entry_id (issue #400) --
+    # not just the winning cell above, every AVAILABLE candidate.
     assert isinstance(decision.result["candidate_snapshot"], list)
+    snapshot_entry_ids = {
+        candidate["entry_id"]
+        for row in decision.result["candidate_snapshot"]
+        for candidate in row["candidates"]
+    }
+    assert snapshot_entry_ids == {501, 502}
     assert new_state.current_step == DesignStep.VERIFICATION.value
 
 
@@ -3155,7 +3178,14 @@ def test_optimization_combinatorial_end_to_end_with_real_alphabet_rows(db_conn):
     REFLECTION_PHASE design loop to its OPTIMIZATION step and confirm the
     real placed layout comes back through the SAME successful-step shape
     (the same decision-recording path via advance_loop_step) the
-    CONTINUOUS path already uses -- not a special-cased return shape."""
+    CONTINUOUS path already uses -- not a special-cased return shape.
+
+    Also issue #400 acceptance criterion 3, proven against these REAL
+    inserted rows rather than a hand-built id in a fixture: a query against
+    this persisted result's entry_id_layout can answer "which measured
+    process backed cell (i, j)" by cross-referencing the row's own real
+    `id` (RETURNING * from the live INSERT below) -- not merely a symbol
+    name that, in production, could match several such rows."""
     process = insert_process_record(
         db_conn,
         machine="Voltera NOVA",
@@ -3166,7 +3196,7 @@ def test_optimization_combinatorial_end_to_end_with_real_alphabet_rows(db_conn):
         achieved_film_thickness_m=12.0e-6,
         cure_schedule="80 degrees C for 30 min, ambient RH",
     )
-    insert_symbol_entry(
+    entry_finger_4 = insert_symbol_entry(
         db_conn,
         element_family="interdigital_elc",
         symbol="elc_finger_4",
@@ -3178,7 +3208,7 @@ def test_optimization_combinatorial_end_to_end_with_real_alphabet_rows(db_conn):
         geometry={"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]},
         response=[{"frequency_hz": 10.0e9, "magnitude": 0.99, "phase_deg": 0.0}],
     )
-    insert_symbol_entry(
+    entry_finger_6 = insert_symbol_entry(
         db_conn,
         element_family="interdigital_elc",
         symbol="elc_finger_6",
@@ -3213,6 +3243,19 @@ def test_optimization_combinatorial_end_to_end_with_real_alphabet_rows(db_conn):
     assert decision.result["method"] == "combinatorial_symbol_placement"
     assert decision.result["layout"] == [["elc_finger_4", "elc_finger_6"]]
     assert decision.result["achieved_error"] == pytest.approx(0.0, abs=1e-6)
+    # Issue #400: the winning layout's own entry_id_layout names the REAL
+    # symbol_alphabet_entries.id backing each cell -- the exact ids
+    # returned by the live INSERT ... RETURNING * calls above, not a
+    # fixture-supplied stand-in.
+    assert decision.result["entry_id_layout"] == [[entry_finger_4["id"], entry_finger_6["id"]]]
+    # decision.input carries the query this entry_id_layout was resolved
+    # under (process_id, frequency_hz, ...) -- together with entry_id_
+    # layout above, this is what answers "which measured process backed
+    # cell (i, j)"; orchestration/tooling.py's own flush-boundary fix
+    # (tests/test_tooling.py's test_flush_target_for_folds_decision_input_
+    # into_engineering_result_value) is what stops this from being dropped
+    # once persisted.
+    assert decision.input["process_id"] == process["id"]
     assert new_state.current_step == DesignStep.VERIFICATION.value
 
 

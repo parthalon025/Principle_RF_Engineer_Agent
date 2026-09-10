@@ -933,6 +933,75 @@ def test_combinatorial_symbol_placement_tags_target_and_candidate_snapshot():
     assert len(result2.candidate_snapshot[(0, 0)]) == 3  # unaffected by the later append
 
 
+# ---------------------------------------------------------------------------
+# Issue #400: SymbolOption.entry_id / CombinatorialPlacementResult.
+# entry_id_layout -- a bare symbol_id in `layout` cannot say WHICH measured
+# symbol_alphabet_entries row (and therefore which process/machine/ink)
+# backed a cell, because several entries can share one symbol/band/
+# incidence-angle-range/process (ADR-0027 point 4's "two runs are still two
+# distinct rows" rule). `entry_id_layout` is the same [j][i] grid as
+# `layout`, but naming the winning entry_id at each cell instead.
+# ---------------------------------------------------------------------------
+
+
+def test_symbol_option_entry_id_defaults_to_none():
+    """A hand-built option (every fixture above) has no backing database
+    row -- `entry_id` must default to `None`, not force every existing
+    caller to start passing one."""
+    option = SymbolOption(symbol_id="A_exact", achieved_value=0.0)
+    assert option.entry_id is None
+
+
+def test_combinatorial_symbol_placement_entry_id_layout_matches_the_winning_choice():
+    """The all-thin-shelf path (no genetic_optimize search at all -- see
+    module docstring): entry_id_layout must report exactly the entry_id
+    each pinned SymbolOption carried, in the SAME [j][i] shape as layout."""
+    candidates = {
+        (0, 0): [SymbolOption(symbol_id="ONLY_A", achieved_value=5.0, entry_id=101)],
+        (1, 0): [SymbolOption(symbol_id="ONLY_B", achieved_value=8.0, entry_id=202)],
+    }
+
+    result = combinatorial_symbol_placement(
+        target=_EXACT_MATCH_TARGET,
+        candidates=candidates,
+        delta_phi_max_deg=12.0,
+        random_seed=1,
+    )
+
+    assert result.layout == [["ONLY_A", "ONLY_B"]]
+    assert result.entry_id_layout == [[101, 202]]
+
+
+def test_combinatorial_symbol_placement_entry_id_layout_disambiguates_same_symbol_id():
+    """Two measured entries sharing the SAME symbol id (e.g. two separate
+    print runs under the same process -- ADR-0027's own "still two distinct
+    rows" rule) must still be told apart in entry_id_layout, even though
+    `layout` alone reports the identical symbol id either way. Exercises
+    the genetic_optimize search path (position (0, 0) has two candidates
+    to choose between), not just the thin-shelf shortcut above."""
+    candidates = {
+        (0, 0): [
+            SymbolOption(symbol_id="A", achieved_value=170.0, entry_id=11),
+            SymbolOption(symbol_id="A", achieved_value=0.0, entry_id=12),
+        ],
+        (1, 0): [SymbolOption(symbol_id="B", achieved_value=10.0, entry_id=21)],
+    }
+
+    result = combinatorial_symbol_placement(
+        target=_EXACT_MATCH_TARGET,  # target[j][i] == [[0.0, 10.0]]
+        candidates=candidates,
+        delta_phi_max_deg=12.0,
+        random_seed=1,
+    )
+
+    assert result.layout == [["A", "B"]]
+    # entry_id=12 (achieved_value=0.0) is the exact match; entry_id=11
+    # (achieved_value=170.0, a 160-degree gap from B) is both a worse raw
+    # error AND infeasible against the 12-degree budget -- entry_id_layout
+    # must name the winner, not merely "some entry named A".
+    assert result.entry_id_layout == [[12, 21]]
+
+
 def test_combinatorial_symbol_placement_layout_feeds_generate_coded_unit_cell_array():
     """Cross-check: the returned layout is directly usable as
     generate_coded_unit_cell_array's own `layout` argument, per this

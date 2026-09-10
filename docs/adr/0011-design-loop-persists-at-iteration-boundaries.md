@@ -117,3 +117,38 @@ recorded once, at loop start) is untouched, so the record of what was
 originally stated is never overwritten by a later interpretation of it.
 `design_loop.py` gains no new database awareness for this, same as the
 original PERSISTENCE design above.
+
+## Amendment: the flush no longer drops `decision.input` for engineering-result decisions (issue #400, 2026-09-10)
+
+`orchestration/tooling.py`'s `_flush_target_for`, for every `calculation`/
+`simulation`/`optimization`/`measurement`/`correlation` decision, wrote only
+`decision.result` to `engineering_results.value` — `decision.input`, the
+step's own recorded query/parameters, was silently discarded at the flush
+boundary. This went unnoticed until a combinatorial (Tier B alphabet)
+OPTIMIZATION step needed it: `decision.input` is what carries the resolved
+`symbol_entries`/`process_id`/`frequency_hz` a placement was searched
+against, and without it a persisted combinatorial result names *which*
+symbol won each cell but not *which measured process* (machine/ink/cure)
+that symbol's response came from — a gap independently worth closing for
+the other four decision kinds too, not just this one.
+
+Fixed by folding `decision.input` into the persisted value under an
+`"input"` key, alongside `decision.result`'s own fields left at the TOP
+level (`_engineering_result_value`, `orchestration/tooling.py`) —
+deliberately NOT nesting `decision.result` itself under a matching
+`"result"` key: `orchestration/solver.py`'s `_prior_best_from_design`
+already reads a persisted row's scored field straight off `value`'s top
+level (e.g. `value["resonant_frequency_hz"]`), and nesting it would have
+silently broken every existing and future row that reader scores, trading
+one dropped fact for another. Every historical row written before this fix
+predates the `"input"` key entirely — a reader that needs it must treat its
+absence on an old row as "not recorded," the same honest-absence reading
+`LoopDecision.iteration`'s own docstring already establishes for a
+different pre-existing field.
+
+This amendment pairs with `optimization/combinatorial.py`'s own
+`SymbolOption.entry_id`/`CombinatorialPlacementResult.entry_id_layout`
+(same issue): `entry_id_layout` names which measured
+`symbol_alphabet_entries` row backed each winning cell, and this
+amendment is what stops `decision.input`'s matching query context from
+being dropped alongside it at the flush.
