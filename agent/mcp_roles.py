@@ -12,19 +12,20 @@ narrowly on purpose: build the new construction ALONGSIDE `agent/main.py`'s
 existing one, prove its per-role tool-filter allow-lists exactly match what
 `ROLES`/`_PRINCIPAL_DIRECT_TOOLS` already grant today, and give issue #158's
 provenance-integrity guardrail a working home in the new shape -- WITHOUT
-touching a single line of `agent/main.py`'s own construction. Nothing here
-is wired into `agent/main.py`'s `run()`, `ROLES`, or `SPECIALIST_HANDOFFS`;
-those stay exactly as they were before this file existed.
+touching a single line of `agent/main.py`'s own construction. As of issue
+#318 (and until #377 below), nothing here was wired into `agent/main.py`'s
+`run()`, `ROLES`, or `SPECIALIST_HANDOFFS`; those stayed exactly as they were
+before this file existed.
 
-WHAT THIS DOES NOT DO (see ADR-0032's own "Consequences" section -- these
-are explicitly future work, not gaps this ticket silently leaves): it does
-not migrate production traffic onto this path, it does not delete or
-deprecate any of `agent/main.py`'s 87+ wrappers, and it has not been
+WHAT THIS DID NOT DO AS OF #318 (see ADR-0032's own "Consequences" section --
+these were explicitly future work, not gaps that ticket silently left): it
+did not migrate production traffic onto this path, it did not delete or
+deprecate any of `agent/main.py`'s 87+ wrappers, and it had not been
 live-tested end to end against a real model the way `agent/main.py`'s
 `.as_tool()` -> `handoffs=[...]` redesign was (see `agent/main.py`'s own
 routing-section comment for that history) -- the ADR's own "Needs a live
-behavior check before it ships" consequence is still open. What IS proven
-here, by test: each role's `create_static_tool_filter` allow-list is
+behavior check before it ships" consequence was still open. What WAS proven
+there, by test: each role's `create_static_tool_filter` allow-list is
 BYTE-FOR-BYTE the same tool-name set `agent/main.py` already grants that
 role today (derived from the same source objects, not hand-copied --
 copying the list a second time here would just recreate the exact
@@ -33,6 +34,77 @@ real MCP-protocol round trip proving the filter actually restricts
 `tools/list` to that set over the wire (not just as a config literal); and
 the provenance guardrail fires under exactly the same condition
 `agent/main.py`'s `_assert_calculated_provenance_is_tool_backed` does today.
+
+ISSUE #377 (this update): `build_role_agent()` is now wired into a REAL,
+LIVE `agent/main.py::run()` for exactly three roles -- principal, systems,
+verification (see `agent/main.py`'s own module comment above `run()` for the
+full account, and issue #376 for why microwave/antenna/test stay on the OLD
+`agent/main.py::ROLES` construction: they hold every Windows-hanging
+subprocess-shelling tool, #372). `build_role_agent()` gained three new,
+all-optional keyword parameters to make this possible WITHOUT changing its
+existing signature's observable behavior for any current caller
+(`tests/test_mcp_roles.py`, `tests/test_mcp_tool_call_parity.py`):
+
+  - `mcp_server`: an already-CONNECTED `MCPServerStdio` to attach instead of
+    building (and leaving unconnected) a fresh one via
+    `build_role_mcp_server(role_key)`. `run()` needs this because connecting
+    a server is `async` (`MCPServerManager.connect_all()`), and this
+    function itself is not -- the caller connects first, this function just
+    wires the already-live instance onto the `Agent`. Omitted (the default,
+    `None`): unchanged behavior, a fresh unconnected server every call, same
+    as before this parameter existed.
+  - `handoffs`: this role's own `route_to_<role>_role` targets. Needed
+    because the LIVE principal's handoffs are a MIXED list -- the two other
+    NEW-style Agents this same function just built (systems, verification)
+    plus the three EXISTING, unchanged `agent/main.py::ROLES` Agent objects
+    for microwave/antenna/test (old-style, `tools=[...]`, no MCP server at
+    all) -- something no single per-role call to this function could express
+    on its own. Omitted (the default, `None`): unchanged behavior, no
+    handoffs, same as `Agent`'s own default.
+  - `extra_instructions`: text inserted between the shared `## Role scope`
+    domain note and the local-reasoning output tail. Needed because the
+    LIVE principal carries an extra "## Routing to a specialist" section
+    (`agent/main.py::_PRINCIPAL_ROUTING_INSTRUCTIONS`) that no other role's
+    `domain_note` needs. Omitted (the default, `""`): unchanged instructions
+    text, same as before this parameter existed.
+
+Confirmed directly against `agents/run.py`'s own turn loop (not assumed):
+`get_all_tools(execution_agent, ...)` is called inside the `while True:`
+per-turn loop, rebound to whatever `current_agent` is that iteration, every
+single turn -- including the turn immediately after a handoff. This is WHY
+mixing an old-style (no MCP server) and a new-style (`mcp_servers=[server]`)
+handoff target on the same principal is safe: an old-style target is never
+asked for MCP tools at all (`Agent.get_mcp_tools()` only iterates
+`self.mcp_servers`, which is empty for `agent/main.py::ROLES[...]`), and a
+new-style target's server only needs to already be connected by the time
+ITS OWN turn arrives -- which eager connect-everything-up-front at `run()`
+start (via `agents.mcp.MCPServerManager`, `strict=True`) guarantees for
+every query, regardless of which role the query actually reaches.
+
+THE PROVENANCE-GUARDRAIL GAP THIS MIXING CREATES, AND WHY IT'S NOT A
+REGRESSION: `provenance_integrity_guardrail` (below) is an
+`Agent.output_guardrails` entry -- it only ever runs when the AGENT IT IS
+ATTACHED TO produces the run's final output. An old-style specialist
+(microwave/antenna/test) has no `output_guardrails` and no
+`_ProvenanceTrackingHooks` wired onto it at all (unchanged, per #376's own
+scope), so if the principal hands off to one and IT calls a real
+calculation tool and produces the final answer, this module's own guardrail
+never runs for that turn -- it was never attached to that agent. This is not
+a gap `run()` silently accepts: `agent/main.py`'s existing, OLDER
+`_assert_calculated_provenance_is_tool_backed(result)` reads the whole
+finished `RunResult.new_items` regardless of which agent in the handoff
+chain produced which item, so it already covers this path (and every other
+handoff path, old-style or new) correctly -- it does not care whether the
+tool-calling agent had a guardrail wired onto it, only whether a real
+calculation-category `tool_call_item` exists anywhere in the run. `run()`
+keeps calling it, unconditionally, on every run's `RunResult`, as the
+authoritative enforcement point; this module's own guardrail is an
+additional, EARLIER line of defense for the NEW-style agents it is actually
+attached to (principal/systems/verification answering directly), not a
+replacement for the post-hoc check. See
+`tests/test_agent_roles.py::test_calculated_claim_backed_by_a_real_tool_call_through_an_old_style_specialist_handoff_is_accepted`
+and its sibling `..._mislabeled_..._still_trips` for the scripted-fake-model
+proof of both halves of this claim.
 
 WHY SIX MCPServerStdio INSTANCES, NOT ONE SHARED SERVER WITH A CALLABLE
 FILTER: the Agents SDK also supports a dynamic/callable `tool_filter` keyed
@@ -56,7 +128,7 @@ import os
 import sys
 from dataclasses import dataclass
 
-from agents import Agent, GuardrailFunctionOutput, RunContextWrapper, output_guardrail
+from agents import Agent, GuardrailFunctionOutput, Handoff, RunContextWrapper, output_guardrail
 from agents.lifecycle import AgentHooks
 from agents.mcp import MCPServerStdio, ToolFilterStatic, create_static_tool_filter
 from agents.mcp.server import MCPServerStdioParams
@@ -322,7 +394,13 @@ def provenance_integrity_guardrail(
     )
 
 
-def build_role_agent(role_key: str) -> Agent:
+def build_role_agent(
+    role_key: str,
+    *,
+    mcp_server: MCPServerStdio | None = None,
+    handoffs: list[Agent | Handoff] | None = None,
+    extra_instructions: str = "",
+) -> Agent:
     """One role's `Agent`, built the ADR-0032 way: `mcp_servers=[server]`
     instead of a hand-built `tools=[...]` list, that role's own
     `create_static_tool_filter` allow-list doing the subsetting `agent/
@@ -339,17 +417,37 @@ def build_role_agent(role_key: str) -> Agent:
     Independent of, and never compared against by identity to,
     `agent.main.ROLES` -- nothing in `agent/main.py` changes or is read back
     into by this function.
+
+    Three all-optional keyword-only parameters, added for issue #377's live
+    `run()` wiring, each defaulting to exactly the pre-#377 behavior so no
+    existing caller (`tests/test_mcp_roles.py`, `tests/test_mcp_tool_call_
+    parity.py`) sees any change when it doesn't pass them -- see this
+    module's own docstring, "ISSUE #377 (this update)", for the full
+    rationale on why each one exists:
+
+    mcp_server: an already-connected `MCPServerStdio` to attach instead of
+        building (and leaving unconnected) a fresh one. `None` (default):
+        calls `build_role_mcp_server(role_key)`, unchanged.
+    handoffs: this Agent's own `route_to_<role>_role` targets -- a mix of
+        old- and new-style Agents is fine (see this module's docstring for
+        why). `None` (default): no handoffs, matching `Agent`'s own default.
+    extra_instructions: appended after the shared domain note and before
+        the local-reasoning output tail. `""` (default): no change to the
+        instructions text.
     """
     spec = _SPEC_BY_KEY[role_key]
+    server = mcp_server if mcp_server is not None else build_role_mcp_server(role_key)
     return Agent(
         name=spec.display_name,
         model=_resolve_agent_model(),
         model_settings=_resolve_agent_model_settings(),
         instructions=(
             f"{SYSTEM_PROMPT}\n\n## Role scope\n\n{spec.domain_note}"
+            f"{extra_instructions}"
             f"{_local_reasoning_output_tail()}"
         ),
-        mcp_servers=[build_role_mcp_server(role_key)],
+        mcp_servers=[server],
         output_guardrails=[provenance_integrity_guardrail],
         hooks=_ProvenanceTrackingHooks(),
+        handoffs=list(handoffs) if handoffs is not None else [],
     )

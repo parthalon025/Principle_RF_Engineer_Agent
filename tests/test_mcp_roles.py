@@ -217,6 +217,58 @@ def test_building_new_construction_agents_does_not_touch_specialist_handoffs():
 
 
 # ---------------------------------------------------------------------------
+# build_role_agent's three new, all-optional keyword parameters (issue #377):
+# mcp_server, handoffs, extra_instructions. Each must default to EXACTLY the
+# pre-#377 behavior (already proven by every test above, which calls
+# build_role_agent(role_key) with no extra arguments) -- these tests cover
+# the NEW, opt-in behavior each parameter adds for run()'s live wiring.
+# ---------------------------------------------------------------------------
+
+
+def test_build_role_agent_attaches_an_already_built_mcp_server_instead_of_a_fresh_one():
+    preconnected_looking_server = build_role_mcp_server("systems")
+    agent = build_role_agent("systems", mcp_server=preconnected_looking_server)
+    assert agent.mcp_servers == [preconnected_looking_server]
+
+
+def test_build_role_agent_default_mcp_server_is_unchanged():
+    # Regression guard: omitting mcp_server must still build a fresh,
+    # independent server every call (this is what every other test in this
+    # file already relies on implicitly -- made explicit here).
+    first = build_role_agent("systems")
+    second = build_role_agent("systems")
+    assert first.mcp_servers[0] is not second.mcp_servers[0]
+
+
+def test_build_role_agent_accepts_a_mixed_handoffs_list():
+    old_style_target = Agent(name="old-style-stand-in")
+    new_style_target = build_role_agent("verification")
+    handoffs = [old_style_target, new_style_target]
+    agent = build_role_agent("principal", handoffs=handoffs)
+    assert agent.handoffs == handoffs
+
+
+def test_build_role_agent_default_handoffs_is_empty():
+    agent = build_role_agent("principal")
+    assert agent.handoffs == []
+
+
+def test_build_role_agent_extra_instructions_appear_between_domain_note_and_reasoning_tail():
+    agent = build_role_agent(
+        "principal", extra_instructions="\n\n## Routing to a specialist\n\nTest."
+    )
+    assert "## Routing to a specialist" in agent.instructions
+    assert agent.instructions.index("## Role scope") < agent.instructions.index(
+        "## Routing to a specialist"
+    )
+
+
+def test_build_role_agent_default_extra_instructions_is_unchanged():
+    agent = build_role_agent("principal")
+    assert "## Routing to a specialist" not in agent.instructions
+
+
+# ---------------------------------------------------------------------------
 # Issue #158's provenance-integrity guardrail, in its new home. Exercised
 # through the REAL agents.OutputGuardrail.run() code path (not just calling
 # the bare Python function), the same way agent/main.py's own guard is
