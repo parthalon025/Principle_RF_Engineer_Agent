@@ -9,7 +9,6 @@ owns the transaction boundary.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import psycopg
@@ -18,6 +17,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from db.pool import checkout_connection
 from knowledge.models import ChunkDraft, DocumentDraft, DocumentStatus
 
 _EMBEDDING_COLUMNS = {"embedding", "embedding_local"}
@@ -47,8 +47,21 @@ class InvalidSupersessionError(Exception):
 
 
 def get_connection() -> psycopg.Connection:
-    """Open a new connection using DATABASE_URL from the environment."""
-    return psycopg.connect(os.environ["DATABASE_URL"])
+    """Check a connection out of the process-wide pool (`db.pool`, issue
+    #406) -- the same pool `designs.db.get_connection` uses, not a second
+    one of this package's own.
+
+    Same call shape as the direct `psycopg.connect(...)` this replaced --
+    `conn = get_connection()` ... `conn.close()` -- but `close()` is now a
+    return to the pool rather than a disconnect, so the next call reuses
+    this connection's backend instead of opening another against
+    Postgres's fixed ceiling. Every connection handed out also arrives
+    carrying a bounded `lock_timeout` and `statement_timeout`, so a caller
+    blocked on a row another agent is editing gets a clear, prompt error
+    instead of waiting indefinitely. See `db/pool.py` for the reasoning and
+    for the two things not to do with a pooled connection.
+    """
+    return checkout_connection()
 
 
 def find_document_by_checksum(
