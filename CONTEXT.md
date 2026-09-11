@@ -163,7 +163,10 @@ and a glossary that churns with it stops being trustworthy (see
   smuggled into the physics the simulator actually computes.*
   _Avoid_: inferring a primitive's role from its position or material
   properties — `role` is an explicit, optional tag, not something derived
-  from `epsilon_r`/`center_m`/shape.
+  from `epsilon_r`/`center_m`/shape. Metamaterial unit cell — a role tags
+  which job ONE primitive does in the stack; a unit cell is the repeating
+  sub-wavelength structure that may itself be built from several
+  role-tagged primitives (e.g. a `PATTERN` layer over a `REFLECTOR`).
 - **Metamaterial unit cell**: the repeating element whose **sub-wavelength
   structure** produces an effective permittivity/permeability the bulk
   material does not have on its own. The base building block a

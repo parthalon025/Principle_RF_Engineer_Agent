@@ -57,6 +57,7 @@ from designs.requirement_targets import (
     mark_unscoreable,
     propose_host_ground_plane,
     propose_intended_effect,
+    propose_requirement_host_ground_plane,
     propose_requirement_target,
     propose_target,
 )
@@ -571,6 +572,25 @@ class TestFetchRequirementsRowLock:
 
         stored = read_design(design_id)
         assert stored["requirements"]["REQ-1"]["target"]["value"] == 20.0
+
+    def test_propose_requirement_host_ground_plane_persists_via_read_design(self, design_id):
+        """`propose_requirement_target`'s sibling test, one field over (issue
+        #484) -- kept alongside it for the same reason: the pure functions
+        below are exhaustively covered, but the I/O wrapper itself (fetch,
+        attach, write, commit) is only proven end to end here."""
+        result = propose_requirement_host_ground_plane(
+            design_id=design_id,
+            requirement_id="REQ-1",
+            is_ground_plane=True,
+        )
+        assert result["status"] == "proposed"
+
+        stored = read_design(design_id)
+        assert stored["requirements"]["REQ-1"]["host_ground_plane"]["is_ground_plane"] is True
+        assert (
+            stored["requirements"]["REQ-1"]["host_ground_plane"]["ground_plane_status"]
+            == GroundPlaneStatus.PROPOSED.value
+        )
 
     def test_fetch_requirements_for_update_blocks_a_concurrent_fetch_until_release(self, design_id):
         """The core issue #389 regression test. Without `FOR UPDATE`, two
