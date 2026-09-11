@@ -75,8 +75,19 @@ MODULE SHAPE. Two layers, same pure/I-O seam `designs.validation`/
     entry, called only from `designs.requirements_document.
     extract_requirement_fields` once a Requirements document reaches
     `CONFIRMED` (docs/adr/0034) -- never as a standalone tool argument.
+    `propose_host_ground_plane`/`confirm_host_ground_plane`/
+    `attach_host_ground_plane` (issue #484, ADR-0017) join the pure layer
+    as a third sibling, living at `requirements[requirement_id]
+    ["host_ground_plane"]`: ADR-0017 lets a design skip the base printed
+    layer's own reflector only when a Customer requirement *explicitly
+    asserts* the host surface is a confirmed, reliable ground plane --
+    "asserted, never inferred" -- so this key is modelled on `target`'s
+    PROPOSED-then-CONFIRMED lifecycle, not `intended_effect`'s one-shot
+    shape: a bare, unconfirmed assertion is not enough to skip anything.
   - Thin I/O wrappers (`propose_requirement_target`,
-    `mark_requirement_unscoreable`, `confirm_requirement_target`) -- these
+    `mark_requirement_unscoreable`, `confirm_requirement_target`,
+    `propose_requirement_host_ground_plane`,
+    `confirm_requirement_host_ground_plane`) -- these
     are what `agent/main.py`/`mcp_server/server.py` actually wire up as
     tools. They read/write `designs.requirements` directly with their own
     small amount of raw SQL, mirroring `designs.db`'s no-ORM style,
@@ -172,6 +183,48 @@ class InvalidRequirementTargetError(ValueError):
     (human or agent) gets a message it can act on."""
 
 
+class GroundPlaneStatus(StrEnum):
+    """Lifecycle status of one host ground-plane assertion, carried as
+    `host_ground_plane["ground_plane_status"]` -- named `ground_plane_status`,
+    not `status`, for the identical reason `TargetStatus` is carried as
+    `target_status`: so it never collides with the wrapper functions' own
+    top-level `status` key (`propose_requirement_host_ground_plane` returns
+    `{"status": "proposed", ..., "host_ground_plane": {"ground_plane_status":
+    "PROPOSED", ...}}`).
+
+    - `PROPOSED`: `propose_host_ground_plane`'s output -- an as-yet-
+      unconfirmed reading of the customer's prose ("the platform is a solid
+      aluminum wing" read as "host asserts confirmed ground plane").
+    - `CONFIRMED`: `confirm_host_ground_plane`'s output -- a human has
+      vouched that the proposed reading matches what the customer meant.
+      Per ADR-0017 ("asserted, never inferred"), only a `CONFIRMED`
+      assertion may ever let the design loop skip the base printed layer's
+      own reflector; a bare `PROPOSED` reading is not enough.
+
+    There is no `UNSCOREABLE`-equivalent third state here the way
+    `TargetStatus` has one: a requirement's prose either does or doesn't
+    assert something about the host's ground-plane reliability, and
+    "doesn't" is simply never calling `propose_host_ground_plane` for that
+    requirement at all -- the same way a requirement with no stated
+    `intended_effect` just never gets one attached, and ADR-0017's own
+    default (the base layer supplies its own reflector) already covers
+    silence without needing a stored value to say so.
+    """
+
+    PROPOSED = "PROPOSED"
+    CONFIRMED = "CONFIRMED"
+
+
+class InvalidHostGroundPlaneAssertionError(ValueError):
+    """Raised by `propose_host_ground_plane`/`confirm_host_ground_plane`
+    when the shape they were handed is wrong -- a non-`bool` `is_ground_plane`,
+    an empty `confirmed_by`, or an attempt to confirm something that isn't a
+    `PROPOSED` assertion. Named and raised the same way
+    `InvalidRequirementTargetError` is for `target` -- a distinct exception
+    class per validated field, so a caller can tell which sibling rejected
+    its input without string-matching a shared message."""
+
+
 class UnknownRequirementError(Exception):
     """Raised by `attach_target` when `requirement_id` does not match any
     key already present in the `requirements` dict it was handed. A target
@@ -205,11 +258,20 @@ def _require_finite_number(field_name: str, value: Any) -> float:
     return numeric
 
 
-def _require_nonempty_string(field_name: str, value: Any) -> str:
+def _require_nonempty_string(
+    field_name: str,
+    value: Any,
+    error_cls: type[Exception] = InvalidRequirementTargetError,
+) -> str:
+    """Shared by every sibling in this module that validates a non-empty
+    string field (`unit`, `reason`, `confirmed_by`, `effect`). Raises
+    `error_cls` -- defaulting to `InvalidRequirementTargetError` for the
+    `target`/`intended_effect` callers already relying on that default, and
+    passed explicitly as `InvalidHostGroundPlaneAssertionError` by
+    `confirm_host_ground_plane` -- so each sibling's caller still sees only
+    its own named exception class, never a different sibling's."""
     if not isinstance(value, str) or not value.strip():
-        raise InvalidRequirementTargetError(
-            f"{field_name} must be a non-empty string, got {value!r}"
-        )
+        raise error_cls(f"{field_name} must be a non-empty string, got {value!r}")
     return value
 
 
@@ -437,6 +499,142 @@ def attach_intent(
         raise UnknownRequirementError(requirement_id)
     updated = copy.deepcopy(requirements)
     updated[requirement_id]["intended_effect"] = intended_effect
+    return updated
+
+
+def propose_host_ground_plane(is_ground_plane: bool) -> dict[str, Any]:
+    """Validate and tag one proposed host ground-plane assertion (issue
+    #484, ADR-0017) -- `attach_target`'s/`attach_intent`'s third sibling,
+    living at `requirements[requirement_id]["host_ground_plane"]`. Mirrors
+    `propose_target`'s validate-then-tag shape rather than
+    `propose_intended_effect`'s one-shot shape, because ADR-0017's whole
+    point is "asserted, never inferred": a bare unconfirmed reading is not
+    enough to let a design skip its own printed reflector, so this field
+    needs the same PROPOSED-then-CONFIRMED lifecycle `target` has.
+
+    `is_ground_plane` must be an actual `bool` -- `True` if the requirement's
+    prose asserts the host surface is a confirmed, reliable conductive
+    backing (e.g. "the platform is a solid aluminum wing"), `False` if it
+    explicitly asserts the opposite (a legitimate, distinct statement from
+    silence, which already defaults to `False`'s behaviour per ADR-0017
+    without anyone having to say so). Raises
+    `InvalidHostGroundPlaneAssertionError` naming the field if it isn't a
+    `bool` -- `None` and any other type are both rejected the same way, and
+    `bool` is not silently coerced from a truthy/falsy value.
+
+    Always returns `ground_plane_status="PROPOSED"`, `provenance="ASSUMED"`
+    -- this function has no way to know whether the reading it was handed
+    correctly reflects the customer's prose, only that it is *shaped* like a
+    legitimate assertion; that is exactly why the result is unconfirmed,
+    never something a caller can skip `confirm_host_ground_plane` for.
+
+    Calling this again for the same requirement (via
+    `propose_requirement_host_ground_plane`, its I/O-layer counterpart) is
+    how a proposal gets corrected or replaced before confirmation, the same
+    as `propose_target`.
+    """
+    if not isinstance(is_ground_plane, bool):
+        raise InvalidHostGroundPlaneAssertionError(
+            f"is_ground_plane must be a bool, got {is_ground_plane!r}"
+        )
+    return {
+        "ground_plane_status": GroundPlaneStatus.PROPOSED.value,
+        "provenance": ASSUMED,
+        "is_ground_plane": is_ground_plane,
+        "confirmed_by": None,
+        "confirmed_at": None,
+    }
+
+
+def confirm_host_ground_plane(
+    assertion: dict[str, Any],
+    confirmed_by: str,
+    confirmed_at: str | None = None,
+) -> dict[str, Any]:
+    """Confirm a proposed host ground-plane assertion, recording that it was
+    confirmed and by whom -- `confirm_target`'s direct sibling (issue #484,
+    ADR-0017). `assertion` must be a dict shaped like
+    `propose_host_ground_plane`'s own return value with
+    `ground_plane_status == "PROPOSED"` -- confirming something not shaped
+    that way (nothing proposed yet) or an already-`CONFIRMED` assertion
+    (re-propose it first if it needs correcting -- confirming a stale
+    confirmation again would silently discard whoever confirmed it
+    originally) both raise `InvalidHostGroundPlaneAssertionError`, naming
+    what was found instead. `confirmed_by` must be a non-empty string
+    identifying who confirmed it, the same trust boundary `confirm_target`
+    already has.
+
+    `confirmed_at` defaults to the real current UTC time (ISO-8601) and is
+    only ever exposed as an explicit parameter for this function's own
+    tests to get deterministic timestamps --
+    `confirm_requirement_host_ground_plane` (the tool-facing I/O wrapper)
+    never accepts it as an argument, so an agent can never fabricate a
+    confirmation timestamp.
+
+    Returns a new dict (the input `assertion` is not mutated) with
+    `ground_plane_status="CONFIRMED"`; `is_ground_plane`/`provenance` are
+    carried over unchanged -- see this module's docstring for why
+    `provenance` deliberately stays `ASSUMED` even once confirmed. Per
+    ADR-0017, only the `CONFIRMED` result of this function may ever let the
+    design loop treat the host as its own reflector.
+    """
+    if (
+        not isinstance(assertion, dict)
+        or assertion.get("ground_plane_status") != GroundPlaneStatus.PROPOSED.value
+    ):
+        found = (
+            assertion.get("ground_plane_status")
+            if isinstance(assertion, dict)
+            else type(assertion).__name__
+        )
+        raise InvalidHostGroundPlaneAssertionError(
+            "confirm_host_ground_plane requires an assertion dict with "
+            f"ground_plane_status {GroundPlaneStatus.PROPOSED.value!r} "
+            f"(propose_host_ground_plane's own return shape) -- got "
+            f"ground_plane_status={found!r}. Nothing proposed yet should be "
+            "proposed first; an already-CONFIRMED assertion should be "
+            "re-proposed (corrected), not re-confirmed."
+        )
+    resolved_confirmed_by = _require_nonempty_string(
+        "confirmed_by", confirmed_by, error_cls=InvalidHostGroundPlaneAssertionError
+    )
+    resolved_confirmed_at = confirmed_at or datetime.datetime.now(datetime.UTC).isoformat()
+
+    confirmed = dict(assertion)
+    confirmed["ground_plane_status"] = GroundPlaneStatus.CONFIRMED.value
+    confirmed["confirmed_by"] = resolved_confirmed_by
+    confirmed["confirmed_at"] = resolved_confirmed_at
+    return confirmed
+
+
+def attach_host_ground_plane(
+    requirements: dict[str, Any],
+    requirement_id: str,
+    host_ground_plane: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a new `requirements` dict (never mutates its input) with
+    `host_ground_plane` attached under
+    `requirements[requirement_id]["host_ground_plane"]` --
+    `attach_target`'s/`attach_intent`'s third sibling (issue #484,
+    ADR-0017), leaving every other key on that requirement entry --
+    `requirement`, `target`, and `intended_effect` included -- exactly as
+    it was.
+
+    Same shape/validation posture as `attach_target`/`attach_intent`: this
+    function does not itself validate `host_ground_plane`'s shape
+    (`propose_host_ground_plane`'s job), and tolerates any extra keys
+    already on the requirement entry.
+
+    Raises `UnknownRequirementError` if `requirement_id` is not already a
+    key in `requirements` -- the identical error class `attach_target`/
+    `attach_intent` raise for the same reason, so a caller sees one
+    consistent failure mode regardless of which of the three sibling
+    `attach_*` functions it called.
+    """
+    if requirement_id not in requirements or not isinstance(requirements[requirement_id], dict):
+        raise UnknownRequirementError(requirement_id)
+    updated = copy.deepcopy(requirements)
+    updated[requirement_id]["host_ground_plane"] = host_ground_plane
     return updated
 
 
@@ -673,4 +871,140 @@ def confirm_requirement_target(
         "design_id": design_id,
         "requirement_id": requirement_id,
         "target": confirmed,
+    }
+
+
+def propose_requirement_host_ground_plane(
+    design_id: int,
+    requirement_id: str,
+    is_ground_plane: bool,
+) -> dict[str, Any]:
+    """Propose (or correct/replace an existing proposal for) one
+    requirement's host ground-plane assertion on a stored design (issue
+    #484, ADR-0017) -- `propose_requirement_target`'s direct sibling, and
+    the tool-facing entry point `agent/main.py`/`mcp_server/server.py` wire
+    up for it. Validates the proposed shape via `propose_host_ground_plane`,
+    then attaches it to the design's `requirements[requirement_id]` via
+    `attach_host_ground_plane`, replacing whatever `host_ground_plane` (if
+    any -- `PROPOSED` or `CONFIRMED`) was there before.
+
+    Returns a structured `status`-tagged result rather than raising for
+    every caller-facing failure mode: `"invalid_host_ground_plane"` (bad
+    shape -- `propose_host_ground_plane`'s own error), `"not_found"` (no
+    such `design_id`), or `"unknown_requirement"` (`requirement_id` isn't
+    one of this design's own requirement keys). On success: `{"status":
+    "proposed", "design_id": ..., "requirement_id": ..., "host_ground_plane":
+    {...}}`. A write that fails for any other reason still raises -- matches
+    every other function in this package.
+    """
+    try:
+        assertion = propose_host_ground_plane(is_ground_plane)
+    except InvalidHostGroundPlaneAssertionError as exc:
+        return {"status": "invalid_host_ground_plane", "message": str(exc)}
+
+    conn = db.get_connection()
+    try:
+        try:
+            requirements = _fetch_requirements(conn, design_id)
+            updated = attach_host_ground_plane(requirements, requirement_id, assertion)
+        except db.UnknownDesignError as exc:
+            conn.rollback()
+            return {"status": "not_found", "design_id": exc.design_id}
+        except UnknownRequirementError as exc:
+            conn.rollback()
+            return {
+                "status": "unknown_requirement",
+                "design_id": design_id,
+                "requirement_id": requirement_id,
+                "message": str(exc),
+            }
+        _store_requirements(conn, design_id, updated)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "status": "proposed",
+        "design_id": design_id,
+        "requirement_id": requirement_id,
+        "host_ground_plane": assertion,
+    }
+
+
+def confirm_requirement_host_ground_plane(
+    design_id: int,
+    requirement_id: str,
+    confirmed_by: str,
+) -> dict[str, Any]:
+    """Confirm the currently-proposed host ground-plane assertion on one of
+    a design's requirements, recording that it was confirmed and by whom
+    (issue #484, ADR-0017) -- `confirm_requirement_target`'s direct sibling.
+    `confirmed_at` is always the real current time -- deliberately not a
+    parameter here (see `confirm_host_ground_plane`'s docstring) so an agent
+    can never supply a fabricated confirmation timestamp.
+
+    Returns a structured `status`-tagged result: `"not_found"` (no such
+    `design_id`), `"unknown_requirement"` (`requirement_id` isn't one of
+    this design's requirement keys), `"no_proposal"` (this requirement has
+    no `host_ground_plane` yet at all -- propose one first),
+    `"invalid_host_ground_plane"` (the existing assertion is already
+    `CONFIRMED` -- `confirm_host_ground_plane`'s own error, naming which),
+    or on success `{"status": "confirmed", "design_id": ..., "requirement_id":
+    ..., "host_ground_plane": {...}}` with `host_ground_plane["confirmed_by"]`/
+    `host_ground_plane["confirmed_at"]` set.
+    """
+    conn = db.get_connection()
+    try:
+        try:
+            requirements = _fetch_requirements(conn, design_id)
+        except db.UnknownDesignError as exc:
+            conn.rollback()
+            return {"status": "not_found", "design_id": exc.design_id}
+
+        requirement_entry = requirements.get(requirement_id)
+        if not isinstance(requirement_entry, dict):
+            conn.rollback()
+            return {
+                "status": "unknown_requirement",
+                "design_id": design_id,
+                "requirement_id": requirement_id,
+            }
+
+        existing_assertion = requirement_entry.get("host_ground_plane")
+        if existing_assertion is None:
+            conn.rollback()
+            return {
+                "status": "no_proposal",
+                "design_id": design_id,
+                "requirement_id": requirement_id,
+                "message": (
+                    f"requirement_id {requirement_id!r} has no proposed host "
+                    "ground-plane assertion yet -- call "
+                    "propose_requirement_host_ground_plane before confirming one"
+                ),
+            }
+
+        try:
+            confirmed = confirm_host_ground_plane(existing_assertion, confirmed_by=confirmed_by)
+        except InvalidHostGroundPlaneAssertionError as exc:
+            conn.rollback()
+            return {"status": "invalid_host_ground_plane", "message": str(exc)}
+
+        updated = attach_host_ground_plane(requirements, requirement_id, confirmed)
+        _store_requirements(conn, design_id, updated)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "status": "confirmed",
+        "design_id": design_id,
+        "requirement_id": requirement_id,
+        "host_ground_plane": confirmed,
     }
