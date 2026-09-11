@@ -78,15 +78,24 @@ def _label_to_kind(item) -> str:
 
 def _item_text(item, doc) -> str | None:
     text = getattr(item, "text", None)
-    if text:
-        return text
-    export_md = getattr(item, "export_to_markdown", None)
-    if callable(export_md):
-        try:
-            return export_md(doc=doc)
-        except TypeError:
-            return export_md()
-    return None
+    if not text:
+        export_md = getattr(item, "export_to_markdown", None)
+        if callable(export_md):
+            try:
+                text = export_md(doc=doc)
+            except TypeError:
+                text = export_md()
+    if not text:
+        return None
+    # Issue #458: docling has been observed emitting a literal NUL (0x00) in
+    # extracted text from a real paper (He et al. 2024's PDF) -- likely a
+    # font/ligature artifact in the source, not anything meaningful. Postgres
+    # text columns reject NUL outright ("PostgreSQL text fields cannot
+    # contain NUL bytes"), which would otherwise fail insert_chunks deep
+    # inside a real ingestion run. Stripped here, at the boundary where
+    # docling's raw output enters this system, so every caller downstream
+    # (title, section headings, chunk content) is protected once.
+    return text.replace("\x00", "")
 
 
 def _item_page(item) -> int | None:

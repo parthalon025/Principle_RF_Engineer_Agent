@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 import agent.main as agent_main
 from agent.mcp_roles import build_role_agent
+from knowledge import extraction
 
 load_dotenv()
 
@@ -89,6 +90,137 @@ def make_fake_executable(tmp_path: Path, body: str, name: str = "fake_exe") -> P
         script.write_text(f"#!{sys.executable}\n" + body)
         script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return script
+
+
+def write_pdf(path: Path, lines: list[str]) -> None:
+    """Hand-rolled minimal single-page PDF with the given text lines -- no
+    third-party PDF-authoring library is a project dependency, so this
+    writes the raw PDF object structure directly.
+
+    Moved here from tests/test_ingest.py (issue #458 code review: a third
+    near-identical copy of this exact helper was about to be added for a
+    new cross-module round-trip test, on top of the two -- tests/
+    test_ingest.py and tests/test_read.py -- that already existed;
+    tests/test_read.py's own copy already carried a comment noting it
+    "mirrors tests/test_ingest.py's helper" rather than importing it. Same
+    Fowler: Duplicated Code smell this file's own `invoke_agent_tool`
+    docstring already names for a different helper, fixed the same way:
+    one copy here, imported by every test file that needs a real (not
+    mocked) PDF to ingest."""
+    content = "BT /F1 14 Tf 72 700 Td 16 TL\n"
+    for line in lines:
+        esc = line.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
+        content += f"({esc}) Tj T*\n"
+    content += "ET"
+    content_bytes = content.encode("latin-1")
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> "
+            b"/MediaBox [0 0 612 792] /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        (
+            f"<< /Length {len(content_bytes)} >>\nstream\n".encode("latin-1")
+            + content_bytes
+            + b"\nendstream"
+        ),
+    ]
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode("latin-1") + obj + b"\nendobj\n"
+
+    xref_offset = len(out)
+    n = len(objects) + 1
+    out += f"xref\n0 {n}\n".encode("latin-1")
+    out += b"0000000000 65535 f \n"
+    for off in offsets[1:]:
+        out += f"{off:010d} 00000 n \n".encode("latin-1")
+    out += (f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF").encode(
+        "latin-1"
+    )
+
+    path.write_bytes(bytes(out))
+
+
+def extraction_error(document_id: int) -> str | None:
+    """Fetch the captured extraction-error text for a document, for use in
+    assertion-failure messages -- so a red `extraction_status` check shows
+    *why* parsing failed (per issue #141) instead of just a bare status
+    mismatch. `ingest_document`'s return value doesn't carry this text (only
+    the stored row's metadata does), so this is a small direct DB read.
+
+    Moved here from tests/test_ingest.py alongside `write_pdf` (issue #458)
+    -- tests/test_read.py had an identical copy of this one too."""
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metadata->>'extraction_error' FROM documents WHERE id = %s",
+                (document_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def no_ocr(monkeypatch):
+    """Forces `ingest_document`'s internal `parse_document` call to run with
+    OCR (image-to-text) switched off, for tests whose fixture PDF already
+    has a real, selectable text layer and never needs it.
+
+    Patches the `parse_document` name as looked up inside `knowledge.ingest`
+    (not `knowledge.extraction`'s own default) so this is scoped to the
+    tests that opt into it -- `parse_document`'s own default (`do_ocr=True`)
+    is untouched, so any other caller (real ingestion of a scanned document)
+    still gets OCR by default (issue #141).
+
+    A pytest fixture, unlike `write_pdf`/`extraction_error` above: living in
+    conftest.py already makes it available to every test file by name, with
+    no import needed -- moved here from tests/test_ingest.py (issue #458),
+    which had the same fixture duplicated (byte for byte) in
+    tests/test_read.py."""
+    monkeypatch.setattr(
+        "knowledge.ingest.parse_document",
+        lambda path: extraction.parse_document(path, do_ocr=False),
+    )
+
+
+@pytest.fixture
+def cleanup_documents():
+    """Tracks document ids created by ingest_document (which commits its
+    own connection) and deletes them afterward -- unlike knowledge/db.py's
+    tests, this can't rely on a rolled-back transaction for isolation.
+
+    Deletes one row at a time in REVERSED (LIFO) append order, not a single
+    bulk `WHERE id = ANY(%s)` statement -- a later-appended document can
+    reference an earlier one via supersedes_document_id (self-referential
+    FK), and a single bulk DELETE gives Postgres no row-order guarantee, so
+    it can (and did, in practice: ForeignKeyViolation on
+    documents_supersedes_document_id_fkey) try to delete the referenced row
+    before the referencing one. Deleting newest-first always clears any such
+    reference before reaching the row it points to.
+
+    Moved here from tests/test_ingest.py alongside `no_ocr` (issue #458),
+    for the same reason: tests/test_read.py already had an identical copy."""
+    ids: list[int] = []
+    yield ids
+    if not ids:
+        return
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            for doc_id in reversed(ids):
+                cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+    finally:
+        conn.close()
 
 
 def invoke_agent_tool(tool_name: str, **kwargs):
