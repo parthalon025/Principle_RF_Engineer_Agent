@@ -8,32 +8,49 @@ for absorbers, Gustafsson & Sjoberg for reflection-phase steering,
 Nel/Skrivervik/Gustafsson for patch antennas -- not one formula with a swapped
 constant", and ADR-0018 made that the deciding argument for modelling the
 design family registry as an open interface. This module is the evidence for
-that decision rather than an assertion of it: the two bounds implemented here
-take different inputs (a thickness and a band; a reference half-wave
-simulation and a target frequency), return different quantities (a minimum
-metres of stack-up; a dimensionless quality factor), and rest on different
-physics (a causality/dispersion integral over a ground-backed slab; a stored-
-energy-over-radiated-power ratio on a LOSSLESS substrate). Nothing about them
-generalises into a shared signature, and pretending otherwise would put a
-number in front of a designer that does not mean what they think it means.
+that decision rather than an assertion of it: the three bounds implemented
+here take different inputs (a thickness and a band; a reference half-wave
+simulation and a target frequency; a static polarizability and a unit-cell
+area), return different quantities (a minimum metres of stack-up; a
+dimensionless quality factor; a minimum polarizability or a maximum
+wavelength-domain fractional bandwidth), and rest on different physics (a
+causality/dispersion integral over a ground-backed slab; a stored-energy-
+over-radiated-power ratio on a LOSSLESS substrate; a Herglotz sum rule on a
+free-standing perforated screen's low-frequency, Babinet-complement
+polarizability). Nothing about them generalises into a shared signature, and
+pretending otherwise would put a number in front of a designer that does not
+mean what they think it means.
 
-THE ONE MISTAKE THIS MODULE EXISTS TO PREVENT. Both bounds sound like "the
-best bandwidth you can get", and they are not interchangeable:
+THE ONE MISTAKE THIS MODULE EXISTS TO PREVENT. All three bounds sound like
+"the best bandwidth you can get", and they are not interchangeable:
 
   * The Rozanov bound governs an absorber, whose bandwidth comes from power
-    DISSIPATED in a deliberately lossy stack.
+    DISSIPATED in a deliberately lossy, GROUND-BACKED stack.
   * The patch Q-factor bound governs a radiator, whose bandwidth comes from
     power RADIATED away, and whose derivation assumes an explicitly lossless
     substrate, a PEC patch, a PEC ground, and (in the source's own appendix)
     "no ohmic losses".
+  * The perforated-screen bound governs a free-standing, TWO-PORT bandpass
+    surface with NOTHING behind it -- the opposite geometry from the first
+    two -- and it bounds passband WIDTH only, saying nothing about the
+    insertion-loss floor inside it.
 
-Citing the patch bound against an absorber design -- or Rozanov against an
-antenna -- is a category error that produces a confident, wrong, unfalsifiable
-number. `docs/patch-q-factor-bound-primary-source.md` and
-`docs/rozanov-bound-primary-source.md` are the first-hand readings behind each,
-including the stated assumptions that decide applicability. The registry in
-`designs/design_families.py` is what keeps them apart in practice, by making a
-family declare which one it is entitled to.
+Citing the patch bound against an absorber design, Rozanov against an
+antenna, or either against a free-standing radome is a category error that
+produces a confident, wrong, unfalsifiable number. Classical Bode-Fano in
+particular does NOT belong in this module for the perforated-screen family:
+it is vacuous for a free-standing structure whose far-side load is a pure
+resistance with zero Q (see
+`docs/bandpass-fss-physical-bound-primary-source.md` section 2) -- a correct,
+not a missing, result, and recording one anyway would repeat exactly the
+category error this paragraph warns against.
+`docs/patch-q-factor-bound-primary-source.md`,
+`docs/rozanov-bound-primary-source.md` and
+`docs/bandpass-fss-physical-bound-primary-source.md` are the first-hand
+readings behind each, including the stated assumptions that decide
+applicability. The registry in `designs/design_families.py` is what keeps
+them apart in practice, by making a family declare which one it is entitled
+to.
 
 PROVENANCE. Every formula here is `LITERATURE-SUPPORTED` -- read from the
 primary source, not from a secondary restatement (which for Rozanov matters:
@@ -417,3 +434,153 @@ def patch_max_fractional_bandwidth(
         frequency_hz, half_wave_reference_frequency_hz, half_wave_reference_q
     )
     return fractional_bandwidth_from_q(q_lb, vswr=vswr)
+
+
+# --------------------------------------------------------------------------
+# BANDPASS_FSS family: the Ludvig-Osipov et al. perforated-screen bound
+# --------------------------------------------------------------------------
+#
+# A. Ludvig-Osipov, J. Lundgren, C. Ehrenborg, Y. Ivanenko, A. Ericsson,
+# M. Gustafsson, B. L. G. Jonsson & D. Sjoberg, "Fundamental Bounds on
+# Transmission Through Periodically Perforated Metal Screens With
+# Experimental Validation", IEEE Trans. Antennas Propag. 68(2):773-782, 2020.
+# doi:10.1109/TAP.2019.2943430 (open author manuscript: arXiv:1810.07669).
+# Read first-hand in docs/bandpass-fss-physical-bound-primary-source.md;
+# equation numbers below are the paper's.
+#
+# NOT A BODE-FANO BOUND, DELIBERATELY. Classical Bode-Fano bounds a lossless
+# matching network in front of a load with non-zero Q; for a free-standing
+# two-port screen the only honest load is the far half-space itself, a pure
+# resistance with Q = 0, and every form of the criterion returns an
+# unbounded (vacuous) answer -- see the primary-source doc section 2 for why
+# that is a correct, not a missing, result. The bound below is a member of
+# the same "passive-system sum rule" family, derived for the right object: a
+# periodically perforated PEC screen, in free space, at normal incidence --
+# the BANDPASS_FSS geometry in the source's own words.
+#
+# THE WORKING FORM, Eq. (12):
+#
+#     B <= gamma * pi * Delta / (A * lambda_0)
+#
+# B is the source's own WAVELENGTH-DOMAIN fractional bandwidth of the
+# passband, B = 2*(lambda2 - lambda1)/(lambda1 + lambda2) -- NOT the
+# frequency-domain (f_high - f_low)/f_center this module uses for Rozanov's
+# bound, and not interchangeable with it (the two coincide only in the
+# narrow-band limit). gamma is the STATIC (DC) polarizability of the
+# aperture's Babinet-COMPLEMENTARY patch shape (not the aperture itself),
+# A the unit-cell area, lambda_0 the passband centre wavelength, and
+# Delta = sqrt(1 - T0^2) / T0 a threshold factor set by the power
+# transmittance T0^2 the passband edges are read at.
+#
+# IN PLAIN TERMS: how wide a window a perforated sheet can open is set by how
+# much electrical "bulk" one repeating cell's worth of metal has when placed
+# in a steady field -- a DC quantity, computable without a frequency sweep.
+# Cut a cleverer hole and the number rises; shrink the cell relative to the
+# wavelength and it falls. Rozanov trades bandwidth against a ground-backed
+# absorber's thickness; this trades it against a free-standing radome's
+# aperture shape and cell size.
+#
+# VALIDITY BOX (from the paper's own Sections II-III and V, not inferred):
+# an infinitely thin (or w/d >= 10, within 2% of the thin-screen result) PEC
+# screen, normal incidence, single propagating Floquet mode (below the
+# grating-lobe onset), negligible cross-polarisation, enough unit cells that
+# finite-array truncation is negligible (~30x30). It bounds passband WIDTH
+# only -- it says nothing about the insertion-loss FLOOR inside that width,
+# and its authors explicitly decline to extend it to lossy impedance
+# surfaces (a printed conductor is not PEC). It does not cover oblique
+# incidence at all.
+#
+# THE UNCOMPUTED INPUT: gamma. This module has no function that computes it
+# from an aperture's geometry -- that is an electrostatic field solve, not a
+# closed form, and nothing in rf_tools or simulation poses that problem
+# today (simulation/meep.py is FDTD, the wrong tool). A caller supplies
+# gamma_m3 the same way rozanov_min_thickness_m's caller supplies mu_s: from
+# a literature value, a hand calculation, or (once it exists) a dedicated
+# solve -- never guessed.
+
+
+def _require_open_unit_interval(name: str, value: float) -> float:
+    if not math.isfinite(value) or not (0.0 < value < 1.0):
+        raise ValueError(f"{name} must be strictly between 0 and 1; got {value!r}.")
+    return float(value)
+
+
+def perforated_screen_threshold_factor(power_transmittance_threshold: float) -> float:
+    """Delta = sqrt(1 - T0^2) / T0, Ludvig-Osipov et al. Eq. (8).
+
+    `power_transmittance_threshold` is T0^2, the fraction of incident POWER
+    the passband edges are read at (0.8 means the edges are where 80% of
+    the power gets through). Delta grows as the threshold tightens towards
+    1.0 (a stricter passband definition costs more of the bound's budget per
+    unit bandwidth) and shrinks towards 0 as the threshold relaxes towards
+    0.0.
+    """
+    t0_sq = _require_open_unit_interval(
+        "power_transmittance_threshold", power_transmittance_threshold
+    )
+    t0 = math.sqrt(t0_sq)
+    return math.sqrt(1.0 - t0_sq) / t0
+
+
+def perforated_screen_min_polarizability_m3(
+    f_low_hz: float,
+    f_high_hz: float,
+    cell_area_m2: float,
+    power_transmittance_threshold: float,
+) -> float:
+    """Least static polarizability (m^3, of the aperture's Babinet-
+    complementary patch shape) any BANDPASS_FSS candidate would need to open
+    a passband `f_low_hz`..`f_high_hz` at power transmittance
+    `power_transmittance_threshold` -- a floor no design beats, not a
+    target. Ludvig-Osipov et al. Eq. (12), solved for gamma:
+
+        gamma_min = B * A * lambda_0 / (pi * Delta)
+
+    with B the paper's own WAVELENGTH-domain fractional bandwidth of the
+    requested band (lambda1 = c/f_high_hz, lambda2 = c/f_low_hz,
+    lambda_0 = (lambda1 + lambda2)/2) -- computed here from the requested
+    band edges directly, so the frequency-vs-wavelength fractional-bandwidth
+    distinction (see this module's section header) never has to be handled
+    by the caller.
+
+    `cell_area_m2` is the unit-cell area (period squared, for a square
+    lattice). Raises nothing on its own -- see
+    docs/bandpass-fss-physical-bound-primary-source.md section 4 for the
+    validity conditions this result assumes without checking (normal
+    incidence, single Floquet mode, thin PEC conductor).
+    """
+    low, high = _require_band(f_low_hz, f_high_hz)
+    area = _require_positive("cell_area_m2", cell_area_m2)
+    delta = perforated_screen_threshold_factor(power_transmittance_threshold)
+    lambda1 = SPEED_OF_LIGHT_M_S / high
+    lambda2 = SPEED_OF_LIGHT_M_S / low
+    lambda0 = (lambda1 + lambda2) / 2.0
+    b_wavelength = 2.0 * (lambda2 - lambda1) / (lambda1 + lambda2)
+    return b_wavelength * area * lambda0 / (math.pi * delta)
+
+
+def perforated_screen_max_wavelength_fractional_bandwidth(
+    gamma_m3: float,
+    cell_area_m2: float,
+    center_wavelength_m: float,
+    power_transmittance_threshold: float,
+) -> float:
+    """Widest wavelength-domain fractional bandwidth (Ludvig-Osipov et al.'s
+    own B, NOT (f_high-f_low)/f_center) a BANDPASS_FSS passband centred at
+    `center_wavelength_m` could hold at power transmittance
+    `power_transmittance_threshold`, given a candidate's `gamma_m3` and
+    `cell_area_m2` -- the inverse question to
+    `perforated_screen_min_polarizability_m3`, Eq. (12) read forwards:
+
+        B_max = gamma * pi * Delta / (A * lambda_0)
+
+    `gamma_m3` is the static polarizability of the aperture's Babinet-
+    complementary patch shape -- this module has no function that computes
+    it from geometry (see this module's section header); it must be
+    supplied.
+    """
+    gamma = _require_positive("gamma_m3", gamma_m3)
+    area = _require_positive("cell_area_m2", cell_area_m2)
+    lambda0 = _require_positive("center_wavelength_m", center_wavelength_m)
+    delta = perforated_screen_threshold_factor(power_transmittance_threshold)
+    return gamma * math.pi * delta / (area * lambda0)
