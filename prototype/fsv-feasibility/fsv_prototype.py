@@ -149,18 +149,20 @@ def s11_mag_from_absorbance(a):
 
 # Landy et al. 2008, measured curve
 LANDY_F0 = 11.5
-LANDY_FWHM = 0.04 * LANDY_F0          # 4% of center freq -> 0.46 GHz  [LITERATURE-SUPPORTED width]
-LANDY_PEAK = 0.88                     # ">88%" measured peak, conservative reading [LITERATURE-SUPPORTED]
-LANDY_BASELINE = 0.10                 # documented ~0.10 baseline      [LITERATURE-SUPPORTED]
+LANDY_FWHM = 0.04 * LANDY_F0  # 4% of center freq -> 0.46 GHz  [LITERATURE-SUPPORTED width]
+LANDY_PEAK = 0.88  # ">88%" measured peak, conservative reading
+# [LITERATURE-SUPPORTED]
+LANDY_BASELINE = 0.10  # documented ~0.10 baseline      [LITERATURE-SUPPORTED]
 
 landy_A = lorentzian_absorbance(FREQ_GHZ, LANDY_F0, LANDY_FWHM, LANDY_PEAK, LANDY_BASELINE)
 landy_s11 = s11_mag_from_absorbance(landy_A)
 
 # US12089385B2 Example 3, FIG. 7G, patent's own simulated curve
 PATENT_F0 = 9.2
-PATENT_FWHM = 0.04 * PATENT_F0        # SYNTHESIZED: assumed same fractional width as Landy [ASSUMED]
-PATENT_PEAK = 0.95                    # digitized peak absorption ~95%  [INFERRED]
-PATENT_BASELINE = 0.06                # digitized-adjacent baseline ~6% [INFERRED]
+PATENT_FWHM = 0.04 * PATENT_F0  # SYNTHESIZED: assumed same fractional width as Landy
+# [ASSUMED]
+PATENT_PEAK = 0.95  # digitized peak absorption ~95%  [INFERRED]
+PATENT_BASELINE = 0.06  # digitized-adjacent baseline ~6% [INFERRED]
 
 patent_A = lorentzian_absorbance(FREQ_GHZ, PATENT_F0, PATENT_FWHM, PATENT_PEAK, PATENT_BASELINE)
 patent_s11 = s11_mag_from_absorbance(patent_A)
@@ -336,7 +338,7 @@ def grade_and_spread(hist):
     for radius in range(n_bins):
         lo_b = max(0, modal - radius)
         hi_b = min(n_bins - 1, modal + radius)
-        if hist[lo_b:hi_b + 1].sum() >= 0.85:
+        if hist[lo_b : hi_b + 1].sum() >= 0.85:
             spread = hi_b - lo_b + 1
             break
 
@@ -349,7 +351,7 @@ def fsv_compare(freq, y1, y2, label=""):
 
     adm = compute_adm(dc1, lo1, dc2, lo2)
     fdm = compute_fdm(hi1, hi2, freq)
-    gdm = np.sqrt(adm ** 2 + fdm ** 2)
+    gdm = np.sqrt(adm**2 + fdm**2)
 
     adm_c = float(np.mean(np.abs(adm)))
     fdm_c = float(np.mean(np.abs(fdm)))
@@ -371,12 +373,18 @@ def fsv_compare(freq, y1, y2, label=""):
 
     result = {
         "label": label,
-        "ADMc": adm_c, "ADMc_grade": name_of(adm_c),
-        "FDMc": fdm_c, "FDMc_grade": name_of(fdm_c),
-        "GDMc": gdm_c, "GDMc_grade": name_of(gdm_c),
-        "ADM_Grade": adm_grade, "ADM_Spread": adm_spread,
-        "FDM_Grade": fdm_grade, "FDM_Spread": fdm_spread,
-        "GDM_Grade": gdm_grade, "GDM_Spread": gdm_spread,
+        "ADMc": adm_c,
+        "ADMc_grade": name_of(adm_c),
+        "FDMc": fdm_c,
+        "FDMc_grade": name_of(fdm_c),
+        "GDMc": gdm_c,
+        "GDMc_grade": name_of(gdm_c),
+        "ADM_Grade": adm_grade,
+        "ADM_Spread": adm_spread,
+        "FDM_Grade": fdm_grade,
+        "FDM_Spread": fdm_spread,
+        "GDM_Grade": gdm_grade,
+        "GDM_Spread": gdm_spread,
         "GDM_hist": gdm_hist,
     }
     return result
@@ -391,17 +399,27 @@ def rms_error_db(y1_mag, y2_mag):
 
 def print_result(r, rms_db_val, offset_ghz, offset_pct, offset_fwhm):
     print(f"\n=== {r['label']} ===")
-    print(f"  frequency offset: {offset_ghz:.3f} GHz "
-          f"({offset_pct:.1f}% of reference center freq, "
-          f"{offset_fwhm:.2f}x Landy's FWHM)")
+    print(
+        f"  frequency offset: {offset_ghz:.3f} GHz "
+        f"({offset_pct:.1f}% of reference center freq, "
+        f"{offset_fwhm:.2f}x Landy's FWHM)"
+    )
     print(f"  RMS error (dB):        {rms_db_val:8.3f} dB")
-    print(f"  ADMc = {r['ADMc']:.4f}  ({r['ADMc_grade']:<10s})  "
-          f"Grade={r['ADM_Grade']}  Spread={r['ADM_Spread']}")
-    print(f"  FDMc = {r['FDMc']:.4f}  ({r['FDMc_grade']:<10s})  "
-          f"Grade={r['FDM_Grade']}  Spread={r['FDM_Spread']}")
-    print(f"  GDMc = {r['GDMc']:.4f}  ({r['GDMc_grade']:<10s})  "
-          f"Grade={r['GDM_Grade']}  Spread={r['GDM_Spread']}")
-    hist_str = ", ".join(f"{n}:{p*100:4.1f}%" for n, p in zip(GRADE_NAMES, r["GDM_hist"]))
+    print(
+        f"  ADMc = {r['ADMc']:.4f}  ({r['ADMc_grade']:<10s})  "
+        f"Grade={r['ADM_Grade']}  Spread={r['ADM_Spread']}"
+    )
+    print(
+        f"  FDMc = {r['FDMc']:.4f}  ({r['FDMc_grade']:<10s})  "
+        f"Grade={r['FDM_Grade']}  Spread={r['FDM_Spread']}"
+    )
+    print(
+        f"  GDMc = {r['GDMc']:.4f}  ({r['GDMc_grade']:<10s})  "
+        f"Grade={r['GDM_Grade']}  Spread={r['GDM_Spread']}"
+    )
+    hist_str = ", ".join(
+        f"{n}:{p * 100:4.1f}%" for n, p in zip(GRADE_NAMES, r["GDM_hist"], strict=False)
+    )
     print(f"  GDM confidence histogram: {hist_str}")
 
 
@@ -416,7 +434,9 @@ print("(SYNTHESIZED, ~11.5 GHz). Curves are Lorentzian approximations, NOT")
 print("digitized data -- see module docstring for exactly what is assumed.")
 print("=" * 78)
 
-main_result = fsv_compare(FREQ_GHZ, landy_s11, patent_s11, label="Patent Ex.3 vs Landy (disputed pair)")
+main_result = fsv_compare(
+    FREQ_GHZ, landy_s11, patent_s11, label="Patent Ex.3 vs Landy (disputed pair)"
+)
 main_rms = rms_error_db(landy_s11, patent_s11)
 print_result(main_result, main_rms, LANDY_F0 - PATENT_F0, FREQ_OFFSET_PCT, FREQ_OFFSET_IN_FWHM)
 
@@ -438,7 +458,7 @@ for k in offsets_in_fwhm:
     shifted_A = lorentzian_absorbance(FREQ_GHZ, f0_shifted, LANDY_FWHM, LANDY_PEAK, LANDY_BASELINE)
     shifted_s11 = s11_mag_from_absorbance(shifted_A)
 
-    label = f"offset = {k:.2f} x FWHM ({shift:.3f} GHz, {shift/LANDY_F0*100:.1f}% of f0)"
+    label = f"offset = {k:.2f} x FWHM ({shift:.3f} GHz, {shift / LANDY_F0 * 100:.1f}% of f0)"
     r = fsv_compare(FREQ_GHZ, landy_s11, shifted_s11, label=label)
     rms_val = rms_error_db(landy_s11, shifted_s11)
     sweep_rows.append((k, shift, r, rms_val))
@@ -451,14 +471,22 @@ for k in offsets_in_fwhm:
 print("\n" + "=" * 78)
 print("SUMMARY TABLE")
 print("=" * 78)
-header = f"{'offset (x FWHM)':>16s} | {'RMS dB':>9s} | {'GDMc':>7s} | {'GDM grade':>10s} | {'Grade':>5s} | {'Spread':>6s}"
+header = (
+    f"{'offset (x FWHM)':>16s} | {'RMS dB':>9s} | {'GDMc':>7s} | "
+    f"{'GDM grade':>10s} | {'Grade':>5s} | {'Spread':>6s}"
+)
 print(header)
 print("-" * len(header))
-for k, shift, r, rms_val in sweep_rows:
-    print(f"{k:16.2f} | {rms_val:9.3f} | {r['GDMc']:7.4f} | {r['GDMc_grade']:>10s} | "
-          f"{r['GDM_Grade']:5d} | {r['GDM_Spread']:6d}")
-print(f"{'DISPUTED PAIR':>16s} | {main_rms:9.3f} | {main_result['GDMc']:7.4f} | "
-      f"{main_result['GDMc_grade']:>10s} | {main_result['GDM_Grade']:5d} | {main_result['GDM_Spread']:6d}")
+for k, _shift, r, rms_val in sweep_rows:
+    print(
+        f"{k:16.2f} | {rms_val:9.3f} | {r['GDMc']:7.4f} | {r['GDMc_grade']:>10s} | "
+        f"{r['GDM_Grade']:5d} | {r['GDM_Spread']:6d}"
+    )
+print(
+    f"{'DISPUTED PAIR':>16s} | {main_rms:9.3f} | {main_result['GDMc']:7.4f} | "
+    f"{main_result['GDMc_grade']:>10s} | {main_result['GDM_Grade']:5d} | "
+    f"{main_result['GDM_Spread']:6d}"
+)
 
 print("\n" + "=" * 78)
 print("READ-OUT for issue #168 (data-driven, matches the numbers printed above)")
@@ -471,6 +499,7 @@ for i in range(1, len(gdmc_values)):
     if abs(gdmc_values[i] - gdmc_values[i - 1]) < 0.02 * max(gdmc_values[i - 1], 1e-6):
         gdmc_plateau_from = offsets_in_fwhm[i - 1]
         break
+gdmc_plateau_label = gdmc_plateau_from if gdmc_plateau_from else offsets_in_fwhm[-1]
 
 print(f"""
 This run's numbers (all from SYNTHESIZED curves and a BEST-EFFORT FSV
@@ -480,32 +509,33 @@ RMS"). What they show instead is a different, still-load-bearing problem:
 
   - The disputed patent-vs-Landy pair sits at a {FREQ_OFFSET_IN_FWHM:.2f}x-FWHM offset,
     matching ADR-0041's "roughly five resonance-widths apart" estimate.
-    Its GDMc = {main_result['GDMc']:.4f} lands in "{main_result['GDMc_grade']}" -- NOT "Very poor" or
-    even "Poor". Two physically near-unrelated resonances (a peak that
+    Its GDMc = {main_result["GDMc"]:.4f} lands in "{main_result["GDMc_grade"]}" --
+    NOT "Very poor" or even "Poor". Two physically near-unrelated resonances (a peak that
     exists at 9.2 GHz in one curve and at 11.5 GHz in the other, with
     essentially baseline behavior at the other curve's peak) are rated
-    "{main_result['GDMc_grade']}" by this reconstruction's headline GDMc number.
+    "{main_result["GDMc_grade"]}" by this reconstruction's headline GDMc number.
 
   - Why: across the {FREQ_GHZ[0]:.0f}-{FREQ_GHZ[-1]:.0f} GHz analysis window, most points sit far
     from either resonance, where both curves are close to the same flat
     baseline reflectance -- so most point-by-point ADM/FDM values are
     small there and pull the *averaged* GDMc back down. The confidence
-    histogram is the tell: {main_result['GDM_hist'][0]*100:.1f}% of points still grade "Excellent"
+    histogram is the tell: {main_result["GDM_hist"][0] * 100:.1f}% of points still grade "Excellent"
     even for the fully-displaced disputed pair, because "most of the
     curve" (the flat part) really does still agree.
 
-  - The sweep shows GDMc rising only up to about {gdmc_plateau_from if gdmc_plateau_from else offsets_in_fwhm[-1]:.2f}x FWHM offset and then
-    roughly PLATEAUING (values across the sweep: {['%.3f' % v for v in gdmc_values]}),
+  - The sweep shows GDMc rising only up to about {gdmc_plateau_label:.2f}x FWHM offset and then
+    roughly PLATEAUING (values across the sweep: {[f"{v:.3f}" for v in gdmc_values]}),
     while RMS error in dB keeps climbing across the same sweep (values:
-    {['%.2f' % v for v in rms_values]} dB). In THIS reconstruction, on THIS
+    {[f"{v:.2f}" for v in rms_values]} dB). In THIS reconstruction, on THIS
     curve pair, plain RMS error is the metric that keeps discriminating
     across the offset range -- GDMc alone saturates early and stops.
 
   - What DOES keep discriminating inside FSV is Spread, not GDMc: it
-    grows monotonically from {sweep_rows[0][2]['GDM_Spread']} (tight, all-"Excellent", near-identical
-    curves) to {main_result['GDM_Spread']} (disputed pair) as the offset grows -- i.e. FSV's
+    grows monotonically from {sweep_rows[0][2]["GDM_Spread"]} (tight, all-"Excellent",
+    near-identical curves) to {main_result["GDM_Spread"]} (disputed pair) as the offset
+    grows -- i.e. FSV's
     extra information over RMS is not in its headline GDMc number here,
     it is in how SPREAD OUT the point-by-point confidence histogram is.
-    A consumer reading only "GDMc = {main_result['GDMc']:.2f}, Good" would be misled; a
+    A consumer reading only "GDMc = {main_result["GDMc"]:.2f}, Good" would be misled; a
     consumer reading the full histogram/Grade/Spread would not be.
 """)
