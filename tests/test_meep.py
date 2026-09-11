@@ -1341,9 +1341,7 @@ def test_role_never_changes_the_conductor_medium_actually_built():
     assert _conductor_medium(fake, tagged, 1e-3) == _conductor_medium(fake, untagged, 1e-3)
 
     # And an ideal-PEC (stateless) conductor, tagged vs. untagged.
-    assert _conductor_medium(fake, {"role": "REFLECTOR"}, 1e-3) == _conductor_medium(
-        fake, {}, 1e-3
-    )
+    assert _conductor_medium(fake, {"role": "REFLECTOR"}, 1e-3) == _conductor_medium(fake, {}, 1e-3)
 
 
 def test_role_never_changes_the_built_meep_object():
@@ -1352,9 +1350,7 @@ def test_role_never_changes_the_built_meep_object():
     fake = _CapabilityFakeMeep()
     tagged_geometry = {"conductors": [_box("REFLECTOR")]}
     untagged_geometry = {"conductors": [_box()]}
-    tagged_objects = _build_geometry_list(
-        fake, tagged_geometry, a_m=1e-3, include_conductors=True
-    )
+    tagged_objects = _build_geometry_list(fake, tagged_geometry, a_m=1e-3, include_conductors=True)
     untagged_objects = _build_geometry_list(
         fake, untagged_geometry, a_m=1e-3, include_conductors=True
     )
