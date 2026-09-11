@@ -264,3 +264,75 @@ borrowed number from a different quantity on a different fixture.
   (ADR-0025). The library returns the finding; nothing yet calls it. That
   wiring is its own ticket, and it must arrive as a warning under ADR-0028,
   never as a gate.
+
+## Corrections
+
+### 2026-09-10 — two of the three reported gaps are closed, and the discrepancy is adjudicated
+
+**What this ADR said**, in its first Consequence:
+
+> **Three effects have no design family, and the report is now queryable.**
+> `effects_without_family()` returns `transmitted`, `shielded against`, and
+> `low infrared emissivity`. Two of those three are named in CONTEXT.md's own
+> seven.
+
+**What is true instead.** `effects_without_family()` returns **one**:
+`low infrared emissivity`. **ADR-0050** registered `BANDPASS_FSS` and `SHIELD`
+in `designs/design_families.py`, and `designs/intended_effects.py` now points
+`transmitted` and `shielded against` at them. `BANDPASS_FSS` was built to the
+`cheapest_fix` this library's own gap entry had spelled out — `TRANSMITTANCE`
+as the scored quantity, `port_count=2`, `requires_ground_plane=False`, an
+honest `UndeclaredAnalysisModel` until a passband synthesis exists.
+
+**This is the mechanism working, not a defect in it.** A `FamilyGap` is meant
+to be stated precisely enough that somebody can close it, and then to stop
+being reported. The tripwire in the other direction fired too:
+`test_every_registered_design_family_is_claimed_by_some_effect` failed the
+moment those two families were registered, rather than leaving two families no
+effect could reach — and that failure is what produced the wiring.
+`families_without_effect()` is back to `("PATCH",)`.
+
+`low infrared emissivity` stays gapped **deliberately**. ADR-0050 part 4
+argued for a family and declined: applying ADR-0027 §5's four-plug-in test
+returns *four nothings* rather than four differences, and the registry's own
+#216 invariant refuses it on physics — an infrared layer has no ports, while
+`DesignFamily.__post_init__` pairs `requires_ground_plane` with `port_count`,
+so registering one would mean declaring a port count or a ground plane that is
+not there. Registering it would make this very report claim a gap was closed
+when it was not.
+
+**Also corrected**, from the same Consequences section:
+
+> **A discrepancy is reported and deliberately not adjudicated.** … Those
+> cannot both be true.
+
+They could, and they were. **ADR-0050 §5** adjudicated it: the doc *quoted* the
+paper, so the formula is on the record; the marker's own error message sets a
+higher bar for "read" — a primary-source read-through recording derivation,
+assumptions and validity box, of the kind
+`docs/rozanov-bound-primary-source.md` is — and no such document exists for
+this bound. Independently, `rf_tools/physical_bounds.py` implements nothing for
+it, so the slot has no `feasibility` function to point at. The marker is
+correct rather than stale, the phrase this library quotes was kept verbatim so
+the quotation stays true, and each bound's `registry_state` now records the
+adjudication instead of an open question.
+
+**Raised by:** ADR-0050 (`feat/design-family-registry-buildout`), reported to
+this library's owner by the agent that wrote it.
+
+**The Decision is unaffected.** The library is still a reference lookup over
+physics and the registry, never a record of the requirement, and ADR-0030
+still stands unamended — `intended_effect` remains an open-vocabulary key
+validated against nothing, and an unknown effect still returns a miss. What
+moved is the *contents* of the gap report, which is what a report is for.
+Amended rather than superseded, per ADR-0020.
+
+**One consequence gains force rather than losing it.** The radome arithmetic
+in the Context section above — a part reflecting 2 % and transmitting 92 %
+scoring `A = 0.06` and ranking last — was the argument for `BANDPASS_FSS` and
+is *not* retired by its existence. A family gives the part somewhere to be
+filed; what still prevents the misgrading is reading `scoring_quantity` before
+choosing an `analysis_model`, since `BANDPASS_FSS` and `ABSORBER_TRANSMISSIVE`
+read the same two solver outputs and differ only in the arithmetic afterwards.
+That arithmetic is kept as a note on the `transmitted` profile, pinned by test,
+rather than deleted along with the gap it justified.
