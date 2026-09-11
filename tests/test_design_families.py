@@ -436,15 +436,42 @@ def test_the_bandpass_family_records_what_makes_it_the_most_fabricable_architect
 
 
 def test_neither_new_family_declares_a_bound_it_has_not_read():
-    """Both are UnreadPhysicalBound, and each says which reading it is --
-    "nobody has searched" rather than "read but unimplemented". Calling either
-    raises with the citation rather than returning a plausible number."""
+    """Both are UnreadPhysicalBound -- "read but unimplemented" is the one
+    reading neither carries. Calling either raises with the citation rather
+    than returning a plausible number.
+
+    The two do NOT say the same thing about themselves: SHIELD's citation
+    still reads "nobody here has searched" (#453's structural-suspicion
+    argument stops short of an actual literature search), while BANDPASS_FSS's
+    now records a completed-but-inconclusive search (2026-09-11) -- see
+    test_the_bandpass_bound_records_a_searched_but_stranded_lead below. Both
+    outcomes are UnreadPhysicalBound because both license the same behaviour:
+    refuse a number, name what to go and read.
+    """
     for family in (BANDPASS_FSS, SHIELD):
         assert isinstance(family.physical_bound, UnreadPhysicalBound), family.name
         assert not family.has_physical_bound, family.name
-        assert "nobody here has searched" in family.physical_bound.citation, family.name
         with pytest.raises(NotImplementedError):
             family.physical_bound()
+    assert "nobody here has searched" in SHIELD.physical_bound.citation
+
+
+def test_the_bandpass_bound_records_a_searched_but_stranded_lead():
+    """BANDPASS_FSS's bound moved from "nobody has searched" to "searched,
+    found one on-point candidate, could not read it" -- a sharper unread
+    state, not a solved one. The citation must name the candidate precisely
+    enough that the next reader can go straight to it, and must not let the
+    search-engine paraphrase it rests on be mistaken for a verbatim quote.
+    """
+    citation = BANDPASS_FSS.physical_bound.citation
+    assert "nobody here has searched" not in citation
+    assert "Zheng, Hao & Li" in citation
+    assert "10.1109/TMTT.2025.3592449" in citation
+    assert "TRANSMISSIVE" in citation
+    assert "STRANDED" in citation
+    assert "docs/RUNNING-LISTS.md" in citation
+    # Still not a claim it applies -- the same discipline the old citation had.
+    assert "NOT a claim that it applies" in citation
 
 
 def test_the_shield_bound_records_the_structural_suspicion_without_acting_on_it():
