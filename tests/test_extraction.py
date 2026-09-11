@@ -160,8 +160,6 @@ def test_parse_document_strips_nul_bytes_from_extracted_text(tmp_path, monkeypat
     real ingestion run with no fixture ever having exercised it. `_item_text`
     now strips NUL at the boundary where docling's raw output enters this
     system, so it never reaches the database."""
-    from docling.datamodel.base_models import InputFormat
-
     pdf_path = tmp_path / "fake.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n%%EOF")
 
