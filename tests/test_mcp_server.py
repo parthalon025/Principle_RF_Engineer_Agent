@@ -10,6 +10,10 @@ test_calculations.py and test_touchstone.py.
 """
 
 import asyncio
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -2306,3 +2310,88 @@ def test_generate_freecad_curved_geometry_forwards_executable(tmp_path: Path, mo
     assert result["simulator"] == "FreeCADCmd"
     assert result["status"] == "COMPLETED"
     assert result["freecad"]["objects_built"] == ["patch_0"]
+
+
+_STDIN_ISOLATION_PROBE = """
+import json
+import subprocess
+import sys
+import threading
+import time
+
+from mcp_server.server import isolate_transport_stdin
+
+isolate_transport_stdin()
+
+seen = []
+reader = threading.Thread(target=lambda: seen.append(sys.stdin.readline()), daemon=True)
+reader.start()
+time.sleep(0.5)
+
+try:
+    child = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.stdout.write(repr(sys.stdin.buffer.read(16)))"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    child_stdin = child.stdout
+except subprocess.TimeoutExpired:
+    child_stdin = "TIMED-OUT"
+
+print(json.dumps({"child_stdin": child_stdin}), flush=True)
+reader.join(timeout=20)
+print(json.dumps({"transport_read": seen[0] if seen else None}), flush=True)
+"""
+
+
+def test_isolate_transport_stdin_keeps_the_protocol_pipe_away_from_child_processes(tmp_path):
+    """The whole reason `mcp_server/server.py` touches standard input at all
+    (see `isolate_transport_stdin`'s own docstring): a child process that
+    inherits the pipe the MCP protocol arrives on deadlocks against the
+    server's outstanding read of that pipe on native Windows, and could
+    swallow protocol bytes on any platform.
+
+    Both halves have to hold, so both are checked here under the one
+    condition that actually triggers the failure -- a read already in flight
+    on the pipe when the child is spawned: the child must get a standard
+    input of its own (an immediate empty read, neither the protocol stream
+    nor a freeze), and the transport must still receive what the client
+    sends afterwards. The child's own `timeout=` is what keeps a regression
+    here a failing test rather than a test run that never ends."""
+    probe = tmp_path / "stdin_isolation_probe.py"
+    probe.write_text(_STDIN_ISOLATION_PROBE)
+
+    repo_root = str(Path(__file__).resolve().parents[1])
+    # The probe runs as its own script, so Python puts its own directory
+    # (tmp_path) on sys.path[0], not `cwd` -- `import mcp_server` would
+    # only resolve by accident, if PYTHONPATH already happened to carry the
+    # repo root in from the parent shell.
+    probe_env = dict(os.environ)
+    existing_pythonpath = probe_env.get("PYTHONPATH", "")
+    probe_env["PYTHONPATH"] = (
+        repo_root if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    )
+
+    process = subprocess.Popen(
+        [sys.executable, str(probe)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=repo_root,
+        env=probe_env,
+    )
+    try:
+        child_line = process.stdout.readline()
+        assert child_line, f"probe produced no output; stderr={process.stderr.read()}"
+        assert json.loads(child_line)["child_stdin"] == "b''"
+
+        process.stdin.write("hello\n")
+        process.stdin.flush()
+        transport_line = process.stdout.readline()
+        assert json.loads(transport_line)["transport_read"] == "hello\n"
+    finally:
+        process.stdin.close()
+        process.kill()
+        process.wait(timeout=30)

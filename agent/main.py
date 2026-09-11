@@ -1576,13 +1576,14 @@ def compile_lab_test_plan(state: dict) -> dict:
 # file wraps is also registered, independently, in `mcp_server/server.py`
 # (ADR-0032's single-registration destination). The duplicates that survive
 # here are the ones microwave/antenna/test still need as `FunctionTool`s,
-# because those three roles shell out to external solvers and every such tool
-# hangs indefinitely over the MCP stdio transport on native Windows (see
-# `tests/test_mcp_tool_call_parity.py`'s module docstring). principal,
-# systems and verification hold no such tool and run entirely over
-# `agent/mcp_roles.py`'s MCP-routed construction, so their wrappers are gone
-# and `agent/mcp_roles.py` owns their tool-name lists outright -- a role
-# whose `RoleSpec.tools` is empty below is migrated, not broken.
+# because those three roles have not been moved onto `agent/mcp_roles.py`'s
+# construction yet. What used to make that move unsafe -- every
+# solver-shelling tool deadlocking permanently over the MCP stdio transport
+# on native Windows -- no longer applies: see `mcp_server/server.py`'s
+# `isolate_transport_stdin`. principal, systems and verification already run
+# entirely over the MCP-routed construction, so their wrappers are gone and
+# `agent/mcp_roles.py` owns their tool-name lists outright -- a role whose
+# `RoleSpec.tools` is empty below is migrated, not broken.
 #
 # A tool shared between a migrated role and one of the three still on the old
 # path (search_knowledge, compile_lab_test_plan, the cascade/IP3 family) keeps

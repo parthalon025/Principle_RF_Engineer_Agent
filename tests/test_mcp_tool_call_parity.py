@@ -48,99 +48,61 @@ rather than silently avoid:
    docstring and `tests/test_mcp_roles.py::test_build_role_mcp_server_
    disables_the_default_five_second_client_session_timeout`.
 
-3. NOT FIXED, DOCUMENTED, CONFIRMED PLATFORM-SPECIFIC -- on native Windows,
-   a tool whose implementation shells out to its OWN subprocess (every
-   `run_*_simulation` tool: NEC2++, openEMS, HFSS, Elmer, Palace, MEEP,
-   gprMax, Qucs, LTspice, ngspice, Xyce, gerber2ems -- roughly half this
-   repo's real engineering tool surface) never returns AT ALL over the
-   MCP-routed path -- not slow, not merely past the old 5s timeout, but
-   genuinely hung indefinitely (observed for 60+ seconds with fix #2 in
-   place, i.e. with no client-side timeout left to mask it) -- even though
-   the SAME call over the OLD path succeeds normally, in well under a
-   second on top of the tool's own real work.
+3. FIXED HERE, AFTER BEING MIS-ROOT-CAUSED ONCE -- on native Windows, a
+   tool whose implementation shells out to its OWN subprocess (every
+   `run_*_simulation` tool, plus `generate_freecad_curved_geometry`,
+   `ingest_arxiv_paper` and `ingest_patent`) never returned AT ALL over
+   the MCP-routed path -- not slow, not merely past the old 5s timeout,
+   but permanently deadlocked -- even though the SAME call over the OLD
+   path succeeded normally, in well under a second on top of the tool's
+   own real work.
 
-   Confirmed WINDOWS-SPECIFIC, not a general `mcp`/`anyio` defect: this
-   file's `_IS_WINDOWS`-gated tests below were run against this exact code
-   inside a `python:3.12-slim` Linux container (network-joined to this
-   repo's own `docker-compose.yml` Postgres service, `uv sync --frozen
-   --group dev`) as part of this ticket's own code review -- every one of
-   them completes normally there, `run_nec2_simulation` included, in
-   seconds, with no timeout needed at all. That is why the three tests
-   naming this finding branch on platform (`_IS_WINDOWS`) instead of
-   unconditionally asserting a hang: CI (`.github/workflows/ci.yml`) runs
-   `pytest` on `ubuntu-latest` only, so an unconditional
-   `pytest.raises(McpRoutedToolCallTimedOut)` here would never observe the
-   hang it asserts and would fail CI outright, not merely mis-describe the
-   finding.
+   The cause is not the one this file, `docs/adr/0032-tool-registration-
+   consolidates-onto-the-mcp-server.md` and the tickets around them
+   recorded for months. That reading blamed FastMCP dispatching a
+   synchronous tool function on its own event-loop thread with no
+   `anyio.to_thread` wrapping. Measured directly against a stripped-down
+   FastMCP server, that explanation does not survive: a sync tool that
+   merely sleeps blocks the event loop exactly as hard and returns fine,
+   and wrapping the subprocess call in `anyio.to_thread.run_sync` does NOT
+   lift the deadlock. Blocking the event loop was never the problem.
 
-   Root-caused down to the raw `mcp` package's own Windows-specific stdio
-   client/server transport, independent of both this repo's
-   `agent/mcp_roles.py` construction and the OpenAI Agents SDK entirely:
-   reproduced with `mcp.client.stdio.stdio_client`/`mcp.ClientSession`
-   called directly, with NO Agents SDK import at all --
+   What is: the child process inherits the server's standard input, which
+   is the pipe the MCP protocol itself arrives on. A Windows anonymous
+   pipe is a synchronous file object, and the kernel serializes every
+   operation on it behind whatever read is already in flight -- and this
+   server always has a read in flight, because that is how it waits for
+   the next request. CPython asks its own standard handles what kind of
+   file they are while starting up, so the child stops there, before its
+   first line of Python, until the server receives another message; the
+   server cannot receive one until the child it is waiting on finishes.
+   Isolated with no `mcp` package involved at all: a parent blocked
+   reading a pipe stdin, spawning a child that inherits it, reproduces
+   the freeze exactly; passing `stdin=subprocess.DEVNULL` clears it; a
+   `cmd.exe` child (which never queries the handle) is unaffected either
+   way, which is why the deadlock looks Python-specific and why POSIX,
+   with no such per-handle serialization, never showed it at all.
 
-       from mcp import ClientSession, StdioServerParameters, stdio_client
-       params = StdioServerParameters(
-           command=sys.executable, args=["-m", "mcp_server.server"], env=env,
-       )
-       async with stdio_client(params) as (read, write):
-           async with ClientSession(read, write, read_timeout_seconds=None) as session:
-               await session.initialize()
-               await session.call_tool("run_nec2_simulation", {...})  # never returns
+   `mcp_server/server.py`'s `isolate_transport_stdin()` fixes it at the
+   one place that owns the problem: the server keeps a private handle for
+   the transport and leaves the null device in the slot children inherit.
+   That covers every tool at once -- including any added later -- rather
+   than 15-odd call sites that would drift apart.
 
-   Likely implicated (not confirmed further -- this is a third-party `mcp`/
-   `anyio` library issue, out of this repo's own code to fix): FastMCP's
-   sync-tool dispatch (`mcp/server/fastmcp/utilities/func_metadata.py`'s
-   `call_fn_with_arg_validation`) calls a synchronous tool function
-   (`return fn(**kwargs)`) directly on the server's own event-loop thread
-   with no `anyio.to_thread`/`asyncio.to_thread` wrapping at all, so a tool
-   that itself blocks on `subprocess.run()` blocks that entire event loop;
-   combined with `mcp`'s own Windows-specific subprocess launch path
-   (`mcp/os/win32/utilities.py`'s Job-Object-based process-tree management
-   for the OUTER `mcp_server.server` subprocess itself), a nested
-   `subprocess.run()` call from inside that blocked loop appears to
-   deadlock rather than merely delay. This was NOT chased further inside
-   the installed `mcp`/`anyio` packages -- that is upstream, third-party
-   code, not this repo's to patch -- but it is a real, load-bearing,
-   reproducible finding that must be resolved (or the affected tools moved
-   off the stdio transport, or their subprocess calls moved onto a worker
-   thread inside `mcp_server/server.py` itself, or the transport itself
-   swapped) before a later "contract" ticket may safely delete the OLD
-   direct-call path these tools currently work over. `docs/adr/0032-tool-
-   registration-consolidates-onto-the-mcp-server.md`'s own "Consequences"
-   section already named exactly this risk in the abstract ("Nothing in
-   this session confirmed that round trip is behaviorally identical"); this
-   file is that confirmation, and the answer for subprocess-shelling tools
-   is "it is not," not "yes, with different wording." Tracked as its own
-   ticket, separate from the "delete the old path" contract ticket (#320)
-   this blocks: issue #372.
-
-Every test below is bounded (`conftest.invoke_role_mcp_tool`'s own
-`harness_timeout_s`, default 30s) so this finding is captured as a normal, fast,
-PASSING test run (asserting the honestly-observed-today behavior) rather
-than an indefinite CI hang -- matching this repo's own "warn, never block"
-principle applied to its own test suite. On Windows, the two tests named
-`*_known_hung_on_windows*` below expect the hang directly
-(`pytest.raises(McpRoutedToolCallTimedOut)`); on every other platform
-(confirmed Linux, above) they instead run the SAME real value-level
-comparison every other test in this file runs, since the call genuinely
-completes there -- a platform this finding does not reproduce on gets a
-platform-appropriate assertion, not a skip and not a false "it hangs
-everywhere" claim. `test_raw_mcp_sdk_reproduces_the_hang_independent_of_
-the_agents_sdk` (this finding's root-cause isolation, with no Agents SDK
-import at all) is `skipif`'d off non-Windows platforms outright instead of
-branching, since its entire point is isolating a hang that platform does
-not have. If finding 3 is ever resolved upstream (or worked around in this
-repo) such that Windows itself stops hanging, the Windows branches of
-these tests will start FAILING (the call will complete within the timeout
-instead of raising `McpRoutedToolCallTimedOut`) -- that failure is the
-intended signal to update this file, not a flake to retry.
+Every test below is still bounded (`conftest.invoke_role_mcp_tool`'s own
+`harness_timeout_s`, default 30s) rather than left to hang indefinitely if
+this regresses -- matching this repo's own "warn, never block" principle
+applied to its own test suite. The tests that used to branch on platform
+and assert the hang now run the SAME real value-level comparison
+everywhere, and `test_raw_mcp_sdk_completes_a_subprocess_shelling_tool`
+(no Agents SDK import at all, so a failure there points at the server
+process rather than at this repo's `agent/mcp_roles.py` or the SDK's
+conversion layer) is the regression guard for the fix itself.
 """
 
 from __future__ import annotations
 
 import json
-import platform
 import tempfile
 import time
 from pathlib import Path
@@ -150,7 +112,6 @@ import pytest
 import skrf as rf
 from conftest import (
     DIPOLE_GEOMETRY,
-    McpRoutedToolCallTimedOut,
     invoke_agent_tool,
     invoke_role_mcp_tool,
     make_fake_executable,
@@ -159,11 +120,6 @@ from conftest import (
 import agent.main as agent_main
 from orchestration.design_loop import start_design_loop
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
-
-# Finding 3 (module docstring above) is confirmed Windows-specific, not a
-# general mcp/anyio defect -- see the tests that reference this constant for
-# how each one adapts to a platform where the hang does not reproduce.
-_IS_WINDOWS = platform.system() == "Windows"
 
 
 def _decode_mcp_tool_output(raw):
@@ -283,7 +239,7 @@ def _write_fake_nec2pp_exit_0(tmp_path: Path) -> Path:
     return make_fake_executable(tmp_path, body, name="fast_nec2pp")
 
 
-def test_geometry_dict_tool_known_hung_on_windows_over_the_new_path(tmp_path, monkeypatch):
+def test_geometry_dict_tool_agrees_over_the_new_path(tmp_path, monkeypatch):
     """run_nec2_simulation: a strict_mode=False tool (its `geometry` param
     is a free-form dict) on the "antenna" role, which shells out to a real
     subprocess (`simulation.nec2pp.Nec2ppSimulator.run`'s own
@@ -291,25 +247,13 @@ def test_geometry_dict_tool_known_hung_on_windows_over_the_new_path(tmp_path, mo
     out here exactly as `tests/test_nec2pp.py` already does, per this
     repo's own solver-adapter-test convention).
 
-    On Windows, this is finding 3 from this file's module docstring,
-    reproduced concretely: the OLD path succeeds normally; the SAME call
-    over the NEW path does not return within `invoke_role_mcp_tool`'s bound
-    at all, even for a fake "solver" that exits immediately with no output
-    and no sleep -- this is not about how long the tool takes, it is about
-    shelling out to a subprocess AT ALL from inside mcp_server.server's own
-    stdio-transport subprocess on this platform. See the module docstring
-    for the raw `mcp`-SDK-only reproduction that rules out the OpenAI
-    Agents SDK and this repo's own agent/mcp_roles.py as the cause.
-
-    THE WINDOWS BRANCH PASSES TODAY BY CAPTURING THAT HANG, NOT BY AVOIDING
-    IT -- if it starts failing, that means the NEW path now completes in
-    time on Windows too, which is the update signal for this file, not a
-    flake. On every other platform (confirmed Linux -- see the module
-    docstring), the call genuinely completes, so this runs the SAME
-    value-level comparison every non-hanging tool in this file runs, giving
-    AC1's "strict_mode=False geometry/circuit-dict tool" bucket a real,
-    completed answer on the platform CI actually runs on
-    (`.github/workflows/ci.yml` is `ubuntu-latest`-only)."""
+    This is AC1's "strict_mode=False geometry/circuit-dict tool" bucket,
+    and it is also the concrete case behind finding 3 in this file's module
+    docstring: a call that used to deadlock forever on native Windows
+    because the faked "solver" inherited the server's own protocol pipe as
+    its standard input. It completes on both paths now, so what is compared
+    here is what the ticket wanted compared all along -- the returned
+    values."""
     script = _write_fake_nec2pp_exit_0(tmp_path)
     monkeypatch.setenv("NEC2PP_BIN", str(script))
 
@@ -318,18 +262,6 @@ def test_geometry_dict_tool_known_hung_on_windows_over_the_new_path(tmp_path, mo
     )
     assert old_result["provenance"] == "SIMULATED"
     assert old_result["status"] == "COMPLETED"
-
-    if _IS_WINDOWS:
-        with pytest.raises(McpRoutedToolCallTimedOut):
-            invoke_role_mcp_tool(
-                "antenna",
-                "run_nec2_simulation",
-                harness_timeout_s=20,
-                geometry=DIPOLE_GEOMETRY,
-                frequency_hz=300e6,
-                timeout_s=10,
-            )
-        return
 
     new_raw = invoke_role_mcp_tool(
         "antenna",
@@ -357,13 +289,10 @@ def test_geometry_dict_tool_known_hung_on_windows_over_the_new_path(tmp_path, mo
 
 # ---------------------------------------------------------------------------
 # AC2 (issue #319): error-surfacing behavior, for a tool that can genuinely
-# raise. Split into two cases -- a clean, non-subprocess exception (which
-# DOES complete, and answers ADR-0032's original "isError=true text result,
-# not a raised Python exception" question directly) and the subprocess-
-# based SimulatorError case (which hits finding 3 above before the isError
-# question is even reachable) -- rather than only the latter, so the
-# narrower error-surfacing question this ticket also asks about has a real,
-# completed answer on record, not just "everything about this tool hangs."
+# raise. Split into two cases -- a clean, non-subprocess exception and the
+# subprocess-based SimulatorError case -- because for as long as finding 3's
+# deadlock stood, only the first could answer ADR-0032's "isError=true text
+# result, not a raised Python exception" question at all.
 # ---------------------------------------------------------------------------
 
 
@@ -423,7 +352,7 @@ def _write_fake_nec2pp_exit_1(tmp_path: Path) -> Path:
     return make_fake_executable(tmp_path, body, name="failing_nec2pp")
 
 
-def test_error_surfacing_for_a_genuine_simulator_error_known_hung_on_windows(tmp_path, monkeypatch):
+def test_error_surfacing_for_a_genuine_simulator_error(tmp_path, monkeypatch):
     """run_nec2_simulation with a fake solver that fails (nonzero exit) --
     the concrete `SimulatorError` scenario ADR-0032's acceptance criteria
     names by example. `simulation.nec2pp.Nec2ppSimulator.run` raises
@@ -435,23 +364,13 @@ def test_error_surfacing_for_a_genuine_simulator_error_known_hung_on_windows(tmp
     Agents SDK's own default_tool_error_function, same as the clean
     non-subprocess case above -- a plain, promptly-returned text string.
 
-    On Windows, the NEW path hits finding 3 (the module docstring's
-    Windows-specific stdio-transport + nested-subprocess hang) before ever
-    reaching the isError=true-vs-raised-exception question at all: the call
-    never returns, error or otherwise. ADR-0032's specific error-surfacing
-    question therefore has NO answer for this tool category on that
-    platform -- not "equivalent", not "different wording" -- the more
-    fundamental transport-level finding preempts it entirely, and the
-    Windows branch's job is to say exactly that, not to paper over it with
-    a narrower claim that platform cannot actually support.
-
-    On every other platform (confirmed Linux -- see the module docstring),
-    the call completes, and ADR-0032's error-surfacing question DOES have
-    an answer for this tool category there: equivalent in effect to
-    `test_error_surfacing_for_a_clean_non_subprocess_exception` above (a
-    plain text result on both paths containing the same failure detail,
-    neither path raising a catchable-by-type exception), with the same
-    wording/shape differences already documented there."""
+    ADR-0032's error-surfacing question went unanswered for this whole tool
+    category while the deadlock in this file's finding 3 preempted it: the
+    call never returned, error or otherwise. With that fixed, the answer is
+    the same one `test_error_surfacing_for_a_clean_non_subprocess_exception`
+    above records -- a plain text result on both paths carrying the same
+    failure detail, neither path raising a catchable-by-type exception,
+    with the wording/shape differences documented there."""
     script = _write_fake_nec2pp_exit_1(tmp_path)
     monkeypatch.setenv("NEC2PP_BIN", str(script))
 
@@ -461,18 +380,6 @@ def test_error_surfacing_for_a_genuine_simulator_error_known_hung_on_windows(tmp
     assert isinstance(old_raw, str)
     assert "NEC2++ failed (1)" in old_raw
     assert "boom: bad geometry card" in old_raw
-
-    if _IS_WINDOWS:
-        with pytest.raises(McpRoutedToolCallTimedOut):
-            invoke_role_mcp_tool(
-                "antenna",
-                "run_nec2_simulation",
-                harness_timeout_s=20,
-                geometry=DIPOLE_GEOMETRY,
-                frequency_hz=300e6,
-                timeout_s=10,
-            )
-        return
 
     new_raw = invoke_role_mcp_tool(
         "antenna",
@@ -574,50 +481,37 @@ def test_latency_sanity_new_path_per_call_cost_is_not_a_gross_regression():
 
 
 # ---------------------------------------------------------------------------
-# Root-cause isolation for finding 3 (module docstring): the raw `mcp`
-# package's own client, with NO OpenAI Agents SDK import at all, to rule
-# out agent/mcp_roles.py's own construction (or the Agents SDK's MCPUtil
-# conversion layer) as the cause. Bounded the same way as every hang-prone
-# test above. Windows-only (see the skipif below): unlike the two tests
-# above, this one has no non-Windows branch, because its entire point is
-# isolating a hang that platform does not have -- there is nothing here to
-# prove on a platform where the raw mcp SDK just returns normally.
+# Regression guard for finding 3 (module docstring), through the raw `mcp`
+# package's own client with NO OpenAI Agents SDK import at all -- so a
+# failure here points at the spawned server process itself rather than at
+# agent/mcp_roles.py's construction or the Agents SDK's MCPUtil conversion
+# layer. Bounded rather than left to hang if the fix ever regresses.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not _IS_WINDOWS,
-    reason=(
-        "finding 3 (module docstring) is confirmed Windows-specific -- the "
-        "raw mcp SDK call this test makes completes normally on Linux (run "
-        "against this exact code during code review, see the module "
-        "docstring). This test's whole purpose is isolating a Windows-only "
-        "hang from the OpenAI Agents SDK, so it has nothing to prove on a "
-        "platform with no hang to isolate."
-    ),
-)
-def test_raw_mcp_sdk_reproduces_the_hang_independent_of_the_agents_sdk(tmp_path, monkeypatch):
-    """Proves finding 3 is a `mcp`/`anyio` stdio-transport limitation on
-    this platform, not a bug this ticket's own `agent/mcp_roles.py`
-    changes introduced or could fix: talks to the exact same `python -m
-    mcp_server.server` subprocess using ONLY the `mcp` package's own
-    `stdio_client`/`ClientSession` -- no `agents` import anywhere in this
-    test. `read_timeout_seconds=None` mirrors this ticket's own
-    `client_session_timeout_seconds=None` fix (finding 2) so the SAME
-    absence of a client-side timeout applies here too -- if this hangs, it
-    is not because of a timeout config this test forgot to raise, it is the
-    same underlying non-completion finding 1/2's fixes were unable to
-    resolve on their own.
+def test_raw_mcp_sdk_completes_a_subprocess_shelling_tool(tmp_path, monkeypatch):
+    """Calls a tool that shells out to its own subprocess against the exact
+    same `python -m mcp_server.server` process a real session talks to,
+    using ONLY the `mcp` package's own `stdio_client`/`ClientSession` -- no
+    `agents` import anywhere in this test. `read_timeout_seconds=None`
+    mirrors `agent/mcp_roles.py`'s own `client_session_timeout_seconds=None`
+    (finding 2 in this file's module docstring), so nothing client-side is
+    bounding the call: what this asserts is that the server answers, not
+    that some timeout is generous enough.
+
+    This is where the deadlock in finding 3 would resurface if
+    `mcp_server.server.isolate_transport_stdin()` were dropped, moved after
+    the server starts serving, or stopped covering a newly added tool that
+    spawns a process some other way. The bound below exists so that
+    regression shows up as one failing test in a normal run rather than a
+    suite that never finishes.
 
     The `asyncio.wait_for` bound is caught INSIDE the two `async with`
     blocks, not around them: cancelling `session.call_tool()` mid-flight
-    (the only way to bound a call that never returns) leaves the stdio
-    reader/writer task group in a state where exiting `stdio_client`'s own
-    `async with` afterward can itself raise an `anyio.BrokenResourceError`
-    wrapped in an `ExceptionGroup` -- a real, observed artifact of
-    cancelling a stuck call, not a second, independent finding, and not
-    the thing this test exists to prove. That secondary exception is
-    swallowed on the way out for exactly that reason."""
+    leaves the stdio reader/writer task group in a state where exiting
+    `stdio_client`'s own `async with` afterward can itself raise an
+    `anyio.BrokenResourceError` wrapped in an `ExceptionGroup`, which would
+    otherwise mask the plain assertion failure this test wants to report."""
     import asyncio
     import contextlib
     import os
@@ -633,15 +527,15 @@ def test_raw_mcp_sdk_reproduces_the_hang_independent_of_the_agents_sdk(tmp_path,
         args=["-m", "mcp_server.server"],
         env=dict(os.environ),
     )
-    timed_out = False
+    result = None
 
     async def _call():
-        nonlocal timed_out
+        nonlocal result
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write, read_timeout_seconds=None) as session:
                 await session.initialize()
-                try:
-                    await asyncio.wait_for(
+                with contextlib.suppress(TimeoutError):
+                    result = await asyncio.wait_for(
                         session.call_tool(
                             "run_nec2_simulation",
                             {
@@ -650,14 +544,14 @@ def test_raw_mcp_sdk_reproduces_the_hang_independent_of_the_agents_sdk(tmp_path,
                                 "timeout_s": 10,
                             },
                         ),
-                        timeout=20,
+                        timeout=30,
                     )
-                except TimeoutError:
-                    timed_out = True
 
     with contextlib.suppress(BaseExceptionGroup, BrokenResourceError):
         asyncio.run(_call())
 
-    assert timed_out, (
-        "expected the raw mcp SDK call to time out, same as the Agents-SDK-routed path"
+    assert result is not None, (
+        "the raw mcp SDK call never returned -- the server is deadlocking on a "
+        "tool that shells out to its own subprocess again"
     )
+    assert json.loads(result.content[0].text)["status"] == "COMPLETED"

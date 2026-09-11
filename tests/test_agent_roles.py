@@ -10,10 +10,11 @@ A role's tool list no longer lives in one place for all six roles, so the
 domain-scoping tests below read it through `_role_tool_names`: principal,
 systems and verification run entirely over `agent/mcp_roles.py`'s MCP-routed
 construction and their names live there; microwave, antenna and test still
-hold real `FunctionTool` objects in `agent/main.py` because every
-subprocess-shelling solver tool hangs over the MCP stdio transport on native
-Windows. What each role may reach is unchanged either way -- only which file
-says so.
+hold real `FunctionTool` objects in `agent/main.py`, not because of the
+Windows solver deadlock that originally held them back (fixed -- see
+`mcp_server/server.py`'s `isolate_transport_stdin`) but because their
+migration has not been done. What each role may reach is unchanged either
+way -- only which file says so.
 
 The routing mechanism was originally built on `Agent.as_tool()` (a nested
 Runner.run() call per delegated question, with a deterministic
