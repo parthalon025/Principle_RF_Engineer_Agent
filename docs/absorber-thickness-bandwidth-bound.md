@@ -593,7 +593,7 @@ Main results, quoted verbatim (Eqs. 4.10, 4.11, 5.1):
 > materials and operating below the first grating lobe. Allowing max|Y(λ)| = 1/2, the
 > normalized bandwidth is bounded by **B λ₀ / d ≤ π**."   (4.11)
 >
-> "B λ₀/d ≤ 2π tan(Φ/4) ≈ { π²Φ/2, Φ ≪ 1 ; 2π, Φ = π ; **2.6, Φ = π/2** }"   (5.1)
+> "B λ₀/d ≤ 2π tan(Φ/4) ≈ { (π/2)Φ, Φ ≪ 1 ; 2π, Φ = π ; **2.6, Φ = π/2** }"   (5.1)
 
 where B is fractional bandwidth, λ₀ the centre wavelength, d the thickness, and Φ the allowed
 reflection-phase window (the reflection phase stays within |φ| ≤ Φ/2). Earlier and looser

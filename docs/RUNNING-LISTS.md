@@ -1076,6 +1076,21 @@ this list.
     43 exists in this register and states exactly this; the map's older
     paragraph should be read superseded by it.
 
+### Found while charting NYS1's remaining patent examples (2026-09-10)
+
+67. **`docs/absorber-thickness-bandwidth-bound.md` §7.1 misquoted Gustafsson
+    & Sjöberg's Eq. (5.1) small-angle asymptote: `π²Φ/2`, not the primary
+    text's `(π/2)Φ`.** A factor-of-π transcription slip, caught while
+    independently rendering the primary PDF page (Gustafsson & Sjöberg,
+    *Physical bounds and sum rules for high-impedance surfaces*,
+    LUTEDX/(TEAT-7198)/1-19/2010, p.9) as an image to resolve a citation
+    question for NYS1's Example 1/2 scoring recipe. Does not change any of
+    that document's actual arithmetic — the `2.6` (Φ=π/2) and `2π` (Φ=π)
+    values it uses everywhere are the exact closed forms, not the small-Φ
+    asymptote — only the asymptotic label itself was wrong. Fixed in place
+    per ADR-0024 ("a correction lands at the claim"; the wrong number must
+    not be readable as current anywhere).
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
