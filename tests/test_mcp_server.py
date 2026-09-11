@@ -2362,14 +2362,25 @@ def test_isolate_transport_stdin_keeps_the_protocol_pipe_away_from_child_process
     probe = tmp_path / "stdin_isolation_probe.py"
     probe.write_text(_STDIN_ISOLATION_PROBE)
 
+    repo_root = str(Path(__file__).resolve().parents[1])
+    # The probe runs as its own script, so Python puts its own directory
+    # (tmp_path) on sys.path[0], not `cwd` -- `import mcp_server` would
+    # only resolve by accident, if PYTHONPATH already happened to carry the
+    # repo root in from the parent shell.
+    probe_env = dict(os.environ)
+    existing_pythonpath = probe_env.get("PYTHONPATH", "")
+    probe_env["PYTHONPATH"] = (
+        repo_root if not existing_pythonpath else f"{repo_root}{os.pathsep}{existing_pythonpath}"
+    )
+
     process = subprocess.Popen(
         [sys.executable, str(probe)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        cwd=str(Path(__file__).resolve().parents[1]),
-        env=dict(os.environ),
+        cwd=repo_root,
+        env=probe_env,
     )
     try:
         child_line = process.stdout.readline()
