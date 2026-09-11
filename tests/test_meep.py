@@ -45,6 +45,7 @@ from conftest import make_fake_executable
 from simulation.base import SimulationResult, SimulatorError
 from simulation.meep import (
     _SPEED_OF_LIGHT_M_S,
+    GeometryRole,
     MeepSimulator,
     _boundaries_and_k_point,
     _build_geometry_list,
@@ -57,6 +58,7 @@ from simulation.meep import (
     _primitive_to_meep,
     _region_weight,
     _run_in_meep_interpreter,
+    _validate_role,
     conductivity_from_sheet_resistance,
     run_meep_simulation,
     sigma_d_from_conductivity,
@@ -1212,6 +1214,160 @@ def test_a_lossy_material_needs_the_band_centre_frequency():
             include_conductors=False,
             fcen_meep=None,
         )
+
+
+# --- #485: geometry-layer role tagging (HOST/SUBSTRATE/REFLECTOR/SPACER/
+# --- PATTERN) -- pure metadata, validated at build time, never touching
+# --- what Medium/conductor actually gets built. -----------------------------
+
+
+@pytest.mark.parametrize("role", list(GeometryRole))
+def test_each_vocabulary_role_is_accepted_and_round_trips(role):
+    """Every one of the five roles passes _validate_role unchanged, and a
+    primitive carrying it still builds normally through _build_geometry_list
+    -- role is metadata, not a build blocker."""
+    assert _validate_role(role.value) is role
+
+    geometry = {
+        "materials": [
+            {"shape": "box", "p1_m": [0, 0, 0], "p2_m": [1e-3, 1e-3, 1e-3], "role": role.value}
+        ]
+    }
+    objects = _build_geometry_list(
+        _CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=False
+    )
+    assert len(objects) == 1
+
+
+def test_a_primitive_with_no_role_key_is_accepted_unchanged():
+    """The no-role case must stay legal and unaffected -- role is purely
+    additive."""
+    assert _validate_role(None) is None
+    geometry = {"materials": [{"shape": "box", "p1_m": [0, 0, 0], "p2_m": [1e-3, 1e-3, 1e-3]}]}
+    objects = _build_geometry_list(
+        _CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=False
+    )
+    assert len(objects) == 1
+
+
+def test_unrecognized_role_is_rejected_by_name():
+    with pytest.raises(ValueError, match="GROUND_PLANE"):
+        _validate_role("GROUND_PLANE")
+
+
+def test_build_geometry_list_names_the_bad_role_and_the_primitive_index():
+    geometry = {
+        "materials": [
+            {
+                "shape": "box",
+                "p1_m": [0, 0, 0],
+                "p2_m": [1e-3, 1e-3, 1e-3],
+                "role": "GROUND_PLANE",
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match=r"materials\[0\].*GROUND_PLANE"):
+        _build_geometry_list(_CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=False)
+
+
+def test_an_unrecognized_conductor_role_is_named_with_its_own_index():
+    geometry = {
+        "conductors": [
+            {"shape": "box", "p1_m": [0, 0, 0], "p2_m": [1e-3, 1e-3, 1e-3], "role": "NOT_A_ROLE"}
+        ]
+    }
+    with pytest.raises(ValueError, match=r"conductors\[0\].*NOT_A_ROLE"):
+        _build_geometry_list(_CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=True)
+
+
+def _box(role: str | None = None) -> dict:
+    prim = {"shape": "box", "p1_m": [0, 0, 0], "p2_m": [1e-3, 1e-3, 1e-3]}
+    if role is not None:
+        prim["role"] = role
+    return prim
+
+
+def test_two_reflectors_within_one_list_is_rejected():
+    geometry = {"conductors": [_box("REFLECTOR"), _box("REFLECTOR")]}
+    with pytest.raises(ValueError, match="REFLECTOR"):
+        _build_geometry_list(_CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=True)
+
+
+def test_two_reflectors_across_materials_and_conductors_combined_is_rejected():
+    geometry = {"materials": [_box("REFLECTOR")], "conductors": [_box("REFLECTOR")]}
+    with pytest.raises(ValueError, match="REFLECTOR"):
+        _build_geometry_list(_CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=True)
+
+
+def test_a_single_reflector_is_accepted():
+    geometry = {"materials": [_box()], "conductors": [_box("REFLECTOR")]}
+    objects = _build_geometry_list(
+        _CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=True
+    )
+    assert len(objects) == 2
+
+
+def test_multiple_pattern_roles_are_accepted():
+    """Unlike REFLECTOR, PATTERN carries no count cap -- ADR-0033's own
+    absorber design coplanar-prints two different-function inks in one
+    pattern layer, and a design may legitimately carry more than one
+    patterned/resonant layer."""
+    geometry = {
+        "materials": [_box("PATTERN")],
+        "conductors": [_box("PATTERN"), _box("PATTERN")],
+    }
+    objects = _build_geometry_list(
+        _CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=True
+    )
+    assert len(objects) == 3
+
+
+@pytest.mark.parametrize("role", ["HOST", "SUBSTRATE", "SPACER"])
+def test_host_substrate_and_spacer_roles_are_not_count_constrained(role):
+    geometry = {"materials": [_box(role), _box(role), _box(role)]}
+    objects = _build_geometry_list(
+        _CapabilityFakeMeep(), geometry, a_m=1e-3, include_conductors=False
+    )
+    assert len(objects) == 3
+
+
+def test_role_never_changes_the_conductor_medium_actually_built():
+    """Point 6: role is pure metadata. A REFLECTOR-tagged conductor and an
+    otherwise-identical untagged one must build byte-for-byte the same
+    medium -- the tag must never leak into _conductor_medium."""
+    fake = _CapabilityFakeMeep()
+    tagged = {"sheet_resistance_ohm_sq": 100.0, "thickness_m": 1e-4, "role": "REFLECTOR"}
+    untagged = {"sheet_resistance_ohm_sq": 100.0, "thickness_m": 1e-4}
+    assert _conductor_medium(fake, tagged, 1e-3) == _conductor_medium(fake, untagged, 1e-3)
+
+    # And an ideal-PEC (stateless) conductor, tagged vs. untagged.
+    assert _conductor_medium(fake, {"role": "REFLECTOR"}, 1e-3) == _conductor_medium(
+        fake, {}, 1e-3
+    )
+
+
+def test_role_never_changes_the_built_meep_object():
+    """Same point 6, at the _build_geometry_list level: the tagged and
+    untagged geometries must build byte-for-byte identical objects."""
+    fake = _CapabilityFakeMeep()
+    tagged_geometry = {"conductors": [_box("REFLECTOR")]}
+    untagged_geometry = {"conductors": [_box()]}
+    tagged_objects = _build_geometry_list(
+        fake, tagged_geometry, a_m=1e-3, include_conductors=True
+    )
+    untagged_objects = _build_geometry_list(
+        fake, untagged_geometry, a_m=1e-3, include_conductors=True
+    )
+    assert tagged_objects == untagged_objects
+
+
+def test_a_pre_existing_role_less_geometry_still_builds_identically():
+    """PATCH_GEOMETRY predates #485 and carries no role key anywhere --
+    confirms this change is purely additive for every existing caller."""
+    objects = _build_geometry_list(
+        _CapabilityFakeMeep(), PATCH_GEOMETRY, a_m=1e-3, include_conductors=True
+    )
+    assert len(objects) == 3  # 1 material + 2 conductors, same as before #485
 
 
 def test_no_periodic_axes_keeps_pml_on_every_side_and_no_k_point():

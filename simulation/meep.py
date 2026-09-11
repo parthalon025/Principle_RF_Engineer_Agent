@@ -286,6 +286,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -309,6 +310,76 @@ _DEFAULT_CHARACTERISTIC_LENGTH_M = 1e-3
 # whitelist (raising ValueError, not a bare getattr AttributeError) so a
 # typo'd component name fails with a clear message.
 _FIELD_COMPONENTS = frozenset({"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"})
+
+
+class GeometryRole(StrEnum):
+    """The physical-layer-role vocabulary a materials/conductors primitive's
+    optional `role` field is validated against (issue #485). This module is
+    the single source of truth for the five values -- named and cased the
+    same way `designs/requirement_targets.py`'s `TargetComparator`/
+    `TargetStatus` are (a `StrEnum`, member name equal to its value), the
+    closed-vocabulary convention already established elsewhere in this
+    codebase.
+
+    CONTEXT.md's domain glossary already distinguishes a design's **Host
+    surface** from its **Substrate** ("a skin has both a substrate and a
+    host"), and docs/adr/0033 records a real stack as a table -- a
+    resonant+lossy PATTERN layer on top, a SPACER in the middle, an
+    unpatterned REFLECTOR on the bottom. None of that was representable on
+    a geometry primitive before this; `role` is purely additive metadata
+    that says which of those five physical jobs one primitive is playing.
+
+    - `HOST`: the surface the whole skin mounts on (CONTEXT.md's Host
+      surface) -- present in a geometry only when the host itself needs to
+      be modelled (e.g. to represent an asserted conductive backing), not a
+      universal layer.
+    - `SUBSTRATE`: the antenna's own dielectric carrier (CONTEXT.md's
+      Substrate) -- distinct from the host per that entry's own _Avoid_
+      line.
+    - `REFLECTOR`: the ground-plane/mirror layer -- at most ONE primitive
+      across a geometry's combined materials+conductors may carry this role
+      (`_build_geometry_list` enforces the cap); a design has one reflector
+      by construction.
+    - `SPACER`: the dielectric standoff between the reflector and the
+      radiating pattern (docs/adr/0033's middle table row).
+    - `PATTERN`: the radiating/resonant printed layer -- UNLIKE `REFLECTOR`,
+      any number of primitives may carry this role: docs/adr/0033's own
+      absorber design coplanar-prints two different-function inks (silver
+      resonant plates, a carbon lossy bridge) in one pattern layer, and a
+      design may legitimately carry more than one patterned/resonant layer.
+
+    Deliberately NOT attached to `Medium`/conductor construction anywhere:
+    `role` is pure metadata for a human or downstream tool to read, and must
+    never change what `_primitive_to_meep`/`_conductor_medium` actually
+    builds (issue #485's own point 6) -- an identically-shaped primitive
+    tagged `REFLECTOR` and one left untagged must simulate byte-for-byte the
+    same object.
+    """
+
+    HOST = "HOST"
+    SUBSTRATE = "SUBSTRATE"
+    REFLECTOR = "REFLECTOR"
+    SPACER = "SPACER"
+    PATTERN = "PATTERN"
+
+
+def _validate_role(role: Any) -> "GeometryRole | None":
+    """Validate one primitive's optional `role` field against
+    `GeometryRole` -- issue #485's rule 1. `None` (the field absent, or
+    explicitly `None`) is always legal and returns `None` unchanged: role is
+    purely additive, so a primitive that never mentions it must stay exactly
+    as legal as it always was. Anything else must name one of the five
+    `GeometryRole` values, or this raises `ValueError` naming what was given
+    -- `_build_geometry_list` wraps this in its own `materials[{idx}]:`/
+    `conductors[{idx}]:` context, matching that function's existing
+    shape/required-field error style."""
+    if role is None:
+        return None
+    try:
+        return GeometryRole(role)
+    except ValueError:
+        legal = ", ".join(r.value for r in GeometryRole)
+        raise ValueError(f"role must be one of {legal}, got {role!r}") from None
 
 
 # ---------------------------------------------------------------------------
@@ -663,10 +734,21 @@ def _build_geometry_list(
     is True, conductors (mapped to mp.metal -- an ideal PEC, see module
     docstring citation). include_conductors=False is this module's own
     "reference run" baseline -- see module docstring's REFERENCE RUN
-    design-choice caveat."""
+    design-choice caveat.
+
+    Also validates each primitive's optional `role` (issue #485,
+    `GeometryRole`) and enforces its one cross-cutting rule -- at most one
+    `REFLECTOR` across this call's combined materials+conductors -- entirely
+    as metadata bookkeeping alongside the existing per-primitive build.
+    `role` is never read by `_primitive_to_meep`/`_conductor_medium` and
+    never changes the `Medium`/conductor object either function returns
+    (issue #485 point 6)."""
     objects: list[Any] = []
+    reflector_locations: list[str] = []
     for idx, mat in enumerate(geometry.get("materials", [])):
         try:
+            if _validate_role(mat.get("role")) is GeometryRole.REFLECTOR:
+                reflector_locations.append(f"materials[{idx}]")
             epsilon_r = float(mat.get("epsilon_r", 1.0))
             mue_r = float(mat.get("mue_r", 1.0))
             # A lossless Medium stays byte-for-byte what it was before loss
@@ -691,10 +773,18 @@ def _build_geometry_list(
     if include_conductors:
         for idx, cond in enumerate(geometry.get("conductors", [])):
             try:
+                if _validate_role(cond.get("role")) is GeometryRole.REFLECTOR:
+                    reflector_locations.append(f"conductors[{idx}]")
                 medium = _conductor_medium(mp_module, cond, a_m)
                 objects.append(_primitive_to_meep(mp_module, cond, a_m, medium))
             except ValueError as exc:
                 raise ValueError(f"conductors[{idx}]: {exc}") from exc
+    if len(reflector_locations) > 1:
+        raise ValueError(
+            f"at most one primitive may carry role={GeometryRole.REFLECTOR.value!r} "
+            f"across materials+conductors combined -- a design has one reflector by "
+            f"construction; got {len(reflector_locations)}: {reflector_locations}"
+        )
     return objects
 
 
