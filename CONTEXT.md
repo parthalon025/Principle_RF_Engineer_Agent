@@ -179,6 +179,24 @@ and a glossary that churns with it stops being trustworthy (see
   anchors a request for design guidance. Distinct from a Component's
   specification, which describes an existing manufactured part rather
   than a target for a new one.
+- **Host ground-plane assertion**: the captured, confirmable claim that a
+  Customer requirement's ground-plane-presence field carries — whether the
+  Host surface is a confirmed, reliable conductive backing (`value` in the
+  vocabulary this entry names is `True`/`False`, never inferred from what
+  the host physically is). Stored at
+  `requirements[requirement_id]["host_ground_plane"]`, `attach_target`'s
+  and `attach_intent`'s third sibling, and tracked through the identical
+  `PROPOSED` → `CONFIRMED` lifecycle a **Requirement target** uses
+  (`confirmed_by`/`confirmed_at`, provenance always `ASSUMED` even once
+  confirmed, for the same reason a Requirement target's is). This is what
+  ADR-0017's "asserted, never inferred" rule needs a place to live: the
+  design loop defaults every base printed layer to its own reflector, and
+  may only rely on the host surface itself once this field reaches
+  `CONFIRMED` — a `PROPOSED`, unconfirmed reading is not enough.
+  _Avoid_: inferring this from the host surface's stated material or
+  platform (a "solid aluminum wing" is not itself a `CONFIRMED` assertion
+  until a human confirms the reading) — ADR-0017 forbids exactly that
+  inference.
 - **Requirements document**: a CDD-style artifact, one per **Design**,
   bundling every one of that design's **Customer requirement** rows into a
   single reviewed document — modelled on the DoD's JCIDS **Capability
