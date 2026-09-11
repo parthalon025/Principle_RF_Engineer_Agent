@@ -165,9 +165,10 @@ and a design's own move to `RELEASED` — simply keeps refusing.
 
 Every capability is registered over **MCP** (`mcp_server/server.py`, stdio). A subset is also
 wrapped as directly-attached **agent tools** in `agent/main.py` — the ones the microwave,
-antenna and test roles need, because those roles run external solvers and a solver call over
-the MCP stdio transport hangs on native Windows ([#372][i372]). Both surfaces are governed by
-`policies/tool_policy.yaml`.
+antenna and test roles need, because those three roles have not been moved onto the MCP-routed
+construction yet. The Windows deadlock that used to block that move — a solver call over the
+MCP stdio transport never returning at all ([#372][i372]) — is fixed. Both surfaces are
+governed by `policies/tool_policy.yaml`.
 
 The work splits across six roles, each scoped to only the tools its discipline needs. The
 principal, systems and verification roles are built in `agent/mcp_roles.py` and reach every

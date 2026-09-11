@@ -1,4 +1,7 @@
 import asyncio
+import io
+import os
+import sys
 from typing import Any
 
 import numpy as np
@@ -2273,5 +2276,44 @@ def confirm_requirement_target(
 assert_all_tools_categorized([tool.name for tool in asyncio.run(mcp.list_tools())])
 
 
+def isolate_transport_stdin() -> None:
+    """Give the stdio transport a private handle on this process's standard
+    input and leave the null device in the inheritable slot, so that a tool
+    which shells out to a solver never hands that solver the pipe this
+    server's own protocol arrives on.
+
+    Without this, every tool that runs an external program deadlocks on
+    native Windows -- not slowly, permanently. An anonymous pipe there is a
+    synchronous file object, and the kernel serializes *every* operation on
+    such an object behind whatever read is already in flight on it. This
+    server always has one in flight (that is how it waits for the next
+    request), and a child process that inherits the pipe queues behind it
+    the moment CPython's own start-up asks the handle what kind of file it
+    is. The child cannot start until the server receives its next message,
+    and the server cannot receive one until the child it is waiting on
+    finishes: neither side moves again. POSIX has no such per-handle
+    serialization and never showed the deadlock.
+
+    *In plain terms: the solver we launch inherits the same phone line the
+    server is listening on, and on Windows one caller at a time means the
+    solver waits for a call that will never come. Hand it a dead line
+    instead and it runs.*
+
+    The redirect is unconditional rather than Windows-only: no tool here
+    takes input on standard input, and a child reading from this handle on
+    any platform would be stealing bytes out of the protocol stream.
+    """
+    private_stdin_fd = os.dup(0)
+    devnull_fd = os.open(os.devnull, os.O_RDONLY)
+    try:
+        os.dup2(devnull_fd, 0)
+    finally:
+        os.close(devnull_fd)
+    sys.stdin = io.TextIOWrapper(
+        open(private_stdin_fd, "rb", closefd=True), encoding="utf-8", errors="replace"
+    )
+
+
 if __name__ == "__main__":
+    isolate_transport_stdin()
     mcp.run()

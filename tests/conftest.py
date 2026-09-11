@@ -275,22 +275,18 @@ def invoke_agent_tool(tool_name: str, **kwargs):
 class McpRoutedToolCallTimedOut(TimeoutError):
     """Raised by `invoke_role_mcp_tool` when the NEW `mcp_servers=[server]`-
     routed path (issue #318, `agent/mcp_roles.py`) does not return within
-    `timeout_s`. Issue #319 found this is not hypothetical: on native
-    Windows, a tool whose implementation shells out to its own subprocess
-    (every `run_*_simulation` tool -- NEC2++, openEMS, HFSS, Elmer, Palace,
-    MEEP, gprMax, Qucs, LTspice, ngspice, Xyce, gerber2ems -- calls its own
-    `subprocess.run()` from inside `mcp_server.server`'s own stdio-transport
-    subprocess) never returns at all over this path -- confirmed
-    independent of the OpenAI Agents SDK using the raw `mcp` client
-    directly (see `tests/test_mcp_tool_call_parity.py`'s module docstring
-    for that reproduction): a genuine third-party (`mcp`/`anyio`) Windows
-    stdio-transport limitation, not a bug in this repo's own
-    `agent/mcp_roles.py` construction. A caller hitting this is not a test
-    bug to silence with a longer timeout -- it is the documented finding
-    itself. `build_role_mcp_server`'s own `client_session_timeout_seconds=
-    None` (issue #319's other fix) means the SDK itself will never time
-    this out on its own -- this wrapper's `timeout_s` is the only thing
-    bounding a call that would otherwise hang the test suite forever."""
+    `harness_timeout_s`. This is not a hypothetical bound: every tool that
+    shells out to its own subprocess deadlocked permanently over this path
+    on native Windows until `mcp_server.server.isolate_transport_stdin()`
+    landed (see `tests/test_mcp_tool_call_parity.py`'s module docstring for
+    what the deadlock actually was, and for how it was mis-diagnosed twice
+    before that). A caller hitting this today is reporting a regression of
+    that class, not a test that needs a longer timeout.
+
+    `build_role_mcp_server`'s own `client_session_timeout_seconds=None`
+    (issue #319's other fix) means the SDK itself will never time a call
+    out -- this wrapper's bound is the only thing standing between a stuck
+    call and a test suite that never finishes."""
 
 
 async def _invoke_role_mcp_tool_async(role_key: str, tool_name: str, **kwargs):
@@ -351,9 +347,8 @@ def invoke_role_mcp_tool(
     forwarded through `**kwargs`, and this wrapper's bound must never
     collide with that): raises `McpRoutedToolCallTimedOut` -- not a bare,
     unexplained `asyncio.TimeoutError` -- if the call does not return in
-    time, since issue #319 found real, reproducible cases (any tool that
-    shells out to its own subprocess) where it never returns at all on
-    this platform.
+    time, because a whole class of tools once did not return at all here
+    (see that exception's own docstring).
     """
     try:
         return asyncio.run(

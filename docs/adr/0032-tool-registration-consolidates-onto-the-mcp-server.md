@@ -254,3 +254,78 @@ The `tools=[...]` + `mcp_servers=[...]` hybrid noted as finding 3 above
 remains unattempted and out of #376's scope.
 
 **Raised by:** issue #376's implementation, 2026-09-10.
+
+### 2026-09-10 — the Windows deadlock is fixed, and the cause recorded above was wrong
+
+**What the two entries above said:** the subprocess-shelling tools deadlock
+over the MCP stdio transport on native Windows because FastMCP dispatches a
+synchronous tool function on its own event-loop thread with no
+`anyio.to_thread` wrapping, compounded by `mcp`'s Windows Job-Object
+subprocess-launch path — third-party, "neither this repo's to patch".
+
+**What is true instead.** That reading does not survive measurement. Against
+a stripped-down FastMCP server on this same machine: a synchronous tool that
+only sleeps blocks the event loop exactly as hard and returns normally, and
+wrapping the subprocess call in `anyio.to_thread.run_sync` — the fix all
+three tickets named first — leaves the deadlock completely intact. Blocking
+the event loop was never the mechanism.
+
+The mechanism is handle inheritance. The child process inherits the server's
+standard input, which is the pipe the MCP protocol itself arrives on. A
+Windows anonymous pipe is a synchronous file object, and the kernel
+serializes every operation on it behind whatever read is already in flight;
+this server always has one in flight, because that is how it waits for the
+next request. CPython asks its own standard handles what kind of file they
+are during interpreter start-up, so the child stops there — before its first
+line of Python — until the server receives another message, which it cannot
+do until the child it is waiting on finishes. Isolated with no `mcp` package
+involved at all: a parent blocked reading a pipe stdin, spawning a child that
+inherits it, reproduces the freeze exactly; `stdin=subprocess.DEVNULL` clears
+it; a `cmd.exe` child, which never queries the handle, is unaffected either
+way. POSIX has no such per-handle serialization, which is why Linux never
+showed it.
+
+*In plain terms: the solver we launched inherited the same phone line the
+server was listening on, and on Windows only one caller at a time gets
+through — so the solver sat waiting for a call that could never come.*
+
+**The fix** is `mcp_server/server.py`'s `isolate_transport_stdin()`, applied
+at start-up before the server serves: the transport keeps a private handle on
+standard input and the null device goes in the slot children inherit. One
+place, every tool, including ones added later — and it also stops a child
+from ever reading bytes out of the protocol stream, which nothing should.
+
+**The affected-tool list in #372 and in the entries above is wrong in both
+directions.** Twelve modules under `simulation/` shell out
+(`elmer`, `gprmax`, `kicad_gerber2ems`, `ltspice`, `meep`, `nec2pp`,
+`ngspice`, `openems`, `openparem`, `palace`, `qucs`, `xyce`), one tool each.
+`simulation/hfss.py` is **not** one of them: it drives `pyaedt`
+(`ansys.aedt.core`) as a library, never `subprocess.run`, and is gated behind
+`check_hfss_workstation_confinement()`, which refuses to run anywhere but a
+licensed workstation this environment is not. It was on the list by analogy
+with the other `run_*_simulation` tools, not by observation. Three tools
+outside `simulation/` were missing from it and are equally affected:
+`generate_freecad_curved_geometry` (FreeCADCmd), `ingest_arxiv_paper` and
+`ingest_patent` (both shell out to a converter). Fifteen tools, then, not
+twelve or thirteen — and the per-tool count stops mattering under a fix that
+lives in the server process rather than at each call site.
+
+**What this does not fix.** Cancelling an MCP tool call mid-flight does not
+kill the solver it started: measured directly, a cancelled call left a fake
+solver running its full 45 seconds, bounded only by the `timeout_s` each
+adapter passes to `subprocess.run`. Tearing the client down does kill the
+whole tree (the Job Object above, verified). Separately, while a solve runs,
+the session answers nothing else — an unrelated `calculate_wavelength` on the
+same session got no reply — which is the one real consequence of FastMCP's
+un-threaded dispatch, and the honest reason to move these tools onto a worker
+thread eventually. Neither is a regression from this fix; both were
+unobservable while the call never returned at all.
+
+**The Decision is unaffected**, and the answer to the open question this ADR
+posed is now "behaviorally identical, modulo the documented wording and
+envelope differences" for the subprocess-shelling tools too: a real
+`run_nec2_simulation` and `run_qucs_simulation` return dictionaries equal
+field for field on both paths, and a failing `run_ngspice_simulation` returns
+the same failure detail on both.
+
+**Raised by:** issue #372's implementation, 2026-09-10.
