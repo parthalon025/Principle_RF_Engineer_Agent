@@ -1447,3 +1447,147 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
         citation=f"DuPont/Celanese Intexar PE874 TDS K-29701, via {_DATASHEET_SWEEP}",
     ),
 ]
+
+
+# ---------------------------------------------------------------------------
+# MXENE_SEED_ENTRIES -- issue #458: the first entries this library holds for
+# any MXene, seeded from the batch of open-access/abstract-level MXene
+# citations verified during a 2026-09-04/2026-09-10 adversarial pass over
+# #104's wayfinder map (NYS7). Separate from DATASHEET_SEED_ENTRIES for the
+# same reason that list is separate from SUBSTRATE_SEED_ENTRIES: a distinct
+# provenance story (a peer-reviewed literature measurement, not a vendor
+# datasheet) and a distinct caveat this batch alone carries (see below) that
+# would blur into the datasheet sweep's own if merged into it.
+#
+# THE CAVEAT THIS WHOLE BATCH TURNS ON, STATED ONCE HERE SO IT IS NOT LOST IN
+# THREE SEPARATE NOTE FIELDS: every eps_r value below was measured on a 15
+# wt.% MXene-in-paraffin-wax COMPOSITE FILLER -- a solid block of wax loaded
+# with MXene powder, machined to a coaxial-airline sample, not a printed or
+# deposited conductive film. This project's own printed-film question (#104's
+# NYS7: what does a printed MXene TRACE look like at RF) is a DIFFERENT
+# measurement of a DIFFERENT physical object that happens to share a chemical
+# name. Citing eps_r=4.5 for "Ti2NbC2Tx" here says nothing about a printed
+# Ti2NbC2Tx line's permittivity, conductivity, or thickness -- treating this
+# entry as if it answered that question would be exactly the "silently
+# looks like it answers the printed-ink question it doesn't" failure #104
+# was written to catch. Repeated in every entry's own `note` below, not only
+# here, because a caller reading one entry in isolation (e.g. via
+# `fetch_material_property_entries`) never sees this module comment.
+#
+# WHY THREE MXENES, NOT ALL SIX THE PAPER REPORTS. Wang et al. 2025
+# synthesised and measured six transition-metal-doped MXenes (Ti3C2Tx,
+# Ti2NbC2Tx, Ti2TaC2Tx, Ti2VC2Tx, Nb2CTx, V2CTx). Issue #458 names only three
+# (Ti2NbC2Tx, Ti3C2Tx, V2CTx -- the highest-eps_r, intermediate, and
+# lowest-eps_r of the six, per the paper's own framing) as the confirmed
+# figures to enter; the other three are left uncited here rather than
+# guessed at from a figure this pipeline cannot read pixel values out of --
+# a later ticket citing Ti2TaC2Tx/Ti2VC2Tx/Nb2CTx from the same paper's
+# Figure 7a should read the real values off that figure directly rather than
+# assume they fall inside the three-value range already entered.
+#
+# WHY THE Ti3C2Tx VALUE IS 3.9 +/- 0.1, NOT A BARE POINT. The paper states
+# Ti3C2Tx's eps_r as the range "3.8-4.0" in prose, not a single point value
+# the way it does for the highest (Ti2NbC2Tx, 4.5) and lowest (V2CTx, 3.0).
+# Entering the range's midpoint with the half-width as `uncertainty` records
+# exactly what the source says -- a value known to within +/-0.1, not a
+# point measured to 3.9 precisely -- rather than inventing a false-precision
+# point value or silently narrowing the source's own stated range.
+_WANG_2025_CITATION_BASE = (
+    "Wang et al. 2025, Adv. Sci. 12(41):e09994, DOI 10.1002/advs.202509994 "
+    "(PMC12591198, open access, fetched in full 2026-09-10 -- issue #458)"
+)
+_WANG_2025_PARAFFIN_CAVEAT = (
+    "MEASURED ON A 15 wt.% MXene-IN-PARAFFIN COMPOSITE FILLER (coaxial-airline "
+    "sample, 22.86x10.16 mm, 2 mm thick), NOT a printed or deposited film -- "
+    "see this module's MXENE_SEED_ENTRIES comment. Does not answer #104's "
+    "NYS7 printed-ink question; measured via vector network analyzer across "
+    "X-band, 8.2-12.4 GHz."
+)
+
+MXENE_SEED_ENTRIES: list[dict[str, Any]] = [
+    add_entry(
+        material="Ti2NbC2Tx",
+        property_name="eps_r",
+        frequency_low_hz=8.2e9,
+        frequency_high_hz=12.4e9,
+        value=4.5,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="vector network analyzer, MXene-paraffin composite (15 wt.%), X-band",
+        note=f"Highest real permittivity of the six MXenes Wang et al. measured, attributed to "
+        f"Nb-induced electronic-structure optimisation and enhanced interfacial polarisation. "
+        f"{_WANG_2025_PARAFFIN_CAVEAT}",
+        citation=_WANG_2025_CITATION_BASE,
+    ),
+    add_entry(
+        material="Ti3C2Tx",
+        property_name="eps_r",
+        frequency_low_hz=8.2e9,
+        frequency_high_hz=12.4e9,
+        value=3.9,
+        uncertainty=0.1,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="vector network analyzer, MXene-paraffin composite (15 wt.%), X-band",
+        note=f"Paper states this as a range, '3.8-4.0', not a point value like the highest/lowest "
+        f"of the six MXenes -- entered as the range's midpoint with uncertainty=0.1 recording the "
+        f"stated range exactly rather than inventing false point precision. Intermediate/"
+        f"'characteristic of its intrinsic dielectric behavior' per the paper. "
+        f"{_WANG_2025_PARAFFIN_CAVEAT}",
+        citation=_WANG_2025_CITATION_BASE,
+    ),
+    add_entry(
+        material="V2CTx",
+        property_name="eps_r",
+        frequency_low_hz=8.2e9,
+        frequency_high_hz=12.4e9,
+        value=3.0,
+        unit="unitless",
+        provenance=LITERATURE_SUPPORTED,
+        method="vector network analyzer, MXene-paraffin composite (15 wt.%), X-band",
+        note=f"Lowest real permittivity of the six MXenes Wang et al. measured, attributed to "
+        f"suppressed dielectric storage from its single-metal V framework and delocalised "
+        f"d-orbital electronic structure -- despite this, the paper reports V2CTx as the best "
+        f"absorber of the six (highest attenuation constant and RL as low as -53.8 dB at 15 mm), "
+        f"driven by loss mechanisms this eps_r entry alone does not capture. "
+        f"{_WANG_2025_PARAFFIN_CAVEAT}",
+        citation=_WANG_2025_CITATION_BASE,
+    ),
+    # Ti3C2Tx RF conductivity -- a genuinely different measurement of a
+    # genuinely different physical object (a spray-coated thin FILM, not a
+    # paraffin composite) from a DIFFERENT, PAYWALLED paper only its abstract
+    # was read for. Never claim MEASURED or full-text provenance for this --
+    # AlHassoon et al. 2020 is not in `documents` (its only located PDF is
+    # DRM-encrypted; Unpaywall confirms no legitimate open copy exists
+    # anywhere -- see RUNNING-LISTS.md), so this citation is abstract-only
+    # and says so explicitly, per issue #458's own instruction never to
+    # claim full-text ingestion for a paper only the abstract was read for.
+    add_entry(
+        material="Ti3C2Tx",
+        property_name="conductivity_s_per_m",
+        frequency_low_hz=1.0e9,
+        frequency_high_hz=1.0e10,
+        value=1.2e6,
+        unit="S/m",
+        provenance=LITERATURE_SUPPORTED,
+        method="capacitively-coupled transmission-line test fixture, S-parameter curve-fit "
+        "against full-wave simulation (contactless -- not a DC four-point probe); spray-coated "
+        "4.3 um film on PET, highest of three thicknesses tested (1.0/1.5/4.3 um)",
+        note="ABSTRACT ONLY -- full text is DRM-locked (the only located PDF, on the Gogotsi "
+        "group's own Drexel site, is rejected by pdftotext/PyMuPDF/pypdf/pikepdf alike) and "
+        "Unpaywall confirms no legitimate open-access copy exists anywhere; the abstract text "
+        "itself is openly available via Crossref/Semantic Scholar/Unpaywall APIs and is what "
+        "this entry is drawn from (see RUNNING-LISTS.md). NOT ingested into `documents` for "
+        "this reason -- issue #458 explicitly instructs against claiming full-text/MEASURED "
+        "provenance for a paper only the abstract was read for. Two things the abstract cannot "
+        "settle: (a) whether 1.2e6 S/m is one frequency-independent fitted value across the "
+        "whole 1-10 GHz sweep or the peak of a value that varies with frequency inside it; "
+        "(b) the synthesis/etching route. Also for citation precision: the measured range "
+        "(1-10 GHz) overlaps only the BOTTOM HALF of X-band (8-12 GHz), not most of it, and "
+        "deposition is spray-coating, not inkjet/screen printing -- both distinctions matter if "
+        "this is cited against #104's NYS7 printed-ink question.",
+        citation="AlHassoon, K. et al. 2020, Appl. Phys. Lett. 116:184101, DOI 10.1063/5.0002514 "
+        "-- abstract only (Crossref-registered text via Unpaywall/Semantic Scholar APIs), full "
+        "text not read; see this entry's own note",
+    ),
+]

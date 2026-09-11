@@ -150,3 +150,49 @@ def test_parse_document_defaults_to_ocr_enabled(tmp_path, monkeypatch):
 
     pdf_option = captured["format_options"][InputFormat.PDF]
     assert pdf_option.pipeline_options.do_ocr is True
+
+
+def test_parse_document_strips_nul_bytes_from_extracted_text(tmp_path, monkeypatch):
+    """Issue #458: ingesting a real paper (He et al. 2024's PDF) surfaced a
+    literal NUL (0x00) in docling's extracted text -- a font/ligature
+    artifact in the source PDF, not anything meaningful. Postgres text
+    columns reject NUL outright, which failed `insert_chunks` deep inside a
+    real ingestion run with no fixture ever having exercised it. `_item_text`
+    now strips NUL at the boundary where docling's raw output enters this
+    system, so it never reaches the database."""
+    from docling.datamodel.base_models import InputFormat
+
+    pdf_path = tmp_path / "fake.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF")
+
+    class _FakeLabel:
+        value = "text"
+
+    class _FakeItem:
+        label = _FakeLabel()
+        text = "Before\x00After"
+        prov = []
+
+    class _FakeDocument:
+        name = "Fake"
+
+        def iterate_items(self, included_content_layers=None):
+            return iter([(_FakeItem(), 0)])
+
+    class _FakeResult:
+        document = _FakeDocument()
+
+    class _FakeConverter:
+        def __init__(self, *, format_options=None, **kwargs):
+            pass
+
+        def convert(self, path):
+            return _FakeResult()
+
+    monkeypatch.setattr("docling.document_converter.DocumentConverter", _FakeConverter)
+
+    parsed = parse_document(str(pdf_path))
+
+    assert len(parsed.blocks) == 1
+    assert "\x00" not in parsed.blocks[0].text
+    assert parsed.blocks[0].text == "BeforeAfter"
