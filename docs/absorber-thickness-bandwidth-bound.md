@@ -595,6 +595,17 @@ Main results, quoted verbatim (Eqs. 4.10, 4.11, 5.1):
 >
 > "B λ₀/d ≤ 2π tan(Φ/4) ≈ { (π/2)Φ, Φ ≪ 1 ; 2π, Φ = π ; **2.6, Φ = π/2** }"   (5.1)
 
+> **Correction, 2026-09-10 (`RUNNING-LISTS.md` §3 correction 67).** Eq. (5.1)'s small-angle
+> asymptote previously read `π²Φ/2` here — a factor-of-π transcription slip, caught and fixed
+> while independently re-verifying this equation for #467/ADR-0051's Example 1 assignment. The
+> primary PDF (LUTEDX/(TEAT-7198)/1-19/2010) was rendered as a page image and read directly:
+> Eq. (4.10) and (4.11) are at §4 p.9, the admittance-definition quote used in §7.1's own
+> reasoning elsewhere in this document is at §4 p.7, and the "arbitrary dielectric and magnetic
+> materials" scope statement is at §1 p.1. None of the closed-form values this document actually
+> computes with (`2.6`, `2π`) were affected — only the small-Φ asymptotic label was wrong. This
+> equation should now be read as `CONFIRMED` against the primary text with specific page
+> locations, not merely `LITERATURE-SUPPORTED` via the open-access manuscript link above.
+
 where B is fractional bandwidth, λ₀ the centre wavelength, d the thickness, and Φ the allowed
 reflection-phase window (the reflection phase stays within |φ| ≤ Φ/2). Earlier and looser
 bounds are due to Brewitt-Taylor, *"Limitation on the bandwidth of artificial perfect magnetic
