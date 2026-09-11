@@ -39,12 +39,16 @@ matters**, so a browsing session can be prioritised rather than exhaustive.
 | **ScienceDirect**, a 2015 waveguide characterisation of **BASF Elastollan 1185A** | HTTP 403 (same block as the existing ScienceDirect row) | An X-band (8.2–12.3 GHz) permittivity measurement for a **named, orderable TPU grade**. This is the repo's oldest standing substrate-data complaint — every TPU figure held today is for generic or unnamed material, against a BASF unfilled range spanning tanδ 0.040–0.140 at 1 MHz | #114, #127 |
 | **Tretyakov & Simovski (2003)**, "Dynamic model of artificial reactive impedance surfaces," *J. Electromagn. Waves Appl.* **17**(1) 131–145 | Closed access. **Confirmed by two independent indexes that no repository copy exists**: Unpaywall `is_oa:false, has_repository_copy:false, oa_locations:[]`; Semantic Scholar `CLOSED` | Costa's ref [35] — the **original statement of eq (10)**, the thin-spacer capacitance correction. Three things are stranded behind it: (a) whether the prefactor is `2Dε₀/π` (as the 2013 paper prints) or `2Dε₀ε_r/π` (as Costa & Borgese 2021 restate it, citing the same source) — **a factor of `ε_r` on the size of the bias the fast tier carries**; (b) whether an **inductance** correction was ever written, asserted three times across the Costa papers and published nowhere; (c) eq (10)'s stated validity range in the author's own words. Equation, symbols and a recomputation are in [`costa-thin-spacer-correction.md`](./costa-thin-spacer-correction.md), read off a 400 dpi render | #190, #128, #111 |
 | **APS / Physical Review Letters**, Landy et al. (2008), "Perfect Metamaterial Absorber," *PRL* **100**:207402 | HTTP 403 to automated fetch. **Routed around**: the arXiv e-print carries the authors' LaTeX source and original figure files, which is a better source than the typeset PDF for this purpose | Whether the published version has **supplementary material** the preprint lacks — `UNKNOWN`, an absence in our access rather than in the world. Bounded risk: the arithmetic in [`example3-frequency-discrepancy.md`](./example3-frequency-discrepancy.md) does not depend on it, since **no** `εr` in the FR4 range closes the 2.28 GHz gap. Landy states no permittivity in the preprint at all | #142, #116 |
-| **Ozden, K., Yucedag, O.M. & Kocer, H., "Metamaterial based broadband RF absorber at X-band," *AEU — Int. J. Electron. Commun.* 70(8), 2016**, DOI `10.1016/j.aeue.2016.05.002` | HTTP 403 (ScienceDirect) and 403 (ResearchGate, "request full-text" only). Confirmed real via independent corroboration across the DOI, ScienceDirect's own listing, and ResearchGate's abstract, and via the same group's earlier, freely-accessible sister paper (Ozden, Ozer, Yucedag & Kocer, *IU-JEEE* 16(2):3001–3006, 2016, DOI `10.16984/saufenbilder.62549` — fetched in full via DergiPark, no block) | A **measured** (not simulated-only), X-band (8–12 GHz) broadband absorber — KOH12/KOH16, 12- and 16-cell tiles of *differently-sized* unit cells with resonances placed close together — reporting 80%-absorption bandwidths of **2.73 GHz (KOH12)** and **2.55 GHz (KOH16)**. This is the specific shape of experiment `docs/five-paper-absorber-corpus-findings.md` reported **no group has ever run** for #187's question (does a broadband super-cell buy bandwidth thickness cannot). The freely-read sister paper confirms this group's baseline unit cell is the same three-layer stack this project's own Example 3 anchor uses (periodic copper / FR-4 dielectric / continuous copper ground) and that its own "dual-band" result comes from **one cell's two internal resonances** (nested ERR+SRR rings), not from combining distinct differently-tuned cells — so it does **not** itself settle #187, and its own conclusion frames the broadband extension as future work: *"the broadband metamaterial absorber can be achieved by overlapping the absorption peaks of the proposed unit cell when their peaks are close to each other."* Whether KOH12/KOH16 shares one spacer/ground plane across its differently-sized cells (making it a true structural counterexample to #128's shared-spacer/one-inductance finding) or uses some other structural difference that reconciles the two results is **unconfirmed** — the full text is needed to check the actual cell layout, whether a single isolated cell's own bandwidth was measured as a baseline, and any discussion of inter-cell coupling | #187, #128, #130 |
+| **Ozden, K., Yucedag, O.M. & Kocer, H., "Metamaterial based broadband RF absorber at X-band," *AEU — Int. J. Electron. Commun.* 70(8), 2016**, DOI `10.1016/j.aeue.2016.05.002` | **RESOLVED 2026-09-10 — full text retrieved** from an open mirror (`iranarze.ir/wp-content/uploads/2016/10/E142.pdf`, HTTP 200, 3,841,143 bytes, 9 pages, complete with reference list; plain `curl` with a desktop user-agent, no proxy). Previously: HTTP 403 (ScienceDirect) and 403 (ResearchGate, "request full-text" only). Confirmed real via independent corroboration across the DOI, ScienceDirect's own listing, and ResearchGate's abstract, and via the same group's earlier, freely-accessible sister paper (Ozden, Ozer, Yucedag & Kocer, *IU-JEEE* 16(2):3001–3006, 2016, DOI `10.16984/saufenbilder.62549` — fetched in full via DergiPark, no block) | A **measured** (not simulated-only), X-band (8–12 GHz) broadband absorber — KOH12/KOH16, 12- and 16-cell tiles of *differently-sized* unit cells with resonances placed close together — reporting 80%-absorption bandwidths of **2.73 GHz (KOH12)** and **2.55 GHz (KOH16)**. This is the specific shape of experiment `docs/five-paper-absorber-corpus-findings.md` reported **no group has ever run** for #187's question (does a broadband super-cell buy bandwidth thickness cannot). The freely-read sister paper confirms this group's baseline unit cell is the same three-layer stack this project's own Example 3 anchor uses (periodic copper / FR-4 dielectric / continuous copper ground) and that its own "dual-band" result comes from **one cell's two internal resonances** (nested ERR+SRR rings), not from combining distinct differently-tuned cells — so it does **not** itself settle #187, and its own conclusion frames the broadband extension as future work: *"the broadband metamaterial absorber can be achieved by overlapping the absorption peaks of the proposed unit cell when their peaks are close to each other."* Whether KOH12/KOH16 shares one spacer/ground plane across its differently-sized cells (making it a true structural counterexample to #128's shared-spacer/one-inductance finding) or uses some other structural difference that reconciles the two results is **now confirmed**: the paper states *"Bottom layer is metallic continuous ground plane"*, *"single-layer microstrip technology"*, and *"No scaling is applied along the z-direction"* — one shared spacer over one continuous ground, lateral detuning only, with no lumped resistors and no resistive film. It **is** #187's experiment. But it does not refute #128: on **width** it agrees (its own text says more cells *"does not change frequency bandwidth"*, and the 12-cell tile beat the 16-cell tile at 2.73 vs 2.55 GHz), while on **depth** it gains ~52 percentage points. The two results differ by baseline, not by mechanism. Full first-hand notes at `docs/ozden-broadband-supercell-primary-source.md` | #187, #128, #130 |
 | **AlHassoon, K. et al. (2020)**, "Conductivity extraction of thin Ti₃C₂Tₓ MXene films over 1–10 GHz using capacitively coupled test-fixture," *Appl. Phys. Lett.* **116**:184101, DOI `10.1063/5.0002514` | HTTP 403 (AIP, a known block for this project). The only located PDF (hosted on the Gogotsi group's own Drexel site) downloaded successfully but is password/DRM-encrypted — rejected by `pdftotext`, PyMuPDF, `pypdf` and `pikepdf` alike. Unpaywall confirms `is_oa:false, has_repository_copy:false` — no legitimate open copy exists anywhere. Abstract (Crossref-registered, not AI-paraphrased) obtained via Unpaywall and Semantic Scholar APIs | Confirmed at abstract level: a genuine RF measurement (contactless, capacitively-coupled transmission lines, S-parameter curve-fit against full-wave simulation — not a DC four-point probe), 1–10 GHz, three film thicknesses (1.0/1.5/4.3 µm), highest conductivity **1.2×10⁶ S/m at 4.3 µm**, films **spray-coated** on PET. Two things the abstract cannot settle and the full text is needed for: (a) whether 1.2×10⁶ S/m is one frequency-independent fitted value across the whole sweep or the peak of a value that varies with frequency inside 1–10 GHz; (b) the synthesis/etching route. Also worth noting for citation precision: the measured range (1–10 GHz) overlaps only the **bottom half** of X-band (8–12 GHz), not "most of the band," and the deposition method is spray-coating, not inkjet/screen printing — both distinctions matter if this is cited against NYS7 | NYS7 (map #104) |
 | **Lin, F., Bai, Y., Chen, J., Yan, Z., Zhou, H. & Wang, Y. (2024)**, "Flexible and broadband microwave-absorbing metastructure with wide-angle stability," *J. Appl. Phys.* **136**(23):233101, DOI `10.1063/5.0239234` | HTTP 403 (AIP direct and its only located mirror, ResearchGate — both Cloudflare bot-walled). No arXiv preprint, no PMC/Europe PMC record, no repository copy (Unpaywall `has_repository_copy:false`, CORE 0 hits) despite the hybrid CC-BY-NC license | Headline numbers are already confirmed verbatim via Crossref's own deposited abstract and safe to cite as-is: a rigid-pyramidal-island/soft-hinge stretchable meta-substrate holds better than −20 dB reflection from 2.2–20 GHz, shifting only **1.1 GHz** in the −10 dB band under **40% tensile strain**. What is still stranded: the body-text passage spelling out the exact strain-to-hinge-rotation mechanism (a candidate design precedent for NYS3's curved-surface-survival question, alongside the map's existing `S ≤ 2·θmax·R` rule) — an AI search-summary rendering of this exists but is not being treated as a verified quote per this project's own "citation is not derivation" rule | NYS3 (map #104) |
 | **Brower, K., DeLacy, B., Garrett, B. & Mirotznik, M. (2024)**, "Wideband millimeter wave absorber based on coding-metasurface with two-dimensional MXene," *Optical Engineering* 63(2):027105, DOI `10.1117/1.OE.63.2.027105` | Incapsula bot-wall at SPIE (confirmed three ways: `curl` on the PDF URL returns a challenge page not a PDF; `WebFetch` returns empty; headless Playwright returns an explicit Incapsula incident ID). No PMC/arXiv/repository mirror despite a hybrid CC-BY license — Unpaywall's only listed OA location is the same blocked SPIE URL. ResearchGate and CORE both 403 | Verbatim abstract (via Crossref/Semantic Scholar APIs) confirms this is a **1-bit coding-metasurface absorber** — reflectance/absorptance framing throughout, zero RCS-reduction or phase-cancellation language — with >93% absorptance 26–40 GHz, 2% average reflectance at normal incidence. That supports the "no MXene coding/supercell **RCS-reduction** metasurface has been published" white-space claim (NYS1's Example 7, #202). Stranded: whether the optimizer is specifically PSO (abstract says only "coding-metasurface algorithm"), the 6 mm tile period, and the ≈100 Ω/sq MXene sheet resistance — none of these three specifics should be cited as confirmed until the body text is read | NYS1, #202 |
 | **Xiao, Z., Liu, Z., Tian, H., Wang, C., Lei, X., He, S., Peng, B. & Deng, L. (2026)**, "Ti₃C₂Tₓ MXene flexible arrays with radar-infrared dual-band compatibility," *J. Alloy. Compd.* **1069**:188525, DOI `10.1016/j.jallcom.2026.188525` | HTTP 403 (ScienceDirect, same recurring block). No repository copy (Unpaywall `is_oa:false`, OpenAlex `oa_status:"closed"`); Elsevier's text-mining API needs a subscriber key this session lacks | Confirmed real and a full version-of-record (not in-press) via Crossref/OpenAlex/Semantic Scholar, including a 66-entry reference list citing Costa's canonical FSS equivalent-circuit papers — consistent with, but not proof of, the claimed LC-circuit-impedance-matched screen-printed chessboard design. Every specific number attached to it (78% X-band transmittance, 90%→16% reflectivity, 120–360 µm gap sweep, ~80% retained IR reflectivity/ε≈0.2) currently rests only on search-engine AI summaries that showed internal drift across calls — none is a verbatim primary quote and none should be cited into the map until a human with ScienceDirect access pulls the actual abstract/highlights | NYS9, fabrication feature-size precedent |
 | **Zheng, Y., Wang, Y., Liu, D., Zhao, J. & Li, Y. (2025)**, "Unlocking Self-antioxidant Capability and Processability of Additive-free MXene Ink towards High-performance Customizable Supercapacitors," *Angew. Chem. Int. Ed.* 64(3):e202415742, DOI `10.1002/anie.202415742`, PMID 39327708 — **note the correct citation**: secondary research had this as "Wang et al., *Nano-Micro Letters*," which is wrong on both the lead author and the journal | HTTP 403 (Wiley), HTTP 403 (ResearchGate, "request full-text" only), no PMC mirror, Unpaywall confirms `is_oa:false` with zero repository copies anywhere. The abstract itself is not blocked — retrieved in full via PubMed/NCBI E-utilities | Confirmed verbatim from the real abstract: an oxyanion-terminated Ti₃C₂Tₓ ink whose in-situ "antioxidative shield" (blocking H₂O attack, strengthening the Ti–C bond) extends **ink/dispersion shelf life to up to 5 months at room temperature** — not "5–6 months," which is an unsupported embellishment. This is an **ink-shelf-life-before-printing** figure and must not be conflated with Zhang et al.'s different, already-cited −82%-over-six-months figure, which measures an already-printed trace's conductivity retention — the two are complementary, non-comparable data points for NYS8, not two measurements of the same quantity. Stranded: the storage/testing protocol behind the "5 months" number (concentration, container/atmosphere, what was actually tracked — dispersion stability, zeta potential, viscosity?) and whether the paper reports any printed-trace conductivity data at all | NYS8 (map #104) |
+| **Rakhmanov, Shuck, Al Hourani, Ippolito, Gogotsi & Friedman**, *Applied Physics Letters* 123(20):204105 (2023), DOI 10.1063/5.0176575 | **Tried:** ResearchGate (HTTP 403); NSF PAR `par.nsf.gov/servlets/purl/10544297` (downloaded but decoded as unreadable binary) | X-band sheet impedance and in-band conductivity for spray-coated Ti₃C₂Tₓ — the most direct in-band MXene electrical datum anyone has named; map #104 turns on it | #104 |
+| **Costa, Monorchio & Manara**, *IEEE Antennas and Propagation Magazine* 54(4), 2012, DOI 10.1109/MAP.2012.6309153 | **Tried:** IEEE Xplore (HTTP 418 from this environment). Needs institutional access | ACES eq (5), an effective-permittivity fit in x = 10·d/D — the likely closed form for a dielectric layer above a printed grid | #111, #190 |
+| **Li et al.**, *ACS Applied Materials & Interfaces* 16(32):42448 (2024), DOI 10.1021/acsami.4c07084 | Not fetched in full text this pass — abstract-level 5–32.5 Ω/sq range only (§3 correction 52) | Film thickness, MXene:PEDOT:PSS ratio, rheology, and whether its 4.4–20 GHz band was measured or predicted by the deep-learning model | #128, §3 correction 52 |
+| **Composite Structures**, PII S0263823125008997 — conformal chessboard metastructure | **Tried:** ScienceDirect (HTTP 403) | Panel size and bend radii in mm | unassessed |
 
 **Environment note.** A headless browser was set up and reaches sites through
 the agent proxy with `--disable-quic --ssl-version-max=tls1.2`. It does **not**
@@ -806,6 +810,287 @@ this list.
     Scholar cross-check) before the wrong citation reached an ADR. See the
     corrected entry in §1's stranded-sources table.
 
+### Found by cross-checking a MXene research pass against the map (2026-09-10)
+
+49. **"No group has ever run #187's experiment", `CONFIDENCE: HIGH` → the
+    corpus that said so contained no microwave paper, and Ozden et al.
+    (2016) ran it in X-band and measured it.**
+    `docs/five-paper-absorber-corpus-findings.md` §1's ruling and map #104's
+    restatement rescope correctly to the five optical/IR papers actually
+    searched (380–2300 nm, 10.90–22.91 µm, a review, 400–3500 nm,
+    500–2000 nm) — not one of the five works at microwave frequencies. The
+    `MEDIUM-HIGH` "revealed preference across four groups" row (§1: *"Does
+    it show lateral detuning is not a first-class mechanism? Indirectly
+    yes… by revealed preference across four groups"*) falls outright:
+    Ozden, Yucedag & Kocer's own introduction cites five further groups
+    reaching for lateral detuning, and their own super-cell — differently
+    sized coplanar resonators over one shared spacer, X-band, measured — is
+    exactly the controlled experiment #187 asks for. Fixed at the claim per
+    ADR-0024. See `docs/ozden-broadband-supercell-primary-source.md`
+    (another agent is creating it; referenced here by path, not created by
+    this entry).
+
+50. **Ozden, Yucedag & Kocer (*AEU* 70:1062–1070, 2016, DOI
+    10.1016/j.aeue.2016.05.002) → no longer stranded.** Named in map #104
+    as paywalled at both ScienceDirect and ResearchGate, and never
+    previously carried as its own row in this register's §1 — it is added
+    there now, already resolved: retrieved 2026-09-10 from an open mirror,
+    `iranarze.ir/wp-content/uploads/2016/10/E142.pdf`. **Third time a
+    stranded source in this programme has fallen to a route rather than to
+    a fee**, after MDPI's PMC mirror (§1) and Costanzo *IJAP* 2019's manual
+    retrieval (correction 14).
+
+51. **ADR-0033's carbon span "6–24 µm … 250–1000 Ω/sq" vs its own working
+    notes' "8:1 (1000 → 125 Ω/sq)" → the notes are the orphan; the ADR's
+    number stands, and "never close" overstates the gap.**
+    `geometry/PROTOTYPE-lossy-cell-fit.md:110` states carbon's thickness
+    knob as an 8:1 span ending at 125 Ω/sq — a number that appears nowhere
+    in that same document's own ink table twenty-two lines above it
+    (:88–89, spanning only 12–24 µm at 500–250 Ω/sq) nor in
+    `docs/voltera-multilayer-capability.md:495–502`'s 6–24 µm / 1000–250
+    Ω/sq table, which is where ADR-0033's own figure comes from. ADR-0033's
+    250–1000 Ω/sq stands. Its "never close to the 11–90 Ω/sq window"
+    (ADR-0033, line 36) overstates the gap: at the nearest documented edge
+    it is 2.8× (250 vs 90 Ω/sq), and even at the working notes' own
+    unsupported 125 Ω/sq endpoint it is only 1.4×.
+
+52. **ADR-0033: "Silver and MXene are several skin depths thick at any
+    printable film" → true for silver, not for MXene, which sits at
+    ~1.5–1.8 skin depths for a 10 µm film across X-band.** ADR-0033
+    (lines 32–33) states both conductors clear "several" skin depths at
+    any printable thickness. `docs/voltera-multilayer-capability.md:463,476`
+    computes a 10 µm MXene film at **1.65 δ at 10 GHz**; using the same
+    conductivity (σ ≈ 6.9×10⁵ S/m) and the per-frequency skin depths in
+    `docs/mxene-voltera-nova-printability.md:102–104`, the same 10 µm film
+    is **1.48 δ at 8 GHz and 1.81 δ at 12 GHz** (`CALCULATED` via
+    `rf_tools/calculations.py`'s `skin_depths_of_thickness`) — not
+    "several" by any ordinary reading, and the opposite of map #104's
+    "MXene never reaches that [3δ] regime at printable thickness." The
+    still-open ~1.8× conductivity disagreement in section 3 item 33 means
+    even this narrower range is not the last word. Silver is unaffected:
+    2.96–5.92 δ across its own 10–20 µm printable range genuinely is
+    several. **Conclusion unaffected either way**: MXene's sheet resistance
+    over that range (≈0.20–0.24 Ω/sq, `CALCULATED` from the finite-thickness
+    formula, not the bulk approximation) stays far below the 11–90 Ω/sq
+    window ADR-0033 needs.
+
+53. **ADR-0033 rejected "tuning loss by ink thickness"; it never considered
+    ink FORMULATION, and formulation reaches the window.** ADR-0033's
+    "Considered and rejected" list names only *"tuning loss by ink
+    thickness alone"* — an argument from Voltera's own catalogue at fixed
+    formulation. Li et al., *ACS Appl. Mater. Interfaces* 16(32):42448
+    (2024), DOI 10.1021/acsami.4c07084, report a screen-printed
+    MXene–PEDOT:PSS ink tunable across **5–32.5 Ω/sq** by formulation
+    ratio, overlapping the repo's 11–90 Ω/sq window at 11–32.5. The ADR
+    reasoned from an enumeration of Voltera's catalogue to a claim about
+    the reachable sheet-resistance space; only the catalogue claim is
+    defended. **The decision itself survives** — the resonant plates still
+    need ~0.1–0.25 Ω/sq (silver/MXene, ADR-0033 lines 32–33), so the
+    two-ink split stands; formulation is a second, not-yet-adopted route
+    to the same 11–90 Ω/sq target the aspect-ratio knob already reaches.
+
+54. **`docs/voltera-multilayer-capability.md:505`: "a better-conducting
+    batch … thickness must rise to compensate" → must FALL.** The line
+    reasons from `R_s = 1/(σt)`: a better-conducting batch has higher σ, and
+    at fixed thickness that gives a *lower* `R_s` than the datasheet
+    upper-bound table assumes. Restoring the table's target `R_s` after a
+    conductivity increase therefore needs *less* thickness, not more —
+    the stated direction is backwards.
+
+55. **The AI-metasurface survey's "an order of magnitude per step up in
+    scope" → the corpus is built from unit-cell solves enumerating
+    TOPOLOGIES, not from aperture arrangements.**
+    `docs/ai-metasurface-survey-against-the-seven-examples.md:58` reads the
+    80,000-versus-7,000 training-set jump from cell to coding pattern as a
+    cost of scope — *"teaching a model about one tile is far cheaper than
+    teaching it about a whole quilt, because the quilt has vastly more
+    distinct arrangements."* The paper very likely behind that Example-7
+    figure, *Materials* 18(21):4841 (2025), DOI 10.3390/ma18214841, states
+    70,000 samples at approximately 1 minute **per unit cell** over a
+    40×40 → 80×80 binary topology encoding. Section 3's price tag survives;
+    its stated mechanism does not. The lever that shrinks a Tier B corpus
+    is constraining the geometry **encoding** (how finely one cell's
+    topology is described), not shrinking the aperture. Encoding
+    dimensionality as *the* driver is **not** established either — it is
+    confounded with model class (generative VAE vs. discriminative
+    surrogate) at n = 1 each side.
+
+56. **The same survey's section 4 attributes both reported ML phase errors
+    to the backscatter-reduction family; its own section 2 table files the
+    4° figure under Example 6 — a polarisation converter, not a coding
+    metasurface.** `docs/ai-metasurface-survey-against-the-seven-examples.md`
+    §4 (line 74) compares *"the survey's two reported phase errors for this
+    family [Example 7, backscatter reduction] are 2° (coding metasurface,
+    80,000 samples) and 4° (DC-GAN)."* §2's own table (line 41) files the
+    4° figure under **Example 6**: *"DC-GAN 90% but 0.2 dB / 4° error."*
+    The two sections of the same document disagree about which family the
+    4° number belongs to; §4's margin table for Example 7 should drop the
+    4°-error row, or restate it against Example 6's own (undefined here)
+    phase budget instead.
+
+57. **`docs/curvature-effects-on-em-surfaces.md` calls Su et al.'s
+    conductor "printed" at line 279 and "Nanoimprinted" at line 373 →
+    nanoimprint.** Line 279 introduces the device as *"a digital coding
+    metasurface made of a printed 2D-material conductor"*; line 373
+    quotes the source directly as a *"Nanoimprinted Ti₃C₂Tₓ grid transparent
+    conductive film."* Nanoimprint lithography is not an extrusion or
+    screen-print process this programme's equipment performs. Makes it a
+    **Capability-warned** precedent — still reported, still informative
+    per the governing "warn, never block" rule — rather than a directly
+    printable one on today's configured machine.
+
+58. **The same document's section 4.2 (line 331) claims Su et al. "sits
+    inside" `S ≤ 2·θ_max·R` → asserted, never computed.** Line 331 reads
+    *"the two 'still works' datapoints sit inside this. Su et al.'s MXene
+    coding surface on R = 100 mm."* The document states Su et al.'s host
+    radius (100 mm) and centre frequency (11 GHz, lines 279–281), but
+    neither the aperture arc length `S` the former was wrapped with nor the
+    element's own angular-stability limit `θ_max` — the table at lines
+    302–305 gives θ_max only for the Jerusalem-cross and mushroom-type
+    families, not for Su et al.'s own grid element. The bound may well hold
+    for this device; the document does not show the arithmetic that would
+    confirm it.
+
+59. **"Recognised bandwidth enhancement is vertical or topological, never
+    lateral detuning of coplanar elements" → too strong; it was a claim
+    about two reading lists.** `docs/patch-q-factor-bound-primary-source.md`
+    lines 19 and 114 state this as an unqualified "never," corroborating it
+    "from a second literature" (patch antennas) alongside the five-paper
+    absorber corpus's own revealed-preference finding (correction 49). Both
+    readings are narrower than "never": arXiv:1704.03032 section 4.2 names
+    horizontal supercell integration as a recognised bandwidth-enhancement
+    method with three citations of its own, and Ozden et al. (correction
+    48/49) measure it working, in X-band. The comparative half of the
+    original claim survives: vertical integration has no ceiling on
+    resonator count where horizontal does. Caveat carried forward: the
+    review at arXiv:1704.03032 recycles an earlier review sharing a
+    co-author — one voice repeated, not a fourth independent literature.
+
+60. **ADR-0027 section 5's family test names "ADR-0018's three per-family
+    plug-ins" → there are four.** ADR-0027 line 137 tests whether an
+    imported shape needs a different `physical_bound`, `optimizer_class` or
+    `simulation_adapter` to decide family-versus-letter. `analysis_model`
+    was added to `designs/design_families.py` as a fourth required,
+    no-default slot per #239 and appears in no ADR and, until this pass, in
+    no `CONTEXT.md` entry (fixed by this pass's glossary addition, see
+    below). **Live victim:** a transmit-type bandpass FSS radome would
+    plausibly match `ABSORBER_TRANSMISSIVE`'s `physical_bound`
+    (`UnreadPhysicalBound`), `optimizer_class` (undeclared/`None`) and
+    `simulation_adapter` (`MEEP_FLOQUET`) exactly, so ADR-0027's
+    three-plug-in test files it as a **letter** under
+    `ABSORBER_TRANSMISSIVE` — whose declared `analysis_model` scores the
+    single worst-in-band **absorptivity** (`TRANSMISSIVE_ABSORBER_BAND_RESPONSE`).
+    That is backwards for a radome, whose entire purpose is to *pass*
+    energy through, not absorb it.
+
+61. **ADR-0027's Process record drops two of the six process variables its
+    own motivation named as "must derive" — ink age and MXene oxidation.**
+    `docs/element-library-prior-art.md:356` names the six: *"ink,
+    substrate, cure schedule, pass count, ink age and MXene oxidation."*
+    The shipped `process_records` table (`db/schema.sql:329–339`) carries
+    `machine`, `ink`, `ink_grade`, `substrate_stack`, `pass_count`,
+    `achieved_film_thickness_m` and `cure_schedule` — covering four of the
+    six (ink, substrate, cure schedule, pass count) and adding two the
+    original list never named (machine, achieved film thickness) — but no
+    ink lot, no receipt/open date, no print date and no measurement date,
+    only a row-insert `created_at` that makes no claim about the artifact.
+    Ink age and MXene oxidation, the two variables the ADR's own text
+    singled out as having "no analogue in etched-copper practice," are the
+    two the shipped schema has no column for. The decision ("entries never
+    expire; they stop matching") is unaffected — this is a gap in what the
+    Process record *records*, not in the identity model.
+
+62. **"Every *patterned* IR layer passes [the 407 Ω/sq overlay threshold]
+    by two to three orders" → a measured chessboard passes by 12× and still
+    fails the 90% absorption floor on susceptance alone.**
+    `docs/five-paper-absorber-corpus-findings.md` §4 derives (`CALCULATED`)
+    that a resistive overlay must exceed 407 Ω/sq to leave a 90% absorption
+    floor intact, and states every patterned IR layer in its corpus clears
+    that by two to three orders of magnitude. Worked back from a measured
+    chessboard IR layer's own T = 0.78 / R = 0.16 (power), its equivalent
+    lumped shunt admittance is `y ≈ 0.077 + j0.90` normalised
+    (`CALCULATED`: solving `|S21|²=T`, `|S11|²=R` for a shunt admittance
+    between matched lines) — an equivalent shunt *resistance* of
+    `Z₀/0.077 ≈ 4,900 Ω/sq`, 12× the 407 Ω/sq floor, but its `0.90·Y₀`
+    susceptance alone, combined with a perfectly matched absorber behind
+    it, leaves only **≈84% absorption** (`CALCULATED`:
+    `A = 1 - |(1-y_n)/(1+y_n)|²` with `y_n = 1 + y`). `min_overlay_sheet_
+    resistance_ohm_sq` (`rf_tools/calculations.py:1442`) models a purely
+    resistive sheet: **passing it is necessary, not sufficient**, for a
+    resonant patterned overlay, which also loads the absorber with a
+    reactive term the resistive-only model cannot see. The continuous half
+    of the original claim stands and is confirmed: a dense MXene film at
+    ~0.77 Ω/sq is ~530× too conductive regardless.
+
+63. **`docs/mxene-voltera-nova-printability.md` lines 51 and 69 still say
+    "Song 2022" → Shao et al., DOI 10.1038/s41467-022-30648-2.** Correction
+    35 was applied at line 18, which already reads "Shao et al." Lines 51
+    (*"Extrusion-printed, room temp, no anneal (Song 2022)"*) and 69
+    (*"Used as a MXene ink substrate in multiple sources (Song 2022; …)"*)
+    were missed. Outside material independently calls the same DOI "Zhang
+    et al." — three names for one paper. **The DOI is the identity.**
+
+64. **`simulation/palace.py:350` cites the arbitrary-shape gap as "issue
+    #289" → #289 is CLOSED**, titled "Palace: embed a real
+    (finite-conductivity) conductor sheet in the periodic unit cell" — the
+    same finite-conductivity-sheet feature the same docstring already
+    cites, correctly, at line 263. The open tickets for the arbitrary-shape
+    (non-rectangular/conformal) meshing gap line 350 is actually describing
+    are **#361** ("Conformal geometry through to Palace") and **#362**
+    ("Non-rectangular elements into MEEP and Palace"), both open.
+    `designs/design_families.py`'s `POLARIZATION_CONVERTER` `simulation_
+    adapter` reason (line 837) also quotes a superseded Palace docstring —
+    *"Embedded PEC conductor patches … are NOT implemented"* — while
+    `simulation/palace.py:222` now reads *"Embedded PEC conductor patches
+    can now be meshed."* `POLARIZATION_CONVERTER` remains genuinely
+    unsettled for the separate, still-true reason its own text gives
+    (Palace cannot yet build a printed anisotropic metal cell end to end),
+    but the quoted evidence for that claim is stale.
+
+65. **Brower et al.'s "MXene sheet resistance ~100 Ω/sq" is not a measured
+    MXene property → it would be, at best, a design-sweep value and an
+    S-parameter inverse fit in which σ and t are degenerate.** Map #104
+    already records that this paper's *"specific optimizer (possibly
+    PSO), tile period and MXene sheet resistance remain unconfirmed and
+    paywalled"* — so any figure quoted from it, including "~100 Ω/sq,"
+    is not yet a confirmed reading and must not be filed as one. Brower,
+    DeLacy, Garrett & Mirotznik, *Optical Engineering* 63(2):027105 (2024),
+    DOI 10.1117/1.OE.63.2.027105, is Ka-band (26–40 GHz) throughout, per
+    its own abstract (map #104: *">93% absorptance, 26–40 GHz"*); a
+    sheet-resistance figure recovered from it would come from a Debye
+    dispersion fit starting at 18 GHz, not a DC or contact measurement,
+    and must not be cited as contradicting ADR-0033's printed-trace
+    figures, which are X-band and measured/datasheet-derived. Its 6 mm
+    tile is **0.52–0.80 λ₀** across 26–40 GHz (`CALCULATED`: λ₀ = 11.54 mm
+    at 26 GHz, 7.5 mm at 40 GHz) — **not** comparable to ADR-0033's 6.0 mm
+    cell at **0.20 λ₀** (ADR-0033, "Period 6.0 mm (0.20 λ₀)") despite the
+    identical 6 mm number.
+
+66. **Map #104's "Costa & Borgese 2021 … triples the bias (−3.01%)" →
+    superseded on 2026-09-08 by this register's own correction 43** (the
+    two published forms differ by `ε_r/ε_eff = 1.487`, not by `ε_r = 2.9`;
+    corrected figures **−1.07%** vs **−1.57%**, 9.893 vs 9.843 GHz, a 14 µm
+    gap difference). The map's own entry for #234/#246 already states
+    "#234 is unchanged at 1.487×", so two paragraphs of the same document
+    disagree and a skim-reader takes the wrong one. Confirmed: correction
+    43 exists in this register and states exactly this; the map's older
+    paragraph should be read superseded by it.
+
+### Found while charting NYS1's remaining patent examples (2026-09-10)
+
+67. **`docs/absorber-thickness-bandwidth-bound.md` §7.1 misquoted Gustafsson
+    & Sjöberg's Eq. (5.1) small-angle asymptote: `π²Φ/2`, not the primary
+    text's `(π/2)Φ`.** A factor-of-π transcription slip, caught while
+    independently rendering the primary PDF page (Gustafsson & Sjöberg,
+    *Physical bounds and sum rules for high-impedance surfaces*,
+    LUTEDX/(TEAT-7198)/1-19/2010, p.9) as an image to resolve a citation
+    question for NYS1's Example 1/2 scoring recipe. Does not change any of
+    that document's actual arithmetic — the `2.6` (Φ=π/2) and `2π` (Φ=π)
+    values it uses everywhere are the exact closed forms, not the small-Φ
+    asymptote — only the asymptotic label itself was wrong. Fixed in place
+    per ADR-0024 ("a correction lands at the claim"; the wrong number must
+    not be readable as current anywhere).
+
 ---
 
 ## 4. Unknowns, ranked by how much they matter
@@ -880,10 +1165,29 @@ does not change — what it is *for* does.
    > **4× less error** (25° / 21° / 12° at half-wavelength pitch for square,
    > Minkowski, fixed-edge). **Prefer letters that differ without changing what
    > they present to their neighbours.**
+   > **A second note, added 2026-09-10.** Ozden et al. (§3 corrections
+   > 48/49) is the first *measured*, *in-band* instance this repo holds of
+   > a super-cell whose author credits **inter-cell coupling** as helping —
+   > verbatim, *"mainly due to the electromagnetic field coupling between
+   > the neighbor unit cells"* — and treats **letter position inside the
+   > tile** as an optimisable variable. That is the exact term all three of
+   > this repo's own checks (`docs/five-paper-absorber-corpus-findings.md`,
+   > `docs/supercell-ring-inductance-bench.md`,
+   > `docs/patch-q-factor-bound-primary-source.md`) omit by construction —
+   > none of the three models inter-cell coupling. See
+   > `docs/ozden-broadband-supercell-primary-source.md`.
 5. **Admission-by-printability** — an element entering the library only after
    printing successfully, which would make any design built from it printable
    by construction.
 6. **A re-characterisation policy** — what invalidates a characterised element.
+   > **Sub-question, added 2026-09-10.** Nothing in the published
+   > element-library literature records *when* an entry was made, or *how
+   > old the artifact was* when it was measured — and this repo's own
+   > Process record does not either (§3 correction 60: the shipped
+   > `process_records` table carries no ink lot, receipt/open date, print
+   > date or measurement date, only a row-insert `created_at`). A
+   > re-characterisation policy has no age signal to trigger on, from
+   > either side.
 7. **Closed-form equivalent-circuit models for the patent's own shapes.**
    Existing closed forms cover square patches, strip grids and the absorber
    stack, but **nothing covers I-shaped ring resonators**.
@@ -900,3 +1204,16 @@ does not change — what it is *for* does.
 library architecture itself, organising by shape family, characterising blocks
 as units, and phase quantisation levels. Those are adopted, not invented — see
 #131.
+
+**One outside claim explicitly refused (2026-09-10).** A research pass from
+outside this repo proposed "a MXene multi-element coding/supercell
+RCS-reduction metasurface" as unpublished white space. **That is not a
+no-prior-art item for this repo.** This repo already holds a retrieved,
+open-access, `MEASURED`, X-band MXene digital coding metasurface, conformally
+bent on a 100 mm former and still splitting an 11 GHz beam into dual beams —
+Su, Xiao et al., *Science Advances* (2026) eaee8104,
+`docs/curvature-effects-on-em-surfaces.md:279–282` — which that pass never
+cites, itself evidence its sweep was not exhaustive. What IS genuinely
+unpublished is narrower, and any novelty claim must say so precisely: **no
+MXene coding surface has been reported as an RCS-reduction device, with a dB
+figure against an equally-bent reference.**
