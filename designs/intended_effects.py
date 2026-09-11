@@ -1123,27 +1123,48 @@ TRANSMITTED = EffectProfile(
     fixtures=(TWO_PORT_TRANSMISSION,),
     bounds=(
         EffectBound(
-            mechanism="passband through an unbacked frequency-selective surface",
-            status=BoundStatus.NOT_ESTABLISHED,
-            name="transmissive/radome bandwidth bound",
-            form="",
+            mechanism="transmission through a periodically perforated free-standing screen",
+            status=BoundStatus.PUBLISHED,
+            name="Ludvig-Osipov et al. perforated-screen transmission bandwidth bound",
+            form="B <= gamma*pi*Delta/(A*lambda_0), Delta = sqrt(1-T0^2)/T0 (their Eq. 12)",
             citation=(
-                "None. ADR-0047's per-family bound table covers absorbers, "
-                "reflection-phase steering, AMC-checkerboard backscatter reduction "
-                "and polarisation conversion; a transmissive passband is not in it, "
-                "and nobody here has searched for one. Recorded as NOT_ESTABLISHED "
-                "rather than NONE_PUBLISHED: absence of a citation is not evidence "
-                "that no bound exists."
+                "A. Ludvig-Osipov, J. Lundgren, C. Ehrenborg, Y. Ivanenko, "
+                "A. Ericsson, M. Gustafsson, B. L. G. Jonsson & D. Sjoberg, "
+                "'Fundamental Bounds on Transmission Through Periodically "
+                "Perforated Metal Screens With Experimental Validation', IEEE "
+                "Trans. Antennas Propag. 68(2):773-782, 2020, "
+                "doi:10.1109/TAP.2019.2943430; read first-hand and recorded at "
+                "docs/bandpass-fss-physical-bound-primary-source.md. Classical "
+                "Bode-Fano was checked first and found vacuous for this mechanism "
+                "(the far-side load is a pure resistance, Q=0 -- same document, "
+                "section 2), which is why the bound below is this different "
+                "member of the same passive-system sum-rule family rather than a "
+                "Bode-Fano restatement."
             ),
             applies_when=(
-                "No ground plane at all; one patterned layer (ADR-0017's 2026-09-06 correction)."
+                "No ground plane at all; one patterned layer (ADR-0017's "
+                "2026-09-06 correction). Infinitely thin (or w/d >= 10) PEC "
+                "screen, normal incidence only, single propagating Floquet mode, "
+                "negligible cross-polarisation, ~30x30 unit cells. Bounds "
+                "passband WIDTH only, not the insertion-loss floor inside it; "
+                "the source explicitly declines to extend it to lossy impedance "
+                "surfaces, and a printed conductor is not PEC."
             ),
             registry_state=(
-                "designs/design_families.py: BANDPASS_FSS.physical_bound is an "
-                "UnreadPhysicalBound (ADR-0050) naming broadband-matching theory "
-                "(Bode, Fano) as where a search should start -- explicitly NOT a "
-                "claim that either applies. The family now exists; the bound still "
-                "does not, so this stays NOT_ESTABLISHED."
+                "designs/design_families.py: BANDPASS_FSS.physical_bound is a "
+                "live PhysicalBound wired to "
+                "rf_tools.physical_bounds.perforated_screen_min_polarizability_m3 "
+                "/ perforated_screen_max_wavelength_fractional_bandwidth. It "
+                "needs gamma, the aperture's static polarizability, supplied by "
+                "the caller -- nothing in rf_tools or simulation computes it from "
+                "geometry yet (an electrostatic solve, not a closed form)."
+            ),
+            caveat=(
+                "B here is Ludvig-Osipov et al.'s own WAVELENGTH-domain "
+                "fractional bandwidth, 2*(lambda2-lambda1)/(lambda1+lambda2) -- "
+                "NOT the frequency-domain (f_high-f_low)/f_center this module "
+                "uses for the Rozanov bound elsewhere, and not interchangeable "
+                "with it except in the narrow-band limit."
             ),
         ),
     ),

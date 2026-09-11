@@ -45,6 +45,7 @@ from designs.design_families import (
     SHIELD,
     AnalysisModel,
     DesignFamily,
+    PhysicalBound,
     PostProcess,
     SimulationTier,
     SweepAxis,
@@ -56,6 +57,7 @@ from designs.design_families import (
     get_design_family,
     known_family_names,
 )
+from rf_tools import physical_bounds
 
 # ---------------------------------------------------------------------------
 # ADR-0045's two missing axes: postprocess and sweep_axes
@@ -284,10 +286,18 @@ def test_a_radome_is_a_family_because_its_analysis_model_differs_not_its_sense()
     """ADR-0027 section 5's four-plug-in test, applied to the case that
     forced the fourth plug-in to be named (#453).
 
-    Three of the four plug-ins are SHARED with ABSORBER_TRANSMISSIVE -- the
-    unread bound, the Floquet adapter, and no optimizer class at all -- which
-    is precisely why the three-plug-in version of the test filed a radome as
-    a LETTER under the absorber family. The fourth is what separates them.
+    At the time ADR-0050 decided this, three of the four plug-ins were
+    SHARED with ABSORBER_TRANSMISSIVE -- the unread bound, the Floquet
+    adapter, and no optimizer class at all -- which is precisely why the
+    three-plug-in version of the test filed a radome as a LETTER under the
+    absorber family. The fourth (analysis_model) was what separated them,
+    and that is still the fact this test exists to pin.
+
+    The bound has since stopped being shared (#483 gave BANDPASS_FSS a read,
+    cited PhysicalBound -- docs/bandpass-fss-physical-bound-primary-source.md
+    -- while ABSORBER_TRANSMISSIVE's stays unread). That does not reopen
+    ADR-0050's decision, which never rested on the bound being identical --
+    it rested on analysis_model, checked below exactly as before.
     """
     # Same solver.
     assert (
@@ -297,10 +307,13 @@ def test_a_radome_is_a_family_because_its_analysis_model_differs_not_its_sense()
     )
     # Same optimizer class -- neither declares one.
     assert BANDPASS_FSS.optimizer_class is ABSORBER_TRANSMISSIVE.optimizer_class is None
-    # Same bound STATE: both unread, neither reached by Rozanov.
-    assert isinstance(BANDPASS_FSS.physical_bound, UnreadPhysicalBound)
+    # The bound is no longer shared -- see the docstring above -- but neither
+    # is reached by Rozanov, which is the fact this test originally checked
+    # here and which still holds for both.
+    assert isinstance(BANDPASS_FSS.physical_bound, PhysicalBound)
+    assert BANDPASS_FSS.has_physical_bound
     assert isinstance(ABSORBER_TRANSMISSIVE.physical_bound, UnreadPhysicalBound)
-    assert not BANDPASS_FSS.has_physical_bound
+    assert "Rozanov" not in BANDPASS_FSS.physical_bound.citation
 
     # The fourth plug-in is where they part. ABSORBER_TRANSMISSIVE declares a
     # model that answers a question about HEAT; a radome is judged on what
@@ -435,16 +448,59 @@ def test_the_bandpass_family_records_what_makes_it_the_most_fabricable_architect
     assert "120" in BANDPASS_FSS.description  # the gap sweep's narrow end
 
 
-def test_neither_new_family_declares_a_bound_it_has_not_read():
-    """Both are UnreadPhysicalBound, and each says which reading it is --
-    "nobody has searched" rather than "read but unimplemented". Calling either
-    raises with the citation rather than returning a plausible number."""
-    for family in (BANDPASS_FSS, SHIELD):
-        assert isinstance(family.physical_bound, UnreadPhysicalBound), family.name
-        assert not family.has_physical_bound, family.name
-        assert "nobody here has searched" in family.physical_bound.citation, family.name
-        with pytest.raises(NotImplementedError):
-            family.physical_bound()
+def test_shield_still_declares_a_bound_it_has_not_read():
+    """SHIELD's bound is UnreadPhysicalBound -- "read but unimplemented" is
+    the one reading it does not carry. Calling it raises with the citation
+    rather than returning a plausible number. Its citation still reads
+    "nobody here has searched": #453's structural-suspicion argument stops
+    short of an actual literature search.
+
+    BANDPASS_FSS used to be filed alongside SHIELD here, on the same
+    UnreadPhysicalBound footing -- see
+    test_the_bandpass_bound_is_now_a_real_read_physical_bound below for
+    where its state actually is now.
+    """
+    assert isinstance(SHIELD.physical_bound, UnreadPhysicalBound)
+    assert not SHIELD.has_physical_bound
+    with pytest.raises(NotImplementedError):
+        SHIELD.physical_bound()
+    assert "nobody here has searched" in SHIELD.physical_bound.citation
+
+
+def test_the_bandpass_bound_is_now_a_real_read_physical_bound():
+    """BANDPASS_FSS's bound moved past "unread" entirely: #483 read
+    Ludvig-Osipov et al. (2020) in full and found it derives exactly the sum
+    rule this family needed -- a bound on passband width from the aperture's
+    static polarizability, for a periodic aperture array in free space at
+    normal incidence, not a Bode-Fano bound (which is vacuous here -- see the
+    citation and docs/bandpass-fss-physical-bound-primary-source.md section
+    2). The citation must name the source precisely enough that the next
+    reader can go straight to it, and must record that classical Bode-Fano
+    was checked and rejected rather than merely never tried.
+    """
+    bound = BANDPASS_FSS.physical_bound
+    assert isinstance(bound, PhysicalBound)
+    assert BANDPASS_FSS.has_physical_bound
+    assert bound.primary_source_doc == "docs/bandpass-fss-physical-bound-primary-source.md"
+    citation = bound.citation
+    assert "Ludvig-Osipov" in citation
+    assert "10.1109/TAP.2019.2943430" in citation
+    assert "arbitrary periodic apertures in thin screens" in citation
+    assert "Bode-Fano" in citation
+    assert "Q=0" in citation
+    assert "Zheng" in citation  # the superseded lead is still named, not dropped
+    # The feasibility function actually resolves and is callable.
+    assert bound.feasibility is physical_bounds.perforated_screen_min_polarizability_m3
+    gamma_min = bound(
+        f_low_hz=8e9, f_high_hz=12e9, cell_area_m2=(9e-3) ** 2, power_transmittance_threshold=0.8
+    )
+    assert gamma_min > 0.0
+    # Bounds passband WIDTH only -- the validity box must say so, and must
+    # name the conductor-loss gap this repo already measured from the other
+    # direction (fss_bandpass_circuit_check.py's 1.3 dB finding).
+    assert "insertion-loss" in bound.validity
+    assert "1.3 dB" in bound.validity
+    assert "gamma" in bound.validity
 
 
 def test_the_shield_bound_records_the_structural_suspicion_without_acting_on_it():

@@ -1657,23 +1657,51 @@ BANDPASS_FSS = DesignFamily(
             "carries the reference; until somebody writes it, this raises."
         ),
     ),
-    physical_bound=UnreadPhysicalBound(
-        name="transmissive/bandpass passband bandwidth bound",
+    physical_bound=PhysicalBound(
+        name="perforated-screen transmission bandwidth bound",
         citation=(
-            "None established, and nobody here has searched -- recorded as unread "
-            "rather than NO_PHYSICAL_BOUND on the same rule ABSORBER_TRANSMISSIVE "
-            "and POLARIZATION_CONVERTER use: absence of a citation is not evidence "
-            "that no bound exists. What IS settled is that Rozanov does not apply, "
-            "for the same reason it does not apply to ABSORBER_TRANSMISSIVE -- its "
-            "derivation opens by fixing a slab 'overlying a perfectly reflecting "
-            "plane' (docs/rozanov-bound-primary-source.md section 3, assumption "
-            "(b)) -- and that ADR-0047's per-family table does not cover a "
-            "transmissive passband at all. A search should start from broadband "
-            "MATCHING theory rather than from the absorber sum rules, since a "
-            "passband is a matching problem: Bode's and Fano's gain-bandwidth "
-            "limits are the named place to look. That is a lead for whoever picks "
-            "this up, NOT a claim that either applies -- neither has been read here "
-            "and neither has been shown to reach a periodic aperture in free space."
+            "A. Ludvig-Osipov, J. Lundgren, C. Ehrenborg, Y. Ivanenko, "
+            "A. Ericsson, M. Gustafsson, B. L. G. Jonsson & D. Sjoberg, "
+            "'Fundamental Bounds on Transmission Through Periodically "
+            "Perforated Metal Screens With Experimental Validation', IEEE "
+            "Trans. Antennas Propag. 68(2):773-782, 2020, "
+            "doi:10.1109/TAP.2019.2943430 (open author manuscript "
+            "arXiv:1810.07669). Their Eq. (12): B <= gamma*pi*Delta/(A*lambda_0) "
+            "-- a sum rule on the static polarizability of the aperture's "
+            "Babinet-complementary patch shape, derived for 'arbitrary "
+            "periodic apertures in thin screens' in free space at normal "
+            "incidence -- the BANDPASS_FSS geometry in the source's own "
+            "words. Read in full and quoted verbatim in "
+            "docs/bandpass-fss-physical-bound-primary-source.md, which also "
+            "records why classical Bode-Fano does NOT apply here (section 2: "
+            "the far-side load is a pure resistance with Q=0, so the "
+            "criterion is vacuous for a physically correct reason -- do not "
+            "reintroduce one) and what became of the still-STRANDED Zheng, "
+            "Hao & Li (2025) lead this search superseded (section 5)."
+        ),
+        primary_source_doc="docs/bandpass-fss-physical-bound-primary-source.md",
+        feasibility=physical_bounds.perforated_screen_min_polarizability_m3,
+        validity=(
+            "Infinitely thin (or w/d >= 10, within 2% of the thin-screen "
+            "result -- this family's own ~15 um conductor against its "
+            "120-360 um gap sweep gives w/d 8-24, holding for all but the "
+            "narrowest end of the sweep) PEC screen, normal incidence ONLY "
+            "(says nothing about the family's own declared incidence-angle "
+            "sweep axis), single propagating Floquet mode (below the "
+            "grating-lobe onset -- the same limit "
+            "rf_tools/transmissive_absorber.py already states), negligible "
+            "cross-polarisation, and enough unit cells (~30x30) that "
+            "finite-array truncation is negligible. Bounds passband WIDTH "
+            "only -- it says nothing about the insertion-loss FLOOR inside "
+            "that width, and its authors explicitly decline to extend it to "
+            "lossy impedance surfaces; a printed conductor is not PEC, and "
+            "verification/fss_bandpass_circuit_check.py already measured a "
+            "lossless reconstruction understating insertion loss by 1.3 dB "
+            "on a real paste-printed part. Needs gamma, the aperture's "
+            "static polarizability, supplied by the caller -- an "
+            "electrostatic solve nothing in rf_tools or simulation computes "
+            "today (docs/bandpass-fss-physical-bound-primary-source.md "
+            "section 6)."
         ),
     ),
 )

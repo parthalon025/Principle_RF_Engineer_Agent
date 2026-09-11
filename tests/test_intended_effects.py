@@ -613,10 +613,29 @@ def test_polarisation_conversion_has_no_published_bandwidth_bound():
     assert "2208.05533" in efficiency[0].citation
 
 
+def test_transmitted_carries_the_ludvig_osipov_perforated_screen_bound_as_published():
+    """'transmitted' moved off NOT_ESTABLISHED: #483 read Ludvig-Osipov et al.
+    (2020) in full and found the sum rule this mechanism needed -- a bound on
+    passband width, from a periodic aperture's static polarizability, for
+    free space on both sides at normal incidence. Not a Bode-Fano restatement
+    -- the citation records that Bode-Fano was checked first and found
+    vacuous for this mechanism, so a later reader cannot mistake this for the
+    Fano-matching member of the sum-rule family.
+    """
+    bounds = physical_bound_for("transmitted")
+    (bound,) = [b for b in bounds if "Ludvig-Osipov" in b.name]
+    assert bound.status is BoundStatus.PUBLISHED
+    assert "gamma" in bound.form
+    assert "10.1109/TAP.2019.2943430" in bound.citation
+    assert "Bode-Fano" in bound.citation
+    assert "Q=0" in bound.citation
+    assert "WAVELENGTH-domain" in bound.caveat
+
+
 def test_effects_with_no_researched_bound_say_not_established_not_none_published():
     """ "Nobody has looked" and "we looked and there is nothing" carry opposite
     instructions and must not collapse into one state."""
-    for effect in ("transmitted", "shielded against", "low infrared emissivity"):
+    for effect in ("shielded against", "low infrared emissivity"):
         bounds = physical_bound_for(effect)
         assert all(b.status is BoundStatus.NOT_ESTABLISHED for b in bounds), effect
 

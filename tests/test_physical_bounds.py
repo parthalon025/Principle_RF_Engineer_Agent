@@ -17,6 +17,7 @@ import pytest
 from designs.design_families import (
     ABSORBER,
     ABSORBER_TRANSMISSIVE,
+    BANDPASS_FSS,
     DIFFUSIVE,
     FREQUENCY_AXIS,
     NO_PHYSICAL_BOUND,
@@ -44,6 +45,9 @@ from rf_tools.physical_bounds import (
     electrically_thin_ceiling_hz,
     patch_max_fractional_bandwidth,
     patch_q_factor_lower_bound,
+    perforated_screen_max_wavelength_fractional_bandwidth,
+    perforated_screen_min_polarizability_m3,
+    perforated_screen_threshold_factor,
     reflectivity_db_to_magnitude,
     rozanov_broadband_thickness_floor_m,
     rozanov_lowest_feasible_center_hz,
@@ -339,7 +343,7 @@ def test_every_available_bound_carries_a_citation_and_a_validity_box():
     """A bound with no stated assumptions is the failure mode this whole
     module exists to prevent -- citing a lossless radiation bound against a
     lossy absorber, or vice versa."""
-    for family in (ABSORBER, PATCH):
+    for family in (ABSORBER, PATCH, BANDPASS_FSS):
         bound = family.physical_bound
         assert isinstance(bound, PhysicalBound)
         assert bound.citation.strip()
@@ -393,6 +397,99 @@ def test_no_bound_returns_infinity_nowhere_and_never_silently_zero():
     'anything is achievable', the most dangerous possible failure."""
     assert math.isfinite(rozanov_min_thickness_m(8e9, 12e9, -10.0))
     assert rozanov_min_thickness_m(8e9, 12e9, -10.0) > 0
+
+
+# ---------------------------------------------------------------------------
+# BANDPASS_FSS -- the Ludvig-Osipov et al. (2020) perforated-screen bound,
+# checked against the paper's own two worked designs
+# (docs/bandpass-fss-physical-bound-primary-source.md section 6.1).
+# ---------------------------------------------------------------------------
+
+
+def test_threshold_factor_matches_the_papers_own_worked_value():
+    """Delta = sqrt(1-T0^2)/T0; at the paper's own T0^2 = 0.8 this is exactly
+    0.5, the value both of its worked examples below are built on."""
+    assert perforated_screen_threshold_factor(0.8) == pytest.approx(0.5, rel=1e-9)
+
+
+def test_perforated_screen_bound_reproduces_the_papers_horseshoe_design():
+    """Ludvig-Osipov et al.'s measured design: an array of horseshoe-shaped
+    slots laser-milled in 18 um aluminium foil, l = 6.57 mm, transmission
+    peak at 13.52 GHz with 5.83% fractional bandwidth, reported as 98% of
+    the Eq. (12) bound at T0^2 = 0.8. Back-solving their own numbers for the
+    implied gamma and checking the forward direction recovers their stated
+    bandwidth is the closest available check against a real, measured design
+    rather than against this implementation's own arithmetic.
+    """
+    f0 = 13.52e9
+    cell_period_m = 6.57e-3
+    lambda0 = SPEED_OF_LIGHT_M_S / f0
+    reported_bandwidth = 0.0583
+    fraction_of_bound = 0.98
+    bound_bandwidth = reported_bandwidth / fraction_of_bound
+
+    lambda1 = lambda0 * (1 - bound_bandwidth / 2)
+    lambda2 = lambda0 * (1 + bound_bandwidth / 2)
+    f_high_hz = SPEED_OF_LIGHT_M_S / lambda1
+    f_low_hz = SPEED_OF_LIGHT_M_S / lambda2
+    cell_area_m2 = cell_period_m**2
+
+    gamma_min = perforated_screen_min_polarizability_m3(f_low_hz, f_high_hz, cell_area_m2, 0.8)
+    gamma_hat = gamma_min / cell_period_m**3
+    # The paper's own Fig. 5-range order of magnitude for a horseshoe slot.
+    assert gamma_hat == pytest.approx(0.1278, rel=1e-3)
+
+    # Forward direction recovers the paper's own bound bandwidth exactly.
+    recovered_bandwidth = perforated_screen_max_wavelength_fractional_bandwidth(
+        gamma_min, cell_area_m2, lambda0, 0.8
+    )
+    assert recovered_bandwidth == pytest.approx(bound_bandwidth, rel=1e-9)
+
+
+def test_perforated_screen_bound_reproduces_the_papers_cross_potent_design():
+    """The paper's second worked design (simulated, Fig. 3): main band at
+    lambda = 2.9*l, fractional bandwidth 0.24, reported as 86% of the
+    Eq. (12) bound at T0^2 = 0.8."""
+    lambda0_over_l = 2.9
+    reported_bandwidth = 0.24
+    fraction_of_bound = 0.86
+    bound_bandwidth = reported_bandwidth / fraction_of_bound
+
+    cell_period_m = 1.0
+    lambda0 = lambda0_over_l * cell_period_m
+    lambda1 = lambda0 * (1 - bound_bandwidth / 2)
+    lambda2 = lambda0 * (1 + bound_bandwidth / 2)
+    f_high_hz = SPEED_OF_LIGHT_M_S / lambda1
+    f_low_hz = SPEED_OF_LIGHT_M_S / lambda2
+    cell_area_m2 = cell_period_m**2
+
+    gamma_min = perforated_screen_min_polarizability_m3(f_low_hz, f_high_hz, cell_area_m2, 0.8)
+    gamma_hat = gamma_min / cell_period_m**3
+    assert gamma_hat == pytest.approx(0.5152, rel=1e-3)
+
+
+def test_perforated_screen_bound_is_positive_and_finite():
+    """Same discipline as test_no_bound_returns_infinity_nowhere_..., for
+    the new bound: never inf, never zero, on an ordinary X-band input."""
+    gamma_min = perforated_screen_min_polarizability_m3(8e9, 12e9, (9e-3) ** 2, 0.8)
+    assert math.isfinite(gamma_min)
+    assert gamma_min > 0.0
+
+
+def test_perforated_screen_bound_rejects_a_threshold_outside_the_open_unit_interval():
+    for bad in (0.0, 1.0, -0.1, 1.5):
+        with pytest.raises(ValueError):
+            perforated_screen_threshold_factor(bad)
+
+
+def test_bandpass_fss_physical_bound_validity_names_the_uncomputed_gamma_input():
+    """The one concrete gap this bound creates (CLAUDE.md's "name the missing
+    measurement"): gamma is not computable from geometry by anything in this
+    repo today, and the validity box must say so rather than let a caller
+    assume it is a solved input."""
+    validity = BANDPASS_FSS.physical_bound.validity
+    assert "gamma" in validity
+    assert "normal incidence ONLY" in validity
 
 
 # ---------------------------------------------------------------------------
