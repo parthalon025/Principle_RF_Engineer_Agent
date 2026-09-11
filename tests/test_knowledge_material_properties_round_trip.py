@@ -86,9 +86,7 @@ from knowledge.ingest import ingest_document
 from knowledge.provenance import LITERATURE_SUPPORTED
 
 
-def test_ingest_document_and_material_properties_round_trip(
-    tmp_path, cleanup_documents, no_ocr
-):
+def test_ingest_document_and_material_properties_round_trip(tmp_path, cleanup_documents, no_ocr):
     pdf_path = tmp_path / "ozden2016_iujeee_excerpt.pdf"
     write_pdf(
         pdf_path,
