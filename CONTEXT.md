@@ -143,6 +143,27 @@ and a glossary that churns with it stops being trustworthy (see
   on, which is a different layer; a skin has both a substrate and a host.
   Platform — names a vehicle class rather than a surface, and a host need
   not belong to one.
+- **Geometry layer role**: the closed, five-value vocabulary (`HOST`,
+  `SUBSTRATE`, `REFLECTOR`, `SPACER`, `PATTERN`) a materials/conductors
+  geometry primitive's optional `role` field is validated against
+  (`simulation/meep.py`'s `GeometryRole`, issue #485) — the code-level
+  counterpart to this same Host surface/Substrate distinction, plus the
+  Reflector/Spacer/Pattern layers ADR-0033's own recommended-cell table
+  names. Purely additive metadata: a primitive with no `role` stays exactly
+  as legal as before, and the tag is never read when building the actual
+  simulated material — an untagged conductor and one tagged `REFLECTOR`
+  simulate byte-for-byte the same object. At most one primitive across a
+  geometry's combined materials and conductors may carry `REFLECTOR` — a
+  design has one ground plane by construction — while `PATTERN` carries no
+  such cap, since ADR-0033's own absorber design coplanar-prints two
+  different-function inks in one pattern layer.
+  *In plain terms: a label on one physical slab or wire saying which job in
+  the stack it's doing — ground plane, spacer, antenna substrate, host, or
+  printed pattern — checked against a fixed list of five, and never
+  smuggled into the physics the simulator actually computes.*
+  _Avoid_: inferring a primitive's role from its position or material
+  properties — `role` is an explicit, optional tag, not something derived
+  from `epsilon_r`/`center_m`/shape.
 - **Metamaterial unit cell**: the repeating element whose **sub-wavelength
   structure** produces an effective permittivity/permeability the bulk
   material does not have on its own. The base building block a
