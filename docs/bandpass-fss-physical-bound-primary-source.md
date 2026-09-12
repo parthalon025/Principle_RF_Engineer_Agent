@@ -325,14 +325,27 @@ layer. That remains unread and is not resolved by this prediction.
 
 **The one concrete gap this creates, named precisely (`CLAUDE.md`'s "when
 stuck, name the missing measurement"):** the bound is stated in `γ`, the
-static polarizability of the aperture's Babinet-complementary patch, and
-nothing in `rf_tools` or `simulation` computes it. It is an **electrostatic**
-solve (`∇×E=0`, `∇·D=0`), not a full-wave one — `simulation/meep.py` is FDTD
-and is the wrong tool for it — and it is far cheaper than the frequency
-sweeps this programme already runs, but it does not exist here today. Until
-it does, a human supplies `γ` (from a literature value for a matching shape,
-or a hand calculation) to evaluate the bound against a candidate; the loop
-cannot derive it from geometry alone.
+static polarizability of the aperture's Babinet-complementary patch, and at
+the time this document was written nothing in `rf_tools` or `simulation`
+computed it. It is an **electrostatic** solve (`∇×E=0`, `∇·D=0`), not a
+full-wave one — `simulation/meep.py` is FDTD and is the wrong tool for it —
+and it is far cheaper than the frequency sweeps this programme already
+runs. Until it existed, a human supplied `γ` (from a literature value for a
+matching shape, or a hand calculation) to evaluate the bound against a
+candidate; the loop could not derive it from geometry alone.
+
+**Update (issue #547): closed for this family's own proposed shape.**
+`rf_tools/aperture_polarizability.py` now computes `γ` from geometry for the
+square-loop slot — `square_loop_polarizability_m3` for the isolated patch,
+`square_loop_periodic_array_polarizability_m3` (or the shape-agnostic
+`periodic_array_polarizability_correction_m3`, given any isolated `γ` and a
+period) for the periodic-array-corrected per-unit-cell value Eq. (12)
+actually needs, validated against Mansfield, Douglas & Garboczi (2001)'s
+square-plate value, Kurennoy (1996)'s narrow-annulus asymptote (a
+discretisation-strategy cross-check, not the square number itself), and this
+paper's own Fig. 4 "square patch" curve. No other aperture shape (circular
+loop, cross-potent, horseshoe, split-ring) has a solve yet — a human still
+supplies `γ` for those the same way as before.
 
 **The honest warning to attach to any candidate scored against this bound**
 (the charter's assumption / cost / cheapest-test triad):

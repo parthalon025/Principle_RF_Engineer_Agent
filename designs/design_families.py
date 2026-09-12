@@ -1892,9 +1892,14 @@ BANDPASS_FSS = DesignFamily(
             "verification/fss_bandpass_circuit_check.py already measured a "
             "lossless reconstruction understating insertion loss by 1.3 dB "
             "on a real paste-printed part. Needs gamma, the aperture's "
-            "static polarizability, supplied by the caller -- an "
-            "electrostatic solve nothing in rf_tools or simulation computes "
-            "today (docs/bandpass-fss-physical-bound-primary-source.md "
+            "static polarizability, supplied by the caller -- for this "
+            "family's own square-loop-slot shape, "
+            "rf_tools.aperture_polarizability.square_loop_polarizability_m3 "
+            "(isolated patch) and "
+            "square_loop_periodic_array_polarizability_m3 (the periodic-"
+            "array-corrected per-unit-cell value Eq. (12) actually needs) "
+            "now compute it (issue #547); no other aperture shape has a "
+            "solve yet (docs/bandpass-fss-physical-bound-primary-source.md "
             "section 6)."
         ),
     ),
