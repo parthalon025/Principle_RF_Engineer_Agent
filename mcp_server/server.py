@@ -64,13 +64,11 @@ from rf_tools.calculations import (
     curvature_length_correction_factor,
     curvature_shifted_resonant_frequency_hz,
     fractional_bandwidth_from_q,
-    l_network_match,
     maxwell_garnett_effective_permeability,
     patch_effective_permittivity,
     patch_length_extension_m,
     patch_resonant_frequency_hz,
     quality_factor_from_fractional_bandwidth,
-    quarter_wave_transformer_impedance,
     wavelength,
 )
 from rf_tools.correlation import (
@@ -80,6 +78,7 @@ from rf_tools.filter_synthesis import (
     realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
 )
+from rf_tools.impedance_matching import l_network_match, quarter_wave_transformer_impedance
 from rf_tools.link_noise_budget import (
     cascade_gain_db,
     cascade_output_ip3_linear,
