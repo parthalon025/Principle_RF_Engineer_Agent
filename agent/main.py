@@ -29,7 +29,6 @@ from optimization.rf_objectives import (
 )
 from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
 from orchestration.policy import assert_all_tools_categorized, category_for
-from rf_tools.calculations import maxwell_garnett_effective_permeability
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
@@ -50,6 +49,7 @@ from rf_tools.link_noise_budget import (
     third_order_intermod_dbc,
     third_order_intermod_output_dbm,
 )
+from rf_tools.metamaterial import maxwell_garnett_effective_permeability
 from rf_tools.network_parameters import (
     abcd_to_s,
     input_stability_circle,

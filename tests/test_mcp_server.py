@@ -23,7 +23,6 @@ from conftest import make_fake_executable
 
 import mcp_server.server as server
 from orchestration.policy import assert_all_tools_categorized
-from rf_tools.calculations import maxwell_garnett_effective_permeability
 from rf_tools.filter_synthesis import (
     realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
@@ -40,6 +39,7 @@ from rf_tools.link_noise_budget import (
     third_order_intermod_dbc,
     third_order_intermod_output_dbm,
 )
+from rf_tools.metamaterial import maxwell_garnett_effective_permeability
 from rf_tools.network_parameters import (
     abcd_to_s,
     input_stability_circle,
