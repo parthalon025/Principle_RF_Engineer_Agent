@@ -282,33 +282,54 @@ READ THE ACTUAL VALUE OUT OF THAT STEP'S RAW RESULT.
 -- it must already be a `designs.requirement_targets.propose_target`/
 `confirm_target` output, `PROPOSED` or `CONFIRMED`) and a plain
 `actual_value`/`actual_unit` pair. But `orchestration.design_loop`'s own
-step handlers each return a small, DIFFERENT dict shape (ANALYSIS:
-`{"resonant_frequency_hz": ...}`; SIMULATION: `{"gain_dbi": ...,
-"impedance": {...}, "pattern": [...], ...}`; OPTIMIZATION: `{"achieved_
-frequency_hz": ...}`, among other fields) -- something has to say which
-key of which step's result is the number being scored, and in what unit.
-`_DEFAULT_SCORE_FIELDS` below is that lookup (`resonant_frequency_hz`/Hz
-for ANALYSIS, `gain_dbi`/dBi for SIMULATION, `achieved_frequency_hz`/Hz
-for OPTIMIZATION), built at import time from `orchestration/
-score_fields.py`'s `SCORE_FIELD_SOURCES` -- the single source of truth
-this module and `orchestration/lab_test_plan.py` both derive their own
-lookup shape from (issue #102; that module needs the same facts grouped
-by physical quantity kind instead of by step, so it builds a differently-
-shaped index from the identical triples rather than this module's flat
-one). See `orchestration/score_fields.py`'s own docstring for why this is
+step handlers each return a small, DIFFERENT dict shape depending on the
+step AND, for SIMULATION, on the design family being driven (ANALYSIS:
+`{"resonant_frequency_hz": ...}` for PATCH, `{"worst_absorption": ...}`
+for ABSORBER; SIMULATION: `{"gain_dbi": ..., "impedance": {...}, ...}`
+for a NEC2-driven patch, `{"worst_absorption": ..., "reflectance": [...],
+...}` for a MEEP-driven absorber; OPTIMIZATION: `{"achieved_frequency_hz":
+...}`, among other fields) -- something has to say which key of which
+step's result is the number being scored, and in what unit.
+
+ANALYSIS and OPTIMIZATION use `_DEFAULT_SCORE_FIELDS` for that (built at
+import time from `orchestration/score_fields.py`'s `SCORE_FIELD_SOURCES`
+-- the single source of truth this module and `orchestration/
+lab_test_plan.py` both derive their own lookup shape from, issue #102;
+that module needs the same facts grouped by physical quantity kind
+instead of by step, so it builds a differently-shaped index from the
+identical triples rather than this module's flat one). See
+`orchestration/score_fields.py`'s own docstring for why this is
 mechanical wiring knowledge fixed by those functions' own documented
-output shapes (rf_tools/calculations.py, simulation/nec2pp.py,
-optimization/rf_objectives.py), not an RF judgment call, and for why it is
-kept separate from `orchestration/tooling.py`'s own `_STEP_TO_TOOL_NAME`
-despite the overlapping step keys. A caller wanting a DIFFERENT field
-scored (e.g. SIMULATION's `average_power_gain_linear` instead of
-`gain_dbi`) overrides `result_field` in that step's `score_specs` entry,
-but then MUST also supply an explicit `unit` -- this module has no basis
-for guessing the unit of an arbitrary overridden field, matching designs/
-success_score.py's own "refuse rather than guess a unit conversion" rule
-exactly (see that module's "UNIT HANDLING" section); `_resolve_score_field`
-below enforces this and raises `SolverError` naming the problem if
-violated.
+output shapes (rf_tools/calculations.py, optimization/rf_objectives.py),
+not an RF judgment call, and for why it is kept separate from
+`orchestration/tooling.py`'s own `_STEP_TO_TOOL_NAME` despite the
+overlapping step keys.
+
+SIMULATION does NOT use that single global default (issue #249): a
+patch's SIMULATION result and an absorber's carry no shared shape at all
+-- `_default_score_field_for` instead reads the driven design family's OWN
+`simulation_scored_field` declaration (`designs/design_families.py`),
+which PATCH states as `gain_dbi`/dBi (`simulation/nec2pp.py`'s own parsed
+peak gain, matching `_DEFAULT_SCORE_FIELDS`'s prior hardcoded value
+exactly, so PATCH's own scoring is unchanged) and ABSORBER/
+ABSORBER_TRANSMISSIVE state as `worst_absorption`/fraction (`orchestration/
+design_loop.py`'s `_simulate_meep_floquet`, via `_meep_absorption_for_
+family`). A family that has declared no `simulation_scored_field` at all
+(`UndeclaredScoredField`) has no default to fall back to -- scoring its
+SIMULATION step without an explicit override is refused as a call-level
+`SolverError`, raised before any candidate is evaluated, rather than
+silently reusing PATCH's `gain_dbi` (a confidently wrong field) or
+reporting a confusing per-candidate `failed_at_step`.
+
+A caller wanting a DIFFERENT field scored than either kind of default
+(e.g. SIMULATION's `average_power_gain_linear` instead of `gain_dbi`, or
+any field at all for a family with no declared default) overrides
+`result_field` in that step's `score_specs` entry, but then MUST also
+supply an explicit `unit` -- this module has no basis for guessing the
+unit of an arbitrary overridden field, matching designs/success_score.py's
+own "refuse rather than guess a unit conversion" rule exactly (see that
+module's "UNIT HANDLING" section); `_resolve_score_field` below enforces
+this and raises `SolverError` naming the problem if violated.
 
 A step with no `score_specs` entry is still DRIVEN (its `LoopDecision` is
 recorded, exactly as if scored) but never scored -- its trail entry
@@ -513,6 +534,10 @@ import math
 from typing import Any
 
 import designs.db as designs_db
+from designs.design_families import AnalysisModel as _AnalysisModel
+from designs.design_families import ScoredField as _ScoredField
+from designs.design_families import UnknownDesignFamilyError as _UnknownDesignFamilyError
+from designs.design_families import get_design_family as _get_design_family
 from designs.requirement_targets import TargetStatus
 from designs.success_score import INFERRED, success_score
 
@@ -552,8 +577,20 @@ _ORDERED_UNGATED_SPAN: tuple[DesignStep, ...] = (
 # it, and the REAL handler's own _require_fields raises
 # DesignLoopValidationError naming it when advance_design_loop_step runs
 # -- this module performs no validation of its own on these.
+#
+# ANALYSIS has no entry here (issue #249): its required fields used to be
+# hardcoded to the patch antenna's own eps_r/w_m/h_m/l_m shape, which
+# `_build_step_input` applied to EVERY family -- an absorber candidate's
+# real fields (f_low_hz, tan_delta, ...) were stripped before ANALYSIS ever
+# ran, so it failed on fields that were never missing, only discarded.
+# `_required_fields_for` below reads ANALYSIS's required fields off the
+# design family's own `analysis_model.required_fields` declaration
+# (designs/design_families.py) instead. SIMULATION and OPTIMIZATION keep
+# their own single, generic entries here unchanged: SIMULATION's shape
+# (geometry/frequency_hz/reference_impedance_ohms) is the same regardless
+# of family, and OPTIMIZATION's family-awareness is `optimizer_class`
+# wiring -- a separate, related gap this ticket does not touch.
 _REQUIRED_FIELDS: dict[DesignStep, tuple[str, ...]] = {
-    DesignStep.ANALYSIS: ("eps_r", "w_m", "h_m", "l_m"),
     # reference_impedance_ohms (issue #101): _handle_simulation now derives
     # VSWR/return loss from the feed-point impedance it already computes,
     # and requires its caller to state the reference impedance explicitly
@@ -635,21 +672,132 @@ def _steps_from(current_step: DesignStep) -> list[DesignStep] | None:
     return list(_ORDERED_UNGATED_SPAN[idx:])
 
 
-def _build_step_input(step: DesignStep, candidate: dict[str, Any]) -> dict[str, Any]:
+def _family_from_state(state: dict[str, Any]) -> Any:
+    """The `designs.design_families.DesignFamily` this iteration's
+    ARCHITECTURE decision named (issue #249) -- read straight off
+    `state["decisions"]`, the tooling-shaped state's own trail, mirroring
+    `orchestration.design_loop`'s private `_family_of_record`/
+    `_registry_family_of_record` (duplicated, not imported -- matching this
+    module's own established precedent of duplicating design_loop.py's
+    private step-handler facts rather than reaching into its internals; see
+    `_REQUIRED_FIELDS`'s own comment above).
+
+    Only ever called once `_steps_from` has already confirmed
+    `state["current_step"]` sits inside `_ORDERED_UNGATED_SPAN` -- the
+    design loop's own state machine cannot reach ANALYSIS/SIMULATION/
+    OPTIMIZATION without an ARCHITECTURE decision already recorded, so this
+    lookup is never expected to come up empty for a state a real loop
+    produced. A hand-assembled state missing one is reported by name here
+    rather than silently treated as any particular family."""
+    family_name = None
+    for decision in state.get("decisions") or ():
+        if decision.get("step") == DesignStep.ARCHITECTURE.value:
+            family_name = decision.get("input", {}).get("design_family")
+    if family_name is None:
+        raise SolverError(
+            "state has no recorded ARCHITECTURE decision naming a design_family "
+            "-- run_candidate_search only reaches this point once state['current_"
+            "step'] is already positioned past ARCHITECTURE (see _steps_from), so "
+            "this indicates a hand-assembled state missing its own architecture "
+            "decision."
+        )
+    try:
+        return _get_design_family(family_name)
+    except _UnknownDesignFamilyError as exc:
+        raise SolverError(str(exc)) from exc
+
+
+def _required_fields_for(step: DesignStep, family: Any) -> tuple[str, ...]:
+    """Required `step_input` fields for `step`, from the design family's
+    own registry declaration where one exists (issue #249).
+
+    ANALYSIS reads `family.analysis_model.required_fields` -- an absorber's
+    real fields (`f_low_hz`, `tan_delta`, ...) no longer get stripped down
+    to the patch antenna's `eps_r`/`w_m`/`h_m`/`l_m` shape just because
+    ANALYSIS used to have one single hardcoded entry regardless of family.
+    A family whose `analysis_model` is `UndeclaredAnalysisModel` (no
+    closed-form model at all) has no required fields to strip TO here --
+    an empty tuple is correct, not a gap: `advance_design_loop_step`'s own
+    ANALYSIS dispatch raises naming the undeclared model regardless of what
+    step_input it is handed, so the real failure is reported honestly
+    either way.
+
+    SIMULATION and OPTIMIZATION keep this module's own single, generic
+    `_REQUIRED_FIELDS` entry, unchanged: SIMULATION's shape (geometry/
+    frequency_hz/reference_impedance_ohms) does not vary by family, and
+    OPTIMIZATION's family-awareness is `optimizer_class` wiring -- a
+    separate, related gap this ticket does not touch."""
+    if step is DesignStep.ANALYSIS:
+        model = family.analysis_model
+        return model.required_fields if isinstance(model, _AnalysisModel) else ()
+    return _REQUIRED_FIELDS[step]
+
+
+def _build_step_input(step: DesignStep, candidate: dict[str, Any], family: Any) -> dict[str, Any]:
     """Project `candidate`'s fields down to exactly the ones `step`'s real
     handler reads (required + optional) -- a missing required field is
     left out, not filled in or defaulted, so the real handler's own
     validation is what raises for it (see this module's docstring)."""
-    fields = (*_REQUIRED_FIELDS[step], *_OPTIONAL_FIELDS.get(step, ()))
+    fields = (*_required_fields_for(step, family), *_OPTIONAL_FIELDS.get(step, ()))
     return {field: candidate[field] for field in fields if field in candidate}
 
 
-def _resolve_score_field(step: DesignStep, spec: dict[str, Any]) -> tuple[str, str]:
+def _default_score_field_for(step: DesignStep, family: Any) -> tuple[str, str] | None:
+    """The `(result_field, unit)` this module scores `step` on by default,
+    or `None` if none is available -- see this module's docstring,
+    "SCORING", and issue #249.
+
+    ANALYSIS and OPTIMIZATION keep this module's own single, generic
+    default (`_DEFAULT_SCORE_FIELDS`, derived from `orchestration.
+    score_fields.SCORE_FIELD_SOURCES`) -- both handlers' result shapes
+    (`resonant_frequency_hz`/`achieved_frequency_hz`) do not vary by
+    family today. SIMULATION reads the family's OWN declaration instead
+    (`family.simulation_scored_field`): a patch's SIMULATION result and an
+    absorber's carry no shared shape at all -- one reports a radiated gain,
+    the other a worst-in-band absorbed fraction -- so a single hardcoded
+    default (`gain_dbi`) was never a conservative fallback for every other
+    family, it was a wrong answer waiting to be produced confidently.
+    `None` here means the family declares no scored field for this step;
+    `_resolve_score_field` below is what turns that into the "not scored"
+    `SolverError`."""
+    if step is DesignStep.SIMULATION:
+        scored = family.simulation_scored_field
+        return (scored.result_field, scored.unit) if isinstance(scored, _ScoredField) else None
+    return _DEFAULT_SCORE_FIELDS[step]
+
+
+def _resolve_score_field(step: DesignStep, spec: dict[str, Any], family: Any) -> tuple[str, str]:
     """Which raw-result field to score for `step`, and its unit -- see
     this module's docstring, "SCORING". Raises `SolverError` if the caller
     overrode `result_field` away from this module's own documented default
-    without also stating an explicit `unit` for it."""
-    default_field, default_unit = _DEFAULT_SCORE_FIELDS[step]
+    without also stating an explicit `unit` for it, OR if `family` declares
+    no default scored field for `step` at all (issue #249) and the caller
+    did not supply a complete override (`result_field` AND `unit`) to score
+    a specific field anyway -- the distinct, clearly-named "not scored"
+    state this ticket's acceptance criteria ask for: a call-level
+    `SolverError`, raised before any candidate is evaluated, never a
+    silent wrong-field lookup and never a per-candidate `failed_at_step`."""
+    default = _default_score_field_for(step, family)
+    if default is None:
+        if "result_field" in spec and "unit" in spec:
+            return spec["result_field"], spec["unit"]
+        # _default_score_field_for only returns None for SIMULATION, and
+        # only when family.simulation_scored_field is the
+        # UndeclaredScoredField sentinel -- its own `reason` names why,
+        # matching this module's existing precedent (the override-without-
+        # unit branch below) of surfacing the concrete reason rather than a
+        # generic message.
+        undeclared = family.simulation_scored_field
+        raise SolverError(
+            f"score_specs[{step.value!r}] cannot be scored by default: "
+            f"design family {getattr(family, 'name', family)!r} declares no "
+            f"simulation_scored_field. Why not: {undeclared.reason} State an "
+            "explicit 'result_field' and 'unit' in this score_specs entry to "
+            "score a specific field instead, or remove this step from "
+            "score_specs to drive it without scoring it (issue #249)."
+        )
+
+    default_field, default_unit = default
     result_field = spec.get("result_field", default_field)
     if result_field == default_field:
         unit = spec.get("unit", default_unit)
@@ -731,14 +879,19 @@ def _validate_score_specs(score_specs: Any) -> dict[str, dict[str, Any]]:
                 f"(an 'UNSCOREABLE' target has no number to score against) -- got "
                 f"target_status={target_status!r}"
             )
-        # Validated eagerly, here, rather than lazily inside _score_step:
-        # an overridden result_field with no explicit unit is a CALL-level
-        # configuration mistake (it would fail identically for every
-        # candidate), not a per-candidate data problem -- see SolverError's
-        # own docstring for that distinction. Raising it up front means the
-        # caller learns about it before spending any evaluation_budget, not
-        # buried inside candidate[0]'s "failed" trail entry.
-        _resolve_score_field(DesignStep(step_name), spec)
+        # Field resolution itself (the default-field/override/unit checks
+        # `_resolve_score_field` performs) is deliberately NOT done here
+        # any more (issue #249): it needs the design family this call's
+        # `state` names, and `state` is not validated to be positioned past
+        # ARCHITECTURE until `run_candidate_search` itself has checked for
+        # a gated/out-of-scope/completed step -- resolving the family here
+        # would raise for a state legitimately still sitting at a gated
+        # ARCHITECTURE step, before this function ever gets a chance to
+        # report that as `stop_reason="gated_step_pending_approval"`
+        # instead. `run_candidate_search` performs the equivalent eager,
+        # call-level `_resolve_score_field` check itself, once the family
+        # is known and BEFORE any candidate is evaluated -- see its own
+        # body, immediately after the "none of score_specs" check.
     return score_specs
 
 
@@ -747,13 +900,14 @@ def _score_step(
     spec: dict[str, Any],
     decision_result: dict[str, Any],
     note: str | None,
+    family: Any,
 ) -> dict[str, Any]:
     """Score one driven step's raw result against `spec["target"]`. Raises
     `SuccessScoreError` (from `designs.success_score.success_score`) for
     everything that function itself refuses -- including a missing/non-
     numeric value at the resolved `result_field` -- letting that module's
     own validation do the work rather than duplicating it here."""
-    result_field, unit = _resolve_score_field(step, spec)
+    result_field, unit = _resolve_score_field(step, spec, family)
     actual_value = decision_result.get(result_field)
     return success_score(
         step=step.value,
@@ -769,6 +923,7 @@ def _drive_candidate(
     steps_to_drive: list[DesignStep],
     candidate: dict[str, Any],
     score_specs: dict[str, dict[str, Any]],
+    family: Any,
 ) -> dict[str, Any]:
     """Drive ONE candidate through `steps_to_drive`, forked fresh from
     `base_state` (never chained from a previous candidate's result -- see
@@ -805,7 +960,7 @@ def _drive_candidate(
     error_message: str | None = None
 
     for step in steps_to_drive:
-        step_input = _build_step_input(step, candidate)
+        step_input = _build_step_input(step, candidate, family)
         try:
             working_state = advance_design_loop_step(working_state, step_input, approval=None)
         except Exception as exc:
@@ -818,7 +973,7 @@ def _drive_candidate(
         score: dict[str, Any] | None = None
         if spec is not None:
             try:
-                score = _score_step(step, spec, decision["result"], note)
+                score = _score_step(step, spec, decision["result"], note, family)
             except Exception as exc:
                 failed_at_step = step.value
                 error_message = str(exc)
@@ -984,6 +1139,7 @@ def _prior_best_from_design(
     design_id: int,
     scoreable_steps: list[DesignStep],
     score_specs: dict[str, dict[str, Any]],
+    family: Any,
 ) -> tuple[float | None, int | None]:
     """The best `overall_score_percent` (design question 3's own
     worst_of_scored_steps rule, reused unchanged) that `design_id` has
@@ -1039,6 +1195,18 @@ def _prior_best_from_design(
     entirely -- logged and skipped, never raised: a corrupt or unrelated
     historical row must not block evaluating this call's own NEW
     candidates).
+
+    `family` (issue #249) is this call's OWN design family (`state`'s
+    ARCHITECTURE decision, resolved once by `run_candidate_search` via
+    `_family_from_state`) -- used exactly like every OTHER `_score_step`
+    call in this module, to resolve SIMULATION's scored field off the
+    family's own declaration rather than a single hardcoded default. Per
+    this function's own docstring above, `design_id` need not name a
+    design of the SAME family as `state`; a caller seeding from a
+    DIFFERENT, related design's history gets that history scored under
+    THIS call's family regardless -- the identical simplifying assumption
+    this module already made before #249 (one global default for every
+    family), so this is not a new limitation introduced here.
     """
     if not scoreable_steps:
         return None, None
@@ -1057,7 +1225,9 @@ def _prior_best_from_design(
         scores: list[dict[str, Any] | None] = []
         for row in rows:
             try:
-                scores.append(_score_step(step, spec, row.get("value") or {}, note=None))
+                scores.append(
+                    _score_step(step, spec, row.get("value") or {}, note=None, family=family)
+                )
             except Exception as exc:
                 _logger.info(
                     "solver: design_id=%s prior engineering_results id=%s for step=%s "
@@ -1117,13 +1287,20 @@ def run_candidate_search(
         architecture). `SolverError` if it is not tooling-shaped (see
         "WHICH LAYER THIS MODULE DRIVES").
       - `candidates`: a non-empty list of plain dicts, each the union of
-        whatever `_REQUIRED_FIELDS`/`_OPTIONAL_FIELDS` the steps actually
-        driven need (e.g. `eps_r`/`w_m`/`h_m`/`l_m` for ANALYSIS,
-        `geometry`/`frequency_hz`/`reference_impedance_ohms` for
-        SIMULATION -- the last one stated explicitly per candidate, never
-        assumed to be 50 ohms (issue #101) -- plus `target_frequency_
-        hz`/`length_lower_m`/`length_upper_m` for OPTIMIZATION). An
-        optional `"note"` key, if present, is forwarded to every scored
+        whatever fields the steps actually driven need. ANALYSIS's own
+        required fields (issue #249) come from the driven design family's
+        own `analysis_model.required_fields` declaration (`designs/
+        design_families.py`) -- e.g. `eps_r`/`w_m`/`h_m`/`l_m` for PATCH,
+        `f_low_hz`/`f_high_hz`/`eps_r`/`tan_delta`/`thickness_m`/`period_
+        m`/`gap_m`/`sheet_resistance_ohm_sq`/`squares` for ABSORBER/
+        ABSORBER_TRANSMISSIVE. SIMULATION and OPTIMIZATION keep this
+        module's own single, generic `_REQUIRED_FIELDS`/`_OPTIONAL_FIELDS`
+        entries regardless of family: `geometry`/`frequency_hz`/
+        `reference_impedance_ohms` for SIMULATION -- the last one stated
+        explicitly per candidate, never assumed to be 50 ohms (issue
+        #101) -- plus `target_frequency_hz`/`length_lower_m`/`length_
+        upper_m` for OPTIMIZATION. An optional `"note"` key, if present,
+        is forwarded to every scored
         step's `success_score(note=...)` call for that candidate. An
         optional `"prediction"` key -- `{"value": <float>, "tolerance":
         <float>}` -- states this candidate's expected value for its
@@ -1325,6 +1502,25 @@ def run_candidate_search(
             "ever be scored"
         )
 
+    # The design family this iteration's ARCHITECTURE decision named
+    # (issue #249) -- resolved exactly HERE, never earlier: `state` is not
+    # confirmed to be positioned past ARCHITECTURE until the gated/out-of-
+    # scope/completed checks above have already passed, and a state
+    # legitimately sitting at a gated ARCHITECTURE step has no family to
+    # read yet (see `_family_from_state`'s own docstring).
+    family = _family_from_state(state)
+
+    # Eagerly resolve every score_specs entry's scored field NOW, against
+    # THIS family, before any candidate is evaluated -- the same "a CALL-
+    # level configuration mistake fails once, up front" contract
+    # `_validate_score_specs` used to enforce by itself (see that
+    # function's own comment), moved here because it needs `family`. Every
+    # entry in score_specs is checked, not only the ones in
+    # relevant_step_names, matching that function's own original scope
+    # exactly.
+    for step_name, spec in score_specs.items():
+        _resolve_score_field(DesignStep(step_name), spec, family)
+
     # Which step a candidate's "prediction" is compared against -- the
     # FIRST step (in driven order) score_specs actually scores, fixed once
     # here for the whole call, before any candidate runs. See this
@@ -1342,7 +1538,7 @@ def run_candidate_search(
     if design_id is not None:
         scoreable_steps = [step for step in steps_to_drive if step.value in score_specs]
         prior_best_score, prior_iteration = _prior_best_from_design(
-            design_id, scoreable_steps, score_specs
+            design_id, scoreable_steps, score_specs, family
         )
         report["prior_best_score"] = prior_best_score
         report["prior_iteration"] = prior_iteration
@@ -1360,7 +1556,7 @@ def run_candidate_search(
 
     for i in range(effective_budget):
         candidate = candidates[i]
-        driven = _drive_candidate(state, steps_to_drive, candidate, score_specs)
+        driven = _drive_candidate(state, steps_to_drive, candidate, score_specs, family)
         overall, all_met = _overall_score(driven["steps"])
         failed = driven["failed_at_step"] is not None
         prediction = _score_prediction(

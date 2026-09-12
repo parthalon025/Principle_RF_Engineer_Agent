@@ -256,11 +256,25 @@ class AnalysisModel:
     `answers` says in plain language what question the returned number is an
     answer to -- because the defect this field exists to remove produced a
     perfectly valid number that answered a question about a different device.
+
+    `required_fields` (issue #249) names exactly the `step_input` keys this
+    model's own dispatched handler requires (`orchestration/design_loop.py`'s
+    own `_require_fields` call for it, plus `eps_r` where `_resolve_eps_r_
+    bounds` needs one) -- the fact `orchestration/solver.py`'s candidate
+    driver reads to know which of a proposed candidate's fields to keep for
+    ANALYSIS, instead of the single hardcoded patch-antenna shape
+    (`eps_r`/`w_m`/`h_m`/`l_m`) it used to project every family's candidate
+    through. Defaults to an empty tuple, never `None`, matching this
+    module's own "never a bare ambiguous absence" discipline -- a family
+    that has not stated one yet strips every field for its ANALYSIS
+    step_input, which reads as "no analysis to run" every bit as loudly as
+    an `UndeclaredAnalysisModel` would, rather than as a hidden fallback.
     """
 
     name: str
     function: str
     answers: str
+    required_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -364,6 +378,85 @@ SimulationAdapterSlot = SimulationAdapter | UnsettledSimulationAdapter
 class UnsettledSimulationAdapterError(ValueError):
     """Raised when a step asks a family which solver to run and the family
     has no settled adapter (issue #241)."""
+
+
+# --------------------------------------------------------------------------
+# Simulation scored field: which raw result key SIMULATION is judged on
+# --------------------------------------------------------------------------
+#
+# WHY THIS SLOT EXISTS (issue #249). `orchestration/solver.py`'s candidate
+# driver used to score every family's SIMULATION result on ONE hardcoded
+# default field, `gain_dbi` -- a patch antenna's peak radiated gain, read
+# straight out of NEC2's own parsed output. ABSORBER's SIMULATION result (from
+# `orchestration/design_loop.py`'s `_simulate_meep_floquet`) carries no such
+# key at all -- it reports `worst_absorption` instead, the family's actual
+# figure of merit -- so scoring it against the patch default silently read a
+# missing field rather than the real one. In plain terms: every family's
+# SIMULATION result was being graded on a patch antenna's report card no
+# matter what kind of surface it actually was.
+#
+# The same three-state discipline as `physical_bound` and `analysis_model`
+# above applies here for the identical reason: a bare `None` would make "this
+# family's SIMULATION result carries no settled figure of merit yet"
+# indistinguishable from "nobody has said". `ScoredField` is a settled
+# declaration; `UndeclaredScoredField` says the question is still open, and
+# asking for it raises rather than falling back to another family's field.
+
+
+@dataclass(frozen=True)
+class ScoredField:
+    """The raw result key a family's SIMULATION step is scored on, and its
+    unit -- the fact `orchestration/solver.py` reads instead of its own
+    single hardcoded default (`gain_dbi`/dBi, issue #249).
+
+    `result_field` names a key of the SIMULATION decision's own raw result
+    dict (e.g. ABSORBER's `worst_absorption`, PATCH's `gain_dbi`); `unit` is
+    that field's unit, passed straight through to
+    `designs.success_score.success_score`'s own `actual_unit`, which
+    requires it to match the scoring target's stated unit by exact string
+    equality.
+    """
+
+    result_field: str
+    unit: str
+
+
+@dataclass(frozen=True)
+class UndeclaredScoredField:
+    """No result field has been declared as this family's SIMULATION scored
+    quantity -- distinct from a bare `None`, and from silently reusing
+    another family's field (PATCH's `gain_dbi`), which is the exact defect
+    issue #249 removes from `orchestration/solver.py`.
+
+    Asking for it raises `UndeclaredScoredFieldError` naming the family and
+    this reason, rather than a caller guessing at a field or a candidate
+    reading as a confusing per-step failure for a field that was simply never
+    named.
+    """
+
+    reason: str
+
+
+ScoredFieldSlot = ScoredField | UndeclaredScoredField
+
+
+UNDECLARED_SIMULATION_SCORED_FIELD = UndeclaredScoredField(
+    reason=(
+        "no SIMULATION scored field has been declared for this family in "
+        "designs/design_families.py. Declare a ScoredField naming the raw "
+        "result key and its unit once this family's SIMULATION result "
+        "carries a settled figure of merit to score candidates on -- until "
+        "then orchestration.solver.run_candidate_search refuses to score "
+        "this step by default rather than falling back to another family's "
+        "field (issue #249)."
+    )
+)
+
+
+class UndeclaredScoredFieldError(ValueError):
+    """Raised when `orchestration.solver` asks a family which field its
+    SIMULATION result is scored on and the family declares none (issue
+    #249)."""
 
 
 # --------------------------------------------------------------------------
@@ -621,6 +714,17 @@ class DesignFamily:
     spine_fields: frozenset[str] = field(default_factory=frozenset)
     optimizer_class: str | None = None
     port_count: int = 1
+    # Defaults to the explicit "nobody has said" sentinel, never a bare
+    # None (issue #249) -- unlike analysis_model/simulation_adapter/
+    # postprocess above, a default is safe here rather than a repeat of
+    # their own #239/#241 defect: the earlier three each had a WRONG
+    # implicit answer silently standing in (the patch model, NEC2, a
+    # borrowed post-process) when nobody declared one, and this default is
+    # never mistaken for a real field -- asking for it raises by name (see
+    # `declared_simulation_scored_field` below) rather than a caller ever
+    # reading `UNDECLARED_SIMULATION_SCORED_FIELD` as though it were a
+    # settled `ScoredField`.
+    simulation_scored_field: ScoredFieldSlot = UNDECLARED_SIMULATION_SCORED_FIELD
 
     @property
     def has_physical_bound(self) -> bool:
@@ -686,6 +790,36 @@ class DesignFamily:
             "settled. Until then this raises rather than falling back: a solver "
             "that cannot represent this structure returns a confidently wrong "
             "number, not an uncertain one (issue #241)."
+        )
+
+    @property
+    def has_simulation_scored_field(self) -> bool:
+        """True only when this family has declared which field its
+        SIMULATION result is scored on (issue #249)."""
+        return isinstance(self.simulation_scored_field, ScoredField)
+
+    def declared_simulation_scored_field(self) -> ScoredField:
+        """The `ScoredField` this family's SIMULATION result is judged on --
+        or a raise naming the family and why none is declared (issue #249).
+
+        Never a fallback to another family's field. In plain terms: if this
+        family's SIMULATION result carries no settled figure of merit yet,
+        the honest answer is "nothing is declared", not PATCH's `gain_dbi`
+        standing in because it happened to be the only field anybody wrote
+        down first.
+        """
+        if isinstance(self.simulation_scored_field, ScoredField):
+            return self.simulation_scored_field
+        undeclared = self.simulation_scored_field
+        raise UndeclaredScoredFieldError(
+            f"Design family {self.name!r} declares no simulation_scored_field, so "
+            "orchestration.solver has no field to score its SIMULATION result on "
+            f"by default. Why not: {undeclared.reason} Declare a ScoredField for "
+            "this family in designs/design_families.py, naming the raw result key "
+            "and its unit, once its SIMULATION result carries a settled figure of "
+            "merit. Until then this raises rather than falling back to another "
+            "family's field (e.g. PATCH's gain_dbi), which would score the wrong "
+            "quantity entirely (issue #249)."
         )
 
     @property
@@ -899,7 +1033,32 @@ ABSORBER = DesignFamily(
             "transmits nothing, so everything not reflected became heat: "
             "A = 1 - |S11|^2."
         ),
+        # issue #249: orchestration/design_loop.py's own
+        # _handle_analysis_absorber requires exactly these eight fields
+        # (its own _require_fields call), plus eps_r for
+        # _resolve_eps_r_bounds -- matching tests/test_design_loop.py's own
+        # _ABSORBER_ANALYSIS_INPUT fixture field-for-field. Before this,
+        # orchestration/solver.py stripped every one of them, keeping only
+        # the patch antenna's eps_r/w_m/h_m/l_m.
+        required_fields=(
+            "f_low_hz",
+            "f_high_hz",
+            "eps_r",
+            "tan_delta",
+            "thickness_m",
+            "period_m",
+            "gap_m",
+            "sheet_resistance_ohm_sq",
+            "squares",
+        ),
     ),
+    # issue #249: this family's SIMULATION result (orchestration/
+    # design_loop.py's _simulate_meep_floquet, via _meep_absorption_for_
+    # family) carries "worst_absorption", a dimensionless 0-1 fraction --
+    # never "gain_dbi", which orchestration/solver.py used to score by
+    # default regardless of family and which this result has no such key
+    # for at all.
+    simulation_scored_field=ScoredField(result_field="worst_absorption", unit="fraction"),
     physical_bound=PhysicalBound(
         name="Rozanov thickness-to-bandwidth bound",
         citation=(
@@ -989,7 +1148,28 @@ ABSORBER_TRANSMISSIVE = DesignFamily(
             "than a mirror, and the model says how much light gets out the far "
             "side instead of crediting the design for it. Issue #242."
         ),
+        # issue #249: orchestration/design_loop.py's own
+        # _handle_analysis_transmissive_absorber requires the identical
+        # field set ABSORBER's own handler does (rf_tools/
+        # transmissive_absorber.py's signature matches rf_tools/absorber.py's
+        # exactly) -- only the arithmetic differs, not the inputs.
+        required_fields=(
+            "f_low_hz",
+            "f_high_hz",
+            "eps_r",
+            "tan_delta",
+            "thickness_m",
+            "period_m",
+            "gap_m",
+            "sheet_resistance_ohm_sq",
+            "squares",
+        ),
     ),
+    # issue #249: same MEEP_FLOQUET absorption path as ABSORBER
+    # (_meep_absorption_for_family dispatches on port_count, not on family
+    # identity), so the same "worst_absorption" fraction is this family's
+    # own SIMULATION scored field too.
+    simulation_scored_field=ScoredField(result_field="worst_absorption", unit="fraction"),
     physical_bound=UnreadPhysicalBound(
         name="unbacked/transmissive absorber bandwidth bound",
         citation=(
@@ -1055,7 +1235,21 @@ PATCH = DesignFamily(
             "which is why it must never be asked of a surface whose whole job is "
             "to transmit nothing (issue #191)."
         ),
+        # issue #249: orchestration/design_loop.py's own
+        # _handle_analysis_patch requires exactly w_m/h_m/l_m (its own
+        # _require_fields call), plus eps_r for _resolve_eps_r_bounds --
+        # the exact shape orchestration/solver.py's own _REQUIRED_FIELDS
+        # already hardcoded for every family until this fix; kept
+        # identical here so PATCH's own scoring is byte-for-byte
+        # unchanged.
+        required_fields=("eps_r", "w_m", "h_m", "l_m"),
     ),
+    # issue #249: NEC2's own parser reads a peak gain straight off its
+    # output as "gain_dbi" (simulation/nec2pp.py's parse_nec2_output) --
+    # the exact field orchestration/solver.py's own _DEFAULT_SCORE_FIELDS
+    # already hardcoded for every family until this fix; kept identical
+    # here so PATCH's own scoring is byte-for-byte unchanged.
+    simulation_scored_field=ScoredField(result_field="gain_dbi", unit="dBi"),
     physical_bound=PhysicalBound(
         name="Nel/Skrivervik/Gustafsson patch Q-factor bound",
         citation=(
