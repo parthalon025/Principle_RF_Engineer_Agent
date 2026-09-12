@@ -39,7 +39,7 @@ from designs.design_families import (
     UndeclaredAnalysisModelError as _UndeclaredAnalysisModelError,
 )
 from rf_tools.absorber import absorber_band_response as _absorber_band_response
-from rf_tools.calculations import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
+from rf_tools.patch_synthesis import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
 from rf_tools.transmissive_absorber import (
     refuse_ground_backed_model as _refuse_ground_backed_model,
 )

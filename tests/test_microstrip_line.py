@@ -1,25 +1,25 @@
 """Microstrip transmission-line synthesis (issue #286).
 
 microstrip_effective_permittivity is the identical Hammerstad fringing-field
-fit patch_effective_permittivity (rf_tools/patch_synthesis.py's-to-be, still
-rf_tools/calculations.py for now) already checks, restated with no
-W/h > 1 floor (Pozar's general line treatment, not Balanis's patch one --
-see the module note in rf_tools/microstrip_line.py). The impedance formulas
-are independently re-typed from Pozar's Table 3.2 here, not re-derived from
-this implementation, matching this file's own convention elsewhere
-(test_patch_resonant_frequency_matches_hand_calculation, etc.).
+fit patch_effective_permittivity (rf_tools/patch_synthesis.py) already
+checks, restated with no W/h > 1 floor (Pozar's general line treatment, not
+Balanis's patch one -- see the module note in rf_tools/microstrip_line.py).
+The impedance formulas are independently re-typed from Pozar's Table 3.2
+here, not re-derived from this implementation, matching this file's own
+convention elsewhere (test_patch_resonant_frequency_matches_hand_calculation,
+etc.).
 """
 
 import math
 
 import pytest
 
-from rf_tools.calculations import patch_effective_permittivity
 from rf_tools.microstrip_line import (
     microstrip_characteristic_impedance_ohm,
     microstrip_effective_permittivity,
     microstrip_synthesize_width_m,
 )
+from rf_tools.patch_synthesis import patch_effective_permittivity
 
 
 def test_microstrip_effective_permittivity_matches_the_patch_formula():

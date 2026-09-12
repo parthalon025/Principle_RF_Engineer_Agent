@@ -70,9 +70,11 @@ the right tool for confirming a design, not for proposing one.
 ## Why (b), and why it stopped at lowpass
 
 `rf_tools/calculations.py` already had the template this ticket needed:
-`patch_effective_permittivity`/`patch_length_extension_m` are exactly
-"a closed-form microstrip-geometry result, sourced from a named textbook
-section, with an explicit validity box" -- the same shape
+`patch_effective_permittivity`/`patch_length_extension_m` (originally in
+`rf_tools/calculations.py`, since moved to `rf_tools/patch_synthesis.py`,
+issue #522) are exactly "a closed-form microstrip-geometry result, sourced
+from a named textbook section, with an explicit validity box" -- the same
+shape
 `butterworth_g_values`/`chebyshev_g_values` already established for the g-value
 side of `filter_synthesis.py`. Extending that existing pattern needed no new
 module and no new architectural seam, per this repo's own "improve before

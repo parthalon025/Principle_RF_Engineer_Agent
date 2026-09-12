@@ -422,13 +422,13 @@ def patch_max_fractional_bandwidth(
 ) -> float:
     """Widest fractional bandwidth a patch could hold at `frequency_hz`, by
     converting `patch_q_factor_lower_bound` through the standard
-    VSWR-bandwidth relation already in `rf_tools.calculations`.
+    VSWR-bandwidth relation already in `rf_tools.patch_synthesis`.
 
     `vswr` defaults to 2.0, this repo's existing convention. Pass 1.92496
     for the -10 dB return-loss definition the source paper uses in its own
     worked example.
     """
-    from rf_tools.calculations import fractional_bandwidth_from_q
+    from rf_tools.patch_synthesis import fractional_bandwidth_from_q
 
     q_lb = patch_q_factor_lower_bound(
         frequency_hz, half_wave_reference_frequency_hz, half_wave_reference_q

@@ -81,7 +81,8 @@ narrow ADR-0045's Consequences to three fields, not to grow the dataclass.
    **closed-form** calculation the ANALYSIS step runs on the **design** —
    geometry and material constants in, a predicted number out, no solver
    anywhere (`rf_tools.absorber.absorber_band_response`,
-   `rf_tools.calculations.patch_resonant_frequency_hz`). `postprocess` names
+   `rf_tools.patch_synthesis.patch_resonant_frequency_hz` — moved from
+   `rf_tools.calculations` under issue #522). `postprocess` names
    arithmetic the SIMULATION step runs on a **solver's output** — reflectance
    and transmittance in, absorptivity out
    (`orchestration/design_loop.py`'s `_one_port_absorption` /

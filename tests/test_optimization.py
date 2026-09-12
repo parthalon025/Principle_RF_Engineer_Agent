@@ -37,7 +37,7 @@ from optimization.rf_objectives import (
     patch_length_objective,
 )
 from optimization.sweep import parameter_sweep
-from rf_tools.calculations import patch_resonant_frequency_hz
+from rf_tools.patch_synthesis import patch_resonant_frequency_hz
 
 # ---------------------------------------------------------------------------
 # Synthetic objectives with known closed-form optima.
