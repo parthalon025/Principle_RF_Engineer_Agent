@@ -3411,3 +3411,43 @@ def test_optimization_refuses_an_unrecognised_optimizer_class(monkeypatch):
     assert "ML_DIRECT_INVERSE_DESIGN" in message
     assert state.current_step == DesignStep.OPTIMIZATION.value
     assert all(d.step != DesignStep.OPTIMIZATION.value for d in state.decisions)
+
+
+def test_optimization_dispatches_through_a_lookup_table_like_its_two_siblings(monkeypatch):
+    """Issue #508: `_handle_optimization` claimed in its own docstring to
+    mirror `_handle_analysis`/`_handle_simulation`'s dict-dispatch pattern
+    (`_ANALYSIS_MODELS`/`_SIMULATION_ADAPTERS`), but actually used a chain
+    of `if/elif optimizer_class == ... / raise` checks -- no lookup table
+    existed to name. This pins the same shape those two siblings have:
+
+      * a module-level `_OPTIMIZER_HANDLERS` dict (this loop's counterpart
+        to `_ANALYSIS_MODELS`/`_SIMULATION_ADAPTERS`) mapping every
+        currently-supported `optimizer_class` value to its handler
+        function, so a reader (or the error message below) can point at
+        one place that lists what is wired;
+      * the "no handler wired" error for an unrecognised value NAMES that
+        table, the same way `_handle_analysis`'s error says "Add one to
+        _ANALYSIS_MODELS in orchestration/design_loop.py" and
+        `_handle_simulation`'s says "Wire one in orchestration/
+        design_loop.py's _SIMULATION_ADAPTERS" -- rather than pointing at
+        the dispatcher function itself, which is what the old if/elif
+        chain's message did.
+    """
+    assert hasattr(design_loop_module, "_OPTIMIZER_HANDLERS")
+    handlers = design_loop_module._OPTIMIZER_HANDLERS
+    assert set(handlers) == {"CONTINUOUS", "COMBINATORIAL"}
+    assert handlers["COMBINATORIAL"] is design_loop_module._optimize_combinatorial_symbol_placement
+    assert callable(handlers["CONTINUOUS"])
+
+    ml_direct = _dc_replace(
+        design_families_module.PATCH, optimizer_class="ML_DIRECT_INVERSE_DESIGN"
+    )
+    monkeypatch.setattr(design_loop_module, "_get_design_family", lambda _name: ml_direct)
+    state = _at_optimization("PATCH")
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(state, {})
+    message = str(exc.value)
+    assert "no handler wired for it" in message
+    assert "_OPTIMIZER_HANDLERS" in message
+    assert "orchestration/design_loop.py" in message
+    assert "designs/design_families.py" in message
