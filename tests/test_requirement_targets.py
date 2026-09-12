@@ -18,16 +18,32 @@ attach, write, translate exceptions), the same shape designs/service.py's
 already-integration-tested wrappers use, and the pure functions they call
 are already fully covered directly below.
 
-The one exception, guarded by the module-level `DATABASE_URL` connectivity
+The exceptions, guarded by the module-level `DATABASE_URL` connectivity
 probe at the bottom of this file (mirroring
 tests/test_element_alphabet.py's identical `pytest.mark.skipif` pattern):
-`_fetch_requirements`'s row lock (issue #389 -- without it,
-two proposals against *different* `requirement_id`s on the same design,
-close enough in time, can race: the second reads the `requirements` payload
-before the first writes its change back, and silently discards it on
-commit). That failure mode needs two real, concurrent connections to
-reproduce -- a pure-function test cannot exercise it -- so it is the one
-thing in this file that is DB-backed rather than a pure in/out check.
+
+- `_fetch_requirements`'s row lock (issue #389 -- without it,
+  two proposals against *different* `requirement_id`s on the same design,
+  close enough in time, can race: the second reads the `requirements`
+  payload before the first writes its change back, and silently discards it
+  on commit). That failure mode needs two real, concurrent connections to
+  reproduce -- a pure-function test cannot exercise it.
+- The five I/O wrappers' (`propose_requirement_target`,
+  `confirm_requirement_target`, `mark_requirement_unscoreable`,
+  `propose_requirement_host_ground_plane`,
+  `confirm_requirement_host_ground_plane`) `not_found`/`unknown_requirement`/
+  `no_proposal`/`invalid_target`(-or-`invalid_host_ground_plane`) rollback
+  branches (issue #504, issue #514) -- every one of these is an early
+  `conn.rollback(); return {...}` inside the outer try/except that issue
+  #504 is about to collapse into a shared helper, and none of them had a
+  test at the public-function level before this. Pinning today's exact
+  `status`-tagged dict for each is the regression net that refactor needs.
+  The `invalid_target`/`invalid_host_ground_plane` branch on
+  `propose_requirement_target`/`mark_requirement_unscoreable`/
+  `propose_requirement_host_ground_plane` fires before `db.get_connection()`
+  is ever called, so those three specific tests need no database at all and
+  are not gated -- see the "I/O wrapper early-validation branches" section
+  below.
 """
 
 from __future__ import annotations
@@ -53,7 +69,10 @@ from designs.requirement_targets import (
     attach_intent,
     attach_target,
     confirm_host_ground_plane,
+    confirm_requirement_host_ground_plane,
+    confirm_requirement_target,
     confirm_target,
+    mark_requirement_unscoreable,
     mark_unscoreable,
     propose_host_ground_plane,
     propose_intended_effect,
@@ -514,6 +533,43 @@ def test_ground_plane_status_covers_the_two_lifecycle_states():
 
 
 # ---------------------------------------------------------------------------
+# I/O wrapper early-validation branches -- propose_requirement_target,
+# mark_requirement_unscoreable and propose_requirement_host_ground_plane all
+# validate their proposed shape (via propose_target/mark_unscoreable/
+# propose_host_ground_plane) BEFORE calling db.get_connection(), so their
+# invalid_target/invalid_host_ground_plane branch needs no database at all
+# (issue #504, issue #514) -- unlike the not_found/unknown_requirement/
+# no_proposal branches exercised in the DB-backed section below.
+# ---------------------------------------------------------------------------
+
+
+def test_propose_requirement_target_invalid_target_needs_no_database():
+    result = propose_requirement_target(
+        design_id=123,
+        requirement_id="REQ-1",
+        value=1.0,
+        comparator="ABOUT_THE_SAME_AS",
+        unit="Hz",
+    )
+    assert result["status"] == "invalid_target"
+    assert "comparator" in result["message"]
+
+
+def test_mark_requirement_unscoreable_invalid_target_needs_no_database():
+    result = mark_requirement_unscoreable(design_id=123, requirement_id="REQ-1", reason="")
+    assert result["status"] == "invalid_target"
+    assert "reason" in result["message"]
+
+
+def test_propose_requirement_host_ground_plane_invalid_host_ground_plane_needs_no_database():
+    result = propose_requirement_host_ground_plane(
+        design_id=123, requirement_id="REQ-1", is_ground_plane="yes"
+    )
+    assert result["status"] == "invalid_host_ground_plane"
+    assert "is_ground_plane" in result["message"]
+
+
+# ---------------------------------------------------------------------------
 # DB-backed: _fetch_requirements's row lock (issue #389) -- see this
 # module's docstring for why this is the one DB-backed exception here.
 # ---------------------------------------------------------------------------
@@ -621,3 +677,231 @@ class TestFetchRequirementsRowLock:
         finally:
             conn1.close()
             conn2.close()
+
+
+# ---------------------------------------------------------------------------
+# DB-backed: propose_requirement_target / confirm_requirement_target /
+# mark_requirement_unscoreable / propose_requirement_host_ground_plane /
+# confirm_requirement_host_ground_plane -- not_found/unknown_requirement/
+# no_proposal/invalid_target(-or-host_ground_plane) rollback branches (issue
+# #504, issue #514). Every one of these needs a live database connection to
+# reach: not_found only surfaces once db.get_connection() has actually
+# queried for the design row and found none, and unknown_requirement/
+# no_proposal both need a real stored design to query against. Exercised
+# at the public-function level, matching this file's own stated convention
+# (see the module docstring).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not _DB_REACHABLE,
+    reason=f"no reachable Postgres at {_TEST_DATABASE_URL.split('@')[-1]!r} in this sandbox",
+)
+class TestRequirementTargetWrapperRollbackBranches:
+    @pytest.fixture
+    def design_id(self):
+        result = create_design(
+            design_key=f"REQ-TARGET-ROLLBACK-{uuid.uuid4().hex[:8]}",
+            name="Rollback Branch Fixture Design",
+            revision="A",
+            requirements={
+                "REQ-1": {"requirement": "Gain >= 20 dB."},
+            },
+            architecture={},
+        )
+        design_id = result["design_id"]
+        yield design_id
+        conn = psycopg.connect(_TEST_DATABASE_URL, autocommit=True)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM designs WHERE id = %s", (design_id,))
+        finally:
+            conn.close()
+
+    #: No `designs` row will ever have this id -- ids are a positive serial
+    #: primary key, so a negative id is unambiguously nonexistent without
+    #: needing to create-then-delete a design just to get a fresh one.
+    _NONEXISTENT_DESIGN_ID = -1
+
+    # -- propose_requirement_target ----------------------------------------
+
+    def test_propose_requirement_target_not_found(self):
+        result = propose_requirement_target(
+            design_id=self._NONEXISTENT_DESIGN_ID,
+            requirement_id="REQ-1",
+            value=20.0,
+            comparator="AT_LEAST",
+            unit="dB",
+        )
+        assert result == {"status": "not_found", "design_id": self._NONEXISTENT_DESIGN_ID}
+
+    def test_propose_requirement_target_unknown_requirement(self, design_id):
+        result = propose_requirement_target(
+            design_id=design_id,
+            requirement_id="REQ-DOES-NOT-EXIST",
+            value=20.0,
+            comparator="AT_LEAST",
+            unit="dB",
+        )
+        assert result["status"] == "unknown_requirement"
+        assert result["design_id"] == design_id
+        assert result["requirement_id"] == "REQ-DOES-NOT-EXIST"
+        assert "REQ-DOES-NOT-EXIST" in result["message"]
+
+    # -- mark_requirement_unscoreable --------------------------------------
+
+    def test_mark_requirement_unscoreable_not_found(self):
+        result = mark_requirement_unscoreable(
+            design_id=self._NONEXISTENT_DESIGN_ID,
+            requirement_id="REQ-1",
+            reason="no numeric bound stated",
+        )
+        assert result == {"status": "not_found", "design_id": self._NONEXISTENT_DESIGN_ID}
+
+    def test_mark_requirement_unscoreable_unknown_requirement(self, design_id):
+        result = mark_requirement_unscoreable(
+            design_id=design_id,
+            requirement_id="REQ-DOES-NOT-EXIST",
+            reason="no numeric bound stated",
+        )
+        assert result["status"] == "unknown_requirement"
+        assert result["design_id"] == design_id
+        assert result["requirement_id"] == "REQ-DOES-NOT-EXIST"
+        assert "REQ-DOES-NOT-EXIST" in result["message"]
+
+    # -- confirm_requirement_target ----------------------------------------
+
+    def test_confirm_requirement_target_not_found(self):
+        result = confirm_requirement_target(
+            design_id=self._NONEXISTENT_DESIGN_ID,
+            requirement_id="REQ-1",
+            confirmed_by="j.mcfarland",
+        )
+        assert result == {"status": "not_found", "design_id": self._NONEXISTENT_DESIGN_ID}
+
+    def test_confirm_requirement_target_unknown_requirement(self, design_id):
+        result = confirm_requirement_target(
+            design_id=design_id,
+            requirement_id="REQ-DOES-NOT-EXIST",
+            confirmed_by="j.mcfarland",
+        )
+        assert result == {
+            "status": "unknown_requirement",
+            "design_id": design_id,
+            "requirement_id": "REQ-DOES-NOT-EXIST",
+        }
+
+    def test_confirm_requirement_target_no_proposal(self, design_id):
+        result = confirm_requirement_target(
+            design_id=design_id,
+            requirement_id="REQ-1",
+            confirmed_by="j.mcfarland",
+        )
+        assert result == {
+            "status": "no_proposal",
+            "design_id": design_id,
+            "requirement_id": "REQ-1",
+            "message": (
+                "requirement_id 'REQ-1' has no proposed target yet -- "
+                "call propose_requirement_target before confirming one"
+            ),
+        }
+
+    def test_confirm_requirement_target_invalid_target(self, design_id):
+        proposed = propose_requirement_target(
+            design_id=design_id,
+            requirement_id="REQ-1",
+            value=20.0,
+            comparator="AT_LEAST",
+            unit="dB",
+        )
+        assert proposed["status"] == "proposed"
+        first_confirm = confirm_requirement_target(
+            design_id=design_id, requirement_id="REQ-1", confirmed_by="j.mcfarland"
+        )
+        assert first_confirm["status"] == "confirmed"
+
+        # Already CONFIRMED -- re-confirming is invalid; re-propose instead.
+        result = confirm_requirement_target(
+            design_id=design_id, requirement_id="REQ-1", confirmed_by="someone.else"
+        )
+        assert result["status"] == "invalid_target"
+        assert set(result) == {"status", "message"}
+
+    # -- propose_requirement_host_ground_plane -----------------------------
+
+    def test_propose_requirement_host_ground_plane_not_found(self):
+        result = propose_requirement_host_ground_plane(
+            design_id=self._NONEXISTENT_DESIGN_ID,
+            requirement_id="REQ-1",
+            is_ground_plane=True,
+        )
+        assert result == {"status": "not_found", "design_id": self._NONEXISTENT_DESIGN_ID}
+
+    def test_propose_requirement_host_ground_plane_unknown_requirement(self, design_id):
+        result = propose_requirement_host_ground_plane(
+            design_id=design_id,
+            requirement_id="REQ-DOES-NOT-EXIST",
+            is_ground_plane=True,
+        )
+        assert result["status"] == "unknown_requirement"
+        assert result["design_id"] == design_id
+        assert result["requirement_id"] == "REQ-DOES-NOT-EXIST"
+        assert "REQ-DOES-NOT-EXIST" in result["message"]
+
+    # -- confirm_requirement_host_ground_plane -----------------------------
+
+    def test_confirm_requirement_host_ground_plane_not_found(self):
+        result = confirm_requirement_host_ground_plane(
+            design_id=self._NONEXISTENT_DESIGN_ID,
+            requirement_id="REQ-1",
+            confirmed_by="j.mcfarland",
+        )
+        assert result == {"status": "not_found", "design_id": self._NONEXISTENT_DESIGN_ID}
+
+    def test_confirm_requirement_host_ground_plane_unknown_requirement(self, design_id):
+        result = confirm_requirement_host_ground_plane(
+            design_id=design_id,
+            requirement_id="REQ-DOES-NOT-EXIST",
+            confirmed_by="j.mcfarland",
+        )
+        assert result == {
+            "status": "unknown_requirement",
+            "design_id": design_id,
+            "requirement_id": "REQ-DOES-NOT-EXIST",
+        }
+
+    def test_confirm_requirement_host_ground_plane_no_proposal(self, design_id):
+        result = confirm_requirement_host_ground_plane(
+            design_id=design_id,
+            requirement_id="REQ-1",
+            confirmed_by="j.mcfarland",
+        )
+        assert result == {
+            "status": "no_proposal",
+            "design_id": design_id,
+            "requirement_id": "REQ-1",
+            "message": (
+                "requirement_id 'REQ-1' has no proposed host ground-plane assertion "
+                "yet -- call propose_requirement_host_ground_plane before confirming one"
+            ),
+        }
+
+    def test_confirm_requirement_host_ground_plane_invalid_host_ground_plane(self, design_id):
+        proposed = propose_requirement_host_ground_plane(
+            design_id=design_id,
+            requirement_id="REQ-1",
+            is_ground_plane=True,
+        )
+        assert proposed["status"] == "proposed"
+        first_confirm = confirm_requirement_host_ground_plane(
+            design_id=design_id, requirement_id="REQ-1", confirmed_by="j.mcfarland"
+        )
+        assert first_confirm["status"] == "confirmed"
+
+        # Already CONFIRMED -- re-confirming is invalid; re-propose instead.
+        result = confirm_requirement_host_ground_plane(
+            design_id=design_id, requirement_id="REQ-1", confirmed_by="someone.else"
+        )
+        assert result["status"] == "invalid_host_ground_plane"
+        assert set(result) == {"status", "message"}
