@@ -452,14 +452,25 @@ Work too large for one session is planned as a **Wayfinder map**: a single issue
 far, with child issues as decision tickets. The map is an *index* — each decision lives in
 its own ticket, never restated on the map.
 
-**Active map:** [Printed metamaterial EM skin design loop
-#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104)
+**Two maps are active, and they divide along plan-versus-execute.**
 
-Its destination is a handoff-ready spec for a design loop that takes a prose customer
+**[Printed metamaterial EM skin design loop
+#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104)** — its
+destination is a handoff-ready spec for a design loop that takes a prose customer
 requirement and returns scored, fabricable printed-metamaterial candidates — with material
 and substrate as *searched variables*, and unit-cell periodicity (not patch length) as the
 degree of freedom. It is **plan-only**: its tickets produce decisions, and implementation
 lands separately as `ready-for-agent` issues.
+
+**[Requirement in, verdict out: make the design loop actually run
+#530](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/530)** — its
+destination is a loop that routes any stated requirement to the right design family and
+runs it end to end, returning either scored candidates or a verdict that the requirement
+cannot be met, naming the bound that forbids it or the measurement that would unblock it.
+Unlike #104 it **executes**: its Notes override Wayfinder's plan-only default, so its
+tickets may land code. It exists because five of the eight registered design families
+declare `UndeclaredAnalysisModel` and so cannot advance past the design loop's first step
+at all. It inherits #104's settled decisions by citation and does not re-argue them.
 
 Two of its settled constraints govern how anything from that effort should be read:
 
