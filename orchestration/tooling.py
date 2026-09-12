@@ -619,6 +619,7 @@ def start_new_design_loop(
     name: str,
     revision: str,
     requirements: dict[str, Any],
+    assumptions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Start a new design-iteration loop backed by a real `designs` row
     (docs/adr/0011). `requirements` must already be in
@@ -631,13 +632,22 @@ def start_new_design_loop(
     started. Returns the new loop's state dict, positioned at the
     ARCHITECTURE step, extended with `design_id` and
     `persisted_decision_count` (0) -- hold onto this dict and pass it
-    back into advance_design_loop_step for every subsequent call."""
+    back into advance_design_loop_step for every subsequent call.
+
+    `assumptions` (issue #460) is passed straight through to
+    `designs.service.create_design` exactly as `requirements` already is
+    -- optional, `None` (the default) stores `{}`, no shape check, no
+    propose/confirm-style lifecycle. This is the design-loop tool
+    surface's own path to `designs.assumptions` (issue #413 wired the
+    direct `create_design`/`read_design` path; this function was the
+    other, previously-unthreaded caller)."""
     created = designs_service.create_design(
         design_key=design_key,
         name=name,
         revision=revision,
         requirements=requirements,
         architecture={},
+        assumptions=assumptions,
     )
     if created["status"] != "created":
         raise DesignLoopPersistenceError(

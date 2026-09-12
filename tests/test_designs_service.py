@@ -245,6 +245,42 @@ def test_create_design_with_malformed_requirements_returns_structured_error(clea
     assert count == 0
 
 
+def test_create_design_with_assumptions_round_trips_through_read_design(cleanup_designs):
+    # Issue #413: `assumptions` threaded through the service layer exactly
+    # like `requirements` -- no shape validation, no lifecycle machinery.
+    assumptions = {"host_material": "assumed aluminum, not yet confirmed"}
+    design_key = _unique("SVC-DES-ASSUME-1")
+    created = create_design(
+        design_key=design_key,
+        name="Service Assumptions Design",
+        revision="A",
+        requirements={},
+        architecture={},
+        assumptions=assumptions,
+    )
+    cleanup_designs.append(created["design_id"])
+
+    result = read_design(created["design_id"])
+
+    assert result["assumptions"] == assumptions
+
+
+def test_create_design_with_no_assumptions_defaults_to_empty_dict(cleanup_designs):
+    design_key = _unique("SVC-DES-ASSUME-2")
+    created = create_design(
+        design_key=design_key,
+        name="Service Assumptions Default Design",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    cleanup_designs.append(created["design_id"])
+
+    result = read_design(created["design_id"])
+
+    assert result["assumptions"] == {}
+
+
 def test_read_design_returns_not_found_for_nonexistent_id():
     result = read_design(999_999)
     assert result == {"status": "not_found", "design_id": 999_999}

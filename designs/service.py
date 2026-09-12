@@ -57,6 +57,7 @@ def create_design(
     revision: str,
     requirements: dict[str, Any],
     architecture: dict[str, Any],
+    assumptions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Start a new design in `DRAFT` status. See `designs.db.create_design`
     for the full write-path contract (`(design_key, revision)` collision
@@ -65,6 +66,10 @@ def create_design(
     returns a structured `status`-tagged result instead of raising, so the
     caller -- human or agent -- gets a message it can act on rather than a
     stack trace; a write that fails for any other reason still raises.
+
+    `assumptions` (issue #413) is passed straight through to
+    `designs.db.create_design` -- `None` (the default) stores `{}`. No
+    shape check, unlike `requirements`.
     """
     conn = db.get_connection()
     try:
@@ -76,6 +81,7 @@ def create_design(
                 revision=revision,
                 requirements=requirements,
                 architecture=architecture,
+                assumptions=assumptions,
             )
         except db.DesignKeyRevisionCollisionError as exc:
             conn.rollback()
