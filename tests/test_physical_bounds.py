@@ -529,7 +529,7 @@ def test_the_two_families_with_a_model_declare_the_ones_they_already_ran():
     assert PATCH.declared_analysis_model().name == "PATCH_RESONANT_FREQUENCY"
     assert (
         PATCH.declared_analysis_model().function
-        == "rf_tools.calculations.patch_resonant_frequency_hz"
+        == "rf_tools.patch_synthesis.patch_resonant_frequency_hz"
     )
 
 

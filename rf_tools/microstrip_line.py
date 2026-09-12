@@ -3,7 +3,7 @@ import math
 # --- Microstrip line: characteristic impedance and width synthesis (issue #286) ---
 #
 # Distinct from patch_effective_permittivity/patch_length_extension_m in
-# rf_tools/calculations.py, on purpose: those restate this identical
+# rf_tools/patch_synthesis.py, on purpose: those restate this identical
 # Hammerstad fringing-field fit inside Balanis's patch-ANTENNA presentation,
 # which frames it for W/h > 1 (a resonant patch is normally much wider than
 # the substrate is thick) and enforces that as a hard precondition. Pozar's

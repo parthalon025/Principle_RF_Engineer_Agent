@@ -46,7 +46,7 @@ from orchestration.design_loop import DesignStep, start_design_loop
 from orchestration.solver import SolverError, run_candidate_search
 from orchestration.tooling import advance_design_loop_step
 from rf_tools.absorber import absorber_band_response
-from rf_tools.calculations import patch_resonant_frequency_hz
+from rf_tools.patch_synthesis import patch_resonant_frequency_hz
 
 REQUIREMENTS = {"R1": {"requirement": "resonant frequency near 2.45 GHz"}}
 

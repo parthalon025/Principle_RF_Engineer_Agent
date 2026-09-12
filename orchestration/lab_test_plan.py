@@ -227,7 +227,7 @@ exactly ONE default scoreable field, and SIMULATION's stays `gain_dbi`;
 same evidence, not a competing default.
 
   - FREQUENCY: `ANALYSIS`'s `resonant_frequency_hz`
-    (`rf_tools.calculations.patch_resonant_frequency_hz`), then
+    (`rf_tools.patch_synthesis.patch_resonant_frequency_hz`), then
     `OPTIMIZATION`'s `achieved_frequency_hz`
     (`optimization.rf_objectives.optimize_patch_length_for_target_
     frequency`) -- both `Hz`.

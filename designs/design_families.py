@@ -479,7 +479,7 @@ class UndeclaredScoredFieldError(ValueError):
 #      calculation the ANALYSIS step runs on the DESIGN -- geometry and
 #      material constants in, a predicted number out, no solver anywhere
 #      (`rf_tools.absorber.absorber_band_response`,
-#      `rf_tools.calculations.patch_resonant_frequency_hz`). This slot names
+#      `rf_tools.patch_synthesis.patch_resonant_frequency_hz`). This slot names
 #      arithmetic the SIMULATION step runs on a SOLVER'S OUTPUT -- reflectance
 #      and transmittance in, absorptivity out. Cheap tier and expensive tier
 #      (CLAUDE.md: "Evaluate cheap before expensive"), two different steps of
@@ -1227,7 +1227,7 @@ PATCH = DesignFamily(
     sweep_axes=(FREQUENCY_AXIS,),
     analysis_model=AnalysisModel(
         name="PATCH_RESONANT_FREQUENCY",
-        function="rf_tools.calculations.patch_resonant_frequency_hz",
+        function="rf_tools.patch_synthesis.patch_resonant_frequency_hz",
         answers=(
             "the frequency at which this patch radiates -- the transmission-line "
             "resonance of a rectangular microstrip patch, from its length, width, "

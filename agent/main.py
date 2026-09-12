@@ -29,18 +29,7 @@ from optimization.rf_objectives import (
 )
 from orchestration.lab_test_plan import compile_lab_test_plan_for_loop as _compile_lab_test_plan
 from orchestration.policy import assert_all_tools_categorized, category_for
-from rf_tools.calculations import (
-    aperture_gain,
-    curvature_length_correction_factor,
-    curvature_shifted_resonant_frequency_hz,
-    fractional_bandwidth_from_q,
-    maxwell_garnett_effective_permeability,
-    patch_effective_permittivity,
-    patch_length_extension_m,
-    patch_resonant_frequency_hz,
-    quality_factor_from_fractional_bandwidth,
-    wavelength,
-)
+from rf_tools.calculations import maxwell_garnett_effective_permeability
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
@@ -75,6 +64,17 @@ from rf_tools.network_parameters import (
     vswr_from_gamma,
     y_to_s,
     z_to_s,
+)
+from rf_tools.patch_synthesis import (
+    aperture_gain,
+    curvature_length_correction_factor,
+    curvature_shifted_resonant_frequency_hz,
+    fractional_bandwidth_from_q,
+    patch_effective_permittivity,
+    patch_length_extension_m,
+    patch_resonant_frequency_hz,
+    quality_factor_from_fractional_bandwidth,
+    wavelength,
 )
 from rf_tools.touchstone import (
     analyze_touchstone,

@@ -21,7 +21,7 @@ Phase 12 -- the final ticket of the 23-ticket build-out).
      direct introspection, per this ticket's own scope guidance.
   5. An end-to-end test driving one full requirements -> redesign cycle
      through all nine DesignStep values, composing the REAL Phase 1/6/9/11
-     functions (rf_tools.calculations.patch_resonant_frequency_hz,
+     functions (rf_tools.patch_synthesis.patch_resonant_frequency_hz,
      simulation.nec2pp.run_nec2_simulation, optimization.rf_objectives.
      optimize_patch_length_for_target_frequency, measurement.external.
      record_external_measurement, rf_tools.correlation.
@@ -1612,7 +1612,7 @@ def test_external_measurement_unreadable_file_names_it_and_records_nothing(tmp_p
 def test_end_to_end_full_requirements_to_redesign_cycle(tmp_path: Path):
     """One full requirements -> redesign cycle through all nine DesignStep
     values, composing the REAL Phase 1/6/9/11 functions (rf_tools.
-    calculations.patch_resonant_frequency_hz, simulation.nec2pp.
+    patch_synthesis.patch_resonant_frequency_hz, simulation.nec2pp.
     run_nec2_simulation, optimization.rf_objectives.
     optimize_patch_length_for_target_frequency, measurement.external.
     record_external_measurement, rf_tools.correlation.
