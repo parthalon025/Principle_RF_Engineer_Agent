@@ -448,7 +448,7 @@ def run_nec2_simulation(
     parsed = parse_nec2_output(result.outputs.get("stdout", ""))
 
     return {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "impedance": parsed["impedance"],
         "pattern": parsed["pattern"],
         "gain_dbi": parsed["gain_dbi"],

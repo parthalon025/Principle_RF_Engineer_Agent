@@ -1547,7 +1547,7 @@ def run_openems_simulation(
     )
 
     output: dict[str, Any] = {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "convergence": parsed["convergence"],
         "s_parameters": parsed["s_parameters"],
         "far_field": parsed["far_field"],

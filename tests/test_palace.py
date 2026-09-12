@@ -1044,6 +1044,35 @@ def test_run_palace_simulation_end_to_end_with_fake_executable(tmp_path: Path):
     assert parsed_config["Problem"]["Type"] == "Driven"
 
 
+def test_run_palace_simulation_provenance_tracks_simulationresult_field(
+    tmp_path: Path, monkeypatch
+):
+    """Regression test for issue #502: run_palace_simulation's "provenance"
+    key must be read off the SimulationResult PalaceSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    script = _make_fake_palace_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    original_run = PalaceSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(PalaceSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_palace_simulation(
+        geometry=GRATING_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_palace_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
     script = _make_fake_palace(
         tmp_path, 'import sys\nsys.stderr.write("mesh error\\n")\nsys.exit(1)\n'

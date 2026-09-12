@@ -394,6 +394,35 @@ def test_run_ltspice_simulation_end_to_end_with_netlist_text(tmp_path: Path):
     assert Path(result["raw_file"]).exists()
 
 
+def test_run_ltspice_simulation_provenance_tracks_simulationresult_field(
+    tmp_path: Path, monkeypatch
+):
+    """Regression test for issue #502: run_ltspice_simulation's "provenance"
+    key must be read off the SimulationResult LtspiceSimulator.run()
+    actually returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    script = tmp_path / "fake_ltspice.py"
+    script.write_text(_FAKE_SUCCESS_BODY)
+    exe = Path(sys.executable).as_posix() + " " + script.as_posix()
+    original_run = LtspiceSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(LtspiceSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_ltspice_simulation(
+        netlist=AC_NETLIST,
+        executable=exe,
+        workdir=str(tmp_path / "run_provenance"),
+        timeout_s=15,
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_ltspice_simulation_accepts_existing_netlist_file(tmp_path: Path):
     script = tmp_path / "fake_ltspice.py"
     script.write_text(_FAKE_SUCCESS_BODY)

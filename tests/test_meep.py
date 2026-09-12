@@ -391,6 +391,25 @@ def test_run_meep_simulation_end_to_end_against_fake():
     assert result["gain_dbi"] is None
 
 
+def test_run_meep_simulation_provenance_tracks_simulationresult_field(monkeypatch):
+    """Regression test for issue #502: run_meep_simulation's "provenance"
+    key must be read off the SimulationResult MeepSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    original_run = MeepSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(MeepSimulator, "run", _run_with_overridden_provenance)
+
+    result, _ = _run_against_fake()
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_frequency_hz_output_matches_hz_to_meep_freq_inverse():
     result, _ = _run_against_fake()
     a_m = 1e-3  # default characteristic length

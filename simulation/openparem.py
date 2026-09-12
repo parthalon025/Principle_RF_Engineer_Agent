@@ -1421,7 +1421,7 @@ def run_openparem_simulation(
 
     output.update(
         {
-            "provenance": "SIMULATED",
+            "provenance": result.provenance,
             "s_parameters": parsed["s_parameters"],
             "far_field": parsed["far_field"],
             "simulator": result.simulator,

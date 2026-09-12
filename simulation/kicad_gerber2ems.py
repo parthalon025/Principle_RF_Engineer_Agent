@@ -966,7 +966,7 @@ def run_kicad_gerber2ems_simulation(
         )
 
     return {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "scope": (
             "PCB signal-integrity only (trace impedance, via/stackup "
             "S-parameters) -- NOT antenna far-field/gain; gerber2ems has "

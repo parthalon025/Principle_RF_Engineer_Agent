@@ -453,6 +453,32 @@ def test_run_nec2_simulation_end_to_end_with_fake_executable(tmp_path: Path):
     assert "EN" in deck_text
 
 
+def test_run_nec2_simulation_provenance_tracks_simulationresult_field(tmp_path: Path, monkeypatch):
+    """Regression test for issue #502: run_nec2_simulation's "provenance"
+    key must be read off the SimulationResult Nec2ppSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    script = _make_fake_nec2pp_py(tmp_path, GUIDE_SAMPLE_OUTPUT)
+    original_run = Nec2ppSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(Nec2ppSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_nec2_simulation(
+        geometry=DIPOLE_GEOMETRY,
+        frequency_hz=300e6,
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_nec2_simulation_end_to_end_with_plane_wave_excitation(tmp_path: Path):
     """A plane_wave excitation geometry runs end to end (deck generation ->
     fake nec2++ -> parsing) and the far-field phase readback a

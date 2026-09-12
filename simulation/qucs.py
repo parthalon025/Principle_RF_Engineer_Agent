@@ -554,7 +554,7 @@ def run_qucs_simulation(
     parsed = parse_qucs_dataset(result.outputs.get("dataset", ""))
 
     output: dict[str, Any] = {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "frequency_hz": parsed["frequency_hz"],
         "s_parameters": parsed["s_parameters"],
         "simulator": result.simulator,
