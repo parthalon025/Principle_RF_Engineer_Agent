@@ -211,7 +211,8 @@ off-machine.
 > has to budget for, not a footnote.
 
 `orchestration/design_loop.py` hardwires `ANALYSIS` to
-`rf_tools.calculations.patch_resonant_frequency_hz` (~line 403) and
+`patch_resonant_frequency_hz` (~line 403; moved from `rf_tools.calculations`
+to `rf_tools.patch_synthesis` under issue #522) and
 `OPTIMIZATION` to `optimize_patch_length_for_target_frequency` (~line 436).
 Both are **rectangular microstrip patch** formulas. So the solver built in
 #95 will faithfully converge on *patch length* — not a printed
