@@ -1287,8 +1287,11 @@ def generate_freecad_curved_geometry(
     approximation an FDTD solver's own rectilinear mesh already makes for any curved
     boundary), NOT the exact tilted plane the FreeCAD-built STEP model represents; each
     returned primitive carries a non-standard, informational `approx_sag_m` field
-    quantifying exactly how much that approximation cost for that cell. Returns
-    "SIMULATED" provenance. FreeCADCmd's headless invocation and every FreeCAD Python
+    quantifying exactly how much that approximation cost for that cell. Carries NO
+    provenance field -- this is a geometry generator, not a Simulator, so it never
+    claims the "SIMULATED" evidence tier (issue #491); `status` is "COMPLETED" or
+    "COMPLETED_WITH_ERRORS" depending on whether a per-object build or the mesh step
+    actually failed. FreeCADCmd's headless invocation and every FreeCAD Python
     API call used were verified directly against FreeCAD's own C++/`.pyi` source on
     GitHub (see geometry/freecad_curved.py's module docstring for the full citation
     list) but NOT against a real FreeCADCmd binary -- none is installed in this
