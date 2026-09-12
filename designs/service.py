@@ -71,8 +71,7 @@ def create_design(
     `designs.db.create_design` -- `None` (the default) stores `{}`. No
     shape check, unlike `requirements`.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             row = db.create_design(
                 conn,
@@ -104,11 +103,6 @@ def create_design(
                 "message": str(exc),
             }
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "created",
@@ -161,8 +155,7 @@ def record_decision(
     look up what was already recorded rather than getting a stack trace;
     a write that fails for any other reason still raises.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             row = db.record_decision(
                 conn,
@@ -186,11 +179,6 @@ def record_decision(
                 ),
             }
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "recorded",
@@ -220,8 +208,7 @@ def record_engineering_result(
     `{"engineering_result_id": ...}` into their own `recorded_as` field,
     they don't need the rest of the row back.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         row = db.record_engineering_result(
             conn,
             design_id=design_id,
@@ -231,11 +218,6 @@ def record_engineering_result(
             provenance=provenance,
         )
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {"engineering_result_id": row["id"]}
 
@@ -299,8 +281,7 @@ def update_design_status(
       human-approval receipt (`designs.release_approval`), and none valid
       for this design revision was supplied.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             row = db.update_design_status(
                 conn,
@@ -328,11 +309,6 @@ def update_design_status(
             conn.rollback()
             return {"status": "not_found", "design_id": exc.design_id}
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "updated",
@@ -361,8 +337,7 @@ def verify_requirement(
     on rather than a stack trace; a write that fails for any other reason
     still raises.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             row = db.verify_requirement(
                 conn,
@@ -382,11 +357,6 @@ def verify_requirement(
             conn.rollback()
             return {"status": "unknown_requirement", "message": str(exc)}
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "verified",
