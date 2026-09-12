@@ -77,6 +77,16 @@ by eps_r -- because the 2021 form never meets eq (6)'s eps_eff loading. At
 produced it in `costa_eq10_form`. Per this project's charter the model
 reports and proceeds; it never refuses to return a number. See
 `docs/costa-thin-spacer-correction.md`.
+
+PROVENANCE (issue #506). Every value returned here is `CALCULATED` --
+deterministic arithmetic on the caller's inputs, no measurement and no model
+fitting -- but this module returns plain numbers and carries no provenance
+field itself, the same convention `rf_tools/filter_synthesis.py` documents
+and follows. Tagging is the caller's job: `orchestration/design_loop.py`'s
+`_handle_analysis_absorber` tags the ANALYSIS decision `CALCULATED`
+explicitly, independent of anything this module returns. A second,
+self-applied tag inside the calculation itself used to duplicate that source
+of truth; it is gone.
 """
 
 from __future__ import annotations
@@ -106,8 +116,12 @@ THIN_SPACER_RATIO = 0.3
 
 
 def _require_positive(name: str, value: float) -> float:
-    if value <= 0:
-        raise ValueError(f"{name} must be positive; got {value!r}.")
+    # #494: NaN compares False against every bound, so `value <= 0` alone
+    # lets a NaN silently pass where a normal non-positive value would be
+    # rejected. `math.isfinite` closes that gap -- the same guard
+    # `rf_tools.physical_bounds._require_positive` already carries.
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number; got {value!r}.")
     return float(value)
 
 
@@ -434,5 +448,4 @@ def absorber_band_response(
         # reconstruct why" failure this key exists to prevent.
         "costa_eq10_form": calculations.COSTA_EQ10_FORM,
         "validity": validity,
-        "provenance": "CALCULATED",
     }

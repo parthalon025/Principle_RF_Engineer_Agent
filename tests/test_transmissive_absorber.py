@@ -350,6 +350,16 @@ def test_a_half_wave_slab_is_transparent_whatever_its_permittivity():
     assert abs(s21) == pytest.approx(1.0, abs=1e-6)
 
 
+def test_rejects_a_nan_frequency():
+    """#494: NaN compares False against every bound (`nan <= 0` is False), so
+    a bare `<= 0` check silently lets it through where a normal non-positive
+    value would be rejected. `_require_positive` here must guard
+    `math.isfinite` too, the same way `rf_tools.physical_bounds`'s own copy
+    already does."""
+    with pytest.raises(ValueError, match="frequency_hz"):
+        dielectric_slab_abcd(math.nan, eps_r=4.0, tan_delta=0.02, thickness_m=1e-3)
+
+
 def test_a_perfectly_conducting_shunt_sheet_is_a_mirror():
     """Infinite admittance short-circuits the line: everything comes back,
     nothing gets through, nothing is absorbed. Metal, in other words."""
@@ -444,9 +454,15 @@ def test_band_response_scores_the_single_worst_frequency_not_the_mean_or_peak():
     assert 8e9 <= result["worst_frequency_hz"] <= 12e9
 
 
-def test_band_response_carries_calculated_provenance():
+def test_band_response_self_tags_no_provenance():
+    """#506: provenance tagging belongs to the caller (the design loop's
+    ANALYSIS handler tags `decision.provenance` explicitly -- see
+    orchestration/design_loop.py's `_handle_analysis_transmissive_absorber`),
+    the same convention `rf_tools/filter_synthesis.py` documents and follows.
+    This calculation function returns a plain result with no second,
+    undocumented source of truth for that field."""
     result = transmissive_absorber_band_response(**BAND, **PRINTED_STACK)
-    assert result["provenance"] == "CALCULATED"
+    assert "provenance" not in result
     assert result["function"] == "transmissive_absorber_band_response"
 
 
