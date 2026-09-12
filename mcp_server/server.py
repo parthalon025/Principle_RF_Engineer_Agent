@@ -1611,7 +1611,7 @@ def search_literature_for_capability_warning(
 ) -> dict:
     """Search this project's own knowledge base, then arXiv, for a citable measured
     value for material_or_ink_name's capability_property -- the gap named by one
-    Capability-warning entry (issue #327, ADR-0033) -- fires only for a Material-/
+    Capability-warning entry (issue #327, ADR-0035) -- fires only for a Material-/
     Ink-property library miss that already carries a Capability warning (issue
     #324). capability_warning is one entry from a capability_warnings list -- only
     capability_kind/capability_property are read; capability_warning's own "family"
@@ -1619,7 +1619,7 @@ def search_literature_for_capability_warning(
     a material/ink product name, so material_or_ink_name (e.g. "FR4", "MXene ink")
     must be supplied separately -- you already know it from the design's own
     context. Raises if capability_kind is not "material" or "ink" ("fabrication"
-    gaps have no literature-search equivalent -- ADR-0033). Returns candidates
+    gaps have no literature-search equivalent -- ADR-0035). Returns candidates
     (title/identifier/excerpt, local-knowledge matches first, then arXiv) when any
     exist; when nothing citable is found, found=False and message says so plainly
     rather than approximating a number. Never calls ingest_document and never

@@ -1,9 +1,9 @@
-"""Issue #327 (ADR-0033): the design loop's one narrow literature-search
+"""Issue #327 (ADR-0035): the design loop's one narrow literature-search
 tool, scoped exactly to a Material-property or Ink-property library miss
 that already carries a Capability warning (issue #324; CONTEXT.md's
 "Capability warning").
 
-WHAT THIS IS FOR. ADR-0033 settled the gap: `search_knowledge` can only
+WHAT THIS IS FOR. ADR-0035 settled the gap: `search_knowledge` can only
 search documents a human already ingested, so when nobody has ever measured
 a material's/ink's RF properties at all, closing that gap was entirely a
 human's job. `search_literature_for_capability_warning` closes it partway --
@@ -40,7 +40,7 @@ query alongside `material_or_ink_name` for precision. `family`/`value`/
 by `orchestration.design_loop._validate_capability_warnings` at write time)
 and are not read here.
 
-WHY `capability_kind="fabrication"` IS REJECTED. ADR-0033's own
+WHY `capability_kind="fabrication"` IS REJECTED. ADR-0035's own
 Consequences section is explicit: "The equipment and materials-catalog gaps
 ... have no equivalent tool, because no queryable source exists for
 either" -- a citation-only spec for a human to research by hand, not a
@@ -61,7 +61,7 @@ search functions are injectable (same fetch_fn-style seam
 fake responses only (issue #327's own acceptance criterion) -- no database,
 no network.
 
-WHAT A CANDIDATE CARRIES, AND WHY NEVER A SETTLED NUMBER. Per ADR-0033: "A
+WHAT A CANDIDATE CARRIES, AND WHY NEVER A SETTLED NUMBER. Per ADR-0035: "A
 found paper's reported eps_r/tan_delta (or ink resistivity/cure schedule)
 is surfaced to whoever is reviewing the warning ... who decides whether to
 add it." Each candidate is `{"source", "title", "identifier", "excerpt"}`:
@@ -72,7 +72,7 @@ parses a document" discipline `designs/material_properties.py` already
 enforces for a human-entered citation; extending that discipline to a
 tool-found one is the same rule, not a new one.
 
-WHAT THIS NEVER DOES (ADR-0033's Decision, and issue #327's AC3): it never
+WHAT THIS NEVER DOES (ADR-0035's Decision, and issue #327's AC3): it never
 calls `ingest_document`, and it never writes a Material-property/Ink-
 property library entry. Finding a source and trusting it as evidence stay
 two separate, deliberate steps -- exactly as `search_arxiv_papers` already
@@ -141,7 +141,7 @@ def search_literature_for_capability_warning(
 ) -> dict[str, Any]:
     """Search this project's own knowledge base, then arXiv, for a citable
     measured value for `material_or_ink_name`'s `capability_property` --
-    the gap named by one Capability-warning entry (issue #327; ADR-0033).
+    the gap named by one Capability-warning entry (issue #327; ADR-0035).
 
     `capability_warning` is one entry from a design loop's own
     `capability_warnings` list (CONTEXT.md's Capability warning;
@@ -171,7 +171,7 @@ def search_literature_for_capability_warning(
     (AC2) -- this function never approximates or invents a value.
 
     This function never calls `ingest_document` and never writes a
-    Material-property/Ink-property library entry, under any input (ADR-0033;
+    Material-property/Ink-property library entry, under any input (ADR-0035;
     AC3) -- finding a source and trusting it as evidence stay two separate,
     deliberate steps.
 
@@ -198,7 +198,7 @@ def search_literature_for_capability_warning(
             f"capability_warning['capability_kind'] must be one of "
             f"{sorted(_SUPPORTED_CAPABILITY_KINDS)} to search literature for -- got "
             f"{capability_kind!r}. A 'fabrication' gap (equipment/machine capability) has "
-            "no literature-search equivalent (ADR-0033); it stays a citation-only spec for "
+            "no literature-search equivalent (ADR-0035); it stays a citation-only spec for "
             "a human to research by hand."
         )
 
