@@ -26,7 +26,9 @@ from scipy.integrate import quad
 from scipy.special import ellipe, ellipkm1
 
 from rf_tools.aperture_polarizability import (
+    _graded_nodes_1d,
     _quarter_loop_mesh,
+    _rect_cells,
     _rect_potential_from_corners,
     _solve_alpha_xx,
     periodic_array_correction_is_reliable,
@@ -34,6 +36,7 @@ from rf_tools.aperture_polarizability import (
     square_loop_periodic_array_polarizability_m3,
     square_loop_polarizability_m3,
 )
+from rf_tools.physical_bounds import perforated_screen_max_wavelength_fractional_bandwidth
 
 # Mansfield, Douglas & Garboczi (2001), Table IV, n=4 (square), converted
 # from their r^3 (r = centre-to-vertex) normalisation to this module's b^3
@@ -435,3 +438,128 @@ def test_annulus_solver_tracks_kurennoy_1996_eq19_for_narrow_gaps(
     solved = _solve_annulus_polarizability(inner_radius, outer_radius, n_cells=48)
     relative_deviation = abs(solved - kurennoy_full_space) / kurennoy_full_space
     assert relative_deviation < asymptotic_formula_deviation
+
+
+# ---------------------------------------------------------------------------
+# Reproduction of Ludvig-Osipov et al. 2020's own "cross potent" worked
+# example (issue #552, following #547's deferred literature reproduction).
+#
+# Source: Ludvig-Osipov, Lundgren, Ehrenborg, Ivanenko, Ericsson, Gustafsson,
+# Jonsson & Sjoberg, "Fundamental bounds on transmission through periodically
+# perforated metal screens with experimental validation," arXiv:1810.07669v3
+# (2019) -- Sec. IV, p. 4, Fig. 3 and its caption, read from the rendered PDF
+# page image. Verbatim: "the array of cross-potent (sometimes referred to as
+# Jerusalem cross) [...] shaped apertures [...] The unit cell geometry is
+# given, with l_x = l_y = l, slot width w = l/20, and parameters a = 0.9l and
+# b = 0.4l. [...] The results show the main transmission band (transmittance
+# threshold level T_0^2 = 0.8) centered at lambda = 2.9l, with the fractional
+# bandwidth B = 0.24. This accounts for 86% of the upper bound limit in (12)."
+#
+# Fig. 3's own inset diagram (not its Fig. 4, which is a different figure for
+# a different set of designs) shows the aperture is a "+"-shaped slot of
+# width w, each arm reaching length a/2 from the centre, capped at every tip
+# by a perpendicular bar of length b and width w (a classic Jerusalem
+# cross/cross-potent). The Babinet-complementary PEC PATCH this module's
+# gamma always means (module docstring) is that same cross shape in metal --
+# decomposable into 4 axis-aligned rectangles per quadrant (2 half-arms, 2
+# T-cap quarters), so it reuses this module's own rectangle-kernel BEM
+# machinery (`_graded_nodes_1d`, `_rect_cells`, `_solve_alpha_xx`) directly --
+# no new numerical method, only a new mesh, matching issue #547's own point
+# that a future shape should be able to reuse this machinery (US12).
+#
+# This is a periodic array at a = 0.9l, i.e. period/patch-size = 1/0.9 = 1.11
+# -- deep inside the range `periodic_array_correction_is_reliable` already
+# flags as unreliable (this module's own Fig. 4 cross-check found the
+# first-order point-dipole correction under-predicts by ~13-15% at a
+# comparably tight spacing). So this reproduction is expected to be loose,
+# not tight -- and is reported as such below, not tuned to look closer than
+# it is.
+def _jerusalem_cross_quarter_mesh(
+    arm_half_length: float, cap_length: float, width: float, n: int = 40
+) -> np.ndarray:
+    """First-quadrant mesh of a cross-potent (Jerusalem cross) patch: a
+    "+"-shaped stem of width `width` reaching `arm_half_length` from the
+    centre in x and y, with a perpendicular bar of length `cap_length` and
+    width `width` capping each tip. Four non-overlapping rectangular pieces
+    per quadrant: the two half-stems (split so neither double-counts the
+    centre corner) and the two cap quarters. Cells grade toward the
+    conductor's genuinely free (slot-facing) edges, same strategy as
+    `_quarter_loop_mesh`; the grading at `stem_end` (where a stem piece
+    meets its cap) targets a smooth internal butt-joint, not a real
+    singularity -- harmless extra resolution there, not a claim of an edge
+    that isn't one."""
+    half_width = width / 2.0
+    cap_half_length = cap_length / 2.0
+    stem_end = arm_half_length - half_width  # where the stem meets its cap
+
+    stem_x = _graded_nodes_1d(0.0, half_width, max(4, n // 4), grade_lo=False, grade_hi=True)
+    stem_y = _graded_nodes_1d(0.0, stem_end, n, grade_lo=False, grade_hi=True)
+    vertical_stem = _rect_cells(stem_x, stem_y)
+
+    arm_x = _graded_nodes_1d(half_width, stem_end, n, grade_lo=False, grade_hi=True)
+    arm_y = _graded_nodes_1d(0.0, half_width, max(4, n // 4), grade_lo=False, grade_hi=True)
+    horizontal_stem = _rect_cells(arm_x, arm_y)
+
+    cap_x = _graded_nodes_1d(0.0, cap_half_length, n, grade_lo=False, grade_hi=True)
+    cap_y = _graded_nodes_1d(
+        stem_end, stem_end + width, max(4, n // 4), grade_lo=True, grade_hi=True
+    )
+    top_cap = _rect_cells(cap_x, cap_y)
+
+    cap_x2 = _graded_nodes_1d(
+        stem_end, stem_end + width, max(4, n // 4), grade_lo=True, grade_hi=True
+    )
+    cap_y2 = _graded_nodes_1d(0.0, cap_half_length, n, grade_lo=False, grade_hi=True)
+    right_cap = _rect_cells(cap_x2, cap_y2)
+
+    return np.vstack([vertical_stem, horizontal_stem, top_cap, right_cap])
+
+
+def test_periodic_array_correction_reproduces_ludvig_osipov_cross_potent_example():
+    """Reproduces Fig. 3's own worked example end to end: compute the
+    cross-potent patch's isolated polarizability from its stated geometry
+    (this test's own BEM mesh, not a value read off any figure), apply this
+    module's periodic-array correction, then feed the result into the
+    unmodified, already-tested `perforated_screen_max_wavelength_fractional_bandwidth`
+    (#483) to get a predicted bound -- and check it against the paper's own
+    reported bandwidth the same two ways the paper itself frames the result:
+    the physical requirement B <= bound must hold, and the ratio should be
+    in the same ballpark as the paper's stated 86% (loosely, given the
+    known tight-packing bias documented above)."""
+    period = 1.0
+    a = 0.9 * period
+    b = 0.4 * period
+    w = period / 20.0
+
+    quarter_cells = _jerusalem_cross_quarter_mesh(arm_half_length=a / 2.0, cap_length=b, width=w)
+    isolated_gamma = _solve_alpha_xx(quarter_cells)
+
+    assert periodic_array_correction_is_reliable(patch_size_m=a, period_m=period) is False
+
+    corrected_gamma = periodic_array_polarizability_correction_m3(
+        isolated_gamma_m3=isolated_gamma, period_m=period
+    )
+    predicted_bound = perforated_screen_max_wavelength_fractional_bandwidth(
+        gamma_m3=corrected_gamma,
+        cell_area_m2=period**2,
+        center_wavelength_m=2.9 * period,
+        power_transmittance_threshold=0.8,
+    )
+
+    reported_bandwidth = 0.24
+    # The physical requirement Eq. (12) exists to guarantee: a real
+    # transmission band can never be wider than the bound. If this failed,
+    # either this module's chain (mesh, kernel, periodic correction) or the
+    # paper's own bound would be wrong.
+    assert reported_bandwidth <= predicted_bound
+    # The paper states B is 86% of its own bound, so its own bound is
+    # reported_bandwidth / 0.86 -- compare this prediction against THAT
+    # number directly, rather than against the loosely related 86% figure
+    # itself. The tolerance is not arbitrary: this module's own correction
+    # is known to under-predict by ~13-15% at a comparably tight packing
+    # (the Fig. 4 cross-check above), and this prediction's actual
+    # deviation here (~5%) sits well inside that ceiling with real margin
+    # to spare -- a tolerance tight enough to fail on a wrong mesh or
+    # kernel, loose enough to allow for the correction's own documented bias.
+    paper_implied_bound = reported_bandwidth / 0.86
+    assert predicted_bound == pytest.approx(paper_implied_bound, rel=0.08)
