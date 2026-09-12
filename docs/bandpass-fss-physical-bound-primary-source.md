@@ -178,7 +178,7 @@ Of the four one/two-element lossless shunt candidates (plain `C`, plain `L`,
 series `L`-`C`, parallel `L`-`C`), only the **parallel `L`‖`C` tank** has
 `Y(ω₀) = 0` at its own resonance — the other three are low-pass, high-pass or
 band-**stop**. A loop-shaped *slot* cut in a conductor is the Babinet
-complement of a conducting *loop patch*; `rf_tools/calculations.py`'s already
+complement of a conducting *loop patch*; `rf_tools/sheet_impedance.py`'s already
 -adopted grid-impedance pair (`capacitive_grid_sheet_capacitance_f` /
 `inductive_grid_sheet_inductance_h`, "the exact Babinet dual") satisfies
 `Z·Z' = η₀²/4` exactly, and a conducting loop (series `L`-`C` in shunt, a
@@ -325,14 +325,27 @@ layer. That remains unread and is not resolved by this prediction.
 
 **The one concrete gap this creates, named precisely (`CLAUDE.md`'s "when
 stuck, name the missing measurement"):** the bound is stated in `γ`, the
-static polarizability of the aperture's Babinet-complementary patch, and
-nothing in `rf_tools` or `simulation` computes it. It is an **electrostatic**
-solve (`∇×E=0`, `∇·D=0`), not a full-wave one — `simulation/meep.py` is FDTD
-and is the wrong tool for it — and it is far cheaper than the frequency
-sweeps this programme already runs, but it does not exist here today. Until
-it does, a human supplies `γ` (from a literature value for a matching shape,
-or a hand calculation) to evaluate the bound against a candidate; the loop
-cannot derive it from geometry alone.
+static polarizability of the aperture's Babinet-complementary patch, and at
+the time this document was written nothing in `rf_tools` or `simulation`
+computed it. It is an **electrostatic** solve (`∇×E=0`, `∇·D=0`), not a
+full-wave one — `simulation/meep.py` is FDTD and is the wrong tool for it —
+and it is far cheaper than the frequency sweeps this programme already
+runs. Until it existed, a human supplied `γ` (from a literature value for a
+matching shape, or a hand calculation) to evaluate the bound against a
+candidate; the loop could not derive it from geometry alone.
+
+**Update (issue #547): closed for this family's own proposed shape.**
+`rf_tools/aperture_polarizability.py` now computes `γ` from geometry for the
+square-loop slot — `square_loop_polarizability_m3` for the isolated patch,
+`square_loop_periodic_array_polarizability_m3` (or the shape-agnostic
+`periodic_array_polarizability_correction_m3`, given any isolated `γ` and a
+period) for the periodic-array-corrected per-unit-cell value Eq. (12)
+actually needs, validated against Mansfield, Douglas & Garboczi (2001)'s
+square-plate value, Kurennoy (1996)'s narrow-annulus asymptote (a
+discretisation-strategy cross-check, not the square number itself), and this
+paper's own Fig. 4 "square patch" curve. No other aperture shape (circular
+loop, cross-potent, horseshoe, split-ring) has a solve yet — a human still
+supplies `γ` for those the same way as before.
 
 **The honest warning to attach to any candidate scored against this bound**
 (the charter's assumption / cost / cheapest-test triad):
@@ -361,7 +374,7 @@ remains the family's own separate, undischarged concern.
 | Claim | Provenance |
 |---|---|
 | Steer's Fano–Bode inequalities, including the `π/Q` general form | `LITERATURE-SUPPORTED` — verbatim, open textbook |
-| The parallel-LC shunt tank is the unique lossless bandpass topology; its Babinet derivation from a loop slot | `CALCULATED` — derived from `rf_tools/transmissive_absorber.py`'s and `rf_tools/calculations.py`'s own adopted formulas |
+| The parallel-LC shunt tank is the unique lossless bandpass topology; its Babinet derivation from a loop slot | `CALCULATED` — derived from `rf_tools/transmissive_absorber.py`'s and `rf_tools/sheet_impedance.py`'s own adopted formulas |
 | Bode–Fano is vacuous for `BANDPASS_FSS` | `CALCULATED` (the `Q=0` substitution) + `INFERRED` (no alternative split rescues it) — no source states this negative result directly |
 | Fano's and Rozanov's bounds are members of one passive-system sum-rule family, but different members | `LITERATURE-SUPPORTED` — verbatim, reference numbers checked |
 | **Eq. (12): `B ≤ γπΔ/(Aλ₀)`, and every validity condition in §4** | `LITERATURE-SUPPORTED` — read in full, quoted verbatim, bibliography Crossref-confirmed, measurement-validated by the source |

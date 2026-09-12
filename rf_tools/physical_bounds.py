@@ -492,11 +492,14 @@ def patch_max_fractional_bandwidth(
 #
 # THE UNCOMPUTED INPUT: gamma. This module has no function that computes it
 # from an aperture's geometry -- that is an electrostatic field solve, not a
-# closed form, and nothing in rf_tools or simulation poses that problem
-# today (simulation/meep.py is FDTD, the wrong tool). A caller supplies
-# gamma_m3 the same way rozanov_min_thickness_m's caller supplies mu_s: from
-# a literature value, a hand calculation, or (once it exists) a dedicated
-# solve -- never guessed.
+# closed form (simulation/meep.py is FDTD, the wrong tool). For BANDPASS_FSS's
+# own square-loop-slot shape, rf_tools/aperture_polarizability.py now does
+# this (issue #547): square_loop_polarizability_m3 for an isolated patch,
+# square_loop_periodic_array_polarizability_m3 for the periodic-array-
+# corrected per-unit-cell value Eq. (12) actually needs. No other aperture
+# shape has a solve yet. A caller still supplies gamma_m3 the same way
+# rozanov_min_thickness_m's caller supplies mu_s: from a literature value, a
+# hand calculation, or a dedicated solve where one exists -- never guessed.
 
 
 def _require_open_unit_interval(name: str, value: float) -> float:

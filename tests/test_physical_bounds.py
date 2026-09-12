@@ -493,9 +493,11 @@ def test_perforated_screen_bound_rejects_a_threshold_outside_the_open_unit_inter
 
 def test_bandpass_fss_physical_bound_validity_names_the_uncomputed_gamma_input():
     """The one concrete gap this bound creates (CLAUDE.md's "name the missing
-    measurement"): gamma is not computable from geometry by anything in this
-    repo today, and the validity box must say so rather than let a caller
-    assume it is a solved input."""
+    measurement"): gamma is a caller-supplied argument here, not something
+    this bound derives itself, and the validity box must say so -- even now
+    that rf_tools/aperture_polarizability.py (issue #547) can compute it for
+    this family's own square-loop-slot shape -- rather than let a caller
+    assume gamma_m3 arrives pre-verified."""
     validity = BANDPASS_FSS.physical_bound.validity
     assert "gamma" in validity
     assert "normal incidence ONLY" in validity
@@ -813,7 +815,7 @@ def test_skin_depth_converts_the_mxene_disagreement_into_a_stated_conductivity()
     own reasoning about the size of the discrepancy, and put both claims in
     comparable units so a single four-point-probe reading can settle them.
     """
-    from rf_tools.calculations import skin_depth_m
+    from rf_tools.sheet_impedance import skin_depth_m
 
     def implied_sigma(delta_m: float) -> float:
         # delta = 1/sqrt(pi*f*mu*sigma)  =>  sigma = 1/(pi*f*mu*delta^2)

@@ -43,7 +43,7 @@ Both amendments follow ADR-0020: dated correction blocks, wrong passage quoted v
 
 - `designs/intended_effects.py` — new. The lookup behind ADR-0049, plus `GapReason` so the type can say *"refused in writing"* rather than *"not yet built."*
 - `designs/design_families.py` — ADR-0050's fields and families, and a consistency test so the registry and the effects library **cannot silently drift apart** again.
-- `rf_tools/calculations.py` — docstring scope only, no behaviour change: `min_overlay_sheet_resistance_ohm_sq` is **necessary but not sufficient** for a resonant patterned overlay (it models a purely resistive sheet); `grid_effective_permittivity` hardcodes air above and fails for any encapsulated stack.
+- `rf_tools/sheet_impedance.py` — docstring scope only, no behaviour change: `min_overlay_sheet_resistance_ohm_sq` is **necessary but not sufficient** for a resonant patterned overlay (it models a purely resistive sheet); `grid_effective_permittivity` hardcodes air above and fails for any encapsulated stack.
 - `simulation/palace.py` — a stale citation retargeted from the closed #289 to the open #362 / #361.
 
 ## 4. The register

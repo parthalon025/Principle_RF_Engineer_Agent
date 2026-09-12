@@ -485,7 +485,7 @@ def realize_lowpass_stepped_impedance_microstrip(
     so this is not gated here -- matching this project's own precedent for
     not gating a smoothly-degrading approximation at an arbitrary threshold,
     see `capacitive_grid_sheet_capacitance_f`'s d/p=0.3 note in
-    `rf_tools/calculations.py`), and it uses each width's quasi-static
+    `rf_tools/sheet_impedance.py`), and it uses each width's quasi-static
     `eps_eff` evaluated at the cutoff frequency only -- no dispersion, no
     coupling between adjacent sections, and no discontinuity (step)
     reactance at the width transitions themselves. Cross-check any result

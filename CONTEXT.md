@@ -890,6 +890,38 @@ and a glossary that churns with it stops being trustworthy (see
   _Avoid_: folding this into `capability-verdict` — that was tried
   (ADR-0025's 2026-09-08 correction) and contradicted ADR-0021's own rule
   that an unbuildable candidate is reported, not dropped.
+- **Infeasibility verdict**: a headline the **Run report** carries when a
+  requirement cannot be met, in one of two kinds (ADR-0052). A **`bound`**
+  verdict fires when a published per-family **Physical bound** forbids the
+  requirement, computed once `ARCHITECTURE` has named a family — its
+  reading is "more search will not help; physics caps this." An
+  **`exhaustion`** verdict fires when a run's stop reason is
+  `evaluation_budget` or `score_plateau` and the **Considered-and-dropped
+  ledger** shows more than one family or material was actually tried — its
+  reading is "we searched hard and found nothing; more or different search
+  might still help." **Advisory, never terminal**: a verdict never stops a
+  run or withholds a candidate the run produced; it changes what the
+  report leads with, not what it contains. Carries the binding constraint,
+  a margin (a per-option reason list instead, for a categorical
+  constraint with no numeric "by how much"), provenance, and the
+  `assumed`/`costs`/`cheapest_test` triple CLAUDE.md's warning contract
+  requires — `assumed` is the bound's own Validity box for a `bound`
+  verdict. Scoped to one `(requirement, family)` pair, never "the" family
+  for a requirement with more than one candidate family.
+  _Avoid_: gating, refusing — an infeasibility verdict never removes a
+  candidate or a run from what the reader sees; that is exactly the act
+  ADR-0047 forbids for a different reason (a candidate's own apparent
+  bound violation).
+- **Unscorable**: the outcome when a family cannot be evaluated at all —
+  no closed-form **Analysis model** (`UndeclaredAnalysisModel`) or a
+  material with no in-band data — as distinct from evaluated-and-found-
+  wanting. The one outcome with genuinely no candidates, since nothing
+  ran. Never reported as an **Infeasibility verdict**: "cannot work" and
+  "cannot be evaluated" are different facts a reader must be able to tell
+  apart at a glance (#127).
+  _Avoid_: infeasible, cannot be met — those claim something about
+  physics; unscorable claims something about what the loop is currently
+  equipped to check.
 - **Field bundle**: the self-describing directory written after a SIMULATION
   step, holding the mesh the solver actually solved on, the complex fields it
   returned, and a manifest carrying that result's **Provenance**, its

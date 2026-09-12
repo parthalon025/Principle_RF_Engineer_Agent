@@ -23,7 +23,7 @@ unambiguous single-value read is tagged `MANUFACTURER-SPECIFIED`; an
 ambiguous or low-confidence read is tagged `INFERRED` instead. Separately,
 each category's structured schema enforces hard physical bounds
 (`nf_db >= 0`, `|S11| <= 1`, etc., matching the validation style already in
-`rf_tools/calculations.py`) — a value that violates a bound is tagged
+`rf_tools`'s domain modules) — a value that violates a bound is tagged
 `UNKNOWN` with the violation recorded, which doesn't depend on the model's
 own (potentially miscalibrated) confidence signal. Anywhere a component
 spec is used in an actual engineering claim, `prompts/principal_engineer.md`'s

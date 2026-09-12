@@ -205,7 +205,7 @@ A candidate's drive can raise for reasons that have nothing to do with any
 OTHER candidate: a missing NEC2++ binary (`simulation.base.SimulatorError`
 -- an environment problem, but one candidate's SIMULATION failing does not
 mean the next candidate's SIMULATION would too, once the binary exists),
-a geometrically invalid patch (`rf_tools.calculations` raising `ValueError`
+a geometrically invalid patch (`rf_tools.patch_synthesis` raising `ValueError`
 for a nonphysical `l_m`), a candidate dict missing a required field for the
 step it reaches (`orchestration.design_loop.DesignLoopValidationError`,
 raised by the SAME `_handle_analysis`/`_handle_simulation`/`_handle_
@@ -300,8 +300,10 @@ instead of by step, so it builds a differently-shaped index from the
 identical triples rather than this module's flat one). See
 `orchestration/score_fields.py`'s own docstring for why this is
 mechanical wiring knowledge fixed by those functions' own documented
-output shapes (rf_tools/calculations.py, optimization/rf_objectives.py),
-not an RF judgment call, and for why it is kept separate from
+output shapes (rf_tools's per-domain modules such as
+rf_tools/patch_synthesis.py and rf_tools/sheet_impedance.py,
+optimization/rf_objectives.py), not an RF judgment call, and for why it
+is kept separate from
 `orchestration/tooling.py`'s own `_STEP_TO_TOOL_NAME` despite the
 overlapping step keys.
 

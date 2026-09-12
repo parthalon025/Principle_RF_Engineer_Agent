@@ -22,8 +22,9 @@ deliverable):
 `realize_lowpass_stepped_impedance_microstrip`, implementing the classic
 "Hi-Z, Lo-Z" stepped-impedance method (Pozar, "Microwave Engineering" 4th
 ed., sec. 8.6) for the lowpass case, backed by new general-purpose microstrip
-line synthesis/analysis formulas, originally added to `rf_tools/calculations.py`
-and since moved to `rf_tools/microstrip_line.py` (issue #521)
+line synthesis/analysis formulas, originally added to this package's former
+single calculations module and since moved to `rf_tools/microstrip_line.py`
+(issue #521)
 (`microstrip_effective_permittivity`, `microstrip_characteristic_impedance_ohm`,
 `microstrip_synthesize_width_m`, Pozar Table 3.2).
 
@@ -69,10 +70,10 @@ the right tool for confirming a design, not for proposing one.
 
 ## Why (b), and why it stopped at lowpass
 
-`rf_tools/calculations.py` already had the template this ticket needed:
-`patch_effective_permittivity`/`patch_length_extension_m` (originally in
-`rf_tools/calculations.py`, since moved to `rf_tools/patch_synthesis.py`,
-issue #522) are exactly "a closed-form microstrip-geometry result, sourced
+This package's former single calculations module already had the template
+this ticket needed: `patch_effective_permittivity`/`patch_length_extension_m`
+(originally there, since moved to `rf_tools/patch_synthesis.py`, issue #522)
+are exactly "a closed-form microstrip-geometry result, sourced
 from a named textbook section, with an explicit validity box" -- the same
 shape
 `butterworth_g_values`/`chebyshev_g_values` already established for the g-value
@@ -84,9 +85,9 @@ the new `realize_lowpass_stepped_impedance_microstrip` function and its
 `MicrostripLineSection` result type live there, next to what they operate on;
 the new `microstrip_effective_permittivity`/`microstrip_characteristic_impedance_ohm`/
 `microstrip_synthesize_width_m` primitives it composes originally lived in
-`rf_tools/calculations.py`, next to the (differently-scoped) patch formulas
-they parallel -- since moved to their own `rf_tools/microstrip_line.py`
-(issue #521).
+that same former single calculations module, next to the
+(differently-scoped) patch formulas they parallel -- since moved to their
+own `rf_tools/microstrip_line.py` (issue #521).
 
 Only the **lowpass** band is realized. The stepped-impedance method itself
 has no equivalent for the other three bands: it works by approximating a

@@ -606,7 +606,7 @@ this list.
     comment into anything a later session would read.* This is the failure
     the map's "a decision is an ADR, or a correction to one" rule exists to
     close, and it is why the frontier looked far wider than it was.
-40. **`rf_tools/calculations.py`'s `patch_effective_permittivity` guard named
+40. **`rf_tools/patch_synthesis.py`'s `patch_effective_permittivity` guard named
     the material, not the formula.** Its `eps_r <= 1` check raised *"Substrate
     dielectric constant eps_r must be > 1"* — stated as a physical law about
     substrates, when the real constraint is that Hammerstad's fringing-field
@@ -866,7 +866,7 @@ this list.
     conductivity (σ ≈ 6.9×10⁵ S/m) and the per-frequency skin depths in
     `docs/mxene-voltera-nova-printability.md:102–104`, the same 10 µm film
     is **1.48 δ at 8 GHz and 1.81 δ at 12 GHz** (`CALCULATED` via
-    `rf_tools/calculations.py`'s `skin_depths_of_thickness`) — not
+    `rf_tools/sheet_impedance.py`'s `skin_depths_of_thickness`) — not
     "several" by any ordinary reading, and the opposite of map #104's
     "MXene never reaches that [3δ] regime at printable thickness." The
     still-open ~1.8× conductivity disagreement in section 3 item 33 means
@@ -1018,7 +1018,7 @@ this list.
     susceptance alone, combined with a perfectly matched absorber behind
     it, leaves only **≈84% absorption** (`CALCULATED`:
     `A = 1 - |(1-y_n)/(1+y_n)|²` with `y_n = 1 + y`). `min_overlay_sheet_
-    resistance_ohm_sq` (`rf_tools/calculations.py:1442`) models a purely
+    resistance_ohm_sq` (`rf_tools/sheet_impedance.py`) models a purely
     resistive sheet: **passing it is necessary, not sufficient**, for a
     resonant patterned overlay, which also loads the absorber with a
     reactive term the resistive-only model cannot see. The continuous half

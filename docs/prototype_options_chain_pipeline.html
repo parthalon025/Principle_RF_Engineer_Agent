@@ -496,7 +496,7 @@
 
     <article class="card built" id="card-analysis">
       <div class="card-head"><span class="tag">03</span><h3>Analysis — closed form</h3><span class="status-pill built">Built</span></div>
-      <p class="files">design_loop.py:600 · rf_tools/absorber.py · rf_tools/calculations.py</p>
+      <p class="files">design_loop.py:600 · rf_tools/absorber.py · rf_tools/sheet_impedance.py</p>
       <p class="tools"><span class="chip">internal — driven by the loop &amp; the solver</span></p>
       <p><strong>Decides:</strong> a cheap, pencil-and-paper-grade estimate — for an absorber, the single worst-absorbing frequency in the required band from an equivalent-circuit model (Costa/Luukkonen); for a patch, its resonant frequency from the closed-form patch formula.</p>
       <p><strong>Why:</strong> the "evaluate cheap before expensive" tier this project's method calls for. For absorbers it also runs the Rozanov thickness-versus-bandwidth limit as a real number, not just a comment, so a physically impossible design is caught before a solver ever sees it.</p>

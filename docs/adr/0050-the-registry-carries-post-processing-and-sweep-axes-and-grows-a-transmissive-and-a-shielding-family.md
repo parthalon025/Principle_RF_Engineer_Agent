@@ -82,7 +82,8 @@ narrow ADR-0045's Consequences to three fields, not to grow the dataclass.
    geometry and material constants in, a predicted number out, no solver
    anywhere (`rf_tools.absorber.absorber_band_response`,
    `rf_tools.patch_synthesis.patch_resonant_frequency_hz` — moved from
-   `rf_tools.calculations` under issue #522). `postprocess` names
+   this package's former single calculations module under issue #522).
+   `postprocess` names
    arithmetic the SIMULATION step runs on a **solver's output** — reflectance
    and transmittance in, absorptivity out
    (`orchestration/design_loop.py`'s `_one_port_absorption` /
@@ -325,13 +326,13 @@ The invariant written for #216 is what says no, and it says no on physics.
 candidate whose family is set by its radar behaviour.** And that constraint has
 a number, so it is usable today with no registry change at all. A **continuous**
 low-emissivity conductive layer over a radar absorber **shorts it out**:
-`rf_tools.calculations.min_overlay_sheet_resistance_ohm_sq` returns **407 Ω/sq**
+`rf_tools.sheet_impedance.min_overlay_sheet_resistance_ohm_sq` returns **407 Ω/sq**
 as the floor an overlay must exceed to leave 90 % microwave absorption intact
 (1,695 Ω/sq for 99 %). A dense printed MXene film at this repo's own
 best-evidenced as-printed conductivity — 6.9 × 10⁵ S/m,
 `docs/mxene-voltera-nova-printability.md` — has an RF sheet resistance of
 **0.24 Ω/sq** at 10 GHz and 20 µm (`CALCULATED` via
-`rf_tools.calculations.sheet_resistance_ohm_sq`), about **1,700× too
+`rf_tools.sheet_impedance.sheet_resistance_ohm_sq`), about **1,700× too
 conductive**. So **only a patterned infrared layer can coexist with an
 absorber**, which is `docs/five-paper-absorber-corpus-findings.md` §4's own
 conclusion: every continuous IR-functional conductor in that corpus fails the
@@ -530,7 +531,7 @@ deliberate rather than as an oversight.
   passband synthesis for `BANDPASS_FSS` (the equivalent-LC-circuit route the
   reported Ti₃C₂Tₓ chessboard used is the obvious shape, and #453 carries the
   reference), and a shielding-effectiveness function for `SHIELD` — whose
-  ingredients already exist in `rf_tools.calculations` (`skin_depth_m`,
+  ingredients already exist in `rf_tools.sheet_impedance` (`skin_depth_m`,
   `sheet_resistance_ohm_sq`, `min_overlay_sheet_resistance_ohm_sq`) and only
   need assembling. Both carry their traps in the code: SE is `20·log₁₀` of a
   **field** magnitude, equivalently `10·log₁₀` of a **power**, and taking

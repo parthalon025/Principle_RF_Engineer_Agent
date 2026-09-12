@@ -50,7 +50,7 @@ that answers several unrelated questions.
 NOT A GENERAL "PHYSICAL QUANTITY" OR "UNIT SYSTEM" MODULE. This is
 narrowly the wiring between THIS loop's own step handlers
 (`orchestration/design_loop.py`) and THIS loop's own currently-implemented
-Phase 1/6/9 functions (`rf_tools/calculations.py`, `simulation/nec2pp.py`,
+Phase 1/6/9 functions (`rf_tools/patch_synthesis.py`, `simulation/nec2pp.py`,
 `optimization/rf_objectives.py`) -- mechanical fact about their already-
 documented output shapes, not an RF judgment call and not a reusable units
 library. A step with no entry here (REQUIREMENTS, ARCHITECTURE,

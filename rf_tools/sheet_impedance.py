@@ -1,38 +1,23 @@
+"""Printed-surface sheet-impedance math: skin depth, grid capacitance and
+inductance, Costa's thin-spacer correction, and the squares rule (issues
+#111, #128, #245; split out of this package's former single calculations
+module, issue #524/#500 -- the last of that module's seven domains).
+
+These formulas describe what a printed metamaterial skin's unit cell
+presents to an incident wave. They had lived only inside a browser prototype
+(geometry/prototype_lossy_cell_fit.html) and a throwaway bench script, so
+every question about a printed cell was re-deriving them from scratch.
+"""
+
 import cmath
 import math
 
-# Free-space constants, for the printed-surface sheet-impedance formulas at
-# the end of this module. CODATA values; EPS0 is exact-derived from MU0 and c.
+# Free-space constants. CODATA values; EPS0 is exact-derived from MU0 and c.
 MU0 = 4e-7 * math.pi
 EPS0 = 8.8541878128e-12
 
 
-# --- Patch antenna synthesis moved to rf_tools/patch_synthesis.py ---
-#
-# wavelength, patch_effective_permittivity, patch_length_extension_m,
-# patch_resonant_frequency_hz, fractional_bandwidth_from_q,
-# quality_factor_from_fractional_bandwidth, curvature_length_correction_factor,
-# curvature_shifted_resonant_frequency_hz, curvature_exceeds_validity_box, and
-# aperture_gain (issue #522) live there now. Microstrip transmission-line
-# synthesis (microstrip_effective_permittivity,
-# microstrip_characteristic_impedance_ohm, microstrip_synthesize_width_m,
-# issue #286) lives in rf_tools/microstrip_line.py -- deliberately kept apart
-# from the patch formulas despite sharing the same underlying fringing-field
-# formula; see the module-level comment in rf_tools/patch_synthesis.py.
-
-
-# --- Metamaterial unit-cell effective-medium parameters (Maxwell-Garnett)
-# moved to rf_tools/metamaterial.py ---
-#
-# maxwell_garnett_effective_permeability (issue #523) lives there now.
-
-
 # --- Printed-surface sheet impedance: the grid pair, and the squares rule ---
-#
-# The formulas below are what a printed metamaterial skin's unit cell
-# presents to an incident wave, and they had lived only inside a browser
-# prototype (geometry/prototype_lossy_cell_fit.html) and a throwaway bench
-# script -- so every question about a printed cell was re-deriving them.
 #
 # CAPACITIVE GRID (patches separated by gaps), Luukkonen et al.'s
 # analytical grid impedance as used inside Costa et al.'s absorber stack

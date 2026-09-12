@@ -22,7 +22,8 @@ number), store it alongside the original prose, and provide the confirm
 step a human uses to vouch for that reading before anything is scored
 against it. A hidden model call inside a function this module documents as
 "deterministic" would violate the same foundational rule
-`rf_tools/calculations.py` and `docs/adr/0003` already rely on: the LLM is
+`rf_tools`'s domain modules (e.g. `rf_tools/sheet_impedance.py`) and
+`docs/adr/0003` already rely on: the LLM is
 never trusted to do the arithmetic/judgment a tool's caller is supposed to
 have already done before calling it.
 

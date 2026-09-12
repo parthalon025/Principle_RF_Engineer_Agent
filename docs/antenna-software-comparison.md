@@ -187,7 +187,7 @@ That catalog, not the solver, is what makes the optimiser useful: an optimiser s
 a good analytic guess converges; one started from nothing burns its budget finding the
 resonance.
 
-This repo has the closed-form patch synthesis (`rf_tools/calculations.py`,
+This repo has the closed-form patch synthesis (`rf_tools/patch_synthesis.py`,
 `patch_resonant_frequency_hz` and neighbours) and exactly one named objective built on it —
 `optimization/rf_objectives.py`, whose own docstring is candid that it is "one concrete case,
 not a speculative menu." Issue #229 records the downstream effect: "the design loop only

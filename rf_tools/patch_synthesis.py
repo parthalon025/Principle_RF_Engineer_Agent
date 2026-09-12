@@ -1,5 +1,6 @@
 """Patch antenna synthesis: resonant frequency, bandwidth, curvature effects,
-and aperture gain (split out of rf_tools/calculations.py, issue #522/#500)."""
+and aperture gain (split out of this package's former single calculations
+module, issue #522/#500)."""
 
 from math import radians, sin
 
