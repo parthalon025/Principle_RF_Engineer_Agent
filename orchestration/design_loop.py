@@ -1931,6 +1931,17 @@ def _simulate_palace_floquet(
     return "simulation", recorded, recorded["provenance"]
 
 
+# The step_input fields `_simulate_nec2` requires, named so
+# `orchestration/solver.py` can import this fact instead of restating it as
+# its own literal (issue #497/#510) -- exactly today's inline set, moved
+# here with zero behavior change to the handler below.
+SIMULATE_NEC2_REQUIRED_FIELDS: set[str] = {
+    "geometry",
+    "frequency_hz",
+    "reference_impedance_ohms",
+}
+
+
 def _simulate_nec2(
     family: Any,
     step_input: dict[str, Any],
@@ -1967,9 +1978,7 @@ def _simulate_nec2(
     advances: the underlying simulation itself completed.
     """
     del family  # a wire-antenna run needs no family fact; the signature is the dispatch's
-    _require_fields(
-        step_input, {"geometry", "frequency_hz", "reference_impedance_ohms"}, "simulation"
-    )
+    _require_fields(step_input, SIMULATE_NEC2_REQUIRED_FIELDS, "simulation")
     result = _run_nec2_simulation(
         geometry=step_input["geometry"],
         frequency_hz=step_input["frequency_hz"],
@@ -2058,6 +2067,20 @@ def _optimizer_class_for(state: DesignLoopState) -> str | None:
     return _registry_family_of_record(state, "optimization").optimizer_class
 
 
+# The step_input fields `_optimize_continuous_patch_length` requires, named
+# so `orchestration/solver.py` can import this fact instead of restating it
+# as its own literal (issue #497/#510) -- exactly today's inline set, moved
+# here with zero behavior change to the handler below.
+OPTIMIZE_CONTINUOUS_PATCH_LENGTH_REQUIRED_FIELDS: set[str] = {
+    "eps_r",
+    "w_m",
+    "h_m",
+    "target_frequency_hz",
+    "length_lower_m",
+    "length_upper_m",
+}
+
+
 def _optimize_continuous_patch_length(
     _family: Any, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -2076,11 +2099,7 @@ def _optimize_continuous_patch_length(
     discipline `_ANALYSIS_MODELS`/`_SIMULATION_ADAPTERS`'s handlers already
     follow.
     """
-    _require_fields(
-        step_input,
-        {"eps_r", "w_m", "h_m", "target_frequency_hz", "length_lower_m", "length_upper_m"},
-        "optimization",
-    )
+    _require_fields(step_input, OPTIMIZE_CONTINUOUS_PATCH_LENGTH_REQUIRED_FIELDS, "optimization")
     result = _optimize_patch_length_for_target_frequency(
         eps_r=step_input["eps_r"],
         w_m=step_input["w_m"],
