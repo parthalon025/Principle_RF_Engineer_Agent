@@ -166,6 +166,8 @@ for a human to read.
 
 Issues live in this repo's GitHub Issues (`parthalon025/Principle_RF_Engineer_Agent`), using the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
+**Merging a PR does not close the ticket it resolves.** GitHub only auto-closes an issue when a `Closes #<n>` / `Resolves #<n>` keyword appears in the PR body or a commit message on the default branch. Include that keyword for every ticket a PR resolves, or close the ticket by hand immediately after the merge — don't let finished work sit as an open issue.
+
 ### Triage labels
 
 Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
