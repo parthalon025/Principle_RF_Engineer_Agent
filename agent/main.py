@@ -126,6 +126,22 @@ _LITELLM_PROVIDERS = {
 }
 
 
+def _resolve_llm_provider() -> str:
+    """The single place that reads LLM_PROVIDER from the environment. In
+    plain terms: this answers "which provider is configured right now" --
+    "openai" (default), "anthropic", "local", or "runpod" -- normalized to
+    lowercase so callers never need to re-normalize or re-read the
+    environment themselves.
+
+    `_resolve_agent_model`, `_resolve_agent_model_settings`,
+    `_local_reasoning_output_tail`, and
+    `_configure_hosted_openai_compatible_backend` all call this instead of
+    independently reading and lowercasing the environment variable
+    themselves, so there is exactly one place that can drift out of sync
+    with the others (issue #499)."""
+    return os.getenv("LLM_PROVIDER", "openai").lower()
+
+
 def _resolve_agent_model():
     """Build the value to pass as every Agent's `model=`: a plain model-name
     string for the "openai" (SDK default provider), "local", and "runpod"
@@ -134,7 +150,7 @@ def _resolve_agent_model():
     a `agents.extensions.models.litellm_model.LitellmModel` instance -- a
     `Model` object, not a string -- for any LiteLLM-routed provider like
     "anthropic". `Agent.model` accepts either (`str | Model`)."""
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    provider = _resolve_llm_provider()
     if provider in _LITELLM_PROVIDERS:
         from agents.extensions.models.litellm_model import LitellmModel
 
@@ -184,7 +200,7 @@ def _resolve_agent_model_settings() -> ModelSettings:
     llama.cpp-native sampling parameters that aren't part of the OpenAI
     wire format itself.
     """
-    if os.getenv("LLM_PROVIDER", "openai").lower() != "local":
+    if _resolve_llm_provider() != "local":
         return get_default_model_settings()
     return ModelSettings(
         temperature=1.0,
@@ -231,7 +247,7 @@ def _local_reasoning_output_tail() -> str:
     Omitted for openai/anthropic/runpod, which have their own well-tuned
     default behavior this repo has no basis to second-guess.
     """
-    if os.getenv("LLM_PROVIDER", "openai").lower() != "local":
+    if _resolve_llm_provider() != "local":
         return ""
     return (
         "\n\n## Output format\n\n"
@@ -268,7 +284,7 @@ def _configure_hosted_openai_compatible_backend() -> None:
     happens to be OpenAI-wire-compatible, which is why it's handled
     alongside "local" here rather than through _LITELLM_PROVIDERS.
     """
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    provider = _resolve_llm_provider()
     if provider == "local":
         base_url = os.getenv("LOCAL_LLM_BASE_URL") or "http://localhost:11434/v1"
         api_key = os.getenv("LOCAL_LLM_API_KEY") or "unused"
