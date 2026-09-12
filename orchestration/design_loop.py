@@ -1884,12 +1884,53 @@ def _optimizer_class_for(state: DesignLoopState) -> str | None:
     return _registry_family_of_record(state, "optimization").optimizer_class
 
 
+def _optimize_continuous_patch_length(
+    _family: Any, step_input: dict[str, Any]
+) -> tuple[str, dict[str, Any], str | None]:
+    """The plain continuous patch-length search (issue #255 ticket 1) --
+    this loop's ONLY OPTIMIZATION path until issue #267 added
+    `_optimize_combinatorial_symbol_placement` beside it. Handles
+    `optimizer_class == "CONTINUOUS"` and, via `_OPTIMIZER_HANDLERS`'s
+    lookup key below, the unset (`None`) case too -- see `_handle_
+    optimization`'s docstring for why both route here identically.
+
+    `_family` is unused: this search has never needed anything off the
+    registry entry, unlike its COMBINATORIAL sibling (which needs the
+    family's name for its own error messages). It is still accepted, not
+    dropped, so both entries in `_OPTIMIZER_HANDLERS` share one call
+    signature `(family, step_input)` -- the same uniform-signature
+    discipline `_ANALYSIS_MODELS`/`_SIMULATION_ADAPTERS`'s handlers already
+    follow.
+    """
+    _require_fields(
+        step_input,
+        {"eps_r", "w_m", "h_m", "target_frequency_hz", "length_lower_m", "length_upper_m"},
+        "optimization",
+    )
+    result = _optimize_patch_length_for_target_frequency(
+        eps_r=step_input["eps_r"],
+        w_m=step_input["w_m"],
+        h_m=step_input["h_m"],
+        target_frequency_hz=step_input["target_frequency_hz"],
+        length_lower_m=step_input["length_lower_m"],
+        length_upper_m=step_input["length_upper_m"],
+        method=step_input.get("method", "bayesian"),
+        n_evaluations=step_input.get("n_evaluations", 20),
+    )
+    return "optimization", result, result.get("provenance", "CALCULATED")
+
+
 def _handle_optimization(
     state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
     """Dispatch OPTIMIZATION to the search this design family's declared
     `optimizer_class` calls for (issue #255 ticket 1; wired up to a real
-    `COMBINATORIAL` search at issue #267).
+    `COMBINATORIAL` search at issue #267; converted to the same dict-
+    dispatch pattern as `_handle_analysis`/`_handle_simulation` at issue
+    #508 -- this docstring claimed that pattern from issue #255 onward, but
+    the code underneath it was actually a chain of `if/elif optimizer_class
+    == ... / raise` checks with no table a reader (or the error message
+    below) could point at).
 
     `optimizer_class == "CONTINUOUS"`, and a family that declares no
     optimizer_class at all (`None` -- every family in `designs/
@@ -1897,7 +1938,11 @@ def _handle_optimization(
     the field open until a family opts in), both route to the SAME
     patch-length search this step has always run, byte-for-byte unchanged:
     same required fields, same call, same result shape (issue #255 ticket
-    1's own acceptance criterion, re-confirmed unchanged by issue #267).
+    1's own acceptance criterion, re-confirmed unchanged by issues #267 and
+    #508). The `None` case is folded into the `"CONTINUOUS"` lookup key
+    right here, before `_OPTIMIZER_HANDLERS` is consulted, rather than
+    given its own dict entry -- `None` is not itself an `optimizer_class`
+    value a family could declare a handler for, it is the ABSENCE of one.
 
     `optimizer_class == "COMBINATORIAL"` -- the shape issue #109/CONTEXT.md
     give REFLECTION_PHASE and DIFFUSIVE's Tier B optimizer, a genetic-
@@ -1912,41 +1957,27 @@ def _handle_optimization(
 
     Any OTHER declared value (a hypothetical third `optimizer_class`, e.g.
     ML-direct inverse design -- ADR-0018 names this as a credible future
-    value) raises, naming the family and the unhandled value, per issue
-    #255's user story 4: reported by name, never guessed past.
+    value) is not a key in `_OPTIMIZER_HANDLERS`, so `.get` returns `None`
+    and the block below raises, naming the family and the unhandled value
+    -- per issue #255's user story 4, reported by name, never guessed past,
+    in the exact wording style `_handle_analysis`'s own "no handler wired"
+    raise uses for `_ANALYSIS_MODELS`.
     """
     optimizer_class = _optimizer_class_for(state)
-    if optimizer_class is None or optimizer_class == "CONTINUOUS":
-        _require_fields(
-            step_input,
-            {"eps_r", "w_m", "h_m", "target_frequency_hz", "length_lower_m", "length_upper_m"},
-            "optimization",
-        )
-        result = _optimize_patch_length_for_target_frequency(
-            eps_r=step_input["eps_r"],
-            w_m=step_input["w_m"],
-            h_m=step_input["h_m"],
-            target_frequency_hz=step_input["target_frequency_hz"],
-            length_lower_m=step_input["length_lower_m"],
-            length_upper_m=step_input["length_upper_m"],
-            method=step_input.get("method", "bayesian"),
-            n_evaluations=step_input.get("n_evaluations", 20),
-        )
-        return "optimization", result, result.get("provenance", "CALCULATED")
-
+    if optimizer_class is None:
+        optimizer_class = "CONTINUOUS"
     family = _registry_family_of_record(state, "optimization")
-    if optimizer_class == "COMBINATORIAL":
-        return _optimize_combinatorial_symbol_placement(family, step_input)
-    raise DesignLoopValidationError(
-        f"Design family {family.name!r} declares optimizer_class "
-        f"{optimizer_class!r}, and this loop has no OPTIMIZATION path wired "
-        "for it. Recognised values: 'CONTINUOUS' (or unset) and "
-        "'COMBINATORIAL'. Add a dispatch branch for it in "
-        "orchestration/design_loop.py's _handle_optimization, or correct the "
-        "declaration in designs/design_families.py -- silently falling "
-        "through to the patch-length search is exactly what issues #239/#241 "
-        "already removed for ANALYSIS/SIMULATION."
-    )
+    handler = _OPTIMIZER_HANDLERS.get(optimizer_class)
+    if handler is None:
+        raise DesignLoopValidationError(
+            f"Design family {family.name!r} declares optimizer_class "
+            f"{optimizer_class!r}, and this loop has no handler wired for it. "
+            "Add one to _OPTIMIZER_HANDLERS in orchestration/design_loop.py, "
+            "or correct the declaration in designs/design_families.py -- "
+            "silently falling through to the patch-length search is exactly "
+            "what issues #239/#241 already removed for ANALYSIS/SIMULATION."
+        )
+    return handler(family, step_input)
 
 
 def _combinatorial_candidate_options(
@@ -2267,6 +2298,19 @@ def _optimize_combinatorial_symbol_placement(
 
     recorded = _combinatorial_result_to_dict(result)
     return "optimization", recorded, recorded["provenance"]
+
+
+# The dispatch table `_handle_optimization` reads -- this loop's counterpart
+# to `_ANALYSIS_MODELS`/`_SIMULATION_ADAPTERS` above. One named handler per
+# declared `optimizer_class` value (`"CONTINUOUS"` also standing in for the
+# unset/`None` case -- see `_handle_optimization`'s own docstring for why
+# that fold happens before this dict is consulted rather than as a third
+# entry here). A family declaring a value that is not a key here is a
+# reported failure, not a fallback (issue #508).
+_OPTIMIZER_HANDLERS: dict[str, Any] = {
+    "CONTINUOUS": _optimize_continuous_patch_length,
+    "COMBINATORIAL": _optimize_combinatorial_symbol_placement,
+}
 
 
 def _handle_verification(
