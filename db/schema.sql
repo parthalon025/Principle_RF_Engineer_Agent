@@ -873,7 +873,11 @@ ON considered_and_dropped_entries (reason_kind);
 -- of "fabrication"/"ink"/"material" -- which of the three capability
 -- sources fell short), `capability_property` (e.g.
 -- "min_feature_size_mm"), the stated need in the same `value`/`comparator`/
--- `unit` shape a Requirement target uses, and a free-text `reason`. No
+-- `unit` shape a Requirement target uses, and the charter's own three-part
+-- warning contract (ADR-0028) as `assumed`/`costs`/`cheapest_test` (issue
+-- #515/#496 -- copied verbatim from `rf_tools/absorber.py`'s/
+-- `rf_tools/transmissive_absorber.py`'s existing `validity` entry shape, in
+-- place of the single freeform `reason` column this table used to have). No
 -- CHECK constraint on `capability_kind`'s closed vocabulary here -- same
 -- discipline as `material_properties.provenance` elsewhere in this file:
 -- the closed set is enforced in Python
@@ -901,7 +905,15 @@ CREATE TABLE IF NOT EXISTS capability_warning_entries (
     value DOUBLE PRECISION NOT NULL,
     comparator TEXT NOT NULL,
     unit TEXT NOT NULL,
-    reason TEXT NOT NULL,
+    -- Issue #515/#496: the charter's own three-part warning contract
+    -- (CLAUDE.md's "Warn, never block"; ADR-0028), copied verbatim from
+    -- rf_tools/absorber.py's/rf_tools/transmissive_absorber.py's existing
+    -- `validity` entry shape, in place of the single freeform `reason`
+    -- column this table used to fold both ideas into with nothing
+    -- enforcing either was actually present.
+    assumed TEXT NOT NULL,
+    costs TEXT NOT NULL,
+    cheapest_test TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

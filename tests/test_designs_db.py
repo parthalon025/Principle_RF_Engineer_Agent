@@ -1021,7 +1021,10 @@ def test_record_decision_persists_and_round_trips_capability_warnings(db_conn):
             "value": 0.2,
             "comparator": "AT_MOST",
             "unit": "mm",
-            "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+            "assumed": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+            "costs": "features finer than 0.5 mm will not resolve; the printed "
+            "geometry will not match the design",
+            "cheapest_test": "print a resolution test coupon on the loaded printer",
         }
     ]
     row = record_decision(
@@ -1064,7 +1067,10 @@ def test_record_decision_writes_capability_warning_entries_to_own_table(db_conn)
             "value": 0.2,
             "comparator": "AT_MOST",
             "unit": "mm",
-            "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+            "assumed": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+            "costs": "features finer than 0.5 mm will not resolve; the printed "
+            "geometry will not match the design",
+            "cheapest_test": "print a resolution test coupon on the loaded printer",
         },
         {
             "family": "patch_antenna",
@@ -1073,7 +1079,11 @@ def test_record_decision_writes_capability_warning_entries_to_own_table(db_conn)
             "value": 0.05,
             "comparator": "AT_MOST",
             "unit": "ohm/sq",
-            "reason": "needs 0.05 ohm/sq; loaded ink measures 0.2 ohm/sq",
+            "assumed": "needs 0.05 ohm/sq; loaded ink measures 0.2 ohm/sq",
+            "costs": "higher sheet resistance dissipates more of the incident "
+            "wave; the absorber's own loss target will not be met",
+            "cheapest_test": "measure the loaded ink's sheet resistance with a "
+            "four-point probe",
         },
     ]
     row = record_decision(
@@ -1091,7 +1101,8 @@ def test_record_decision_writes_capability_warning_entries_to_own_table(db_conn)
     with db_conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT decision_record_id, family, capability_kind, capability_property, "
-            "value, comparator, unit, reason FROM capability_warning_entries "
+            "value, comparator, unit, assumed, costs, cheapest_test "
+            "FROM capability_warning_entries "
             "WHERE decision_record_id = %s ORDER BY id",
             (row["id"],),
         )
@@ -1106,7 +1117,9 @@ def test_record_decision_writes_capability_warning_entries_to_own_table(db_conn)
         assert stored_entry["value"] == expected["value"]
         assert stored_entry["comparator"] == expected["comparator"]
         assert stored_entry["unit"] == expected["unit"]
-        assert stored_entry["reason"] == expected["reason"]
+        assert stored_entry["assumed"] == expected["assumed"]
+        assert stored_entry["costs"] == expected["costs"]
+        assert stored_entry["cheapest_test"] == expected["cheapest_test"]
 
 
 def test_record_decision_writes_no_capability_warning_entries_when_none_given(db_conn):
@@ -1156,7 +1169,10 @@ def test_capability_warning_entries_cascade_delete_with_their_decision_record(db
                 "value": 0.2,
                 "comparator": "AT_MOST",
                 "unit": "mm",
-                "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+                "assumed": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+                "costs": "features finer than 0.5 mm will not resolve; the printed "
+                "geometry will not match the design",
+                "cheapest_test": "print a resolution test coupon on the loaded printer",
             }
         ],
     )
