@@ -707,6 +707,30 @@ and a glossary that churns with it stops being trustworthy (see
   solver-agnostic but is hardwired to call NEC2, which cannot represent a
   periodic/Floquet boundary — a family that needs one and doesn't declare
   `PALACE_FLOQUET` would silently get a wrong-but-plausible answer.
+- **Geometry model** (`geometry/ir.py`'s `Model`): one electromagnetic
+  problem — domain, band, excitation, boundary, conducting and dielectric
+  regions — stated once, independently of any solver. `geometry/translate.py`
+  renders it into each adapter's own geometry dict. Deliberately carries **no
+  mesh**: grid density is a numerical choice per solver, not a property of the
+  object, and mixing the two lets a mesh setting masquerade as a design
+  variable (#540).
+  _Avoid_: "geometry dict" for this — that names an adapter's own
+  solver-specific input, which is what a Geometry model is translated *into*.
+- **Conductor kind** (`geometry/ir.py`'s `ConductorKind`): the closed
+  three-value vocabulary — `PERFECT`, `BULK_CONDUCTIVITY`,
+  `SHEET_RESISTANCE` — every conductor in a Geometry model must declare.
+  Required rather than defaulted, because "a conductor" means an idealized
+  lossless mirror in one adapter and a real lossy film in another; an
+  optional field a translator could ignore is the exact shape of issue #230,
+  where a resistive sheet was modelled as perfect metal and absorbed nothing.
+- **Unrepresentable geometry** (`geometry/ir.py`'s `UnrepresentableGeometry`):
+  raised when a target solver cannot express a Geometry model's physics — a
+  lossy sheet bound for a PEC-only solver, an oblique wave bound for a
+  normal-incidence-only one. Carries what could not cross, why, and what to do
+  instead. Distinct from ADR-0028's "warn, never block", which governs
+  withholding a *candidate* from a human reader who can weigh the warning:
+  nothing reads a warning on the translation path, so a degraded geometry
+  would reach a solver and return a confident `SIMULATED` number unchallenged.
 - **Element/Coding-Alphabet library**: a persistent, cross-run store of
   characterized symbol-alphabet elements (Tier B design families only, see
   #130) — the same accumulate-once-and-reuse shape as the
