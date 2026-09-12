@@ -253,8 +253,8 @@ def record_decision(
                 """
                 INSERT INTO capability_warning_entries
                     (decision_record_id, family, capability_kind, capability_property,
-                     value, comparator, unit, reason)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                     value, comparator, unit, assumed, costs, cheapest_test)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (
@@ -265,7 +265,9 @@ def record_decision(
                         entry["value"],
                         entry["comparator"],
                         entry["unit"],
-                        entry["reason"],
+                        entry["assumed"],
+                        entry["costs"],
+                        entry["cheapest_test"],
                     )
                     for entry in capability_warnings
                 ],
@@ -802,8 +804,11 @@ def read_capability_warning_entries(
     result, since the latter cannot tell those two cases apart.
 
     One dict per entry -- `record_key`, `family`, `capability_kind`,
-    `capability_property`, `value`, `comparator`, `unit`, `reason` -- the
-    same shape a `capability_warnings` entry has always had, ordered by
+    `capability_property`, `value`, `comparator`, `unit`, `assumed`,
+    `costs`, `cheapest_test` (issue #515/#496: the charter's own three-part
+    warning contract as three required fields, in place of the single
+    freeform `reason` this shape used to carry) -- the same shape a
+    `capability_warnings` entry has always had, ordered by
     entry id (write order, matching the order the old JSON array held them
     in). Every field `orchestration.design_loop.capability_warning_holds`
     reads (`capability_kind`/`capability_property`/`comparator`/`value`) is
@@ -819,7 +824,8 @@ def read_capability_warning_entries(
         cur.execute(
             """
             SELECT dr.record_key, cwe.family, cwe.capability_kind, cwe.capability_property,
-                   cwe.value, cwe.comparator, cwe.unit, cwe.reason
+                   cwe.value, cwe.comparator, cwe.unit, cwe.assumed, cwe.costs,
+                   cwe.cheapest_test
             FROM capability_warning_entries cwe
             JOIN decision_records dr ON dr.id = cwe.decision_record_id
             WHERE dr.design_id = %s

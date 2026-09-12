@@ -809,8 +809,15 @@ def _validate_considered_and_dropped(
 # (`capability_property`, e.g. "min_feature_size_mm"), the stated need in
 # the SAME `value`/`comparator`/`unit` shape a Requirement target uses (the
 # issue's own "so the gap is a precise, actionable spec rather than
-# descriptive prose"), and a free-text `reason` (e.g. "needs 0.2 mm
-# features; loaded printer achieves 0.5 mm").
+# descriptive prose"), and the charter's own three-part warning contract
+# (CLAUDE.md's "Warn, never block"; ADR-0028) as three required string
+# fields -- `assumed` (what is assumed), `costs` (what it costs if that
+# assumption is wrong), and `cheapest_test` (the cheapest way to find out)
+# -- issue #515/#496: the same vocabulary already implemented and
+# test-pinned by `rf_tools/absorber.py`'s/`rf_tools/transmissive_absorber.py`'s
+# `validity` entries, copied verbatim rather than re-derived, in place of
+# the single freeform `reason` field this shape used to fold both ideas
+# into with nothing enforcing either was actually present.
 #
 # No closed-form "must actually violate" check gates this at write time,
 # unlike capability-verdict's curvature bound -- no such published bound
@@ -875,7 +882,19 @@ def _validate_capability_warnings(entries: Any, step_name: str) -> None:
     ARCHITECTURE/REDESIGN_DECISION step_input -- see this section's own
     module comment above for the full shape. `None` (the key absent) is a
     no-op, same "No gate" as `_validate_considered_and_dropped` -- attaching
-    a Capability warning is never required."""
+    a Capability warning is never required.
+
+    Issue #515/#496: `assumed`/`costs`/`cheapest_test` are each required,
+    non-empty string fields -- the charter's own three-part warning
+    contract (what is assumed / what it costs if that assumption is wrong /
+    the cheapest way to find out) enforced structurally instead of folded,
+    optionally, into one freeform `reason` string. Same field names as
+    `rf_tools/absorber.py`'s/`rf_tools/transmissive_absorber.py`'s existing
+    `validity` entries -- copied verbatim, not a new vocabulary.
+    `family`/`capability_kind`/`capability_property`/`value`/`comparator`/
+    `unit` are unchanged: they identify WHAT the gap is about, not the
+    three-part warning contract itself.
+    """
     if entries is None:
         return
     if not isinstance(entries, list):
@@ -890,7 +909,9 @@ def _validate_capability_warnings(entries: Any, step_name: str) -> None:
         "value",
         "comparator",
         "unit",
-        "reason",
+        "assumed",
+        "costs",
+        "cheapest_test",
     }
     for index, entry in enumerate(entries):
         prefix = f"{step_name} step_input['capability_warnings'][{index}]"
@@ -901,7 +922,13 @@ def _validate_capability_warnings(entries: Any, step_name: str) -> None:
             raise DesignLoopValidationError(
                 f"{prefix} is missing required field(s): {sorted(missing)}"
             )
-        for text_field in ("family", "capability_property", "reason"):
+        for text_field in (
+            "family",
+            "capability_property",
+            "assumed",
+            "costs",
+            "cheapest_test",
+        ):
             if not isinstance(entry[text_field], str) or not entry[text_field].strip():
                 raise DesignLoopValidationError(
                     f"{prefix}[{text_field!r}] must be a non-empty string, "

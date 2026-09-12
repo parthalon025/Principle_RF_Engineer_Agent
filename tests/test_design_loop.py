@@ -828,7 +828,15 @@ def _capability_warning_entry(**overrides: Any) -> dict[str, Any]:
         "value": 0.2,
         "comparator": "AT_MOST",
         "unit": "mm",
-        "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+        # Issue #515/#496: the charter's own three-part warning contract
+        # (assumed / costs / cheapest_test), same field names as
+        # rf_tools/absorber.py's/rf_tools/transmissive_absorber.py's
+        # existing `validity` entries, in place of the single freeform
+        # `reason` this fixture used to carry.
+        "assumed": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+        "costs": "features finer than 0.5 mm will not resolve; the printed "
+        "geometry will not match the design",
+        "cheapest_test": "print a resolution test coupon on the loaded printer",
     }
     entry.update(overrides)
     return entry
@@ -859,6 +867,25 @@ def test_capability_warning_rejected_for_missing_required_field():
     state = start_design_loop(REQUIREMENTS)
     entry = _capability_warning_entry()
     del entry["capability_property"]
+    step_input = _architecture_step_input()
+    step_input["capability_warnings"] = [entry]
+    with pytest.raises(DesignLoopValidationError, match="missing required field"):
+        _grant_and_advance(state, DesignStep.ARCHITECTURE, step_input_override=step_input)
+
+
+@pytest.mark.parametrize("missing_field", ["assumed", "costs", "cheapest_test"])
+def test_capability_warning_rejected_for_missing_any_one_of_the_three_required_parts(
+    missing_field,
+):
+    """Issue #496: the charter's own three-part warning contract (what is
+    assumed / what it costs if that assumption is wrong / the cheapest way
+    to find out) must be structurally enforced, not foldable into one
+    freeform field where a caller could omit one part unnoticed -- a
+    warning missing any single one of `assumed`/`costs`/`cheapest_test` is
+    rejected."""
+    state = start_design_loop(REQUIREMENTS)
+    entry = _capability_warning_entry()
+    del entry[missing_field]
     step_input = _architecture_step_input()
     step_input["capability_warnings"] = [entry]
     with pytest.raises(DesignLoopValidationError, match="missing required field"):
