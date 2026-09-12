@@ -1577,7 +1577,7 @@ def run_palace_simulation(
     conservation_check = check_palace_result(parsed, lossless=lossless, reciprocal=True)
 
     return {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "s_parameters": parsed,
         "conservation_check": conservation_check,
         "simulator": result.simulator,

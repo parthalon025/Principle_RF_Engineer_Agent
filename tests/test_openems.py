@@ -1081,6 +1081,34 @@ def test_run_openems_simulation_end_to_end_converged(tmp_path: Path):
     assert xml_text.startswith("<openEMS>")
 
 
+def test_run_openems_simulation_provenance_tracks_simulationresult_field(
+    tmp_path: Path, monkeypatch
+):
+    """Regression test for issue #502: run_openems_simulation's "provenance"
+    key must be read off the SimulationResult OpenemsSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    script = _make_fake_openems_py(tmp_path, CONVERGED_LOG)
+    original_run = OpenemsSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(OpenemsSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_openems_simulation(
+        geometry=PATCH_GEOMETRY,
+        fdtd={"max_timesteps": 30000, "end_criteria": 1e-5},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_openems_simulation_end_to_end_max_timesteps(tmp_path: Path):
     script = _make_fake_openems_py(tmp_path, MAX_TIMESTEPS_LOG)
 

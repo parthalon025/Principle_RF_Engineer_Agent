@@ -376,6 +376,32 @@ def test_run_qucs_simulation_end_to_end_with_fake_executable(tmp_path: Path):
     assert ".SP:SP1" in netlist_text
 
 
+def test_run_qucs_simulation_provenance_tracks_simulationresult_field(tmp_path: Path, monkeypatch):
+    """Regression test for issue #502: run_qucs_simulation's "provenance"
+    key must be read off the SimulationResult QucsSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    script = _make_fake_qucsator_py(tmp_path, TWO_PORT_DATASET)
+    original_run = QucsSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(QucsSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_qucs_simulation(
+        circuit=TWO_PORT_CIRCUIT,
+        analysis=LIN_ANALYSIS,
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_qucs_simulation_writes_full_nport_touchstone_file(tmp_path: Path):
     """Unlike simulation/openems.py (one S-matrix column per run), a single
     qucsator_rf .SP run yields the FULL N-port matrix -- confirm a real

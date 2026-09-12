@@ -1011,7 +1011,7 @@ def run_hfss_simulation(
         }
     )
     return {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "simulator": result.simulator,
         "status": result.status,
         "workdir": str(result.workdir),

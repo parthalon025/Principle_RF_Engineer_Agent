@@ -626,6 +626,34 @@ def test_run_ngspice_simulation_end_to_end_ac(tmp_path: Path):
     assert ".end" in deck_text
 
 
+def test_run_ngspice_simulation_provenance_tracks_simulationresult_field(
+    tmp_path: Path, monkeypatch
+):
+    """Regression test for issue #502: run_ngspice_simulation's "provenance"
+    key must be read off the SimulationResult NgspiceSimulator.run()
+    actually returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    wrdata_text = "1e+08 2.0 0.0 1.0 0.0\n1e+09 1.5 -0.5 0.8 -0.2\n"
+    script = _make_fake_ngspice_py(tmp_path, "ngspice_output.dat", wrdata_text)
+    original_run = NgspiceSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(NgspiceSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_ngspice_simulation(
+        job=MATCHING_NETWORK_JOB,
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_ngspice_simulation_end_to_end_noise(tmp_path: Path):
     wrdata_text = "1e+03 2.0e-08 1.0e-08\n1e+04 1.8e-08 0.9e-08\n"
     script = _make_fake_ngspice_py(tmp_path, "ngspice_output.dat", wrdata_text)

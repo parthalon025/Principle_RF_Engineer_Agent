@@ -685,7 +685,7 @@ def run_ngspice_simulation(
         output_file_str = str(output_file)
 
     return {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "scale_name": scale_name,
         "scale": scale,
         "values": values,

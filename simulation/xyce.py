@@ -456,7 +456,7 @@ def run_xyce_simulation(
     )
 
     output: dict[str, Any] = {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "simulator": result.simulator,
         "status": result.status,
         "workdir": str(result.workdir),

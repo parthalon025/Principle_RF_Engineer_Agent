@@ -713,7 +713,7 @@ def run_ltspice_simulation(
     parsed = parse_ltspice_raw(result.outputs["raw_file"], traces_to_read=traces_to_read)
 
     output: dict[str, Any] = {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "plot_name": parsed["plot_name"],
         "trace_names": parsed["trace_names"],
         "has_axis": parsed["has_axis"],
