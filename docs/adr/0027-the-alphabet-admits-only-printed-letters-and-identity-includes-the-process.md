@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded-by-0053
 ---
 
 # The alphabet admits only printed letters, and a letter's identity includes the process that made it
