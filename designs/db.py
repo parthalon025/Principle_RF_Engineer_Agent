@@ -502,10 +502,18 @@ def create_design(
     revision: str,
     requirements: dict[str, Any],
     architecture: dict[str, Any],
+    assumptions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Insert a new `designs` row in `DRAFT` status, plus one
     `verification_items` row per `requirements` key (all `NOT VERIFIED`).
 
+    - `assumptions` (issue #413) is a plain `dict` stored as-is in the
+      column of the same name -- `NOT NULL DEFAULT '{}'::jsonb` in
+      `db/schema.sql`. `None` (the default here) writes `{}`, matching the
+      column's own default. Unlike `requirements` below, there is no shape
+      check and no propose/confirm-style lifecycle: this is deliberately
+      scoped to closing the write-then-read round trip a plain JSONB dict
+      needs, nothing more.
     - `(design_key, revision)` is globally unique. Reusing an exact pair
       already in use raises `DesignKeyRevisionCollisionError` carrying the
       existing row -- never silently overwritten, never a raw database
@@ -569,8 +577,9 @@ def create_design(
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            INSERT INTO designs (design_key, name, revision, status, requirements, architecture)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO designs
+                (design_key, name, revision, status, requirements, assumptions, architecture)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -579,6 +588,7 @@ def create_design(
                 revision,
                 DesignStatus.DRAFT.value,
                 Json(requirements),
+                Json(assumptions or {}),
                 Json(architecture),
             ),
         )
@@ -655,13 +665,14 @@ def find_designs_referencing_component(
 
 def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | None:
     """Fetch a design plus everything hung off it in one payload (ticket
-    #18): its `requirements`/`architecture` (every `component_id`
-    referenced in `architecture` resolved inline to its `manufacturer`/
-    `part_number`, not left as a bare id), and all of its
+    #18): its `requirements`/`assumptions`/`architecture` (every
+    `component_id` referenced in `architecture` resolved inline to its
+    `manufacturer`/`part_number`, not left as a bare id), and all of its
     `engineering_results`, `decision_records`, and `verification_items`
     rows. This is the one human-visible surface for the whole #16 feature
     area -- everything else (#17/#19/#20/#21) is write-only until this
-    exists.
+    exists. `assumptions` (issue #413) is returned exactly as stored --
+    no shape assumed, no lifecycle fields attached.
 
     Returns None if no `designs` row matches `design_id` -- mirrors
     `knowledge.db.get_document`'s not-found signal rather than raising or
@@ -759,6 +770,7 @@ def read_design(conn: psycopg.Connection, design_id: int) -> dict[str, Any] | No
         "revision": design_row["revision"],
         "status": design_row["status"],
         "requirements": design_row["requirements"],
+        "assumptions": design_row["assumptions"],
         "architecture": architecture,
         "supersedes_design_id": design_row["supersedes_design_id"],
         "engineering_results": [_serialize_row(r) for r in engineering_results],

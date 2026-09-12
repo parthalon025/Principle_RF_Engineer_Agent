@@ -1354,7 +1354,13 @@ def optimize_patch_length_for_target_frequency(
 
 
 @mcp.tool()
-def start_design_loop(design_key: str, name: str, revision: str, requirements: dict) -> dict:
+def start_design_loop(
+    design_key: str,
+    name: str,
+    revision: str,
+    requirements: dict,
+    assumptions: dict | None = None,
+) -> dict:
     """Start a new controlled design-iteration loop, backed by a real
     `designs` row created in `DRAFT` status (docs/adr/0011). `design_key`/
     `name`/`revision` are exactly `designs.service.create_design`'s own
@@ -1365,13 +1371,15 @@ def start_design_loop(design_key: str, name: str, revision: str, requirements: d
     factor, host-surface curvature, platform); those details can still go
     in each requirement's extra keys or its `requirement` prose. A
     rejected `requirements` shape raises DesignLoopPersistenceError and no
-    loop is started. Returns the new loop's state, positioned at the
-    ARCHITECTURE step and carrying `design_id` -- hold onto this dict and
-    pass it back into advance_design_loop_step for every subsequent call;
-    it is the whole loop's session token (this project has no long-running
-    server process, so the state itself is not persisted server-side --
-    only the loop's history, once flushed at an iteration boundary, is)."""
-    return _start_new_design_loop(design_key, name, revision, requirements)
+    loop is started. `assumptions` (issue #460) is optional and passed
+    straight through -- a plain dict, no shape check, no lifecycle.
+    Returns the new loop's state, positioned at the ARCHITECTURE step and
+    carrying `design_id` -- hold onto this dict and pass it back into
+    advance_design_loop_step for every subsequent call; it is the whole
+    loop's session token (this project has no long-running server
+    process, so the state itself is not persisted server-side -- only the
+    loop's history, once flushed at an iteration boundary, is)."""
+    return _start_new_design_loop(design_key, name, revision, requirements, assumptions=assumptions)
 
 
 @mcp.tool()

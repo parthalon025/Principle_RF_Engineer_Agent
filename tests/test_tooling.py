@@ -137,6 +137,32 @@ def test_start_new_design_loop_creates_a_draft_design_row(cleanup_designs):
     assert stored["verification_items"][0]["status"] == "NOT VERIFIED"
 
 
+def test_start_new_design_loop_threads_assumptions_through_to_read_design(cleanup_designs):
+    # Issue #460: start_new_design_loop is the OTHER (ADR-0011, loop-driven)
+    # caller of designs.service.create_design -- #413 threaded `assumptions`
+    # through create_design/read_design directly, but left this path with
+    # no `assumptions` parameter at all. Mirrors how `requirements` is
+    # already threaded through this same function.
+    assumptions = {"host_material": "assumed aluminum, not yet confirmed"}
+    state = start_new_design_loop(
+        "TOOL-ASSUME-1", "Assumptions Loop Test", "A", REQUIREMENTS, assumptions=assumptions
+    )
+    cleanup_designs.append(state["design_id"])
+
+    stored = read_design(state["design_id"])
+    assert stored["assumptions"] == assumptions
+
+
+def test_start_new_design_loop_with_no_assumptions_defaults_to_empty_dict(cleanup_designs):
+    state = start_new_design_loop(
+        "TOOL-ASSUME-2", "Assumptions Default Loop Test", "A", REQUIREMENTS
+    )
+    cleanup_designs.append(state["design_id"])
+
+    stored = read_design(state["design_id"])
+    assert stored["assumptions"] == {}
+
+
 def test_start_new_design_loop_rejects_bad_requirements_shape():
     # Old free-form "customer requirement" shape -- no longer accepted
     # (see orchestration/tooling.py's module docstring, "REQUIREMENTS
