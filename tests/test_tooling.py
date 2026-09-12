@@ -50,7 +50,7 @@ from orchestration.tooling import (
     reevaluate_capability_warnings,
     start_new_design_loop,
 )
-from rf_tools.calculations import patch_resonant_frequency_hz
+from rf_tools.patch_synthesis import patch_resonant_frequency_hz
 
 load_dotenv()
 

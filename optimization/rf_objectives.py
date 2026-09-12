@@ -18,7 +18,7 @@ antenna's length (the one free geometric variable
 patch_resonant_frequency_hz's transmission-line model is most directly
 invertible in) to hit a target resonant frequency, composing this ticket's
 optimization methods with the Phase 1 antenna-synthesis calculation
-(rf_tools.calculations.patch_resonant_frequency_hz) exactly as the ticket's
+(rf_tools.patch_synthesis.patch_resonant_frequency_hz) exactly as the ticket's
 own context describes ("calling into Phase 1 calculations ... as the
 objective function"). See mcp_server/server.py's
 optimize_patch_length_for_target_frequency and agent/main.py's matching
@@ -38,7 +38,7 @@ from optimization.base import ObjectiveFunction, OptimizationResult, Parameter
 from optimization.bayesian import bayesian_optimize
 from optimization.grid import grid_search
 from optimization.sweep import parameter_sweep
-from rf_tools.calculations import patch_resonant_frequency_hz
+from rf_tools.patch_synthesis import patch_resonant_frequency_hz
 
 _METHODS = ("sweep", "grid", "bayesian")
 

@@ -23,17 +23,7 @@ from conftest import make_fake_executable
 
 import mcp_server.server as server
 from orchestration.policy import assert_all_tools_categorized
-from rf_tools.calculations import (
-    aperture_gain,
-    curvature_length_correction_factor,
-    curvature_shifted_resonant_frequency_hz,
-    fractional_bandwidth_from_q,
-    maxwell_garnett_effective_permeability,
-    patch_effective_permittivity,
-    patch_length_extension_m,
-    patch_resonant_frequency_hz,
-    quality_factor_from_fractional_bandwidth,
-)
+from rf_tools.calculations import maxwell_garnett_effective_permeability
 from rf_tools.filter_synthesis import (
     realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
@@ -62,6 +52,16 @@ from rf_tools.network_parameters import (
     two_port_stability_delta,
     y_to_s,
     z_to_s,
+)
+from rf_tools.patch_synthesis import (
+    aperture_gain,
+    curvature_length_correction_factor,
+    curvature_shifted_resonant_frequency_hz,
+    fractional_bandwidth_from_q,
+    patch_effective_permittivity,
+    patch_length_extension_m,
+    patch_resonant_frequency_hz,
+    quality_factor_from_fractional_bandwidth,
 )
 
 # A generic, well-behaved two-port S-parameter matrix (unconditionally

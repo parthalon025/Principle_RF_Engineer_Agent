@@ -41,7 +41,7 @@ import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from rf_tools.calculations import wavelength
+from rf_tools.patch_synthesis import wavelength
 
 # The real server entry point (`if __name__ == "__main__": mcp.run()` in
 # mcp_server/server.py), launched exactly as an external MCP client

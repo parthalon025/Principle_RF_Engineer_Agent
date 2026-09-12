@@ -15,7 +15,7 @@ built and tested -- not reimplementing any of them:
                 scored on the single worst-absorbing frequency in the
                 required band (#110's minimax rule). PATCH declares
                 PATCH_RESONANT_FREQUENCY and calls
-                rf_tools.calculations.patch_resonant_frequency_hz (Phase 1).
+                rf_tools.patch_synthesis.patch_resonant_frequency_hz (Phase 1).
                 Both return exactly what they returned before. A family that
                 declares no model is a reported failure here, never a
                 fall-through: #191 dispatched by comparing the family name
@@ -213,11 +213,11 @@ from optimization.combinatorial import (
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,  # noqa: F401
 )
-from rf_tools.calculations import (
-    curvature_exceeds_validity_box as _curvature_exceeds_validity_box,
-)
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
+)
+from rf_tools.patch_synthesis import (
+    curvature_exceeds_validity_box as _curvature_exceeds_validity_box,
 )
 
 # Unused in this module itself -- `_simulate_nec2`/`_simulate_meep_floquet`/
