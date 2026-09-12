@@ -1082,8 +1082,7 @@ def test_record_decision_writes_capability_warning_entries_to_own_table(db_conn)
             "assumed": "needs 0.05 ohm/sq; loaded ink measures 0.2 ohm/sq",
             "costs": "higher sheet resistance dissipates more of the incident "
             "wave; the absorber's own loss target will not be met",
-            "cheapest_test": "measure the loaded ink's sheet resistance with a "
-            "four-point probe",
+            "cheapest_test": "measure the loaded ink's sheet resistance with a four-point probe",
         },
     ]
     row = record_decision(

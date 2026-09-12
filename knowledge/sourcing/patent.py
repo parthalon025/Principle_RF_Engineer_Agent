@@ -686,4 +686,3 @@ def ingest_patent(
         extra_metadata=extra_metadata,
     )
     return {**result, "patent_conversion": conversion}
-

@@ -13,7 +13,8 @@ it never decides anything on its own.
 WHY `material_or_ink_name` IS ITS OWN PARAMETER, NOT READ OFF
 `capability_warning`. A Capability-warning entry (`orchestration.
 design_loop`'s `{"family", "capability_kind", "capability_property",
-"value", "comparator", "unit", "reason"}`) names WHICH DESIGN it is
+"value", "comparator", "unit", "assumed", "costs", "cheapest_test"}`) names
+WHICH DESIGN it is
 attached to (`family` -- CONTEXT.md's Design family, e.g. "patch_antenna",
 NOT a material's own name -- confirmed against
 `tests/test_design_loop.py`'s own `_capability_warning_entry` fixture) and
@@ -21,7 +22,7 @@ WHICH PROPERTY of the material/ink source falls short (`capability_property`,
 e.g. "eps_r"). Nothing in that shape names the specific material or ink
 product (e.g. "FR4", "MXene ink") the warning is actually about -- #324
 built no such field, and inventing a heuristic to guess one out of the
-free-text `reason` field here would be exactly the kind of parsing/
+free-text `assumed`/`costs`/`cheapest_test` fields here would be exactly the kind of parsing/
 extraction the charter reserves for the model ("Nothing here parses a
 requirement, invents a target, or proposes a geometry" -- CLAUDE.md). Only
 the caller -- who holds the full design context the warning entry itself
@@ -36,7 +37,7 @@ result or `inspect_design_loop_state`) and hands it straight to this tool
 rather than picking a field out of it first. `capability_kind` gates scope
 (see below); `capability_property` (e.g. "eps_r") is folded into the search
 query alongside `material_or_ink_name` for precision. `family`/`value`/
-`comparator`/`unit`/`reason` describe the gap's own shape (already enforced
+`comparator`/`unit`/`assumed`/`costs`/`cheapest_test` describe the gap's own shape (already enforced
 by `orchestration.design_loop._validate_capability_warnings` at write time)
 and are not read here.
 
@@ -103,11 +104,12 @@ SearchExternalFn = Callable[..., list[dict[str, Any]]]
 _SUPPORTED_CAPABILITY_KINDS = frozenset({"material", "ink"})
 
 # Everything this function actually reads off a `capability_warnings` entry
-# -- deliberately not the full seven-key shape `orchestration.design_loop.
+# -- deliberately not the full nine-key shape `orchestration.design_loop.
 # _validate_capability_warnings` enforces at write time (`family`/`value`/
-# `comparator`/`unit`/`reason` describe the gap, not what to search for --
-# see this module's docstring's "WHY material_or_ink_name IS ITS OWN
-# PARAMETER" section for why `family` in particular is not a material name).
+# `comparator`/`unit`/`assumed`/`costs`/`cheapest_test` describe the gap, not
+# what to search for -- see this module's docstring's "WHY
+# material_or_ink_name IS ITS OWN PARAMETER" section for why `family` in
+# particular is not a material name).
 _REQUIRED_FIELDS = frozenset({"capability_kind", "capability_property"})
 
 

@@ -805,4 +805,3 @@ def test_ingest_patent_creates_a_tempdir_when_download_dir_is_omitted(monkeypatc
 
     assert len(seen) == 1
     assert seen[0].exists()
-
