@@ -55,7 +55,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from rf_tools.calculations import (
+from rf_tools.microstrip_line import (
     microstrip_effective_permittivity,
     microstrip_synthesize_width_m,
 )
