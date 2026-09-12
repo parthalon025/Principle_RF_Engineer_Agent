@@ -424,35 +424,51 @@ def test_threshold_factor_matches_the_papers_own_worked_value():
 def test_perforated_screen_bound_reproduces_the_papers_horseshoe_design():
     """Ludvig-Osipov et al.'s measured design: an array of horseshoe-shaped
     slots laser-milled in 18 um aluminium foil, l = 6.57 mm, transmission
-    peak at 13.52 GHz with 5.83% fractional bandwidth, reported as 98% of
-    the Eq. (12) bound at T0^2 = 0.8. Back-solving their own numbers for the
-    implied gamma and checking the forward direction recovers their stated
-    bandwidth is the closest available check against a real, measured design
-    rather than against this implementation's own arithmetic.
+    peak at 13.52 GHz with 5.83% fractional bandwidth. The paper's own "98%"
+    figure for this design (Sec. VI) compares the *measured* result against
+    a *PEC simulation of the same geometry* (Fig. 8), not against the
+    Eq. (12) sum-rule bound -- the paper never states what fraction of its
+    own bound this design reaches, nor the gamma behind it
+    (docs/ludvig-osipov-horseshoe-dimension-mismatch-research.md Sec. 5).
+
+    So this can only be a one-sided check, not a reproduction: the
+    PEC-simulated bandwidth implied by "98%" (5.83%/0.98 = 5.95%) is a real
+    bandwidth a real screen achieved, and Eq. (12) is an upper BOUND, so
+    whatever gamma the paper's own design actually has must be at least the
+    gamma that would make 5.95% exactly equal the bound at this design's own
+    A and lambda0 -- a real measured/simulated result can never exceed its
+    own true bound. `gamma_min` below is that floor, not the paper's own
+    gamma (which is never stated); it corresponds to CALCULATED provenance,
+    not a literature-supported reproduction.
     """
     f0 = 13.52e9
     cell_period_m = 6.57e-3
     lambda0 = SPEED_OF_LIGHT_M_S / f0
     reported_bandwidth = 0.0583
-    fraction_of_bound = 0.98
-    bound_bandwidth = reported_bandwidth / fraction_of_bound
+    measured_over_pec_simulated = 0.98
+    pec_simulated_bandwidth = reported_bandwidth / measured_over_pec_simulated
 
-    lambda1 = lambda0 * (1 - bound_bandwidth / 2)
-    lambda2 = lambda0 * (1 + bound_bandwidth / 2)
+    lambda1 = lambda0 * (1 - pec_simulated_bandwidth / 2)
+    lambda2 = lambda0 * (1 + pec_simulated_bandwidth / 2)
     f_high_hz = SPEED_OF_LIGHT_M_S / lambda1
     f_low_hz = SPEED_OF_LIGHT_M_S / lambda2
     cell_area_m2 = cell_period_m**2
 
+    # The gamma floor implied by treating the PEC-simulated bandwidth as
+    # exactly at the bound (the tightest floor consistent with the paper's
+    # own numbers, per the docstring above).
     gamma_min = perforated_screen_min_polarizability_m3(f_low_hz, f_high_hz, cell_area_m2, 0.8)
     gamma_hat = gamma_min / cell_period_m**3
-    # The paper's own Fig. 5-range order of magnitude for a horseshoe slot.
     assert gamma_hat == pytest.approx(0.1278, rel=1e-3)
 
-    # Forward direction recovers the paper's own bound bandwidth exactly.
+    # Forward direction is a consistency identity on this module's own pair
+    # of functions (min-polarizability and max-bandwidth are exact inverses
+    # of Eq. (12)), not a fresh check against the paper -- confirms this
+    # gamma floor's own bound reads back as the PEC-simulated bandwidth.
     recovered_bandwidth = perforated_screen_max_wavelength_fractional_bandwidth(
         gamma_min, cell_area_m2, lambda0, 0.8
     )
-    assert recovered_bandwidth == pytest.approx(bound_bandwidth, rel=1e-9)
+    assert recovered_bandwidth == pytest.approx(pec_simulated_bandwidth, rel=1e-9)
 
 
 def test_perforated_screen_bound_reproduces_the_papers_cross_potent_design():
