@@ -60,7 +60,6 @@ from orchestration.tooling import advance_design_loop_step as _advance_design_lo
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
 from rf_tools.calculations import (
-    abcd_to_s,
     aperture_gain,
     cascade_gain_db,
     cascade_output_ip3_linear,
@@ -71,32 +70,20 @@ from rf_tools.calculations import (
     free_space_path_loss_db,
     friis_noise_factor,
     iip3_from_oip3_db,
-    input_stability_circle,
     l_network_match,
     linear_to_db,
     link_budget_margin_db,
     maxwell_garnett_effective_permeability,
     noise_factor_to_db,
     oip3_from_iip3_db,
-    output_stability_circle,
     patch_effective_permittivity,
     patch_length_extension_m,
     patch_resonant_frequency_hz,
     quality_factor_from_fractional_bandwidth,
     quarter_wave_transformer_impedance,
-    return_loss_db,
-    rollett_k_factor,
-    s_to_abcd,
-    s_to_y,
-    s_to_z,
-    stability_verdict,
     third_order_intermod_dbc,
     third_order_intermod_output_dbm,
-    two_port_stability_delta,
-    vswr_from_gamma,
     wavelength,
-    y_to_s,
-    z_to_s,
 )
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
@@ -104,6 +91,21 @@ from rf_tools.correlation import (
 from rf_tools.filter_synthesis import (
     realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
+)
+from rf_tools.network_parameters import (
+    abcd_to_s,
+    input_stability_circle,
+    output_stability_circle,
+    return_loss_db,
+    rollett_k_factor,
+    s_to_abcd,
+    s_to_y,
+    s_to_z,
+    stability_verdict,
+    two_port_stability_delta,
+    vswr_from_gamma,
+    y_to_s,
+    z_to_s,
 )
 from rf_tools.touchstone import (
     analyze_touchstone,
