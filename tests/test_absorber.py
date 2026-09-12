@@ -234,7 +234,17 @@ def test_band_response_reports_the_worst_frequency_not_the_average():
     assert r["worst_absorption"] == pytest.approx(min(curve))
     assert r["best_absorption"] == pytest.approx(max(curve))
     assert r["worst_absorption"] <= sum(curve) / len(curve)
-    assert r["provenance"] == "CALCULATED"
+
+
+def test_band_response_self_tags_no_provenance():
+    """#506: provenance tagging belongs to the caller (the design loop's
+    ANALYSIS handler tags `decision.provenance` explicitly -- see
+    orchestration/design_loop.py's `_handle_analysis_absorber`), the same
+    convention `rf_tools/filter_synthesis.py` documents and follows. This
+    calculation function returns a plain result with no second, undocumented
+    source of truth for that field."""
+    r = absorber_band_response(8e9, 12e9, **STACK)
+    assert "provenance" not in r
 
 
 def test_the_spacer_thickness_reaches_the_sheet_and_lowers_its_reactance():
@@ -379,3 +389,12 @@ def test_rejects_a_gap_wider_than_the_period():
 def test_rejects_nonphysical_permittivity():
     with pytest.raises(ValueError, match="eps_r"):
         grounded_slab_impedance(10e9, 0.5, 0.0, 1e-3)
+
+
+def test_rejects_a_nan_frequency():
+    """#494: NaN compares False against every bound (`nan <= 0` is False), so
+    a bare `<= 0` check silently lets it through where a normal non-positive
+    value would be rejected. `_require_positive` must guard `math.isfinite`
+    too, the same way `rf_tools.physical_bounds`'s own copy already does."""
+    with pytest.raises(ValueError, match="frequency_hz"):
+        grounded_slab_impedance(math.nan, STACK["eps_r"], STACK["tan_delta"], STACK["thickness_m"])

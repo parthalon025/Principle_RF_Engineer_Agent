@@ -2162,7 +2162,11 @@ def test_the_transmissive_absorber_runs_the_two_port_model_not_the_patch_formula
     result = state.decisions[-1].result
     assert "resonant_frequency_hz" not in result
     assert result["worst_absorption"] is not None
-    assert result["provenance"] == "CALCULATED"
+    # #506: rf_tools.transmissive_absorber returns a plain result with no
+    # provenance field of its own; the tag lives on the decision, applied by
+    # the ANALYSIS handler (_handle_analysis_transmissive_absorber).
+    assert "provenance" not in result
+    assert state.decisions[-1].provenance == "CALCULATED"
 
 
 def test_the_same_stack_scores_lower_unbacked_because_power_leaves_out_the_back():
