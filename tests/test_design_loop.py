@@ -1550,7 +1550,7 @@ def test_external_measurement_missing_file_names_it_and_records_nothing(tmp_path
         fields, approved_by="jane.engineer", approval_callback=lambda f: True
     )
 
-    with pytest.raises(ExternalMeasurementError, match=re.escape(str(missing_path))):
+    with pytest.raises(ExternalMeasurementError, match=re.escape(repr(str(missing_path)))):
         advance_loop_step(state, step_input, approval=receipt)
     # No evidence was recorded -- the loop is still parked at MEASUREMENT.
     assert state.current_step == DesignStep.MEASUREMENT.value
@@ -1569,7 +1569,7 @@ def test_external_measurement_unreadable_file_names_it_and_records_nothing(tmp_p
         fields, approved_by="jane.engineer", approval_callback=lambda f: True
     )
 
-    with pytest.raises(ExternalMeasurementError, match=re.escape(str(bad_path))):
+    with pytest.raises(ExternalMeasurementError, match=re.escape(repr(str(bad_path)))):
         advance_loop_step(state, step_input, approval=receipt)
     assert state.current_step == DesignStep.MEASUREMENT.value
     assert all(d.step != DesignStep.MEASUREMENT.value for d in state.decisions)
