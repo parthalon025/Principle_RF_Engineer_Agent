@@ -100,11 +100,11 @@ async def test_list_tools_includes_calculate_wavelength():
 async def test_call_tool_calculate_wavelength_matches_underlying_function():
     """The full JSON-RPC round trip for one real, deterministic tool call:
     tool discovery already proven above, then call_tool with known inputs,
-    asserting the decoded result matches what rf_tools.calculations.
+    asserting the decoded result matches what rf_tools.patch_synthesis.
     wavelength already returns for the same input -- the way a real
     external MCP client calling this tool would experience it. This is
-    NOT a re-test of wavelength()'s own math (test_calculations.py already
-    covers that); it is a check that nothing is lost or mangled crossing
+    NOT a re-test of wavelength()'s own math (tests/test_patch_synthesis.py
+    already covers that); it is a check that nothing is lost or mangled crossing
     the JSON-RPC argument-marshalling / response-serialization boundary."""
     frequency_hz = 2.4e9
     expected = wavelength(frequency_hz)

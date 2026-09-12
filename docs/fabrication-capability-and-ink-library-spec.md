@@ -3,7 +3,7 @@
 **Status:** plan-only specification. No code implementing either library accompanies it, per
 issue [#104](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/104)'s standing
 preference — one unrelated one-line error-message fix this spec's own analysis found
-(`rf_tools/calculations.py`, §12 below) is included as a trivial, self-contained correction, not
+(`rf_tools/patch_synthesis.py`, §12 below) is included as a trivial, self-contained correction, not
 implementation. A real code change (uncertainty/method fields on the existing Material-property
 library) originally bundled into this PR was split out to
 [#199](https://github.com/parthalon025/Principle_RF_Engineer_Agent/pull/199) for exactly this
@@ -423,7 +423,7 @@ referenced by six places, each taking a different slice, with no definition anyw
 | `CONTEXT.md:190` | the cure gate — *"whether the finished part can leave its host and reach an external oven"* |
 | `CONTEXT.md:383-384` | design-family spine fields — *"host thickness, host εr/tanδ"* |
 | ADR-0017 | whether the host is a ground plane — asserted, never assumed |
-| `rf_tools/calculations.py:706` | `curvature_length_correction_factor(l_m, radius_of_curvature_m)` |
+| `rf_tools/patch_synthesis.py` | `curvature_length_correction_factor(l_m, radius_of_curvature_m)` |
 | `geometry/freecad_curved.py` | exists, and #104 records it as unwired |
 
 **Six slices and no definition is the signature of a missing domain object.**
@@ -563,7 +563,7 @@ erroneous versions reached a committed document before being caught.
 
 **New to the repo:**
 
-1. **`rf_tools/calculations.py:540-541`** raises *"Substrate dielectric constant eps_r must be
+1. **`rf_tools/patch_synthesis.py`** raises *"Substrate dielectric constant eps_r must be
    > 1"* — a false physical claim stated as one, on a live path from the Material-property
    library (`orchestration/design_loop.py:485-494` → `patch_effective_permittivity`). The
    guard is correct: Hammerstad's fit at `:551` interpolates between `eps_r` and 1 and is

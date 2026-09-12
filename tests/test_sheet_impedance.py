@@ -1,5 +1,5 @@
 """Tests for the printed-surface sheet-impedance formulas in
-rf_tools/calculations.py (issues #111, #128).
+rf_tools/sheet_impedance.py (issues #111, #128).
 
 These formulas previously existed only inside a browser prototype
 (geometry/prototype_lossy_cell_fit.html) and a throwaway bench script, so
@@ -13,7 +13,7 @@ import math
 
 import pytest
 
-from rf_tools.calculations import (
+from rf_tools.sheet_impedance import (
     COSTA_EQ10_FORM,
     COSTA_EQ10_FORMS,
     capacitive_grid_sheet_capacitance_f,

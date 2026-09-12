@@ -34,7 +34,7 @@ import pytest
 
 from designs.design_families import ABSORBER, ABSORBER_TRANSMISSIVE, PATCH
 from rf_tools.absorber import absorptivity as ground_backed_absorptivity
-from rf_tools.calculations import min_overlay_sheet_resistance_ohm_sq
+from rf_tools.sheet_impedance import min_overlay_sheet_resistance_ohm_sq
 from rf_tools.transmissive_absorber import (
     ETA0_OHM,
     MATCHED_SHEET_RESISTANCE_OHM_SQ,
@@ -380,7 +380,7 @@ def test_cascade_of_nothing_is_the_identity_and_order_is_preserved():
 
 
 def test_a_resistive_only_reading_can_pass_while_the_complex_sheet_fails():
-    """rf_tools/calculations.py's min_overlay_sheet_resistance_ohm_sq is
+    """rf_tools/sheet_impedance.py's min_overlay_sheet_resistance_ohm_sq is
     RESISTIVE-ONLY (its own docstring now says so): clearing its threshold is
     necessary but not sufficient for a resonant PATTERNED overlay, which is a
     complex sheet admittance Y = G + jB, not a resistor.

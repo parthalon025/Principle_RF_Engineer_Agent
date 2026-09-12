@@ -285,7 +285,7 @@ Our ladder (`CONTEXT.md`): `MEASURED` → `SIMULATED` → `CALCULATED` → `MANU
 |---|---|---|---|
 | **Test** | Detailed instrumented data from real hardware under controlled conditions | `MEASURED` | **Exact.** ADR-0013's externally-obtained Touchstone file *is* a test. |
 | **Analysis** (simulation half) | Manipulating a model — "a simulation is the manipulation of a model" | `SIMULATED` | **Exact.** Palace/openEMS runs. |
-| **Analysis** (closed-form half) | Mathematical prediction from calculated data | `CALCULATED` | **Exact.** `rf_tools/calculations.py`. |
+| **Analysis** (closed-form half) | Mathematical prediction from calculated data | `CALCULATED` | **Exact.** `rf_tools`'s domain modules (e.g. `rf_tools/sheet_impedance.py`). |
 | **Analysis** ("verification by similarity of a heritage product") | It worked on the last one, and this one is close enough | `LITERATURE-SUPPORTED` at best, honestly `INFERRED` | **Poor fit.** One named method spans three of our rungs. See below. |
 | **Inspection** — of drawings, documents, records | Reading a datasheet or a drawing and checking the number | `MANUFACTURER-SPECIFIED` (datasheet) or `LITERATURE-SUPPORTED` (standard/paper) | **Good.** Matches `knowledge/provenance.py`'s existing source-type mapping. |
 | **Inspection** — visual examination of realized hardware | Someone looked at the built object | *(none)* | **No rung.** See §7. |
