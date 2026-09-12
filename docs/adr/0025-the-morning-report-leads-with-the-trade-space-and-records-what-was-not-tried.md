@@ -304,3 +304,28 @@ This is an **amendment, not a supersede** (ADR-0020): the ledger's
 structure — a family, a kept/dropped flag, a reason, a reason kind —
 stands unchanged. What changed is which situations `capability-verdict`
 may describe.
+
+### 2026-09-12 — the ledger's blocking prerequisite has since been fixed; this ADR's own Consequences section is stale
+
+**What this ADR's Consequences section said:**
+
+> A prerequisite blocks the rejection half. `orchestration/tooling.py:237`
+> hardcodes `"alternatives": []` for every `architecture_decision` and
+> `redesign_decision` it persists, regardless of what the step input
+> carried, so rejected options are discarded at the flush rather than
+> merely unindexed. Filed as its own `ready-for-agent` issue; ADR-0026
+> cannot function until it lands.
+
+**Why it no longer holds.** That issue is #205, closed and completed.
+`orchestration/tooling.py` (lines ~344–378 as of this correction) now
+reads `"alternatives": decision.input.get("alternatives", [])` and
+carries `"considered_and_dropped": decision.input.get(
+"considered_and_dropped", [])` through unchanged — nothing is discarded
+at the flush anymore. Found while grounding #532 (map #530) in the code
+rather than the plan, per CLAUDE.md's "check the code" rule: a ticket
+building an exhaustion verdict on this ledger would otherwise have cited
+a blocking prerequisite that had already been cleared.
+
+This is an **amendment, not a supersede** (ADR-0020): the ledger's own
+structure and this ADR's Decision are unaffected. Only the named
+prerequisite's status changed.
