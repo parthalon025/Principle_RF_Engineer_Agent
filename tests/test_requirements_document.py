@@ -9,26 +9,36 @@ are in tests/test_requirement_targets.py -- no database needed.
 
 `create_requirements_document`/`transition_requirements_document`/
 `read_requirements_document` (the I/O wrappers that actually read/write the
-`requirements_documents` table) are NOT tested here: they need a live
-Postgres via DATABASE_URL, and there is no database in this sandbox (same
-constraint tests/test_requirement_targets.py, tests/test_designs_service.py
-and tests/test_tooling.py already document for themselves). Were a live
-DATABASE_URL available, a test for them would follow
-tests/test_designs_service.py's own `cleanup_designs` fixture convention --
-open a real connection, create a design via designs.service.create_design,
-call create_requirements_document/transition_requirements_document against
-it, assert read_requirements_document's payload carries the expected
-revision history, and delete the design afterward. Not written here because
-it cannot run in this sandbox and the pure functions it would exercise
-end-to-end are already fully covered directly below -- the I/O wrappers
-themselves are thin glue (open connection, fetch, validate via the pure
-functions, insert, translate exceptions), the same shape
-designs/requirement_targets.py's already-integration-tested wrappers use.
+`requirements_documents` table) are mostly NOT tested here: they need a live
+Postgres via DATABASE_URL, which most sandboxes running this suite don't have
+(same constraint tests/test_requirement_targets.py, tests/test_designs_service.py
+and tests/test_tooling.py already document for themselves) -- the I/O wrappers
+are thin glue (open connection, fetch, validate via the pure functions,
+insert, translate exceptions), the same shape
+designs/requirement_targets.py's already-integration-tested wrappers use, and
+the pure functions they call are already fully covered directly above.
+
+The one exception, guarded by the module-level `DATABASE_URL` connectivity
+probe at the bottom of this file (mirroring
+tests/test_requirement_targets.py's identical `pytest.mark.skipif` pattern,
+itself mirroring tests/test_element_alphabet.py's): `create_requirements_document`'s
+and `transition_requirements_document`'s `not_found`/`already_exists`/
+`no_document`/`illegal_transition`/`invalid_document` rollback branches
+(issue #504, issue #514) -- every one of these is an early
+`conn.rollback(); return {...}` inside the outer try/except that issue #504
+is about to collapse into a shared helper, and none of them had a test at the
+public-function level before this. Pinning today's exact `status`-tagged
+dict for each is the regression net that refactor needs.
 """
 
 from __future__ import annotations
 
+import os
+import uuid
+
+import psycopg
 import pytest
+from dotenv import load_dotenv
 
 from designs.requirement_targets import mark_unscoreable, propose_intended_effect, propose_target
 from designs.requirements_document import (
@@ -39,11 +49,16 @@ from designs.requirements_document import (
     InvalidRequirementsDocumentError,
     check_transition,
     coerce_status,
+    create_requirements_document,
     draft_requirements_document,
     extract_requirement_fields,
     legal_transitions_from,
     revise_requirements_document,
+    transition_requirements_document,
 )
+from designs.service import create_design
+
+load_dotenv()
 
 S = DocumentStatus
 
@@ -493,3 +508,183 @@ def test_extract_requirement_fields_does_not_mutate_its_inputs():
     extract_requirement_fields(requirements, confirmed)
     assert "target" not in requirements["req-1"]
     assert "intended_effect" not in requirements["req-1"]
+
+
+# ---------------------------------------------------------------------------
+# DB-backed: create_requirements_document / transition_requirements_document
+# rollback branches (issue #504, issue #514) -- see this module's docstring
+# for why this is the one DB-backed section here.
+# ---------------------------------------------------------------------------
+
+_TEST_DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://rf:rf_dev_password@localhost:5432/rfengineer"
+)
+
+
+def _database_reachable() -> bool:
+    try:
+        with psycopg.connect(_TEST_DATABASE_URL, connect_timeout=3):
+            return True
+    except psycopg.OperationalError:
+        return False
+
+
+_DB_REACHABLE = _database_reachable()
+
+#: A design_id no `designs` row will ever have -- ids are a positive serial
+#: primary key, so a negative id is unambiguously nonexistent without
+#: needing to create-then-delete a design just to get a fresh one.
+_NONEXISTENT_DESIGN_ID = -1
+
+
+@pytest.mark.skipif(
+    not _DB_REACHABLE,
+    reason=f"no reachable Postgres at {_TEST_DATABASE_URL.split('@')[-1]!r} in this sandbox",
+)
+class TestCreateAndTransitionRequirementsDocumentRollbackBranches:
+    @pytest.fixture
+    def cleanup_designs(self):
+        """Mirrors tests/test_designs_service.py's own fixture of the same
+        name: `create_design` commits its own connection, so cleanup can't
+        rely on a rolled-back transaction for isolation."""
+        ids: list[int] = []
+        yield ids
+        if not ids:
+            return
+        conn = psycopg.connect(_TEST_DATABASE_URL, autocommit=True)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM designs WHERE id = ANY(%s)", (ids,))
+        finally:
+            conn.close()
+
+    @pytest.fixture
+    def design_id(self, cleanup_designs):
+        """A stored design with a single Customer requirement row, `REQ-1`
+        -- exactly the coverage `draft_requirements_document`/
+        `revise_requirements_document` require."""
+        result = create_design(
+            design_key=f"REQDOC-{uuid.uuid4().hex[:8]}",
+            name="Requirements Document Fixture Design",
+            revision="A",
+            requirements={"REQ-1": {"requirement": "Gain >= 20 dB."}},
+            architecture={},
+        )
+        design_id = result["design_id"]
+        cleanup_designs.append(design_id)
+        return design_id
+
+    # -- create_requirements_document ------------------------------------
+
+    def test_create_requirements_document_not_found(self):
+        result = create_requirements_document(
+            design_id=_NONEXISTENT_DESIGN_ID,
+            narrative="Needs to work at 2.4 GHz.",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert result == {"status": "not_found", "design_id": _NONEXISTENT_DESIGN_ID}
+
+    def test_create_requirements_document_already_exists(self, design_id):
+        first = create_requirements_document(
+            design_id=design_id,
+            narrative="Needs to work at 2.4 GHz.",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert first["status"] == "created"
+
+        second = create_requirements_document(
+            design_id=design_id,
+            narrative="A second, different narrative.",
+            requirement_targets={"REQ-1": _proposed(5.0e9)},
+        )
+        assert second == {
+            "status": "already_exists",
+            "design_id": design_id,
+            "message": (
+                f"design_id {design_id!r} already has a Requirements document -- "
+                "call transition_requirements_document to revise it"
+            ),
+        }
+
+    def test_create_requirements_document_invalid_document(self, design_id):
+        result = create_requirements_document(
+            design_id=design_id,
+            narrative="",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert result["status"] == "invalid_document"
+        assert "narrative" in result["message"]
+
+    # -- transition_requirements_document ---------------------------------
+
+    def test_transition_requirements_document_not_found(self):
+        result = transition_requirements_document(
+            design_id=_NONEXISTENT_DESIGN_ID,
+            status="UNDER_REVIEW",
+            narrative="Needs to work at 2.4 GHz.",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert result == {"status": "not_found", "design_id": _NONEXISTENT_DESIGN_ID}
+
+    def test_transition_requirements_document_no_document(self, design_id):
+        result = transition_requirements_document(
+            design_id=design_id,
+            status="UNDER_REVIEW",
+            narrative="Needs to work at 2.4 GHz.",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert result == {
+            "status": "no_document",
+            "design_id": design_id,
+            "message": (
+                f"design_id {design_id!r} has no Requirements document yet -- "
+                "call create_requirements_document first"
+            ),
+        }
+
+    def test_transition_requirements_document_illegal_transition(self, design_id):
+        created = create_requirements_document(
+            design_id=design_id,
+            narrative="Needs to work at 2.4 GHz.",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert created["status"] == "created"
+
+        # DRAFT -> CONFIRMED directly is illegal -- the acceptance
+        # criteria's own worked example, at the public-function level.
+        result = transition_requirements_document(
+            design_id=design_id,
+            status="CONFIRMED",
+            narrative="Needs to work at 2.4 GHz.",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert result["status"] == "illegal_transition"
+        assert result["current_status"] == "DRAFT"
+        assert result["requested_status"] == "CONFIRMED"
+        assert result["legal_next"] == ["UNDER_REVIEW"]
+        assert "DRAFT" in result["message"]
+        assert "CONFIRMED" in result["message"]
+        assert set(result) == {
+            "status",
+            "message",
+            "current_status",
+            "requested_status",
+            "legal_next",
+        }
+
+    def test_transition_requirements_document_invalid_document(self, design_id):
+        created = create_requirements_document(
+            design_id=design_id,
+            narrative="Needs to work at 2.4 GHz.",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert created["status"] == "created"
+
+        result = transition_requirements_document(
+            design_id=design_id,
+            status="UNDER_REVIEW",
+            narrative="   ",
+            requirement_targets={"REQ-1": _proposed()},
+        )
+        assert result["status"] == "invalid_document"
+        assert "narrative" in result["message"]
