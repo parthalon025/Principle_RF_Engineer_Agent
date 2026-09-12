@@ -213,14 +213,14 @@ from rf_tools.calculations import (
     curvature_exceeds_validity_box as _curvature_exceeds_validity_box,
 )
 from rf_tools.calculations import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
-from rf_tools.calculations import (
-    reflection_coefficient_from_impedance as _reflection_coefficient_from_impedance,
-)
-from rf_tools.calculations import return_loss_db as _return_loss_db
-from rf_tools.calculations import vswr_from_gamma as _vswr_from_gamma
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
+from rf_tools.network_parameters import (
+    reflection_coefficient_from_impedance as _reflection_coefficient_from_impedance,
+)
+from rf_tools.network_parameters import return_loss_db as _return_loss_db
+from rf_tools.network_parameters import vswr_from_gamma as _vswr_from_gamma
 from rf_tools.transmissive_absorber import (
     declared_port_count as _declared_port_count,
 )
