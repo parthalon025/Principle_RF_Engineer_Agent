@@ -1079,16 +1079,29 @@ def test_meep_is_genuinely_not_installed_in_this_environment():
         import meep  # noqa: F401
 
 
-def test_meep_simulator_run_raises_simulator_error_with_no_injected_module():
+def test_meep_simulator_run_raises_simulator_error_with_no_injected_module(monkeypatch):
     """A real MeepSimulator() constructed with no meep_module override must
     fail with a clear SimulatorError (naming how to install Meep), not some
-    other exception, when meep genuinely isn't importable here."""
+    other exception, when meep genuinely isn't importable here.
+
+    This is the "meep is not installed at all" branch of _import_meep, which
+    only fires when MEEP_PYTHON is unset -- so pin that here rather than
+    trust the ambient environment (this repo's own solver container sets
+    MEEP_PYTHON, which would otherwise take the OTHER branch, the one
+    test_missing_meep_names_the_interpreter_mismatch_when_meep_python_is_set
+    covers, and fail this test for a reason that has nothing to do with the
+    code being wrong)."""
+    monkeypatch.delenv("MEEP_PYTHON", raising=False)
     simulator = MeepSimulator()
     with pytest.raises(SimulatorError, match="meep is not installed"):
         simulator.run({"geometry": PATCH_GEOMETRY})
 
 
-def test_run_meep_simulation_raises_simulator_error_with_no_injected_module():
+def test_run_meep_simulation_raises_simulator_error_with_no_injected_module(monkeypatch):
+    """See test_meep_simulator_run_raises_simulator_error_with_no_injected_module
+    just above: MEEP_PYTHON must be unset for this to exercise the "not
+    installed at all" branch rather than the interpreter-mismatch one."""
+    monkeypatch.delenv("MEEP_PYTHON", raising=False)
     with pytest.raises(SimulatorError, match="meep is not installed"):
         run_meep_simulation(geometry=PATCH_GEOMETRY)
 
