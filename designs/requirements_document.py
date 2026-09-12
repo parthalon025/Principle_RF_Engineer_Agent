@@ -556,8 +556,7 @@ def create_requirements_document(
     any other reason still raises, matching every other function in this
     package.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             requirement_ids = _fetch_requirement_ids(conn, design_id)
         except db.UnknownDesignError as exc:
@@ -583,11 +582,6 @@ def create_requirements_document(
 
         _insert_revision(conn, design_id, document["revisions"][0])
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "created",
@@ -629,8 +623,7 @@ def transition_requirements_document(
     "document_status": ..., "narrative": ..., "requirement_targets": {...}}`.
     A write that fails for any other reason still raises.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             requirement_ids = _fetch_requirement_ids(conn, design_id)
         except db.UnknownDesignError as exc:
@@ -674,11 +667,6 @@ def transition_requirements_document(
             _store_requirements(conn, design_id, extracted)
 
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "transitioned",
