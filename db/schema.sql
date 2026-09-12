@@ -658,35 +658,53 @@ ON documents (checksum_sha256) WHERE checksum_sha256 IS NOT NULL;
 -- instead of updating the first whenever a supplier feed omitted the
 -- manufacturer field -- verified live against this database. Drop-then-add
 -- under the same constraint name so this is safe to re-run.
+--
+-- Issue #418: the ADD is additionally wrapped in the same
+-- DO-block-with-exception-handling idiom the verification_items constraint
+-- above uses (rather than relying on the DROP alone). A plain unconditional
+-- ADD right after the DROP is already idempotent on its own here -- the
+-- name never changes, so the DROP above always clears the way -- but
+-- wrapping it too costs nothing and matches the designs fix immediately
+-- below, which genuinely needs the DO block because its constraint gets
+-- renamed.
 ALTER TABLE components DROP CONSTRAINT IF EXISTS components_manufacturer_part_number_key;
-ALTER TABLE components
-    ADD CONSTRAINT components_manufacturer_part_number_key
-    UNIQUE NULLS NOT DISTINCT (manufacturer, part_number);
+DO $$$$ BEGIN
+    ALTER TABLE components
+        ADD CONSTRAINT components_manufacturer_part_number_key
+        UNIQUE NULLS NOT DISTINCT (manufacturer, part_number);
+EXCEPTION
+    WHEN duplicate_table OR duplicate_object THEN NULL;
+END $$$$;
 
 -- Issue #369. CONTEXT.md documents, as an already-holding rule, that a
 -- released design gets a new revision rather than being edited back into
 -- engineering -- but `design_key` alone was UNIQUE, so the database could
--- never actually hold two revisions of the same design_key. Drop-then-add
--- under a new constraint name, matching issue #367's identical fix to
--- components' constraint -- safe to re-run against both a fresh container
--- and an already-initialized database.
+-- never actually hold two revisions of the same design_key. Drop the old
+-- (pre-rename) constraint name, then add the new one -- matching issue
+-- #367's identical fix to components' constraint above -- safe to re-run
+-- against both a fresh container and an already-initialized database.
 --
--- Both DROPs are needed, unlike the components fix immediately above:
--- issue #367's DROP/ADD used the SAME constraint name on both sides, so
--- re-running it just drops and re-adds the identical name every time. This
--- one renames (`designs_design_key_key` -> `designs_design_key_revision_key`),
--- so a first run leaves ONLY the new name behind -- a second run's
--- `DROP ... designs_design_key_key` then finds nothing to drop (already
--- renamed away) and the unqualified `ADD CONSTRAINT
--- designs_design_key_revision_key` collided with itself
--- (`DuplicateTable`), which is exactly what happened applying this file a
--- second time against issue #407's sandbox database. Dropping the new name
--- too, first, makes this idempotent under either starting state.
+-- Unlike the components fix immediately above, this one RENAMES the
+-- constraint (`designs_design_key_key` -> `designs_design_key_revision_key`),
+-- so a first run leaves ONLY the new name behind. A plain unconditional ADD
+-- under the new name would then fail on every run after that: `DROP ...
+-- designs_design_key_key` is a no-op once already renamed away, but the
+-- unqualified `ADD CONSTRAINT designs_design_key_revision_key` collides
+-- with itself (`DuplicateTable`) -- exactly what happened applying this
+-- file a second time, first against issue #407's sandbox database and
+-- again (against a long-lived, already-migrated database) in issue #418.
+-- The ADD is wrapped in the DO-block-with-exception-handling idiom the
+-- verification_items constraint above uses, so a second (or Nth) run that
+-- finds the new name already in place swallows the resulting exception
+-- instead of aborting the rest of this file.
 ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_key;
-ALTER TABLE designs DROP CONSTRAINT IF EXISTS designs_design_key_revision_key;
-ALTER TABLE designs
-    ADD CONSTRAINT designs_design_key_revision_key
-    UNIQUE (design_key, revision);
+DO $$$$ BEGIN
+    ALTER TABLE designs
+        ADD CONSTRAINT designs_design_key_revision_key
+        UNIQUE (design_key, revision);
+EXCEPTION
+    WHEN duplicate_table OR duplicate_object THEN NULL;
+END $$$$;
 
 -- Issue #398: a design's revision history should be traceable through the
 -- database via a real link (supersedes_design_id), mirroring the pattern
