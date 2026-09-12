@@ -59,7 +59,6 @@ from orchestration.solver import run_candidate_search as _run_candidate_search
 from orchestration.tooling import advance_design_loop_step as _advance_design_loop_step
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
-from rf_tools.calculations import maxwell_garnett_effective_permeability
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
@@ -82,6 +81,7 @@ from rf_tools.link_noise_budget import (
     third_order_intermod_dbc,
     third_order_intermod_output_dbm,
 )
+from rf_tools.metamaterial import maxwell_garnett_effective_permeability
 from rf_tools.network_parameters import (
     abcd_to_s,
     input_stability_circle,
