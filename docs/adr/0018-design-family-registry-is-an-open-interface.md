@@ -1,3 +1,7 @@
+---
+status: accepted
+---
+
 # Design family registry is an open interface, not a fixed schema
 
 Issue #109 asked what a design family (absorber, reflection-phase steering

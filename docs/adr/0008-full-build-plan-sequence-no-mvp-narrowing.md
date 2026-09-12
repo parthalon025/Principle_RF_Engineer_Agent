@@ -1,3 +1,7 @@
+---
+status: accepted
+---
+
 # Build the full BUILD_PLAN.md sequence in strict phase order, not a narrowed MVP
 
 **Context**: Scoping near-term work, a narrowed MVP was proposed and grilled with the user — calculation + knowledge only, evaluating designs against physical test data instead of running simulation, deferring Phases 6+ (NEC2++/openEMS/HFSS/measurement/correlation/optimization) indefinitely.
