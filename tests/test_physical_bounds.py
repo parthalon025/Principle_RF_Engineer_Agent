@@ -813,7 +813,7 @@ def test_skin_depth_converts_the_mxene_disagreement_into_a_stated_conductivity()
     own reasoning about the size of the discrepancy, and put both claims in
     comparable units so a single four-point-probe reading can settle them.
     """
-    from rf_tools.calculations import skin_depth_m
+    from rf_tools.sheet_impedance import skin_depth_m
 
     def implied_sigma(delta_m: float) -> float:
         # delta = 1/sqrt(pi*f*mu*sigma)  =>  sigma = 1/(pi*f*mu*delta^2)

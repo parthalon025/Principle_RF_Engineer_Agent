@@ -95,8 +95,8 @@ import cmath
 import math
 from typing import Any
 
-from rf_tools import calculations, physical_bounds
-from rf_tools.calculations import (
+from rf_tools import physical_bounds, sheet_impedance
+from rf_tools.sheet_impedance import (
     capacitive_grid_sheet_capacitance_f,
     grid_effective_permittivity,
     grid_gap_loss_tangent,
@@ -292,7 +292,7 @@ def absorber_band_response(
 
     It also returns `costa_eq10_form`: which of the two published forms
     of Costa's thin-spacer correction produced these numbers (#234, #245).
-    That is a module-level choice in `rf_tools.calculations`, not an argument
+    That is a module-level choice in `rf_tools.sheet_impedance`, not an argument
     here -- a caller free to vary it design-by-design could pick whichever
     form flatters the candidate in front of them. Recording it is what lets
     two runs that disagree be told apart from two runs of different code.
@@ -344,7 +344,7 @@ def absorber_band_response(
                     f"spacer-to-period ratio is {ratio:.3f}, below "
                     f"{THIN_SPACER_RATIO}, so Costa's eq (10) thin-spacer "
                     "correction is numerically significant here. It IS applied "
-                    f"(#245), in the '{calculations.COSTA_EQ10_FORM}' form -- Costa et "
+                    f"(#245), in the '{sheet_impedance.COSTA_EQ10_FORM}' form -- Costa et "
                     "al. 2013, arXiv:1211.1902 eq (10), prefactor 2D*eps_0/pi "
                     "substituted into the unloaded grid capacitance. The same "
                     "author publishes a second form -- Costa & Borgese 2021, "
@@ -446,6 +446,6 @@ def absorber_band_response(
         # the selection would move every number here while this key went on
         # reporting the old form -- the "two runs disagree with no way to
         # reconstruct why" failure this key exists to prevent.
-        "costa_eq10_form": calculations.COSTA_EQ10_FORM,
+        "costa_eq10_form": sheet_impedance.COSTA_EQ10_FORM,
         "validity": validity,
     }

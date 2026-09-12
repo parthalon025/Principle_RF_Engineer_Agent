@@ -1,5 +1,5 @@
 """Metamaterial unit-cell effective-medium parameters (Maxwell-Garnett), split
-out of rf_tools/calculations.py, issue #523/#500."""
+out of this package's former single calculations module, issue #523/#500."""
 
 
 def maxwell_garnett_effective_permeability(

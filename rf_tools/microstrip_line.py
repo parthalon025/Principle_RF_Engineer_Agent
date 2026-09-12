@@ -16,9 +16,9 @@ import math
 # patch_effective_permittivity's own domain) and its low-impedance ("Lo-Z")
 # sections come out wide (W/h > 1). Two functions computing the same
 # fringing-field number for two different stated domains is deliberate
-# here, the same way rf_tools/calculations.py already carries two published
-# forms of Costa's thin-spacer correction side by side (COSTA_EQ10_FORMS)
-# rather than picking one and hoping it generalizes.
+# here, the same way rf_tools/sheet_impedance.py already carries two
+# published forms of Costa's thin-spacer correction side by side
+# (COSTA_EQ10_FORMS) rather than picking one and hoping it generalizes.
 
 
 def microstrip_effective_permittivity(eps_r: float, w_m: float, h_m: float) -> float:

@@ -1216,7 +1216,7 @@ PATCH = DesignFamily(
             "gain straight out of the solver's own output "
             "(`parse_nec2_output` returns 'impedance' and 'gain_dbi'), and #101's "
             "VSWR and return loss are one-line conversions of that impedance that "
-            "rf_tools.calculations already provides "
+            "rf_tools.network_parameters already provides "
             "(`vswr_from_gamma`, `return_loss_db`). There is no retrieval, no "
             "energy-balance sum and no polarisation decomposition between the "
             "solver and the score. Recorded as a positive statement, not as a "
@@ -1357,7 +1357,7 @@ REFLECTION_PHASE = DesignFamily(
     # Deliberately nothing to declare, not an omission (#239). What this
     # family needs is a per-cell reflection PHASE -- by how much a bounce off
     # one cell shifts the wave's timing -- and no closed form in this repo
-    # returns a phase at all: rf_tools.calculations offers a patch resonance,
+    # returns a phase at all: rf_tools.patch_synthesis offers a patch resonance,
     # rf_tools.absorber a magnitude. Its Tier B evaluation then needs an
     # aperture-level step on top of that per-cell lookup, which no module here
     # performs either. The patch resonant frequency is not a weaker answer to
@@ -1366,7 +1366,7 @@ REFLECTION_PHASE = DesignFamily(
         reason=(
             "a reflection-phase surface is designed by its per-cell reflection "
             "PHASE, and no closed form in rf_tools returns a phase "
-            "(rf_tools.calculations returns a patch resonant frequency; "
+            "(rf_tools.patch_synthesis returns a patch resonant frequency; "
             "rf_tools.absorber returns an absorbed fraction). The Tier B "
             "aperture-level step that would turn a per-cell phase lookup into a "
             "steered beam does not exist here either. Both are open work, not "
@@ -1828,7 +1828,7 @@ BANDPASS_FSS = DesignFamily(
     # passband is, and how much insertion loss the conductor's finite
     # conductivity costs inside it. rf_tools has nothing of that shape:
     # rf_tools.absorber and rf_tools.transmissive_absorber return absorbed
-    # fractions, rf_tools.calculations a patch resonance, and
+    # fractions, rf_tools.patch_synthesis a patch resonance, and
     # rf_tools.filter_synthesis a stepped-impedance LOWPASS realisation in
     # transmission line (ADR-0031), which is a circuit on a board rather than
     # a periodic aperture in free space. In plain terms: nobody here has
@@ -1839,7 +1839,7 @@ BANDPASS_FSS = DesignFamily(
             "a bandpass FSS is designed by where its aperture resonance sits and "
             "how wide it is, and no closed form in rf_tools computes a passband: "
             "rf_tools.absorber and rf_tools.transmissive_absorber return absorbed "
-            "fractions, rf_tools.calculations a patch's radiating resonance, and "
+            "fractions, rf_tools.patch_synthesis a patch's radiating resonance, and "
             "rf_tools.filter_synthesis a stepped-impedance LOWPASS transmission-line "
             "realisation (ADR-0031), which is a different object in a different "
             "medium. ABSORBER_TRANSMISSIVE's model is NOT a weaker answer to this "
@@ -2049,7 +2049,7 @@ SHIELD = DesignFamily(
     # straight off a sheet resistance -- does not exist in rf_tools. The
     # PIECES are there and that is worth saying, because it makes this a small
     # piece of scoped work rather than a research problem:
-    # rf_tools.calculations already has skin_depth_m, sheet_resistance_ohm_sq
+    # rf_tools.sheet_impedance already has skin_depth_m, sheet_resistance_ohm_sq
     # (with its own frequency gate on the DC formula) and
     # min_overlay_sheet_resistance_ohm_sq, which is the same shunt-sheet
     # algebra pointed at a different question. Nobody has assembled them into
@@ -2061,7 +2061,7 @@ SHIELD = DesignFamily(
             "against its skin depth and its sheet resistance -- Schelkunoff's "
             "reflection + absorption + multiple-reflection decomposition, or the "
             "thin shunt-sheet limit -- and no closed form in rf_tools returns it. "
-            "The ingredients exist (rf_tools.calculations.skin_depth_m, "
+            "The ingredients exist (rf_tools.sheet_impedance.skin_depth_m, "
             "sheet_resistance_ohm_sq, min_overlay_sheet_resistance_ohm_sq) and "
             "nobody has assembled them. Borrowing BANDPASS_FSS's model is not an "
             "option even once that one is written: a passband synthesis is a "
