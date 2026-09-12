@@ -221,7 +221,7 @@ metamaterial's degree of freedom.
 The right pieces already exist in the repo and are **not wired into the
 loop**:
 
-- `rf_tools/calculations.py::maxwell_garnett_effective_permeability` —
+- `rf_tools/metamaterial.py::maxwell_garnett_effective_permeability` —
   effective-medium model, the natural fast inner-loop calculation
 - `geometry/unit_cell.py::generate_unit_cell_array` — takes `spacing_m`,
   i.e. the unit-cell period, a genuine design variable
