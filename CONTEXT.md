@@ -551,20 +551,33 @@ and a glossary that churns with it stops being trustworthy (see
   only symbols that have been printed, measured, and validity-boxed; a
   generic "library" doesn't carry that admission bar.
 - **Letter**: a **Symbol** that has passed admission and is an entry in the
-  **Element/Coding-Alphabet library**. The two words are not
-  interchangeable: every letter is a symbol, but a symbol described in a
-  paper, or drawn and simulated but never printed, is not a letter. The
-  distinction is the whole content of ADR-0027 — a shape from the
-  literature enters as a candidate in the **Considered-and-dropped
-  ledger**, and only printing, measuring and characterising it here makes
-  it a letter. Because identity includes the process, *"the same outline
-  printed in carbon and in MXene is two letters, not one letter under two
-  conditions"* (#132).
-  *In plain terms: a letter is a shape you have actually printed and
-  measured. Anything else is a shape you have read about.*
-  _Avoid_: using "letter" for a proposed or simulated element — that is a
-  **Symbol** at best, and a candidate at worst. The looser usage is what
-  ADR-0027 exists to prevent.
+  **Element/Coding-Alphabet library**. Every letter is a symbol, but a
+  symbol only described in a paper, with no run of its own here, is not a
+  letter at any provenance — it stays a candidate in the
+  **Considered-and-dropped ledger** (ADR-0027). Admission is by either of
+  two routes (ADR-0027, ADR-0053): **printed and measured** (`MEASURED`
+  provenance, always carries a **Process record**), or **simulated on a
+  solver path with a passing Reference Case** for its problem class
+  (`SIMULATED` provenance, no Process record — nothing was printed, and
+  that absence is itself how a simulated letter is told apart from a
+  measured one in the same table, with no extra field needed). A simulated
+  letter states which Reference Case backed it, or that none exists yet
+  for its problem class, and is never withheld for lacking one
+  (ADR-0028). Provenance is never upgraded in place: a later print-and-
+  measure of the same shape is a second, separate letter, not this one
+  promoted, because identity already includes the process — *"the same
+  outline printed in carbon and in MXene is two letters, not one letter
+  under two conditions"* (#132) applies the same way to a simulated
+  version and its later-printed twin.
+  *In plain terms: a letter used to mean only a shape actually printed and
+  measured. It now also covers a shape a validated simulator vouched for —
+  but the record says which kind it is, and a printed letter still
+  outranks a simulated one whenever the two disagree (Evidence hierarchy).*
+  _Avoid_: treating a simulated letter as equivalent evidence to a printed
+  one — Provenance and the Evidence hierarchy keep them ranked apart;
+  nothing here promotes one into the other automatically. Also avoid using
+  "letter" for a shape with no run of its own at all — that is a **Symbol**
+  described elsewhere at best, and a candidate at worst.
 - **Validity box**: the stated set of conditions a symbol's or alphabet's
   characterised numbers hold under — pitch, substrate, ink, pass count,
   cure schedule, incidence-angle range, and the neighbour set it was
@@ -737,11 +750,16 @@ and a glossary that churns with it stops being trustworthy (see
   **Material-property library**, holding each symbol's characterized
   response so it is looked up rather than re-solved by every design that
   shares its band and substrate. Keyed by `(element family, symbol,
-  band, incidence-angle range, process)` — the **Process record**
-  reference is what makes #132's rule expressible, that "the same
-  outline printed in carbon and in MXene is two letters, not one letter
-  under two conditions." **Only a printed letter is in the library**
-  (ADR-0027): a shape from the literature enters as a candidate in the
+  band, incidence-angle range, process)`, where **process is present only
+  for a printed entry** — a simulated entry has none, since nothing was
+  printed, and that absence is part of how the two kinds are told apart.
+  The **Process record** reference is what makes #132's rule expressible,
+  that "the same outline printed in carbon and in MXene is two letters,
+  not one letter under two conditions." **A letter enters the library by
+  being printed and measured, or by being simulated on a solver path with
+  a passing Reference Case for its problem class** (ADR-0027, ADR-0053);
+  either way it states which route it took. A shape from the literature
+  with no run of its own here still enters only as a candidate in the
   **Considered-and-dropped ledger**, never as an entry, since its
   published response was measured inside someone else's validity box.
   **Entries never expire; they stop matching** — a configuration that no

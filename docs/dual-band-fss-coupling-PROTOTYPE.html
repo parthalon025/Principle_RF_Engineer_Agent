@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PROTOTYPE — Dual-Band FSS Coupling Feel-Test</title>
+<style>
+  :root {
+    --accent: #b5472b;
+    --ink: #1e1b16;
+    --paper: #faf6ef;
+    --panel: #fff;
+    --line: #e2d9c8;
+    --muted: #7a7264;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 64px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .badge {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .intro {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+  }
+  .intro p { margin: 0 0 10px; }
+  .intro p:last-child { margin-bottom: 0; }
+  .intro .caveat {
+    font-size: 0.88rem;
+    color: var(--muted);
+    border-top: 1px dashed var(--line);
+    padding-top: 10px;
+    margin-top: 10px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+  }
+  .panel h2 {
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+  .state-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px 16px;
+    margin-bottom: 4px;
+  }
+  .state-field { }
+  .state-field .label { font-size: 0.75rem; color: var(--muted); }
+  .state-field .value { font-size: 1.05rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .verdict {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .verdict.good { background: #e4f2e6; color: #276a3d; }
+  .verdict.partial { background: #fbedd6; color: #8a5a12; }
+  .verdict.bad { background: #f8e2e0; color: #9c2c22; }
+  canvas { width: 100%; height: 240px; display: block; background: #fffdf8; border: 1px solid var(--line); border-radius: 8px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 20px; }
+  .control label { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 4px; }
+  .control label span.v { font-weight: 700; color: var(--accent); }
+  .control input[type=range] { width: 100%; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  button {
+    font: inherit;
+    font-size: 0.85rem;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    padding: 7px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { opacity: 0.9; color: #fff; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tab-btn {
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: #fff;
+    font-size: 0.85rem;
+  }
+  .tab-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .scenario { display: none; }
+  .scenario.active { display: block; }
+  .scenario p.desc { margin-top: 0; color: #3a352c; }
+  .steps { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .step-btn {
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .step-btn .n {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--line);
+    font-size: 0.75rem;
+    font-weight: 700;
+    flex: none;
+  }
+  .step-btn.done .n { background: var(--accent); color: #fff; }
+  .step-btn.current { border-color: var(--accent); }
+  footer { text-align: center; font-size: 0.8rem; color: var(--muted); margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="badge">PROTOTYPE — throwaway, not production</span>
+  <h1>Dual-Band FSS Coupling Feel-Test</h1>
+
+  <div class="intro">
+    <p>
+      <strong>The question this answers:</strong> our research on stacking two
+      differently-tuned resonant layers to build a GPS L1/L2 filter found
+      that every published design which achieved two genuinely independent
+      passbands did so only after adding a deliberate "decoupling" trick —
+      and every one of those designs separated its two bands by roughly
+      1.85–2.4× in frequency. GPS L1 (1575.42 MHz) and L2 (1227.60 MHz) are
+      only <strong>1.283× apart</strong> — tighter than anything verified.
+      This prototype lets you <em>feel</em> what "the bands blur together"
+      actually looks like, and whether a decoupling knob can rescue a tight
+      ratio like GPS's the way it rescued the wider ratios in the papers.
+    </p>
+    <p class="caveat">
+      <strong>What this is not:</strong> this is a toy coupled-resonator
+      circuit model (the same textbook physics — two resonant "tanks" linked
+      by a coupling term — every paper in the research used to explain their
+      own designs), not a full-wave simulation of any real geometry. Nothing
+      here is <code>SIMULATED</code> or <code>CALCULATED</code> evidence
+      about the actual GPS filter — it's a feel-it tool for the underlying
+      idea, meant to surface "wait, that's surprising" moments before anyone
+      spends real EM-solver time on it.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Current state</h2>
+    <div class="state-grid">
+      <div class="state-field"><div class="label">Layer 1 target</div><div class="value" id="s-f1">—</div></div>
+      <div class="state-field"><div class="label">Layer 2 target</div><div class="value" id="s-f2">—</div></div>
+      <div class="state-field"><div class="label">Band ratio</div><div class="value" id="s-ratio">—</div></div>
+      <div class="state-field"><div class="label">Coupling</div><div class="value" id="s-coupling">—</div></div>
+      <div class="state-field"><div class="label">Decoupling structure</div><div class="value" id="s-decouple">—</div></div>
+      <div class="state-field"><div class="label">Resonator Q (both layers)</div><div class="value" id="s-q">—</div></div>
+    </div>
+    <canvas id="chart" width="900" height="240"></canvas>
+    <div class="verdict" id="verdict">—</div>
+  </div>
+
+  <div class="panel">
+    <h2>Free play</h2>
+    <div class="controls">
+      <div class="control">
+        <label>Layer 1 frequency (MHz) <span class="v" id="l-f1"></span></label>
+        <input type="range" id="c-f1" min="800" max="6000" step="1">
+      </div>
+      <div class="control">
+        <label>Layer 2 frequency (MHz) <span class="v" id="l-f2"></span></label>
+        <input type="range" id="c-f2" min="800" max="6000" step="1">
+      </div>
+      <div class="control">
+        <label>Coupling strength <span class="v" id="l-coupling"></span></label>
+        <input type="range" id="c-coupling" min="0" max="150" step="1">
+      </div>
+      <div class="control">
+        <label>Decoupling structure <span class="v" id="l-decouple"></span></label>
+        <input type="range" id="c-decouple" min="0" max="100" step="1">
+      </div>
+      <div class="control">
+        <label>Resonator Q <span class="v" id="l-q"></span></label>
+        <input type="range" id="c-q" min="5" max="100" step="1">
+      </div>
+    </div>
+    <div class="presets">
+      <button class="primary" id="preset-gps">Reset to GPS L1 / L2</button>
+      <button id="preset-lit">Reset to a literature-style ratio (~2.4×)</button>
+      <button id="preset-zero">Zero coupling</button>
+      <button id="preset-max">Max coupling</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Guided walkthroughs</h2>
+    <div class="tabs" id="tabs"></div>
+    <div id="scenarios"></div>
+  </div>
+
+  <footer>
+    Prototype for the GPS L1/L2 dual-band FSS design question.
+    Capture: once the alphabet/family spec is settled, fold the validated
+    coupled-resonator module (see &lt;script id="logic-module"&gt;) into the
+    real analysis code if it proves useful; keep this HTML shell on a
+    throwaway branch as a primary source, referenced from the implementation
+    ticket.
+  </footer>
+</div>
+
+<script id="logic-module">
+// ---------------------------------------------------------------------
+// PURE MODULE — no DOM access anywhere in this block. Lift this straight
+// into the real codebase if the coupled-resonator model proves useful for
+// the actual two-layer FSS analysis model.
+// ---------------------------------------------------------------------
+
+// Complex number helpers: {re, im}
+const cAdd = (a, b) => ({ re: a.re + b.re, im: a.im + b.im });
+const cSub = (a, b) => ({ re: a.re - b.re, im: a.im - b.im });
+const cMul = (a, b) => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re });
+const cDiv = (a, b) => {
+  const d = b.re * b.re + b.im * b.im;
+  return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d };
+};
+const cAbs = (a) => Math.sqrt(a.re * a.re + a.im * a.im);
+const cJ = (x) => ({ re: 0, im: x }); // j * x, for real x
+
+/**
+ * Two-mode temporal coupled-mode theory (CMT): two resonant "tanks" at
+ * angular frequencies w1, w2, each with its own decay rate (from Q), linked
+ * by a real coupling rate `mu`, both driven by the same incident wave and
+ * both re-radiating forward. This is the same physics every paper in the
+ * research doc used (Ebrahimi's hybrid resonator, Rahmani-Shams' k1/k2
+ * coupling terms, Payne's coupled-tank network) to describe why two
+ * differently-tuned layers can pull each other off-target.
+ *
+ * state: { f1Hz, f2Hz, q, couplingHz, decouple01 }
+ * omega: angular frequency (rad/s) to evaluate the response at
+ * returns: magnitude of the forward-transmitted amplitude at that frequency
+ */
+function transmissionAt(state, omega) {
+  const w1 = 2 * Math.PI * state.f1Hz;
+  const w2 = 2 * Math.PI * state.f2Hz;
+  const g1 = w1 / (2 * state.q);
+  const g2 = w2 / (2 * state.q);
+  const muRaw = 2 * Math.PI * state.couplingHz;
+  const mu = muRaw * (1 - state.decouple01);
+
+  const k1 = Math.sqrt(2 * g1);
+  const k2 = Math.sqrt(2 * g2);
+
+  // (j(w-w1) + g1) a1 - j*mu*a2 = k1
+  // -j*mu*a1 + (j(w-w2) + g2) a2 = k2
+  const A11 = { re: g1, im: omega - w1 };
+  const A22 = { re: g2, im: omega - w2 };
+  const Aoff = cJ(-mu);
+
+  const det = cSub(cMul(A11, A22), cMul(Aoff, Aoff));
+  const b1 = { re: k1, im: 0 };
+  const b2 = { re: k2, im: 0 };
+
+  const a1 = cDiv(cSub(cMul(b1, A22), cMul(Aoff, b2)), det);
+  const a2 = cDiv(cSub(cMul(A11, b2), cMul(Aoff, b1)), det);
+
+  const t = cAdd(cMul({ re: k1, im: 0 }, a1), cMul({ re: k2, im: 0 }, a2));
+  return cAbs(t);
+}
+
+/** Sweep the response across a frequency range. Returns [{fHz, mag}]. */
+function sweepResponse(state, fLowHz, fHighHz, numPoints) {
+  const out = [];
+  for (let i = 0; i < numPoints; i++) {
+    const fHz = fLowHz + ((fHighHz - fLowHz) * i) / (numPoints - 1);
+    const mag = transmissionAt(state, 2 * Math.PI * fHz);
+    out.push({ fHz, mag });
+  }
+  return out;
+}
+
+/**
+ * Resolvability check: are there genuinely two separate passbands, or have
+ * they merged into one? Compares the response at each target frequency
+ * against the response at the midpoint between them — the classic "is
+ * there a real valley between the two peaks" test.
+ */
+function analyzeResolution(state) {
+  const midHz = (state.f1Hz + state.f2Hz) / 2;
+  const magAt1 = transmissionAt(state, 2 * Math.PI * state.f1Hz);
+  const magAt2 = transmissionAt(state, 2 * Math.PI * state.f2Hz);
+  const magAtMid = transmissionAt(state, 2 * Math.PI * midHz);
+  const weaker = Math.min(magAt1, magAt2);
+  const valleyRatio = magAtMid / weaker; // close to 1 = no valley = merged
+
+  let verdict, cls;
+  if (valleyRatio < 0.55) {
+    verdict = `Two distinct passbands. The valley between them drops to ${(valleyRatio * 100).toFixed(0)}% of the weaker peak — clearly resolved.`;
+    cls = "good";
+  } else if (valleyRatio < 0.85) {
+    verdict = `Two peaks are still visible, but the valley only drops to ${(valleyRatio * 100).toFixed(0)}% of the weaker peak — partially merged, marginal as two independent filters.`;
+    cls = "partial";
+  } else {
+    verdict = `The two bands have blurred into essentially one response — the valley barely dips (${(valleyRatio * 100).toFixed(0)}% of the weaker peak). Not usable as two independent passbands.`;
+    cls = "bad";
+  }
+  return { valleyRatio, verdict, cls, magAt1, magAt2, magAtMid };
+}
+</script>
+
+<script>
+// ---------------------------------------------------------------------
+// PAGE SHELL — thin, DOM-only. Calls into the pure module above; nothing
+// flows the other direction.
+// ---------------------------------------------------------------------
+(function () {
+  const GPS = { f1Hz: 1575.42e6, f2Hz: 1227.60e6, couplingHz: 60e6, decouple01: 0.0, q: 25 };
+  const LIT = { f1Hz: 2400e6, f2Hz: 5800e6, couplingHz: 200e6, decouple01: 0.0, q: 25 };
+
+  let state = { ...GPS };
+
+  const $ = (id) => document.getElementById(id);
+  const fmtMHz = (hz) => `${(hz / 1e6).toFixed(2)} MHz`;
+
+  function render() {
+    // sync sliders
+    $("c-f1").value = state.f1Hz / 1e6;
+    $("c-f2").value = state.f2Hz / 1e6;
+    $("c-coupling").value = state.couplingHz / 1e6;
+    $("c-decouple").value = state.decouple01 * 100;
+    $("c-q").value = state.q;
+
+    $("l-f1").textContent = fmtMHz(state.f1Hz);
+    $("l-f2").textContent = fmtMHz(state.f2Hz);
+    $("l-coupling").textContent = `${(state.couplingHz / 1e6).toFixed(0)} MHz-equiv`;
+    $("l-decouple").textContent = `${Math.round(state.decouple01 * 100)}%`;
+    $("l-q").textContent = state.q;
+
+    // state panel
+    $("s-f1").textContent = fmtMHz(state.f1Hz);
+    $("s-f2").textContent = fmtMHz(state.f2Hz);
+    const ratio = Math.max(state.f1Hz, state.f2Hz) / Math.min(state.f1Hz, state.f2Hz);
+    $("s-ratio").textContent = `${ratio.toFixed(3)}×`;
+    $("s-coupling").textContent = `${(state.couplingHz / 1e6).toFixed(0)} MHz-equiv`;
+    $("s-decouple").textContent = state.decouple01 === 0 ? "none" : `${Math.round(state.decouple01 * 100)}% cancelled`;
+    $("s-q").textContent = state.q;
+
+    // chart
+    const lo = Math.min(state.f1Hz, state.f2Hz) * 0.75;
+    const hi = Math.max(state.f1Hz, state.f2Hz) * 1.25;
+    const resp = sweepResponse(state, lo, hi, 400);
+    drawChart(resp, lo, hi, state.f1Hz, state.f2Hz);
+
+    // verdict
+    const a = analyzeResolution(state);
+    const v = $("verdict");
+    v.textContent = a.verdict;
+    v.className = `verdict ${a.cls}`;
+  }
+
+  function drawChart(resp, lo, hi, f1, f2) {
+    const canvas = $("chart");
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const maxMag = Math.max(...resp.map((p) => p.mag), 1e-9);
+    const x = (fHz) => ((fHz - lo) / (hi - lo)) * (w - 40) + 30;
+    const y = (mag) => h - 24 - (mag / maxMag) * (h - 50);
+
+    // axes
+    ctx.strokeStyle = "#d8cdb8";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(30, h - 24);
+    ctx.lineTo(w - 10, h - 24);
+    ctx.stroke();
+
+    // target markers
+    ctx.strokeStyle = "#b5472b55";
+    ctx.setLineDash([4, 4]);
+    [f1, f2].forEach((f) => {
+      ctx.beginPath();
+      ctx.moveTo(x(f), 10);
+      ctx.lineTo(x(f), h - 24);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    // response curve
+    ctx.strokeStyle = "#1e1b16";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    resp.forEach((p, i) => {
+      const px = x(p.fHz), py = y(p.mag);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    // labels
+    ctx.fillStyle = "#7a7264";
+    ctx.font = "11px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`${(f1 / 1e6).toFixed(0)} MHz`, x(f1), h - 8);
+    ctx.fillText(`${(f2 / 1e6).toFixed(0)} MHz`, x(f2), h - 8);
+  }
+
+  // wire free-play sliders
+  $("c-f1").addEventListener("input", (e) => { state.f1Hz = +e.target.value * 1e6; render(); });
+  $("c-f2").addEventListener("input", (e) => { state.f2Hz = +e.target.value * 1e6; render(); });
+  $("c-coupling").addEventListener("input", (e) => { state.couplingHz = +e.target.value * 1e6; render(); });
+  $("c-decouple").addEventListener("input", (e) => { state.decouple01 = +e.target.value / 100; render(); });
+  $("c-q").addEventListener("input", (e) => { state.q = +e.target.value; render(); });
+
+  $("preset-gps").addEventListener("click", () => { state = { ...GPS }; render(); });
+  $("preset-lit").addEventListener("click", () => { state = { ...LIT }; render(); });
+  $("preset-zero").addEventListener("click", () => { state.couplingHz = 0; render(); });
+  $("preset-max").addEventListener("click", () => { state.couplingHz = 150e6; render(); });
+
+  // ------------------------------------------------------------------
+  // Guided walkthroughs
+  // ------------------------------------------------------------------
+  const scenarios = [
+    {
+      id: "lit",
+      title: "Literature's own comfortable ratio",
+      desc: "Every published design that achieved two independent bands separated them by roughly 1.85–2.4× in frequency. Set up that comfortable case and push coupling hard — watch how forgiving a wide ratio is.",
+      steps: [
+        { label: "Reset to a literature-style ratio (2.4×: 2400/5800 MHz)", apply: () => (state = { ...LIT, couplingHz: 0 }) },
+        { label: "Raise coupling to 40 MHz-equivalent", apply: () => (state.couplingHz = 40e6) },
+        { label: "Raise coupling to 90 MHz-equivalent", apply: () => (state.couplingHz = 90e6) },
+        { label: "Push coupling to the max (150 MHz-equivalent)", apply: () => (state.couplingHz = 150e6) },
+      ],
+    },
+    {
+      id: "gps-plain",
+      title: "GPS's own tight ratio, no decoupling",
+      desc: "Now GPS L1/L2 — only 1.283× apart. Raise coupling the same way and watch what happens to the valley between the two peaks much sooner.",
+      steps: [
+        { label: "Reset to GPS L1 / L2, zero coupling", apply: () => (state = { ...GPS, couplingHz: 0, decouple01: 0 }) },
+        { label: "Raise coupling to 40 MHz-equivalent", apply: () => (state.couplingHz = 40e6) },
+        { label: "Raise coupling to 80 MHz-equivalent", apply: () => (state.couplingHz = 80e6) },
+        { label: "Raise coupling to 120 MHz-equivalent", apply: () => (state.couplingHz = 120e6) },
+      ],
+    },
+    {
+      id: "gps-decouple",
+      title: "GPS's own tight ratio, with decoupling added",
+      desc: "Every working paper added a deliberate decoupling trick (Payne's separation gap, Rahmani-Shams' independently-biased branches). Start from a strongly-coupled, merged GPS pair, then dial in decoupling and see how far it can pull the bands back apart.",
+      steps: [
+        { label: "Reset to GPS L1 / L2", apply: () => (state = { ...GPS, decouple01: 0 }) },
+        { label: "Set strong coupling (100 MHz-equivalent) — watch band 2 collapse toward band 1", apply: () => (state.couplingHz = 100e6) },
+        { label: "Add 50% decoupling", apply: () => (state.decouple01 = 0.5) },
+        { label: "Add 80% decoupling", apply: () => (state.decouple01 = 0.8) },
+        { label: "Add 95% decoupling — is it fully resolved, and still on-target?", apply: () => (state.decouple01 = 0.95) },
+      ],
+    },
+    {
+      id: "free",
+      title: "Push it until it breaks",
+      desc: "No fixed steps — use the free-play sliders above. Try to find the coupling/decoupling combination where GPS L1/L2 sit right at the edge between 'two clean bands' and 'merged.' That edge is the real design margin this whole question is about.",
+      steps: [],
+    },
+  ];
+
+  let activeTab = 0;
+  let stepIndex = {}; // scenario id -> next step index
+
+  function renderTabs() {
+    const tabsEl = $("tabs");
+    tabsEl.innerHTML = "";
+    scenarios.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.className = "tab-btn" + (i === activeTab ? " active" : "");
+      b.textContent = s.title;
+      b.addEventListener("click", () => { activeTab = i; renderTabs(); renderScenarios(); });
+      tabsEl.appendChild(b);
+    });
+  }
+
+  function renderScenarios() {
+    const el = $("scenarios");
+    el.innerHTML = "";
+    scenarios.forEach((s, i) => {
+      const div = document.createElement("div");
+      div.className = "scenario" + (i === activeTab ? " active" : "");
+      const p = document.createElement("p");
+      p.className = "desc";
+      p.textContent = s.desc;
+      div.appendChild(p);
+
+      if (s.steps.length) {
+        const stepsEl = document.createElement("div");
+        stepsEl.className = "steps";
+        const done = stepIndex[s.id] || 0;
+        s.steps.forEach((step, si) => {
+          const btn = document.createElement("button");
+          btn.className = "step-btn" + (si < done ? " done" : "") + (si === done ? " current" : "");
+          btn.innerHTML = `<span class="n">${si + 1}</span> ${step.label}`;
+          btn.addEventListener("click", () => {
+            step.apply();
+            stepIndex[s.id] = si + 1;
+            render();
+            renderScenarios();
+          });
+          stepsEl.appendChild(btn);
+        });
+        div.appendChild(stepsEl);
+      }
+      el.appendChild(div);
+    });
+  }
+
+  renderTabs();
+  renderScenarios();
+  render();
+})();
+</script>
+</body>
+</html>
