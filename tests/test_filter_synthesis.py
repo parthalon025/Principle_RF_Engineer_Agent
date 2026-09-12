@@ -12,15 +12,15 @@ import math
 
 import pytest
 
-from rf_tools.calculations import (
-    microstrip_effective_permittivity,
-    microstrip_synthesize_width_m,
-)
 from rf_tools.filter_synthesis import (
     butterworth_g_values,
     chebyshev_g_values,
     realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
+)
+from rf_tools.microstrip_line import (
+    microstrip_effective_permittivity,
+    microstrip_synthesize_width_m,
 )
 
 TABLE_TOL = 1e-3
