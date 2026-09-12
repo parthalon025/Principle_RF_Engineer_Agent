@@ -208,7 +208,6 @@ from optimization.rf_objectives import (
 from rf_tools.calculations import (
     curvature_exceeds_validity_box as _curvature_exceeds_validity_box,
 )
-from rf_tools.calculations import patch_resonant_frequency_hz as _patch_resonant_frequency_hz
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
