@@ -49,7 +49,12 @@ from designs.element_alphabet import (
     insert_symbol_entry,
 )
 from designs.material_properties import FR4_SEED_ENTRIES, resolve_material_property
-from designs.requirement_targets import propose_intended_effect, propose_target
+from designs.requirement_targets import (
+    confirm_host_ground_plane,
+    propose_host_ground_plane,
+    propose_intended_effect,
+    propose_target,
+)
 from designs.requirements_document import (
     DocumentStatus,
     draft_requirements_document,
@@ -71,8 +76,10 @@ from orchestration.design_loop import (
     DesignLoopValidationError,
     DesignStep,
     LoopDecision,
+    _any_requirement_confirms_host_ground_plane,
     _combinatorial_result_to_dict,
     _optimizer_class_for,
+    _require_reflector_or_confirmed_host_ground_plane,
     _simulation_adapter_for,
     advance_loop_step,
     start_design_loop,
@@ -2907,6 +2914,328 @@ def test_the_ground_backed_family_pays_nothing_for_the_two_port_machinery(monkey
     assert result["absorption"] == pytest.approx([0.8, 0.99])
     assert result["transmittance"] is None
     assert result["energy_balance_violations"] == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #486: a reflector-provenance check wired into SIMULATION.
+#
+# ADR-0017's rule (captured by #484's host_ground_plane assertion and #485's
+# REFLECTOR geometry role) has, until now, had nowhere it was actually read:
+# a candidate whose family needs a ground plane could reach scoring having
+# neither a REFLECTOR layer of its own nor a confirmed host. This section
+# closes that gap at the one place a family's requirement and a candidate's
+# geometry are both in hand -- the SIMULATION step -- mirroring
+# `_require_transmission_monitor_for_two_port`'s own shape: a pure check,
+# unit-tested directly, then proven wired in via the real step.
+# ---------------------------------------------------------------------------
+
+# Minimal role-tagged/untagged geometry fixtures. Only the `role` field (and,
+# for the reflector case, which of materials/conductors it sits in) matters
+# to this check -- shape/p1_m/p2_m are never read by it, so they're omitted
+# except where a fixture needs to look like a real primitive.
+_NO_ROLE_TAGS_GEOMETRY: dict[str, Any] = {"cell_size_m": [3e-3, 3e-3, 40e-3]}
+_ROLE_TAGGED_NO_REFLECTOR_GEOMETRY: dict[str, Any] = {
+    "materials": [{"role": "PATTERN", "epsilon_r": 2.9}],
+}
+_ROLE_TAGGED_WITH_REFLECTOR_GEOMETRY: dict[str, Any] = {
+    "conductors": [{"role": "REFLECTOR"}],
+    "materials": [{"role": "PATTERN", "epsilon_r": 2.9}],
+}
+
+
+def _confirmed_host_ground_plane_requirements(requirement_id: str = "host_backing") -> dict:
+    """A `state.requirements`-shaped dict carrying one CONFIRMED,
+    is_ground_plane=True host_ground_plane assertion (#484's own pure
+    layer, not the DB-touching I/O wrapper) -- the fixture this section's
+    "confirmed" cases reuse."""
+    proposed = propose_host_ground_plane(is_ground_plane=True)
+    confirmed = confirm_host_ground_plane(
+        proposed, confirmed_by="jane.engineer", confirmed_at="2026-01-01T00:00:00+00:00"
+    )
+    return {
+        requirement_id: {
+            "requirement": "the host is solid aluminum",
+            "host_ground_plane": confirmed,
+        }
+    }
+
+
+class _FakeFamily:
+    """A minimal stand-in carrying only what
+    `_require_reflector_or_confirmed_host_ground_plane` reads
+    (`requires_ground_plane`, `name`) -- deliberately NOT a real
+    `DesignFamily`, so these unit tests exercise this check's own logic in
+    isolation from `__post_init__`'s unrelated requires_ground_plane/
+    port_count cross-check (issue #216), the same way
+    `_require_transmission_monitor_for_two_port`'s own `getattr(family,
+    'name', family)`/`getattr(family, 'port_count', None)` tolerate an
+    arbitrary object rather than demanding a real registry entry."""
+
+    def __init__(self, requires_ground_plane: bool, name: str = "FAKE_FAMILY"):
+        self.requires_ground_plane = requires_ground_plane
+        self.name = name
+
+
+def test_any_requirement_confirms_host_ground_plane_is_false_for_no_requirements():
+    assert _any_requirement_confirms_host_ground_plane({}) is False
+
+
+def test_any_requirement_confirms_host_ground_plane_ignores_non_dict_requirements():
+    """`state.requirements` in this test file's own REQUIREMENTS fixture
+    carries plain scalar/list values (band_ghz, gain_dbi_min, ...), not
+    requirement_id-keyed dicts -- this helper must not choke on that shape,
+    only find nothing to confirm."""
+    assert _any_requirement_confirms_host_ground_plane(REQUIREMENTS) is False
+
+
+def test_any_requirement_confirms_host_ground_plane_true_when_any_entry_confirms():
+    """The ambiguity resolution this ticket makes explicit: `requirements`
+    holds several requirement entries, and this design's host is confirmed
+    a ground plane if ANY of them carries a CONFIRMED, is_ground_plane=True
+    assertion -- there is no single 'the' requirement id it must match."""
+    requirements = {
+        "req_band": {"requirement": "2.4-2.5 GHz"},
+        **_confirmed_host_ground_plane_requirements("req_host"),
+        "req_gain": {"requirement": "gain >= 5 dBi"},
+    }
+    assert _any_requirement_confirms_host_ground_plane(requirements) is True
+
+
+def test_any_requirement_confirms_host_ground_plane_false_when_only_proposed():
+    """A PROPOSED, unconfirmed reading is not enough (ADR-0017) -- mirrors
+    the Host ground-plane assertion glossary entry's own "not a `CONFIRMED`
+    assertion until a human confirms the reading" rule."""
+    proposed = propose_host_ground_plane(is_ground_plane=True)
+    requirements = {"req_host": {"requirement": "solid aluminum", "host_ground_plane": proposed}}
+    assert _any_requirement_confirms_host_ground_plane(requirements) is False
+
+
+def test_any_requirement_confirms_host_ground_plane_false_when_confirmed_false():
+    """A human can confirm that the host is NOT a reliable ground plane --
+    that is a genuine, informative CONFIRMED reading, and must not be
+    read as satisfying the assertion."""
+    proposed = propose_host_ground_plane(is_ground_plane=False)
+    confirmed = confirm_host_ground_plane(proposed, confirmed_by="jane.engineer")
+    requirements = {"req_host": {"requirement": "a PET film", "host_ground_plane": confirmed}}
+    assert _any_requirement_confirms_host_ground_plane(requirements) is False
+
+
+@pytest.mark.parametrize(
+    "requires_ground_plane, geometry, requirements_confirmed, expect_raise",
+    [
+        # requires_ground_plane=False: exempt outright, in every geometry/
+        # confirmation combination -- this family's physics does not depend
+        # on a ground plane at all (ABSORBER_TRANSMISSIVE's own shape).
+        (False, _NO_ROLE_TAGS_GEOMETRY, False, False),
+        (False, _ROLE_TAGGED_NO_REFLECTOR_GEOMETRY, False, False),
+        (False, _ROLE_TAGGED_WITH_REFLECTOR_GEOMETRY, False, False),
+        (False, _ROLE_TAGGED_NO_REFLECTOR_GEOMETRY, True, False),
+        # requires_ground_plane=True, no role tags anywhere: legacy/
+        # non-role-tagging geometry is exempt (a DELIBERATE #481 decision,
+        # not an oversight) -- covers NEC2's own wire geometry, which never
+        # carries `role` at all.
+        (True, _NO_ROLE_TAGS_GEOMETRY, False, False),
+        # requires_ground_plane=True, role-tagged geometry, one REFLECTOR:
+        # the candidate supplies its own reflector -- passes regardless of
+        # whether any requirement also confirms the host.
+        (True, _ROLE_TAGGED_WITH_REFLECTOR_GEOMETRY, False, False),
+        (True, _ROLE_TAGGED_WITH_REFLECTOR_GEOMETRY, True, False),
+        # requires_ground_plane=True, role-tagged geometry, no REFLECTOR,
+        # host confirmed: the escape hatch ADR-0017 names -- passes.
+        (True, _ROLE_TAGGED_NO_REFLECTOR_GEOMETRY, True, False),
+        # requires_ground_plane=True, role-tagged geometry, no REFLECTOR,
+        # host NOT confirmed: neither half of ADR-0017's rule is satisfied
+        # -- must raise.
+        (True, _ROLE_TAGGED_NO_REFLECTOR_GEOMETRY, False, True),
+    ],
+)
+def test_reflector_provenance_check_full_combination_matrix(
+    requires_ground_plane, geometry, requirements_confirmed, expect_raise
+):
+    family = _FakeFamily(requires_ground_plane=requires_ground_plane, name="A_TEST_FAMILY")
+    requirements = _confirmed_host_ground_plane_requirements() if requirements_confirmed else {}
+
+    if expect_raise:
+        with pytest.raises(DesignLoopValidationError) as exc:
+            _require_reflector_or_confirmed_host_ground_plane(family, geometry, requirements)
+        message = str(exc.value)
+        assert "A_TEST_FAMILY" in message
+        assert "REFLECTOR" in message
+        assert "host" in message.lower()
+        assert "confirm_requirement_host_ground_plane" in message
+    else:
+        _require_reflector_or_confirmed_host_ground_plane(family, geometry, requirements)
+
+
+def test_reflector_provenance_check_reads_conductors_as_well_as_materials():
+    """A REFLECTOR primitive sitting in `conductors` (the common case -- a
+    ground plane is a metal layer) must count exactly like one in
+    `materials`; `_build_geometry_list` itself treats the two lists as one
+    combined pool, and this check must agree with it."""
+    family = _FakeFamily(requires_ground_plane=True)
+    geometry = {"conductors": [{"role": "REFLECTOR"}]}
+    _require_reflector_or_confirmed_host_ground_plane(family, geometry, {})  # must not raise
+
+
+def test_reflector_provenance_check_geometry_missing_entirely_is_exempt():
+    """`_handle_simulation` runs this check with whatever
+    `step_input.get('geometry')` returns, which is `None` when a caller
+    forgot the key entirely -- that must not crash this check itself; the
+    handler's own `_require_fields` is what reports a missing geometry, and
+    it must get the chance to say so, not have this check pre-empt it with
+    an unrelated error."""
+    family = _FakeFamily(requires_ground_plane=True)
+    _require_reflector_or_confirmed_host_ground_plane(family, None, {})  # must not raise
+
+
+def test_reflector_provenance_check_message_names_the_remedy():
+    """The message shape `_require_transmission_monitor_for_two_port`
+    itself uses: name the family, say what is missing, say what to do."""
+    family = _FakeFamily(requires_ground_plane=True, name="REFLECTION_PHASE")
+    with pytest.raises(DesignLoopValidationError) as exc:
+        _require_reflector_or_confirmed_host_ground_plane(
+            family, _ROLE_TAGGED_NO_REFLECTOR_GEOMETRY, {}
+        )
+    message = str(exc.value)
+    assert "REFLECTION_PHASE" in message
+    assert "role-tagged" in message or "role=REFLECTOR" in message
+    assert "confirm_requirement_host_ground_plane" in message
+
+
+# --- Integration: the check is actually wired into the SIMULATION step -----
+
+
+def test_ground_backed_absorber_simulation_with_no_role_tags_is_unaffected(monkeypatch):
+    """ABSORBER's own existing tests use geometry with no materials/
+    conductors keys at all -- the legacy exemption must keep every one of
+    those passing exactly as before; this pins that regression directly."""
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.05]},
+        },
+    )
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(state, {"geometry": {}, "frequency_hz": 10e9})
+    assert state.decisions[-1].result["simulator"] == "MEEP"
+
+
+def test_ground_backed_family_with_role_tags_but_no_reflector_or_confirmation_refuses(
+    monkeypatch,
+):
+    """ABSORBER declares requires_ground_plane=True. Once its candidate's
+    own geometry opts into role-tagging (#485) but supplies no REFLECTOR,
+    and no requirement on the design confirms the host, this must be
+    refused before the solver runs -- not scored on a candidate that has
+    neither its own reflector nor a vouched-for one."""
+
+    def exploding_run(**kwargs):
+        raise AssertionError("the solver must not run when neither half of ADR-0017 is met")
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", exploding_run)
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    with pytest.raises(DesignLoopValidationError) as exc:
+        advance_loop_step(
+            state,
+            {
+                "geometry": {
+                    "cell_size_m": [3e-3, 3e-3, 40e-3],
+                    "materials": [{"role": "PATTERN", "epsilon_r": 2.9}],
+                },
+                "frequency_hz": 10e9,
+            },
+        )
+    message = str(exc.value)
+    assert "ABSORBER" in message
+    assert "REFLECTOR" in message
+    assert state.current_step == DesignStep.SIMULATION.value
+    assert all(d.step != DesignStep.SIMULATION.value for d in state.decisions)
+
+
+def test_ground_backed_family_with_a_reflector_role_layer_runs(monkeypatch):
+    """The candidate supplies its own reflector (#485's REFLECTOR role) --
+    ADR-0017's default case -- so the run proceeds with no confirmed host
+    assertion needed at all."""
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.05]},
+        },
+    )
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": {
+                "cell_size_m": [3e-3, 3e-3, 40e-3],
+                "conductors": [{"role": "REFLECTOR"}],
+            },
+            "frequency_hz": 10e9,
+        },
+    )
+    assert state.decisions[-1].result["simulator"] == "MEEP"
+
+
+def test_ground_backed_family_with_confirmed_host_and_no_reflector_runs(monkeypatch):
+    """ADR-0017's escape hatch: no REFLECTOR of its own, but this design's
+    requirements confirm the host is a reliable ground plane -- so the run
+    proceeds leaning on the host instead."""
+    monkeypatch.setattr(
+        design_loop_module,
+        "_run_meep_simulation",
+        lambda **kwargs: {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.05]},
+        },
+    )
+    requirements = {**REQUIREMENTS, **_confirmed_host_ground_plane_requirements()}
+    state = start_design_loop(requirements)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(
+        state,
+        {
+            "geometry": {
+                "cell_size_m": [3e-3, 3e-3, 40e-3],
+                "materials": [{"role": "PATTERN", "epsilon_r": 2.9}],
+            },
+            "frequency_hz": 10e9,
+        },
+    )
+    assert state.decisions[-1].result["simulator"] == "MEEP"
+
+
+def test_unbacked_transmissive_family_is_exempt_even_with_role_tags_and_no_confirmation(
+    monkeypatch,
+):
+    """ABSORBER_TRANSMISSIVE declares requires_ground_plane=False: exempt
+    outright regardless of role tags or host confirmation -- its physics
+    never depended on a ground plane, so there is nothing here to check."""
+    state, captured = _run_two_port_simulation(
+        monkeypatch,
+        _meep_result([0.2], {"computed": True, "requested": True, "transmittance": [0.3]}),
+        geometry={
+            **_TWO_PORT_GEOMETRY,
+            "materials": [{"role": "PATTERN", "epsilon_r": 2.9}],
+        },
+    )
+    assert state.decisions[-1].result["simulator"] == "MEEP"
 
 
 # ---------------------------------------------------------------------------

@@ -143,6 +143,30 @@ and a glossary that churns with it stops being trustworthy (see
   on, which is a different layer; a skin has both a substrate and a host.
   Platform — names a vehicle class rather than a surface, and a host need
   not belong to one.
+- **Geometry layer role**: the closed, five-value vocabulary (`HOST`,
+  `SUBSTRATE`, `REFLECTOR`, `SPACER`, `PATTERN`) a materials/conductors
+  geometry primitive's optional `role` field is validated against
+  (`simulation/meep.py`'s `GeometryRole`, issue #485) — the code-level
+  counterpart to this same Host surface/Substrate distinction, plus the
+  Reflector/Spacer/Pattern layers ADR-0033's own recommended-cell table
+  names. Purely additive metadata: a primitive with no `role` stays exactly
+  as legal as before, and the tag is never read when building the actual
+  simulated material — an untagged conductor and one tagged `REFLECTOR`
+  simulate byte-for-byte the same object. At most one primitive across a
+  geometry's combined materials and conductors may carry `REFLECTOR` — a
+  design has one ground plane by construction — while `PATTERN` carries no
+  such cap, since ADR-0033's own absorber design coplanar-prints two
+  different-function inks in one pattern layer.
+  *In plain terms: a label on one physical slab or wire saying which job in
+  the stack it's doing — ground plane, spacer, antenna substrate, host, or
+  printed pattern — checked against a fixed list of five, and never
+  smuggled into the physics the simulator actually computes.*
+  _Avoid_: inferring a primitive's role from its position or material
+  properties — `role` is an explicit, optional tag, not something derived
+  from `epsilon_r`/`center_m`/shape. Metamaterial unit cell — a role tags
+  which job ONE primitive does in the stack; a unit cell is the repeating
+  sub-wavelength structure that may itself be built from several
+  role-tagged primitives (e.g. a `PATTERN` layer over a `REFLECTOR`).
 - **Metamaterial unit cell**: the repeating element whose **sub-wavelength
   structure** produces an effective permittivity/permeability the bulk
   material does not have on its own. The base building block a
@@ -179,6 +203,24 @@ and a glossary that churns with it stops being trustworthy (see
   anchors a request for design guidance. Distinct from a Component's
   specification, which describes an existing manufactured part rather
   than a target for a new one.
+- **Host ground-plane assertion**: the captured, confirmable claim that a
+  Customer requirement's ground-plane-presence field carries — whether the
+  Host surface is a confirmed, reliable conductive backing (`value` in the
+  vocabulary this entry names is `True`/`False`, never inferred from what
+  the host physically is). Stored at
+  `requirements[requirement_id]["host_ground_plane"]`, `attach_target`'s
+  and `attach_intent`'s third sibling, and tracked through the identical
+  `PROPOSED` → `CONFIRMED` lifecycle a **Requirement target** uses
+  (`confirmed_by`/`confirmed_at`, provenance always `ASSUMED` even once
+  confirmed, for the same reason a Requirement target's is). This is what
+  ADR-0017's "asserted, never inferred" rule needs a place to live: the
+  design loop defaults every base printed layer to its own reflector, and
+  may only rely on the host surface itself once this field reaches
+  `CONFIRMED` — a `PROPOSED`, unconfirmed reading is not enough.
+  _Avoid_: inferring this from the host surface's stated material or
+  platform (a "solid aluminum wing" is not itself a `CONFIRMED` assertion
+  until a human confirms the reading) — ADR-0017 forbids exactly that
+  inference.
 - **Requirements document**: a CDD-style artifact, one per **Design**,
   bundling every one of that design's **Customer requirement** rows into a
   single reviewed document — modelled on the DoD's JCIDS **Capability

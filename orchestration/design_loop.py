@@ -190,6 +190,7 @@ from designs.element_alphabet import lookup_symbol_entries as _lookup_symbol_ent
 from designs.element_alphabet import (
     reduce_response_at_frequency as _reduce_response_at_frequency,
 )
+from designs.requirement_targets import GroundPlaneStatus as _GroundPlaneStatus
 from designs.requirement_targets import (
     InvalidRequirementTargetError as _InvalidRequirementTargetError,
 )
@@ -245,6 +246,7 @@ from simulation.base import SimulatorError as _SimulatorError
 from simulation.meep import (
     PERIODIC_ABSORBER_VALIDITY as _MEEP_PERIODIC_ABSORBER_VALIDITY,
 )
+from simulation.meep import GeometryRole as _GeometryRole
 from simulation.meep import (
     periodic_absorber_capability_gaps as _meep_periodic_absorber_capability_gaps,
 )
@@ -1388,6 +1390,154 @@ def _declared_adapter_name(family: Any) -> str:
         raise DesignLoopValidationError(str(exc)) from exc
 
 
+def _role_tagged_primitives(geometry: Any) -> list[Any]:
+    """Every raw, unvalidated `role` value across `geometry`'s combined
+    `materials`+`conductors` lists (issue #486, reading #485's own tag back
+    out). Deliberately NOT re-validating each value against `GeometryRole`
+    -- that is `simulation/meep.py`'s `_validate_role`'s job, run for real
+    when (and only when) a MEEP_FLOQUET candidate actually builds its
+    geometry; this function only needs to know whether ANY primitive
+    opted into role-tagging at all, and (via the caller) how many claim
+    `REFLECTOR`.
+
+    Tolerates `geometry` being `None` or not a dict at all -- returning `[]`
+    rather than raising -- because this can run (from `_handle_simulation`)
+    before a handler's own `_require_fields` has had a chance to say
+    'geometry is missing'; this check must not pre-empt that with a
+    different, confusing error of its own. A NEC2-shaped geometry (a
+    `{'wires': [...]}` dict) also lands here safely: `.get('materials'/
+    'conductors', [])` simply finds nothing, the same as no geometry at
+    all -- which is exactly the "PATCH's own wire representation cannot
+    carry a role tag in the first place" case this ticket's legacy
+    exemption exists for.
+    """
+    if not isinstance(geometry, dict):
+        return []
+    primitives = list(geometry.get("materials") or []) + list(geometry.get("conductors") or [])
+    return [
+        prim.get("role")
+        for prim in primitives
+        if isinstance(prim, dict) and prim.get("role") is not None
+    ]
+
+
+def _any_requirement_confirms_host_ground_plane(requirements: Any) -> bool:
+    """Whether ANY entry in a design's `requirements` carries a CONFIRMED,
+    `is_ground_plane=True` `host_ground_plane` assertion (#484).
+
+    THE AMBIGUITY THIS RESOLVES, stated plainly. #481/#486 both describe
+    this as consulting "the owning requirement's host ground-plane
+    assertion" -- phrasing that presumes one requirement per candidate.
+    In fact `requirements` is a dict of every requirement entry recorded
+    for the whole design, and whether the host surface is a reliable
+    ground plane is a physical fact about that surface, not something
+    tied to any one numeric target (a gain requirement and a VSWR
+    requirement on the same design share the same host). There is no
+    natural "the" requirement_id to demand a match against, and refusing
+    a candidate because the confirmation happened to be attached to a
+    different requirement entry than some arbitrarily chosen one would be
+    checking bookkeeping, not physics. So this deliberately asks "does
+    ANY entry confirm it" rather than requiring a specific requirement_id
+    -- the same design-wide fact, read off whichever entry happens to
+    carry it.
+
+    Tolerates `requirements` being anything other than a dict (returns
+    `False`), and tolerates entries that are not themselves dicts or that
+    carry no `host_ground_plane` key at all -- `state.requirements` in this
+    loop is an open, caller-supplied dict (see `DesignLoopState`'s own
+    docstring), not guaranteed to be shaped like `designs.requirement_
+    targets`'s own requirement-entry schema.
+    """
+    if not isinstance(requirements, dict):
+        return False
+    for entry in requirements.values():
+        if not isinstance(entry, dict):
+            continue
+        host_ground_plane = entry.get("host_ground_plane")
+        if not isinstance(host_ground_plane, dict):
+            continue
+        if (
+            host_ground_plane.get("ground_plane_status") == _GroundPlaneStatus.CONFIRMED.value
+            and host_ground_plane.get("is_ground_plane") is True
+        ):
+            return True
+    return False
+
+
+def _require_reflector_or_confirmed_host_ground_plane(
+    family: Any, geometry: Any, requirements: Any
+) -> None:
+    """ADR-0017's rule, finally read against itself (issue #486): a
+    candidate whose family needs a ground plane must get one from
+    somewhere -- its own bottom printed layer, or the surface it mounts
+    on -- and until now nothing checked which. #484 gave a design a place
+    to confirm the host is one; #485 gave a geometry primitive a `role` to
+    say it IS one (`REFLECTOR`); this is the first thing that reads the
+    two against each other.
+
+    CHECKED IN THIS ORDER, and each step here is a deliberate pass, not
+    an oversight:
+
+    1. `family.requires_ground_plane` is falsy: exempt outright. A family
+       whose physics never depends on a ground plane at all
+       (ABSORBER_TRANSMISSIVE's own shape) has nothing here to check.
+    2. `geometry` carries no `role` tag anywhere across its combined
+       `materials`+`conductors` (`_role_tagged_primitives` above): exempt.
+       This is a DELIBERATE decision carried over from the parent spec
+       (#481), not a gap -- `role` (#485) is opt-in metadata, and PATCH's
+       own NEC2 wire-geometry representation (the other family with
+       requires_ground_plane=True) has no materials/conductors list to
+       tag in the first place, so it can never satisfy a check phrased in
+       terms of that tag. Legacy/pre-#485 MEEP_FLOQUET geometry gets the
+       identical pass, for the identical reason: only geometry that opts
+       into role-tagging is held to this check.
+    3. At least one primitive claims `role=REFLECTOR`
+       (`_build_geometry_list` itself caps this at exactly one across a
+       geometry's combined materials+conductors): the candidate supplies
+       its own reflector, ADR-0017's default. Passes.
+    4. Otherwise, passes only if `_any_requirement_confirms_host_ground_
+       plane` says this design has a CONFIRMED, is_ground_plane=True
+       assertion (#484) -- ADR-0017's named escape hatch: a design may
+       skip its own reflector layer and lean on the host instead, but
+       only once a human has vouched the host actually is one.
+
+    Raises `DesignLoopValidationError` otherwise, naming the family and
+    exactly what to add -- mirroring `_require_transmission_monitor_for_
+    two_port`'s own message shape and its own reason for checking here,
+    before the solver runs: no length of a Meep run can supply a reflector
+    the geometry never described, or a confirmation a human never gave.
+    """
+    if not getattr(family, "requires_ground_plane", False):
+        return
+
+    roles = _role_tagged_primitives(geometry)
+    if not roles:
+        return
+
+    reflector_count = sum(1 for role in roles if role == _GeometryRole.REFLECTOR)
+    if reflector_count >= 1:
+        return
+
+    if _any_requirement_confirms_host_ground_plane(requirements):
+        return
+
+    raise DesignLoopValidationError(
+        f"Design family {getattr(family, 'name', family)!r} declares "
+        "requires_ground_plane=True (ADR-0017), so this candidate needs a "
+        "reflector from somewhere: its own bottom printed layer, or the "
+        "surface it mounts on. This candidate's geometry has role-tagged "
+        "layers (issue #485) but none of them is role=REFLECTOR, and no "
+        "requirement on this design confirms the host is a reliable ground "
+        "plane (issue #484). Add a REFLECTOR-role primitive to this "
+        "candidate's geometry (materials or conductors), or confirm the "
+        "host assertion via designs.requirement_targets."
+        "confirm_requirement_host_ground_plane before retrying -- this is "
+        "refused before the solver runs rather than after, because no "
+        "length of run can supply a reflector the geometry never described "
+        "or a confirmation a human never gave."
+    )
+
+
 def _handle_simulation(
     state: DesignLoopState, step_input: dict[str, Any]
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -1415,6 +1565,27 @@ def _handle_simulation(
     The registry entry itself -- not just its solver's name -- is handed to
     the handler, because since #243 the handler also has to know how many
     ports the family declares before it can turn the run into an absorption.
+
+    WHY THE REFLECTOR-PROVENANCE CHECK (#486) LIVES HERE, NOT INSIDE A
+    HANDLER. `_require_reflector_or_confirmed_host_ground_plane` needs both
+    `state.requirements` (where a design's `host_ground_plane` assertion,
+    #484, actually lives) and this step's own geometry -- and this function
+    is the one place both are already in scope, with no per-handler
+    signature change needed. `_simulate_meep_floquet`/`_simulate_nec2`/
+    `_simulate_palace_floquet` all take `(family, step_input)` only, per
+    `_SIMULATION_ADAPTERS`'s own dispatch contract; threading `requirements`
+    through that contract for one check, when every handler's `family`
+    argument already carries `requires_ground_plane`, would touch three
+    handlers to give one of them one more fact. Checking here also means it
+    runs for every adapter uniformly, with no adapter-name special-casing:
+    NEC2's geometry is `{'wires': [...]}` and PALACE_FLOQUET's is
+    `{'unit_cell', 'ground_backed', 'pec_patches', ...}` -- neither carries a
+    `materials`/`conductors` list to tag a `role` onto in the first place
+    (#485's tag exists only on `simulation/meep.py`'s own geometry shape),
+    so `_role_tagged_primitives` finds nothing for either and the legacy
+    exemption fires on its own. PATCH (NEC2, requires_ground_plane=True)
+    is proof of this: it is never refused by this check, and never needed a
+    line of code naming NEC2 to arrange that.
     """
     family = _registry_family_of_record(state, "simulation")
     adapter = _declared_adapter_name(family)
@@ -1428,6 +1599,9 @@ def _handle_simulation(
             "declaration in designs/design_families.py. Running a different "
             "solver instead is the exact defect issue #241 removed."
         )
+    _require_reflector_or_confirmed_host_ground_plane(
+        family, step_input.get("geometry"), state.requirements
+    )
     return handler(family, step_input)
 
 

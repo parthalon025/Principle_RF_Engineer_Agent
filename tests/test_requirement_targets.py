@@ -42,16 +42,22 @@ import pytest
 from dotenv import load_dotenv
 
 from designs.requirement_targets import (
+    GroundPlaneStatus,
+    InvalidHostGroundPlaneAssertionError,
     InvalidRequirementTargetError,
     TargetComparator,
     TargetStatus,
     UnknownRequirementError,
     _fetch_requirements,
+    attach_host_ground_plane,
     attach_intent,
     attach_target,
+    confirm_host_ground_plane,
     confirm_target,
     mark_unscoreable,
+    propose_host_ground_plane,
     propose_intended_effect,
+    propose_requirement_host_ground_plane,
     propose_requirement_target,
     propose_target,
 )
@@ -353,7 +359,145 @@ def test_attach_intent_rejects_unknown_requirement_id():
 
 
 # ---------------------------------------------------------------------------
-# TargetComparator / TargetStatus -- the fixed vocabularies themselves
+# propose_host_ground_plane / confirm_host_ground_plane / attach_host_ground_plane
+# -- attach_target's/attach_intent's direct sibling (issue #484, ADR-0017):
+# "asserted, never inferred" that the host surface is a confirmed, reliable
+# ground plane, so the base printed layer may skip its own reflector.
+# ---------------------------------------------------------------------------
+
+
+def test_propose_host_ground_plane_true_is_tagged_assumed_and_proposed():
+    assertion = propose_host_ground_plane(True)
+    assert assertion["ground_plane_status"] == "PROPOSED"
+    assert assertion["provenance"] == "ASSUMED"
+    assert assertion["is_ground_plane"] is True
+    assert assertion["confirmed_by"] is None
+    assert assertion["confirmed_at"] is None
+
+
+def test_propose_host_ground_plane_covers_an_explicit_false_assertion():
+    # An explicit "no, don't trust the host" is a legitimate assertion too --
+    # distinct from silence, which ADR-0017 already treats as the safe
+    # default without anyone having to say so.
+    assertion = propose_host_ground_plane(False)
+    assert assertion["is_ground_plane"] is False
+    assert assertion["ground_plane_status"] == "PROPOSED"
+
+
+def test_propose_host_ground_plane_rejects_non_bool_value():
+    with pytest.raises(InvalidHostGroundPlaneAssertionError, match="is_ground_plane"):
+        propose_host_ground_plane("yes")
+
+
+def test_propose_host_ground_plane_rejects_none():
+    with pytest.raises(InvalidHostGroundPlaneAssertionError, match="is_ground_plane"):
+        propose_host_ground_plane(None)
+
+
+def test_confirm_host_ground_plane_records_confirmed_by_and_confirmed_at():
+    proposed = propose_host_ground_plane(True)
+    confirmed = confirm_host_ground_plane(
+        proposed, confirmed_by="j.mcfarland", confirmed_at="2026-09-03T00:00:00+00:00"
+    )
+    assert confirmed["ground_plane_status"] == "CONFIRMED"
+    assert confirmed["confirmed_by"] == "j.mcfarland"
+    assert confirmed["confirmed_at"] == "2026-09-03T00:00:00+00:00"
+
+
+def test_confirm_host_ground_plane_preserves_the_assertion_and_provenance():
+    proposed = propose_host_ground_plane(True)
+    confirmed = confirm_host_ground_plane(proposed, confirmed_by="j.mcfarland")
+    assert confirmed["is_ground_plane"] is True
+    # provenance is deliberately still ASSUMED after confirmation -- the
+    # identical "WHY PROVENANCE STAYS ASSUMED" reasoning this module's own
+    # docstring gives for target/intended_effect applies unchanged here:
+    # confirmation is a trust signal about the reading, not a stronger
+    # evidence tier.
+    assert confirmed["provenance"] == "ASSUMED"
+
+
+def test_confirm_host_ground_plane_does_not_mutate_its_input():
+    proposed = propose_host_ground_plane(True)
+    confirm_host_ground_plane(proposed, confirmed_by="j.mcfarland")
+    assert proposed["ground_plane_status"] == "PROPOSED"
+    assert proposed["confirmed_by"] is None
+
+
+def test_confirm_host_ground_plane_fills_in_a_real_timestamp_by_default():
+    proposed = propose_host_ground_plane(True)
+    confirmed = confirm_host_ground_plane(proposed, confirmed_by="j.mcfarland")
+    assert confirmed["confirmed_at"] is not None
+    assert isinstance(confirmed["confirmed_at"], str)
+
+
+def test_confirm_host_ground_plane_rejects_something_with_no_proposal():
+    # Nothing shaped like propose_host_ground_plane's own output -- the pure-
+    # function analogue of the wrapper's "no_proposal" outcome.
+    with pytest.raises(InvalidHostGroundPlaneAssertionError, match="ground_plane_status"):
+        confirm_host_ground_plane({}, confirmed_by="j.mcfarland")
+
+
+def test_confirm_host_ground_plane_rejects_an_already_confirmed_assertion():
+    proposed = propose_host_ground_plane(True)
+    confirmed_once = confirm_host_ground_plane(proposed, confirmed_by="j.mcfarland")
+    with pytest.raises(InvalidHostGroundPlaneAssertionError):
+        confirm_host_ground_plane(confirmed_once, confirmed_by="someone.else")
+
+
+def test_confirm_host_ground_plane_rejects_empty_confirmed_by():
+    proposed = propose_host_ground_plane(True)
+    with pytest.raises(InvalidHostGroundPlaneAssertionError, match="confirmed_by"):
+        confirm_host_ground_plane(proposed, confirmed_by="")
+
+
+def test_attach_host_ground_plane_preserves_the_original_prose_and_any_target():
+    requirements = {
+        "req-1": {
+            "requirement": "the platform is a solid aluminum wing",
+            "target": propose_target(value=2.4e9, comparator="EQUALS", unit="Hz"),
+        },
+    }
+    assertion = propose_host_ground_plane(True)
+    updated = attach_host_ground_plane(requirements, "req-1", assertion)
+    assert updated["req-1"]["requirement"] == "the platform is a solid aluminum wing"
+    assert updated["req-1"]["target"]["value"] == 2.4e9
+    assert updated["req-1"]["host_ground_plane"] == assertion
+
+
+def test_attach_host_ground_plane_does_not_mutate_its_input():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    assertion = propose_host_ground_plane(True)
+    attach_host_ground_plane(requirements, "req-1", assertion)
+    assert "host_ground_plane" not in requirements["req-1"]
+
+
+def test_attach_host_ground_plane_replaces_a_prior_assertion_on_correction():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    first = propose_host_ground_plane(False)
+    with_first = attach_host_ground_plane(requirements, "req-1", first)
+    second = propose_host_ground_plane(True)
+    with_second = attach_host_ground_plane(with_first, "req-1", second)
+    assert with_second["req-1"]["host_ground_plane"]["is_ground_plane"] is True
+    assert with_second["req-1"]["requirement"] == "some prose"
+
+
+def test_attach_host_ground_plane_preserves_other_keys_on_the_requirement_entry():
+    requirements = {"req-1": {"requirement": "some prose", "priority": "high"}}
+    assertion = propose_host_ground_plane(True)
+    updated = attach_host_ground_plane(requirements, "req-1", assertion)
+    assert updated["req-1"]["priority"] == "high"
+
+
+def test_attach_host_ground_plane_rejects_unknown_requirement_id():
+    requirements = {"req-1": {"requirement": "some prose"}}
+    assertion = propose_host_ground_plane(True)
+    with pytest.raises(UnknownRequirementError, match="req-does-not-exist"):
+        attach_host_ground_plane(requirements, "req-does-not-exist", assertion)
+
+
+# ---------------------------------------------------------------------------
+# TargetComparator / TargetStatus / GroundPlaneStatus -- the fixed vocabularies
+# themselves
 # ---------------------------------------------------------------------------
 
 
@@ -363,6 +507,10 @@ def test_target_comparator_covers_point_minimum_and_maximum():
 
 def test_target_status_covers_the_three_lifecycle_states():
     assert {s.value for s in TargetStatus} == {"PROPOSED", "CONFIRMED", "UNSCOREABLE"}
+
+
+def test_ground_plane_status_covers_the_two_lifecycle_states():
+    assert {s.value for s in GroundPlaneStatus} == {"PROPOSED", "CONFIRMED"}
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +572,25 @@ class TestFetchRequirementsRowLock:
 
         stored = read_design(design_id)
         assert stored["requirements"]["REQ-1"]["target"]["value"] == 20.0
+
+    def test_propose_requirement_host_ground_plane_persists_via_read_design(self, design_id):
+        """`propose_requirement_target`'s sibling test, one field over (issue
+        #484) -- kept alongside it for the same reason: the pure functions
+        below are exhaustively covered, but the I/O wrapper itself (fetch,
+        attach, write, commit) is only proven end to end here."""
+        result = propose_requirement_host_ground_plane(
+            design_id=design_id,
+            requirement_id="REQ-1",
+            is_ground_plane=True,
+        )
+        assert result["status"] == "proposed"
+
+        stored = read_design(design_id)
+        assert stored["requirements"]["REQ-1"]["host_ground_plane"]["is_ground_plane"] is True
+        assert (
+            stored["requirements"]["REQ-1"]["host_ground_plane"]["ground_plane_status"]
+            == GroundPlaneStatus.PROPOSED.value
+        )
 
     def test_fetch_requirements_for_update_blocks_a_concurrent_fetch_until_release(self, design_id):
         """The core issue #389 regression test. Without `FOR UPDATE`, two

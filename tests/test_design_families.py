@@ -151,6 +151,20 @@ def test_a_sweep_axis_with_no_stated_reason_is_refused():
         )
 
 
+def test_requires_ground_plane_and_port_count_disagreement_is_refused_at_construction():
+    """Issue #216's own invariant, re-pinned here rather than only exercised
+    incidentally. Issue #486 added a second, independent consumer of
+    `requires_ground_plane` (the reflector-provenance check in
+    orchestration/design_loop.py) that trusts this flag is never allowed to
+    drift out of agreement with `port_count` -- so this test exists to catch
+    a future change to `__post_init__`'s cross-check here, at the source,
+    rather than have #486's own tests discover it indirectly."""
+    with pytest.raises(ValueError, match="port_count"):
+        dataclasses.replace(ABSORBER, port_count=2)
+    with pytest.raises(ValueError, match="port_count"):
+        dataclasses.replace(ABSORBER_TRANSMISSIVE, port_count=1)
+
+
 def test_sweep_axes_follow_neither_the_tier_nor_the_port_count():
     """ADR-0045's load-bearing claim about this field, checked rather than
     quoted: "none of the three is derivable from the tier or from each other."
