@@ -47,9 +47,9 @@ from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standar
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.fcc_ecfr import search_fcc_rules as _search_fcc_rules
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
-from knowledge.sourcing.patent import search_uspto_patents as _search_uspto_patents
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
+from knowledge.uspto_search import search_uspto_patents as _search_uspto_patents
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -1880,7 +1880,7 @@ def search_uspto_patents(query: str, max_results: int = 10) -> list:
     and return a ranked list of candidates for review -- NOT documents in the
     corpus. Each candidate carries number/title/date/snippet (snippet is always
     None -- ODP's search response is bibliographic metadata, not a text excerpt
-    of the matched document; see knowledge/sourcing/patent.py's module docstring).
+    of the matched document; see knowledge/uspto_search.py's module docstring).
     Use "search precedent before inventing" (CLAUDE.md) to judge relevance before
     spending an ingestion pass on it. Pass a chosen candidate's number straight
     to ingest_patent unchanged (it already round-trips through

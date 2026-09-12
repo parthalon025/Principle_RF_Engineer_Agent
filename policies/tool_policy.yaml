@@ -171,9 +171,11 @@ approval_self_gated:
   - lookup_mouser_component
   - lookup_nexar_component
   - search_ink_product
-  # issue #280: search_uspto_patents (knowledge/sourcing/patent.py) sits here,
-  # not beside its own sibling ingest_patent in ingestion_auto below. The
-  # distinction is the same one this category already draws for the three
+  # issue #280: search_uspto_patents (knowledge/uspto_search.py, split into
+  # its own top-level module by issue #513) sits here, not beside its own
+  # sibling ingest_patent (knowledge/sourcing/patent.py) in ingestion_auto
+  # below. The distinction is the same one this category already draws for
+  # the three
   # distributor lookups: ingest_patent's fetch-by-number USPTO PDF endpoint
   # takes no API key, no account and no payment (verified live, issue #219),
   # but search_uspto_patents calls the USPTO Open Data Portal's full-text
