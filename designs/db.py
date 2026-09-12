@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import copy
 import datetime
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import psycopg
@@ -58,6 +60,41 @@ def get_connection() -> psycopg.Connection:
     for the two things not to do with a pooled connection.
     """
     return checkout_connection()
+
+
+@contextmanager
+def _write_transaction() -> Iterator[psycopg.Connection]:
+    """Shared outer skeleton for every write-path call site in
+    `designs/service.py`, `designs/requirement_targets.py`, and
+    `designs/requirements_document.py` (issue #504/#518): check out a
+    connection via `get_connection()`, yield it, roll back and re-raise on
+    an unhandled exception, and always close (return to the pool) on the
+    way out.
+
+    Deliberately does **not** commit on normal exit. Several call sites
+    call `conn.rollback()` themselves and then `return {...}` for an
+    expected, non-exceptional outcome (`not_found`, `already_exists`, an
+    invalid shape, ...) before ever reaching their own success-path
+    `conn.commit()`; a helper that auto-committed here would silently undo
+    that intentional rollback. So every call site keeps its own inner
+    try/except rollback-and-return branches and its own final
+    `conn.commit()` exactly where they are today -- this only replaces the
+    outer `conn = get_connection()` / `try` / `except Exception:
+    conn.rollback(); raise` / `finally: conn.close()` lines with `with
+    _write_transaction() as conn:`.
+
+    Never wrap the yielded connection in Python's own `with conn:` --
+    `get_connection`'s docstring and `db/pool.py` both document why that
+    doesn't check the connection back into the pool.
+    """
+    conn = get_connection()
+    try:
+        yield conn
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 class DanglingComponentReferenceError(Exception):

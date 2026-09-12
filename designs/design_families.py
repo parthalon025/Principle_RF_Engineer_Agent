@@ -2025,7 +2025,8 @@ SHIELD = DesignFamily(
         reason=(
             "it is one line of arithmetic and nobody has written it down anywhere "
             "it can be run. "
-            "rf_tools.calculations has linear_to_db and return_loss_db but no "
+            "rf_tools.link_noise_budget has linear_to_db and rf_tools.network_parameters "
+            "has return_loss_db but neither has a "
             "shielding-effectiveness function, and orchestration/design_loop.py's "
             "post-solver arithmetic computes absorption from reflectance and "
             "transmittance (_one_port_absorption / _two_port_absorption) and stops "

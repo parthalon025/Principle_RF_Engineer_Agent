@@ -717,8 +717,7 @@ def propose_requirement_target(
     except InvalidRequirementTargetError as exc:
         return {"status": "invalid_target", "message": str(exc)}
 
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             requirements = _fetch_requirements(conn, design_id)
             updated = attach_target(requirements, requirement_id, target)
@@ -735,11 +734,6 @@ def propose_requirement_target(
             }
         _store_requirements(conn, design_id, updated)
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "proposed",
@@ -768,8 +762,7 @@ def mark_requirement_unscoreable(
     except InvalidRequirementTargetError as exc:
         return {"status": "invalid_target", "message": str(exc)}
 
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             requirements = _fetch_requirements(conn, design_id)
             updated = attach_target(requirements, requirement_id, target)
@@ -786,11 +779,6 @@ def mark_requirement_unscoreable(
             }
         _store_requirements(conn, design_id, updated)
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "unscoreable",
@@ -821,8 +809,7 @@ def confirm_requirement_target(
     "target": {...}}` with `target["confirmed_by"]`/`target["confirmed_at"]`
     set.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             requirements = _fetch_requirements(conn, design_id)
         except db.UnknownDesignError as exc:
@@ -860,11 +847,6 @@ def confirm_requirement_target(
         updated = attach_target(requirements, requirement_id, confirmed)
         _store_requirements(conn, design_id, updated)
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "confirmed",
@@ -902,8 +884,7 @@ def propose_requirement_host_ground_plane(
     except InvalidHostGroundPlaneAssertionError as exc:
         return {"status": "invalid_host_ground_plane", "message": str(exc)}
 
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             requirements = _fetch_requirements(conn, design_id)
             updated = attach_host_ground_plane(requirements, requirement_id, assertion)
@@ -920,11 +901,6 @@ def propose_requirement_host_ground_plane(
             }
         _store_requirements(conn, design_id, updated)
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "proposed",
@@ -956,8 +932,7 @@ def confirm_requirement_host_ground_plane(
     ..., "host_ground_plane": {...}}` with `host_ground_plane["confirmed_by"]`/
     `host_ground_plane["confirmed_at"]` set.
     """
-    conn = db.get_connection()
-    try:
+    with db._write_transaction() as conn:
         try:
             requirements = _fetch_requirements(conn, design_id)
         except db.UnknownDesignError as exc:
@@ -996,11 +971,6 @@ def confirm_requirement_host_ground_plane(
         updated = attach_host_ground_plane(requirements, requirement_id, confirmed)
         _store_requirements(conn, design_id, updated)
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
     return {
         "status": "confirmed",
