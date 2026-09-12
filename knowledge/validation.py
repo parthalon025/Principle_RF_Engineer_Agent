@@ -4,8 +4,9 @@ values (ADR-0003, CONTEXT.md: Component).
 `validate_field` returns a `ValidationResult`, it never raises -- a bound
 violation is data to record on the field (`provenance: UNKNOWN`, via
 `knowledge.provenance.component_field_provenance`), not a caller error, per
-ticket #11's acceptance criteria. Style matches `rf_tools/calculations.py`'s
-domain checks, but returns instead of raising.
+ticket #11's acceptance criteria. Style matches `rf_tools`'s per-domain
+modules' (e.g. `rf_tools/sheet_impedance.py`) domain checks, but returns
+instead of raising.
 
 Bounds are keyed by field name, not by (category, field) pair: the same
 field name denotes the same physical quantity everywhere it appears across

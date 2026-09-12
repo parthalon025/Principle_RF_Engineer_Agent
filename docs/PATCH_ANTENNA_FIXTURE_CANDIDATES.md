@@ -1,7 +1,7 @@
 # Verification-corpus candidates: a real microstrip patch antenna case for `tests/fixtures/`
 
 Research findings for the first end-to-end fixture exercising requirement →
-`designs/requirement_targets.py` → `rf_tools/calculations.py`'s `patch_*`
+`designs/requirement_targets.py` → `rf_tools/patch_synthesis.py`'s `patch_*`
 functions → `optimization.rf_objectives.optimize_patch_length_for_target_frequency`
 → `rf_tools/touchstone.py` → `rf_tools/correlation.py`, per `CONTEXT.md`'s
 "there is no verification corpus yet for the simulator adapters or the
@@ -47,7 +47,7 @@ glossed over.
 
 ## Repo context that shaped the ranking
 
-- `rf_tools/calculations.py`'s `patch_resonant_frequency_hz` and its
+- `rf_tools/patch_synthesis.py`'s `patch_resonant_frequency_hz` and its
   supporting `patch_effective_permittivity`/`patch_length_extension_m`
   take exactly `(eps_r, w_m, h_m, l_m)` — a rectangular patch, Balanis
   transmission-line model. `optimization.rf_objectives.

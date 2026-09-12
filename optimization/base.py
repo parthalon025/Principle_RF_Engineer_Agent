@@ -22,7 +22,8 @@ every simulator backend a shared result shape:
     self-describing without needing to consult the call site that made it.
 
 Provenance: `OptimizationResult.provenance` defaults to "CALCULATED" (this
-project's rf_tools.calculations convention), not "SIMULATED"
+project's rf_tools domain-module convention, e.g. rf_tools/sheet_impedance.py),
+not "SIMULATED"
 (simulation/base.py's SimulationResult convention). Optimization here is a
 deterministic (or, for bayesian_optimize, seeded-deterministic) numerical
 procedure applied to whatever objective function the caller supplies -- it

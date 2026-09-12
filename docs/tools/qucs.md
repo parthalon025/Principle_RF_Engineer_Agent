@@ -139,7 +139,7 @@ frequency-selective surfaces, absorbers:
   no scriptable equivalent to drive from `simulation/qucs.py` — see
   `docs/adr/0031-filter-physical-realization-is-a-closed-form-stepped-impedance-extension.md`,
   which instead added closed-form microstrip-realization formulas directly
-  to `rf_tools/filter_synthesis.py`/`rf_tools/calculations.py` for the
+  to `rf_tools/filter_synthesis.py`/`rf_tools/microstrip_line.py` for the
   lowpass case.
 - **qucsator_rf's own dispersive microstrip/MLIN and other real
   transmission-line models** (coaxial, coplanar, waveguide, substrate-aware)

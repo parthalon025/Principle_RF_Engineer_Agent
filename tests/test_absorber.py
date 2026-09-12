@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from rf_tools import calculations
+from rf_tools import sheet_impedance
 from rf_tools.absorber import (
     ETA0_OHM,
     THIN_SPACER_RATIO,
@@ -19,7 +19,7 @@ from rf_tools.absorber import (
     grounded_slab_impedance,
     patterned_sheet_impedance,
 )
-from rf_tools.calculations import COSTA_EQ10_FORM, COSTA_EQ10_FORMS
+from rf_tools.sheet_impedance import COSTA_EQ10_FORM, COSTA_EQ10_FORMS
 
 # A plausible printed X-band stack: silicone spacer, 3 mm cell, 0.2 mm gap.
 STACK = {
@@ -123,11 +123,11 @@ def test_the_recorded_form_cannot_disagree_with_the_numbers():
     before = absorber_band_response(8e9, 12e9, **THIN_STACK)
     assert before["costa_eq10_form"] == "eps0"
 
-    calculations.COSTA_EQ10_FORM = "eps0_epsr"
+    sheet_impedance.COSTA_EQ10_FORM = "eps0_epsr"
     try:
         after = absorber_band_response(8e9, 12e9, **THIN_STACK)
     finally:
-        calculations.COSTA_EQ10_FORM = "eps0"
+        sheet_impedance.COSTA_EQ10_FORM = "eps0"
 
     assert after["costa_eq10_form"] == "eps0_epsr"
     # And the numbers really did move, so the label is tracking something.

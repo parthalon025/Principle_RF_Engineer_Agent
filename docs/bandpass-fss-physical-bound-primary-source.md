@@ -178,7 +178,7 @@ Of the four one/two-element lossless shunt candidates (plain `C`, plain `L`,
 series `L`-`C`, parallel `L`-`C`), only the **parallel `L`‖`C` tank** has
 `Y(ω₀) = 0` at its own resonance — the other three are low-pass, high-pass or
 band-**stop**. A loop-shaped *slot* cut in a conductor is the Babinet
-complement of a conducting *loop patch*; `rf_tools/calculations.py`'s already
+complement of a conducting *loop patch*; `rf_tools/sheet_impedance.py`'s already
 -adopted grid-impedance pair (`capacitive_grid_sheet_capacitance_f` /
 `inductive_grid_sheet_inductance_h`, "the exact Babinet dual") satisfies
 `Z·Z' = η₀²/4` exactly, and a conducting loop (series `L`-`C` in shunt, a
@@ -361,7 +361,7 @@ remains the family's own separate, undischarged concern.
 | Claim | Provenance |
 |---|---|
 | Steer's Fano–Bode inequalities, including the `π/Q` general form | `LITERATURE-SUPPORTED` — verbatim, open textbook |
-| The parallel-LC shunt tank is the unique lossless bandpass topology; its Babinet derivation from a loop slot | `CALCULATED` — derived from `rf_tools/transmissive_absorber.py`'s and `rf_tools/calculations.py`'s own adopted formulas |
+| The parallel-LC shunt tank is the unique lossless bandpass topology; its Babinet derivation from a loop slot | `CALCULATED` — derived from `rf_tools/transmissive_absorber.py`'s and `rf_tools/sheet_impedance.py`'s own adopted formulas |
 | Bode–Fano is vacuous for `BANDPASS_FSS` | `CALCULATED` (the `Q=0` substitution) + `INFERRED` (no alternative split rescues it) — no source states this negative result directly |
 | Fano's and Rozanov's bounds are members of one passive-system sum-rule family, but different members | `LITERATURE-SUPPORTED` — verbatim, reference numbers checked |
 | **Eq. (12): `B ≤ γπΔ/(Aλ₀)`, and every validity condition in §4** | `LITERATURE-SUPPORTED` — read in full, quoted verbatim, bibliography Crossref-confirmed, measurement-validated by the source |

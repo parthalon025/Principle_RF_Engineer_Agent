@@ -17,7 +17,8 @@ entry and docs/adr/0014's own wording, which this module quotes rather than
 reinterprets.
 
 FOUNDATIONAL RULE THIS MODULE OBEYS: the LLM never does RF arithmetic
-(`rf_tools/calculations.py`, `docs/adr/0003`, `docs/adr/0014`). Every branch
+(`rf_tools`'s domain modules, e.g. `rf_tools/sheet_impedance.py`, plus
+`docs/adr/0003`, `docs/adr/0014`). Every branch
 below is ordinary floating-point comparison; nothing here calls a model, and
 every result is tagged `provenance="CALCULATED"` for exactly that reason.
 
@@ -90,8 +91,9 @@ DESIGN QUESTIONS THIS TICKET LEFT OPEN, AND WHAT WAS CHOSEN
    0 -- any nonzero deviation would be an undefined division, and inventing
    an arbitrary epsilon denominator would silently misrepresent a precision
    this function has no basis for choosing (the same refuse-rather-than-
-   guess instinct `rf_tools/calculations.py`'s domain functions already
-   apply to e.g. undefined ABCD/stability-circle conversions). A target
+   guess instinct `rf_tools/network_parameters.py`'s domain functions
+   already apply to e.g. undefined ABCD/stability-circle conversions). A
+   target
    truly centered on 0 (e.g. "phase error = 0 degrees") needs an explicit
    `tolerance` to be scoreable this way; #92's `propose_target` already
    accepts one.
@@ -144,8 +146,9 @@ DESIGN QUESTIONS THIS TICKET LEFT OPEN, AND WHAT WAS CHOSEN
    domain judgment this project's foundational rule keeps out of
    deterministic code without an explicit, caller-supplied instruction. A
    caller comparing a result recorded in different units must convert it
-   to the target's own unit (e.g. via this module's sibling
-   `rf_tools/calculations.py` conversions where one exists) BEFORE calling
+   to the target's own unit (e.g. via this project's sibling
+   `rf_tools` domain-module conversions, such as
+   `rf_tools/network_parameters.py`'s, where one exists) BEFORE calling
    `success_score` -- this module does not do that conversion silently on
    the caller's behalf. Rejected alternative: ignoring units entirely (score
    the raw numbers regardless of unit). Rejected because a target of

@@ -609,7 +609,7 @@ already demonstrated.**
 
 ## 10. The code seam, precisely
 
-**`rf_tools/calculations.py:1055`.** Verified by reading it:
+**`rf_tools/sheet_impedance.py`.** Verified by reading it:
 
 ```python
 def grid_effective_permittivity(eps_r: float) -> float:
@@ -625,7 +625,7 @@ first line. There is no parameter for what sits above the grid, and no caller co
 supply one.
 
 The seam propagates exactly one level down. `capacitive_grid_sheet_capacitance_f`
-(`rf_tools/calculations.py:1286`) calls it at line 1327 —
+(`rf_tools/sheet_impedance.py`) calls it internally —
 `eps_eff = grid_effective_permittivity(eps_r)` — and that function feeds
 `patterned_sheet_impedance` in `rf_tools/absorber.py:141`, which feeds `absorptivity`
 at `:213`, which is the ANALYSIS-step model for the whole `ABSORBER` design family.
@@ -815,6 +815,6 @@ login. Running the sweep costs an adapter capability that does not exist yet.
 | Voltera NOVA capability figures | `MANUFACTURER-SPECIFIED` |
 | Zero `cure` / `laminate` rows seeded | Verified in the tree |
 | `geometry/stack.py` does not exist | Verified by listing `geometry/` |
-| `grid_effective_permittivity` hardcodes air above | Verified by reading `rf_tools/calculations.py:1055–1066` |
+| `grid_effective_permittivity` hardcodes air above | Verified by reading `rf_tools/sheet_impedance.py` |
 | ACES eq (5) as the candidate missing form | `LITERATURE-SUPPORTED` that it exists (recorded in `costa-thin-spacer-correction.md` §8); **unread** |
 | The FSS-superstrate literature | **Unsearched.** No absence claim is made |

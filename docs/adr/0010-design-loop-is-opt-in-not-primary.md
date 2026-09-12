@@ -22,7 +22,7 @@ exploratory case for the benefit of the tracked case, without the user
 having asked for tracking.
 
 Both paths call the same underlying deterministic functions
-(`rf_tools.calculations`, `simulation.*`, `measurement.*`) — the loop adds
+(`rf_tools`'s domain modules, `simulation.*`, `measurement.*`) — the loop adds
 no new RF capability, only the ordering, gating, and persistence around an
 explicit design-iteration workflow.
 
