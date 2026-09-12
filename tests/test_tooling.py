@@ -95,7 +95,14 @@ def _capability_warning_entry(**overrides: Any) -> dict[str, Any]:
         "value": 0.2,
         "comparator": "AT_MOST",
         "unit": "mm",
-        "reason": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+        # Issue #515/#496: the charter's own three-part warning contract
+        # (assumed / costs / cheapest_test), same field names as
+        # tests/test_design_loop.py's own fixture of the same name -- kept
+        # in sync there, not imported (see this module's own docstring).
+        "assumed": "needs 0.2 mm features; loaded printer achieves 0.5 mm",
+        "costs": "features finer than 0.5 mm will not resolve; the printed "
+        "geometry will not match the design",
+        "cheapest_test": "print a resolution test coupon on the loaded printer",
     }
     entry.update(overrides)
     return entry

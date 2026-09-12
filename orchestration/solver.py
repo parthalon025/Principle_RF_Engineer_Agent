@@ -541,8 +541,14 @@ from designs.design_families import get_design_family as _get_design_family
 from designs.requirement_targets import TargetStatus
 from designs.success_score import INFERRED, success_score
 
-from .design_loop import GATED_STEPS, DesignStep
+from .design_loop import (
+    GATED_STEPS,
+    OPTIMIZE_CONTINUOUS_PATCH_LENGTH_REQUIRED_FIELDS,
+    SIMULATE_NEC2_REQUIRED_FIELDS,
+    DesignStep,
+)
 from .score_fields import SCORE_FIELD_SOURCES
+from .tooling import _STEP_TO_TOOL_NAME as _TOOLING_STEP_TO_TOOL_NAME
 from .tooling import advance_design_loop_step
 
 _logger = logging.getLogger(__name__)
@@ -570,13 +576,14 @@ _ORDERED_UNGATED_SPAN: tuple[DesignStep, ...] = (
 
 # The design_loop.py step handlers' own required step_input fields
 # (design_loop.py's module docstring and issue #95's own "WHAT YOU ARE
-# BUILDING ON" section both state these) -- duplicated, not imported, so
-# this module can build a step_input from a flat candidate dict without
-# reaching into design_loop.py's private _handle_*/_require_fields
-# internals. A missing field here simply means the built step_input omits
-# it, and the REAL handler's own _require_fields raises
-# DesignLoopValidationError naming it when advance_design_loop_step runs
-# -- this module performs no validation of its own on these.
+# BUILDING ON" section both state these) -- imported from design_loop.py's
+# own named constants (issue #497/#510), not restated as a second literal,
+# so a rename or addition to either handler's required fields can't leave
+# this module silently validating against a stale copy. A missing field
+# here simply means the built step_input omits it, and the REAL handler's
+# own _require_fields raises DesignLoopValidationError naming it when
+# advance_design_loop_step runs -- this module performs no validation of
+# its own on these.
 #
 # ANALYSIS has no entry here (issue #249): its required fields used to be
 # hardcoded to the patch antenna's own eps_r/w_m/h_m/l_m shape, which
@@ -590,22 +597,15 @@ _ORDERED_UNGATED_SPAN: tuple[DesignStep, ...] = (
 # (geometry/frequency_hz/reference_impedance_ohms) is the same regardless
 # of family, and OPTIMIZATION's family-awareness is `optimizer_class`
 # wiring -- a separate, related gap this ticket does not touch.
-_REQUIRED_FIELDS: dict[DesignStep, tuple[str, ...]] = {
+_REQUIRED_FIELDS: dict[DesignStep, set[str]] = {
     # reference_impedance_ohms (issue #101): _handle_simulation now derives
     # VSWR/return loss from the feed-point impedance it already computes,
     # and requires its caller to state the reference impedance explicitly
     # -- never silently assumed to be 50 ohms. A candidate driving
     # SIMULATION through this module must carry it the same way it must
     # carry geometry/frequency_hz.
-    DesignStep.SIMULATION: ("geometry", "frequency_hz", "reference_impedance_ohms"),
-    DesignStep.OPTIMIZATION: (
-        "eps_r",
-        "w_m",
-        "h_m",
-        "target_frequency_hz",
-        "length_lower_m",
-        "length_upper_m",
-    ),
+    DesignStep.SIMULATION: SIMULATE_NEC2_REQUIRED_FIELDS,
+    DesignStep.OPTIMIZATION: OPTIMIZE_CONTINUOUS_PATCH_LENGTH_REQUIRED_FIELDS,
 }
 _OPTIONAL_FIELDS: dict[DesignStep, tuple[str, ...]] = {
     DesignStep.SIMULATION: ("timeout_s", "executable", "workdir"),
@@ -621,16 +621,26 @@ _DEFAULT_SCORE_FIELDS: dict[DesignStep, tuple[str, str]] = {
 }
 
 # Which engineering_results.tool_name a scoreable step's own PAST rows are
-# recorded under -- the same lookup orchestration/tooling.py's own
-# _STEP_TO_TOOL_NAME keeps for ANALYSIS/SIMULATION/OPTIMIZATION,
-# duplicated rather than imported (same convention _DEFAULT_SCORE_FIELDS
-# above already follows). Used only by _prior_best_from_design, below, for
-# the optional design_id-seeding feature (issue #87's cross-run-learning
+# recorded under. Used only by _prior_best_from_design, below, for the
+# optional design_id-seeding feature (issue #87's cross-run-learning
 # follow-up) -- nothing else in this module reads engineering_results.
+#
+# OPTIMIZATION's entry is a genuine duplicate of a real, static fact in
+# orchestration/tooling.py's own _STEP_TO_TOOL_NAME (issue #497/#510), so
+# it is imported from there instead of hand-copied.
+#
+# ANALYSIS and SIMULATION are NOT mirrors of anything in tooling.py --
+# tooling.py deliberately keeps no static entry for either, because
+# _tool_name_for resolves their real tool name dynamically per design
+# family (patch vs. absorber, NEC2 vs. MEEP vs. Palace). The two literals
+# below are this module's own, narrower, patch-only assumption: they only
+# match what today's sole real design family (patch) actually produces,
+# and would be wrong for any other family. There is no static table to
+# import them from -- don't go looking for one in tooling.py.
 _STEP_TOOL_NAME: dict[DesignStep, str] = {
     DesignStep.ANALYSIS: "patch_resonant_frequency_hz",
     DesignStep.SIMULATION: "run_nec2_simulation",
-    DesignStep.OPTIMIZATION: "optimize_patch_length_for_target_frequency",
+    DesignStep.OPTIMIZATION: _TOOLING_STEP_TO_TOOL_NAME[DesignStep.OPTIMIZATION.value],
 }
 
 _REQUIRED_STATE_KEYS = (
@@ -677,10 +687,10 @@ def _family_from_state(state: dict[str, Any]) -> Any:
     ARCHITECTURE decision named (issue #249) -- read straight off
     `state["decisions"]`, the tooling-shaped state's own trail, mirroring
     `orchestration.design_loop`'s private `_family_of_record`/
-    `_registry_family_of_record` (duplicated, not imported -- matching this
-    module's own established precedent of duplicating design_loop.py's
-    private step-handler facts rather than reaching into its internals; see
-    `_REQUIRED_FIELDS`'s own comment above).
+    `_registry_family_of_record` (duplicated, not imported, since
+    design_loop.py exposes no public accessor for the family of record --
+    unlike the two required-field sets `_REQUIRED_FIELDS` above now
+    imports directly as named constants, issue #497/#510).
 
     Only ever called once `_steps_from` has already confirmed
     `state["current_step"]` sits inside `_ORDERED_UNGATED_SPAN` -- the

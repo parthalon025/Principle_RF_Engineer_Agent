@@ -47,9 +47,9 @@ from knowledge.sourcing.etsi import ingest_etsi_standard as _ingest_etsi_standar
 from knowledge.sourcing.fcc_ecfr import ingest_fcc_rule as _ingest_fcc_rule
 from knowledge.sourcing.fcc_ecfr import search_fcc_rules as _search_fcc_rules
 from knowledge.sourcing.patent import ingest_patent as _ingest_patent
-from knowledge.sourcing.patent import search_uspto_patents as _search_uspto_patents
 from knowledge.sourcing.threegpp import ingest_3gpp_spec as _ingest_3gpp_spec
 from knowledge.sourcing.threegpp import lookup_3gpp_spec_status as _lookup_3gpp_spec_status
+from knowledge.uspto_search import search_uspto_patents as _search_uspto_patents
 from optimization.rf_objectives import (
     optimize_patch_length_for_target_frequency as _optimize_patch_length_for_target_frequency,
 )
@@ -60,7 +60,6 @@ from orchestration.tooling import advance_design_loop_step as _advance_design_lo
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
 from rf_tools.calculations import (
-    abcd_to_s,
     aperture_gain,
     cascade_gain_db,
     cascade_output_ip3_linear,
@@ -71,32 +70,20 @@ from rf_tools.calculations import (
     free_space_path_loss_db,
     friis_noise_factor,
     iip3_from_oip3_db,
-    input_stability_circle,
     l_network_match,
     linear_to_db,
     link_budget_margin_db,
     maxwell_garnett_effective_permeability,
     noise_factor_to_db,
     oip3_from_iip3_db,
-    output_stability_circle,
     patch_effective_permittivity,
     patch_length_extension_m,
     patch_resonant_frequency_hz,
     quality_factor_from_fractional_bandwidth,
     quarter_wave_transformer_impedance,
-    return_loss_db,
-    rollett_k_factor,
-    s_to_abcd,
-    s_to_y,
-    s_to_z,
-    stability_verdict,
     third_order_intermod_dbc,
     third_order_intermod_output_dbm,
-    two_port_stability_delta,
-    vswr_from_gamma,
     wavelength,
-    y_to_s,
-    z_to_s,
 )
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
@@ -104,6 +91,21 @@ from rf_tools.correlation import (
 from rf_tools.filter_synthesis import (
     realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
+)
+from rf_tools.network_parameters import (
+    abcd_to_s,
+    input_stability_circle,
+    output_stability_circle,
+    return_loss_db,
+    rollett_k_factor,
+    s_to_abcd,
+    s_to_y,
+    s_to_z,
+    stability_verdict,
+    two_port_stability_delta,
+    vswr_from_gamma,
+    y_to_s,
+    z_to_s,
 )
 from rf_tools.touchstone import (
     analyze_touchstone,
@@ -1880,7 +1882,7 @@ def search_uspto_patents(query: str, max_results: int = 10) -> list:
     and return a ranked list of candidates for review -- NOT documents in the
     corpus. Each candidate carries number/title/date/snippet (snippet is always
     None -- ODP's search response is bibliographic metadata, not a text excerpt
-    of the matched document; see knowledge/sourcing/patent.py's module docstring).
+    of the matched document; see knowledge/uspto_search.py's module docstring).
     Use "search precedent before inventing" (CLAUDE.md) to judge relevance before
     spending an ingestion pass on it. Pass a chosen candidate's number straight
     to ingest_patent unchanged (it already round-trips through
