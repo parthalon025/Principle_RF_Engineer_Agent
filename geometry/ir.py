@@ -163,6 +163,19 @@ Shape = Box | Cylinder | Polygon
 # ---------------------------------------------------------------------------
 # Materials
 # ---------------------------------------------------------------------------
+class GeometryRole(StrEnum):
+    """What layer of the stack a region is, from CONTEXT.md's closed
+    five-value "Geometry layer role" vocabulary (`simulation/meep.py`'s own
+    `GeometryRole`, issue #485). Purely additive metadata: a region with no
+    role behaves exactly as it did before one existed."""
+
+    HOST = "HOST"
+    SUBSTRATE = "SUBSTRATE"
+    REFLECTOR = "REFLECTOR"
+    SPACER = "SPACER"
+    PATTERN = "PATTERN"
+
+
 class ConductorKind(StrEnum):
     """How a conductor conducts. REQUIRED on every conductor -- see this
     module's docstring for why this is a tag and not an optional field.
@@ -190,6 +203,7 @@ class Conductor:
     conductivity_s_m: float | None = None
     sheet_resistance_ohm_sq: float | None = None
     thickness_m: float | None = None
+    role: GeometryRole | None = None
     name: str | None = None
 
     def __post_init__(self) -> None:
@@ -235,6 +249,7 @@ class Dielectric:
     epsilon_r: float = 1.0
     mu_r: float = 1.0
     loss_tangent: float = 0.0
+    role: GeometryRole | None = None
     name: str | None = None
 
     def __post_init__(self) -> None:
@@ -343,10 +358,3 @@ class Model:
         a mesher must size against, since the wavelength is shortest
         there."""
         return max((d.epsilon_r for d in self.dielectrics), default=1.0)
-
-    @property
-    def lossy_conductors(self) -> tuple[Conductor, ...]:
-        return tuple(c for c in self.conductors if c.is_lossy)
-
-    def shapes(self) -> tuple[Shape, ...]:
-        return tuple(c.shape for c in self.conductors) + tuple(d.shape for d in self.dielectrics)

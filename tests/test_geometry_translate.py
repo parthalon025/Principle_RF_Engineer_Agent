@@ -20,13 +20,22 @@ from geometry.ir import (
     ConductorKind,
     Cylinder,
     Dielectric,
+    GeometryRole,
     LumpedPort,
     Model,
     PlaneWave,
     Polygon,
     UnrepresentableGeometry,
 )
-from geometry.translate import to_elmer, to_gprmax, to_meep, to_nec2, to_openems, to_palace
+from geometry.translate import (
+    to_elmer,
+    to_gprmax,
+    to_meep,
+    to_nec2,
+    to_openems,
+    to_openparem,
+    to_palace,
+)
 
 # A printed resistive film in a periodic unit cell -- the free-standing
 # matched sheet from verification/simulator_reference_cases.py, restated in
@@ -124,7 +133,7 @@ def test_lossy_film_is_REFUSED_by_nec2_rather_than_becoming_a_bare_wire():
     )
     with pytest.raises(UnrepresentableGeometry) as excinfo:
         to_nec2(model)
-    assert excinfo.value.solver == "NEC2++"
+    assert excinfo.value.solver == "NEC2"
     assert "#230" in excinfo.value.why
 
 
@@ -239,11 +248,26 @@ def test_meep_refuses_a_polygon_rather_than_approximating_it():
 
 
 def test_openems_refuses_plane_wave_illumination_because_it_has_no_such_excitation():
-    """A real capability gap, surfaced by building the translator: this
+    """A real capability gap, surfaced by building the translator (#538): this
     repo's openEMS adapter is lumped-port only, so an illuminated passive
     surface -- an absorber cell, an FSS -- cannot run on it at all."""
     with pytest.raises(UnrepresentableGeometry, match="plane-wave"):
         to_openems(lossy_unit_cell())
+
+
+def test_openems_refuses_a_periodic_model_because_it_has_no_boundary_handling():
+    """simulation/openems.py writes no BoundaryCond at all, so a periodic_axes
+    key would have been silently dropped and the cell solved as if isolated."""
+    cell = lossy_unit_cell()
+    periodic_but_driven = Model(
+        domain=cell.domain,
+        band=cell.band,
+        excitation=LumpedPort(center_m=(5e-4, 5e-4, 1e-3), size_m=(0, 0, 2e-4), direction="z"),
+        boundary=BoundaryKind.PERIODIC_XY,
+        conductors=cell.conductors,
+    )
+    with pytest.raises(UnrepresentableGeometry, match="PERIODIC_XY"):
+        to_openems(periodic_but_driven)
 
 
 def test_palace_refuses_an_open_boundary_rather_than_silently_making_it_periodic():
@@ -302,7 +326,7 @@ def test_gprmax_converts_a_sheet_resistance_because_that_preserves_the_physics()
     model = Model(
         domain=Box((0, 0, 0), (0.05, 0.05, 0.05)),
         band=Band(10e9),
-        excitation=PlaneWave(),
+        excitation=LumpedPort(center_m=(0.025, 0.025, 0.01), size_m=(0, 0, 1e-3), direction="z"),
         conductors=(
             Conductor(
                 shape=Box((0.01, 0.01, 0.02), (0.04, 0.04, 0.0201)),
@@ -316,3 +340,156 @@ def test_gprmax_converts_a_sheet_resistance_because_that_preserves_the_physics()
     assert geometry["conductors"] == []
     (material,) = geometry["materials"]
     assert material["conductivity_s_m"] == pytest.approx(1.0 / (MATCHED_RS * 0.1e-3))
+
+
+# ---------------------------------------------------------------------------
+# The two acceptance tests whose absence hid two real bugs: to_meep and
+# to_gprmax both emitted geometry their own adapters reject outright.
+# ---------------------------------------------------------------------------
+def test_meep_adapter_accepts_the_translated_geometry():
+    """simulation/meep.py requires port + two monitor centres before it will
+    run anything. Checked against the adapter's OWN validators, so no Meep
+    install is needed."""
+    from simulation.meep import _validate_port
+
+    geometry = to_meep(lossy_unit_cell())
+    for required in (
+        "cell_size_m",
+        "pml_thickness_m",
+        "mesh_cell_size_m",
+        "port",
+        "reflection_monitor_center_m",
+        "reference_monitor_center_m",
+    ):
+        assert required in geometry, f"MEEP requires geometry[{required!r}]"
+    _validate_port(geometry["port"])
+
+
+def test_gprmax_adapter_accepts_the_translated_geometry():
+    from simulation.gprmax import generate_gprmax_input
+
+    model = Model(
+        domain=Box((0, 0, 0), (0.05, 0.05, 0.05)),
+        band=Band(10e9),
+        excitation=LumpedPort(center_m=(0.025, 0.025, 0.01), size_m=(0, 0, 1e-3), direction="z"),
+        conductors=(
+            Conductor(
+                shape=Box((0.01, 0.01, 0.02), (0.04, 0.04, 0.0201)),
+                kind=ConductorKind.PERFECT,
+            ),
+        ),
+    )
+    deck = generate_gprmax_input(to_gprmax(model), fdtd={"time_window_iterations": 100})
+    assert "#domain:" in deck
+
+
+def test_meep_cell_is_larger_than_the_domain_to_hold_pml_source_and_monitors():
+    """The cell is not the domain: an illumination run needs absorbing layers,
+    a source plane and monitor planes that the object itself does not occupy."""
+    model = lossy_unit_cell()
+    geometry = to_meep(model)
+    assert geometry["cell_size_m"][2] > model.domain.extents_m[2]
+    z_half = geometry["cell_size_m"][2] / 2.0
+    pml = geometry["pml_thickness_m"]
+    for plane in ("reflection_monitor_center_m", "transmission_monitor_center_m"):
+        z = geometry[plane][2]
+        assert -z_half + pml < z < z_half - pml, f"{plane} sits inside the PML"
+    assert -z_half + pml < geometry["port"]["center_m"][2] < z_half - pml
+
+
+def test_ground_backed_model_keeps_its_ground_in_meep():
+    """The silent degradation the first cut of this module shipped: a
+    metal-backed absorber crossed into MEEP as a free-standing sheet."""
+    cell = lossy_unit_cell()
+    grounded = Model(
+        domain=cell.domain,
+        band=cell.band,
+        excitation=cell.excitation,
+        boundary=BoundaryKind.GROUND_BACKED,
+        conductors=cell.conductors,
+    )
+    geometry = to_meep(grounded)
+    grounds = [c for c in geometry["conductors"] if c.get("name") == "ground"]
+    assert len(grounds) == 1, "a GROUND_BACKED model must carry a PEC ground into MEEP"
+    # Nothing passes through a ground plane, so asking for it would be noise.
+    assert "transmission_monitor_center_m" not in geometry
+    assert to_palace(grounded)["ground_backed"] is True
+
+
+def test_oblique_incidence_reaches_palace_as_a_transverse_wave_vector():
+    """A CONVERSION, not a refusal: an incidence angle IS a Floquet transverse
+    wave vector, k_t = k0 sin(theta)."""
+    cell = lossy_unit_cell()
+    oblique = Model(
+        domain=cell.domain,
+        band=cell.band,
+        excitation=PlaneWave(theta_deg=30.0, phi_deg=0.0),
+        boundary=BoundaryKind.PERIODIC_XY,
+        conductors=cell.conductors,
+    )
+    floquet = to_palace(oblique)["floquet"]
+    k0 = 2 * math.pi * 10e9 / 299_792_458.0
+    assert floquet["wave_vector_1_per_m"][0] == pytest.approx(k0 * math.sin(math.radians(30.0)))
+    assert floquet["polarization"] == "TE"
+
+
+def test_meep_refuses_oblique_incidence_rather_than_flattening_it_to_normal():
+    cell = lossy_unit_cell()
+    oblique = Model(
+        domain=cell.domain,
+        band=cell.band,
+        excitation=PlaneWave(theta_deg=30.0),
+        boundary=BoundaryKind.PERIODIC_XY,
+        conductors=cell.conductors,
+    )
+    with pytest.raises(UnrepresentableGeometry, match="theta=30"):
+        to_meep(oblique)
+
+
+def test_geometry_layer_role_survives_the_crossing():
+    """CONTEXT.md's closed five-value vocabulary must not be dropped in
+    translation -- a translated primitive could never carry one before."""
+    model = Model(
+        domain=Box((0, 0, 0), (1e-3, 1e-3, 1e-3)),
+        band=Band(10e9),
+        excitation=LumpedPort(center_m=(5e-4, 5e-4, 5e-4), size_m=(0, 0, 1e-4), direction="z"),
+        conductors=(
+            Conductor(
+                shape=Box((0, 0, 5e-4), (1e-3, 1e-3, 5e-4)),
+                kind=ConductorKind.PERFECT,
+                role=GeometryRole.PATTERN,
+            ),
+        ),
+    )
+    assert to_openems(model)["conductors"][0]["role"] == "PATTERN"
+
+
+def test_openparem_shares_elmers_geometry_because_it_reuses_the_same_mesher():
+    model = Model(
+        domain=Box((0, 0, 0), (0.02, 0.02, 0.02)),
+        band=Band(10e9),
+        excitation=PlaneWave(),
+    )
+    assert to_openparem(model) == to_elmer(model)
+
+
+def test_an_illuminated_wire_is_not_forced_to_an_odd_segment_count():
+    """Only a driven wire needs an odd count, so the adapter's midpoint feed
+    lands on a true centre. Forcing it on an illuminated structure would be an
+    unasked-for modelling choice."""
+    illuminated = Model(
+        domain=Box((-0.5, -0.01, -0.01), (0.5, 0.01, 0.01)),
+        band=Band(300e6, fractional_bandwidth=0.0),
+        excitation=PlaneWave(),
+        conductors=(
+            Conductor(
+                shape=Cylinder(center_m=(0, 0, 0), radius_m=1e-3, height_m=0.5, axis="x"),
+                kind=ConductorKind.PERFECT,
+            ),
+        ),
+    )
+    (wire,) = to_nec2(illuminated)["wires"]
+    # 0.5 m at lambda = 0.99931 m, ten segments per wavelength -> ceil(5.003) = 6.
+    # An EVEN count, deliberately: a driven wire would be bumped to 7, so this
+    # distinguishes "not forced odd" from "odd by coincidence".
+    assert wire["segments"] == 6

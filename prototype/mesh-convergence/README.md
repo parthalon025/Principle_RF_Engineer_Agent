@@ -51,7 +51,16 @@ keeping:
    convergence order, and a resistive sheet six pixels thick with subpixel
    smoothing is exactly where that assumption is worth least. Refusing to
    assume over-states the uncertainty, which is the safe direction.
+
+   *In plain terms: "how much did the answer move when we last made the grid
+   finer" is the honest error bar. There is a trick that predicts where the
+   answer is heading and quotes a tighter one, but it only works if you know
+   how fast the simulator converges — and on a film this thin, spread over so
+   few grid cells, you don't. Better to say a number is fuzzier than it
+   probably is than to promise a precision you can't back.*
 3. **The knob is pixels across the thinnest feature, not raw resolution.**
+   *In plain terms: what matters is not how fine the grid is in the abstract,
+   but how many cells land across the thinnest thing you are trying to model.*
    This falls out of a confound in the existing evidence: the two
    absorptance numbers in `docs/meep-absorber-validation.md` (0.4999 at 80
    px/mm with a 0.2 mm sheet, 0.4971 at 60 px/mm with a 0.1 mm sheet) changed
