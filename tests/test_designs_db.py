@@ -568,6 +568,40 @@ def test_read_design_returns_design_fields_and_empty_related_lists(db_conn):
     assert {vi["requirement_id"] for vi in result["verification_items"]} == {"REQ-1", "REQ-2"}
 
 
+def test_create_design_stores_assumptions_and_read_design_returns_them(db_conn):
+    # Issue #413: `assumptions` is a plain JSONB dict, threaded through
+    # exactly like `requirements` -- no shape validation, no lifecycle.
+    assumptions = {"host_material": "assumed aluminum, not yet confirmed"}
+    created = create_design(
+        db_conn,
+        design_key="DES-ASSUME-1",
+        name="Assumptions Round Trip Design",
+        revision="A",
+        requirements={},
+        architecture={},
+        assumptions=assumptions,
+    )
+
+    result = read_design(db_conn, created["id"])
+
+    assert result["assumptions"] == assumptions
+
+
+def test_create_design_with_no_assumptions_defaults_to_empty_dict(db_conn):
+    created = create_design(
+        db_conn,
+        design_key="DES-ASSUME-2",
+        name="Assumptions Default Design",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+
+    result = read_design(db_conn, created["id"])
+
+    assert result["assumptions"] == {}
+
+
 def test_read_design_resolves_component_id_to_manufacturer_and_part_number(db_conn):
     component_id = _make_component(db_conn, part_number="ACM-AMP-READ")
     created = create_design(

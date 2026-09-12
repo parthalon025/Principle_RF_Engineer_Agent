@@ -47,11 +47,14 @@ from designs.design_families import (
     DesignFamily,
     PhysicalBound,
     PostProcess,
+    ScoredField,
     SimulationTier,
     SweepAxis,
     UnbuiltPostProcess,
     UnbuiltPostProcessError,
     UndeclaredAnalysisModel,
+    UndeclaredScoredField,
+    UndeclaredScoredFieldError,
     UnreadPhysicalBound,
     _NoPostProcess,
     get_design_family,
@@ -251,6 +254,89 @@ def test_no_two_families_share_one_copy_pasted_unbuilt_postprocess_reason():
     assert len({pp.reason for pp in unbuilt.values()}) == len(unbuilt)
     assert "polarisation" in unbuilt["POLARIZATION_CONVERTER"].needed
     assert "S21" in unbuilt["SHIELD"].needed
+
+
+# ---------------------------------------------------------------------------
+# Issue #249: ANALYSIS's own required step_input fields, and the SIMULATION
+# scored field, are declared per family rather than hardcoded once in
+# orchestration/solver.py for the patch-antenna shape.
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_model_required_fields_defaults_to_an_empty_tuple():
+    """A family that has not stated its ANALYSIS model's required fields
+    (nobody has needed to yet) gets an empty tuple, never `None` -- so a
+    caller can always iterate it without a None-check, matching this
+    module's own "never a bare None" discipline for every other slot."""
+    model = AnalysisModel(name="X", function="x.y", answers="a test fixture")
+    assert model.required_fields == ()
+
+
+def test_patch_and_absorber_declare_their_own_analysis_required_fields():
+    """orchestration/solver.py used to hardcode ANALYSIS's required
+    step_input fields to the patch antenna's own eps_r/w_m/h_m/l_m shape --
+    stripping an ABSORBER candidate's real fields (f_low_hz, tan_delta, ...)
+    before the step ever ran, so it failed on fields that were never
+    missing, only discarded. Each family now states its own required fields
+    directly on its declared AnalysisModel, matching exactly what
+    `orchestration.design_loop`'s own dispatched handler requires (plus
+    `eps_r`, needed by `_resolve_eps_r_bounds` but not restated in that
+    handler's own `_require_fields` call -- see
+    tests/test_design_loop.py's `_ABSORBER_ANALYSIS_INPUT` fixture, which
+    this mirrors field-for-field)."""
+    assert set(PATCH.analysis_model.required_fields) == {"eps_r", "w_m", "h_m", "l_m"}
+    absorber_fields = {
+        "f_low_hz",
+        "f_high_hz",
+        "eps_r",
+        "tan_delta",
+        "thickness_m",
+        "period_m",
+        "gap_m",
+        "sheet_resistance_ohm_sq",
+        "squares",
+    }
+    assert set(ABSORBER.analysis_model.required_fields) == absorber_fields
+    # ABSORBER_TRANSMISSIVE's ANALYSIS handler requires the identical field
+    # set (rf_tools/transmissive_absorber.py's own signature matches
+    # rf_tools/absorber.py's exactly) -- only the arithmetic differs.
+    assert set(ABSORBER_TRANSMISSIVE.analysis_model.required_fields) == absorber_fields
+
+
+def test_a_family_with_no_declared_simulation_scored_field_defaults_to_undeclared():
+    """A family that has not declared which field its SIMULATION result is
+    scored on gets the explicit `UndeclaredScoredField` sentinel, never a
+    bare `None` and never a silent reuse of another family's field."""
+    assert isinstance(REFLECTION_PHASE.simulation_scored_field, UndeclaredScoredField)
+    assert not REFLECTION_PHASE.has_simulation_scored_field
+    assert REFLECTION_PHASE.simulation_scored_field.reason.strip()
+
+
+def test_declared_simulation_scored_field_raises_naming_the_family_and_why():
+    """Asking an undeclared family for its scored field raises rather than
+    falling back to PATCH's `gain_dbi` -- the exact defect issue #249 fixes
+    in orchestration/solver.py."""
+    with pytest.raises(UndeclaredScoredFieldError) as excinfo:
+        REFLECTION_PHASE.declared_simulation_scored_field()
+    message = str(excinfo.value)
+    assert "REFLECTION_PHASE" in message
+    assert "designs/design_families.py" in message
+
+
+def test_patch_and_absorber_declare_their_own_simulation_scored_field():
+    """PATCH keeps exactly the field orchestration/solver.py always scored
+    it on (`gain_dbi`/dBi -- NEC2's own parsed peak gain); ABSORBER and
+    ABSORBER_TRANSMISSIVE are scored on `worst_absorption`, the field their
+    own SIMULATION result actually carries (see
+    orchestration/design_loop.py's `_simulate_meep_floquet`), never on
+    `gain_dbi`, which their result has no such key for at all."""
+    assert PATCH.simulation_scored_field == ScoredField(result_field="gain_dbi", unit="dBi")
+    assert PATCH.has_simulation_scored_field
+    assert PATCH.declared_simulation_scored_field() == PATCH.simulation_scored_field
+
+    absorber_field = ScoredField(result_field="worst_absorption", unit="fraction")
+    assert ABSORBER.simulation_scored_field == absorber_field
+    assert ABSORBER_TRANSMISSIVE.simulation_scored_field == absorber_field
 
 
 # ---------------------------------------------------------------------------

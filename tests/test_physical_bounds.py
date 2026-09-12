@@ -149,6 +149,15 @@ def test_rozanov_rejects_an_inverted_band():
         rozanov_min_thickness_m(12e9, 8e9, -10.0)
 
 
+def test_rozanov_rejects_a_nan_band_edge():
+    """#494: this module's `_require_positive` already guards
+    `math.isfinite` before the sign check, unlike the two independent copies
+    in rf_tools/absorber.py and rf_tools/transmissive_absorber.py -- this is
+    the confirming regression test for the copy that was already correct."""
+    with pytest.raises(ValueError, match="f_low_hz"):
+        rozanov_min_thickness_m(math.nan, 12e9, -10.0)
+
+
 # ---------------------------------------------------------------------------
 # The two walls together
 # ---------------------------------------------------------------------------

@@ -972,6 +972,40 @@ def test_run_openparem_simulation_end_to_end_with_fake_executable(tmp_path: Path
     assert ports_text.startswith("#OpenParEMports 1.0")
 
 
+def test_run_openparem_simulation_provenance_tracks_simulationresult_field(
+    tmp_path: Path, monkeypatch
+):
+    """Regression test for issue #502: run_openparem_simulation's
+    "provenance" key must be read off the SimulationResult
+    OpenParemSimulator.run() actually returns, not a hardcoded "SIMULATED"
+    literal -- change what the simulator reports and the top-level dict
+    must follow it."""
+    script = _make_fake_openparem3d_py(tmp_path, "monopole")
+    original_run = OpenParemSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(OpenParemSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_openparem_simulation(
+        mesh_file="monopole_antenna.msh",
+        ports=MONOPOLE_PORTS,
+        project={
+            "frequency_plan": {"linear": [{"start_hz": 1e9, "stop_hz": 3e9, "step_hz": 1e9}]},
+            "far_field": {"quantity": "G"},
+        },
+        project_name="monopole",
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_openparem_simulation_accepts_ports_positionally(tmp_path: Path):
     """run_openparem_simulation's required argument ('ports') must be
     callable positionally, matching every sibling `run_*_simulation` adapter

@@ -360,6 +360,36 @@ def test_run_xyce_simulation_end_to_end_print_only(tmp_path: Path):
     assert os.path.exists(result["netlist_file"])
 
 
+def test_run_xyce_simulation_provenance_tracks_simulationresult_field(tmp_path: Path, monkeypatch):
+    """Regression test for issue #502: run_xyce_simulation's "provenance"
+    key must be read off the SimulationResult XyceSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    csv_text = (
+        "FREQ,VDB(OUT),VP(OUT)\n"
+        "100000000.000000,-3.010000,-45.000000\n"
+        "1000000000.000000,-6.020000,-90.000000\n"
+    )
+    script = _make_fake_xyce_py(tmp_path, {"xyce_output.csv": csv_text})
+    original_run = XyceSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(XyceSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_xyce_simulation(
+        job=PRINT_ONLY_JOB,
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 _TOUCHSTONE_S2P = """# GHz S RI R 50
 0.1 0.99 0.01 0.02 0.10 0.02 0.10 0.99 0.01
 1.0 0.90 0.05 0.10 0.20 0.10 0.20 0.90 0.05

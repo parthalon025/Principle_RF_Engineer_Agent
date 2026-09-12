@@ -856,6 +856,43 @@ def test_run_gprmax_simulation_end_to_end_with_fake_executable(tmp_path: Path):
     assert "#transmission_line:" in deck_text
 
 
+def test_run_gprmax_simulation_provenance_tracks_simulationresult_field(
+    tmp_path: Path, monkeypatch
+):
+    """Regression test for issue #502: run_gprmax_simulation's "provenance"
+    key must be read off the SimulationResult GprmaxSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    n, dt = 512, 1e-11
+    vinc = _gaussian_pulse(n, dt, t0=n * dt / 4, tau=n * dt / 20)
+    gamma = -0.4
+    vtotal = (1 + gamma) * vinc
+    itotal = vtotal / 50.0
+    script = _make_fake_gprmax_python(tmp_path, vinc, vtotal, itotal, dt)
+    original_run = GprmaxSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(GprmaxSimulator, "run", _run_with_overridden_provenance)
+
+    geometry = {
+        **BASIC_GEOMETRY,
+        "half_space": {"z_m": 0.04, "epsilon_r": 8.0, "conductivity_s_m": 0.015},
+    }
+    result = run_gprmax_simulation(
+        geometry=geometry,
+        fdtd={"time_window_s": 6e-9},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_gprmax_simulation_propagates_simulator_error_on_failure(tmp_path: Path):
     script = _make_fake_python(
         tmp_path, 'import sys\nsys.stderr.write("geometry error\\n")\nsys.exit(1)\n'

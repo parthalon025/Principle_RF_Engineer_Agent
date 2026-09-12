@@ -446,6 +446,20 @@ sys.stdout.write("ran but wrote nothing\\n")
 sys.exit(0)
 """
 
+_FAKE_FREECADCMD_OBJECT_BUILD_FAILURE = """
+import sys, json
+status = {
+    "objects_built": [],
+    "errors": [{"name": "patch_0", "error": "Face is not planar"}],
+    "step_file": None,
+    "total_input": 1,
+}
+with open("curved_unit_cell_array_status.json", "w") as f:
+    json.dump(status, f)
+sys.stdout.write("FreeCAD fake run complete (with per-object failure)\\n")
+sys.exit(0)
+"""
+
 _BOX = {"name": "patch", "shape": "box", "p1_m": [-0.001, -0.001, 0.0], "p2_m": [0.001, 0.001, 0.0]}
 
 
@@ -460,7 +474,12 @@ def test_run_freecad_curved_geometry_end_to_end_with_fake_executable(tmp_path: P
         timeout_s=10,
     )
 
-    assert result["provenance"] == "SIMULATED"
+    # This is a geometry generator, not a Simulator -- it produces no
+    # SimulationResult and must never claim the "SIMULATED" evidence tier
+    # (issue #491). No fitting closed-vocabulary provenance value exists
+    # (CONTEXT.md's nine-value Provenance set), so the field is omitted
+    # entirely rather than inventing one.
+    assert "provenance" not in result
     assert result["simulator"] == "FreeCADCmd"
     assert result["status"] == "COMPLETED"
     # The geometry-dict mapping is real and computed regardless of the fake
@@ -502,6 +521,28 @@ def test_run_freecad_curved_geometry_missing_status_file_is_honestly_noted(tmp_p
     assert result["freecad"]["objects_built"] == []
     assert result["freecad"]["step_file"] is None
     assert "note" in result["freecad"]
+
+
+def test_run_freecad_curved_geometry_per_object_build_failure_status_reflects_it(tmp_path: Path):
+    """A per-object solid-build failure INSIDE a successfully-run FreeCADCmd
+    process (freecad["errors"] non-empty) is still not raised (see the
+    function's own docstring), but the top-level status must say so rather
+    than claim "COMPLETED" (issue #491)."""
+    script = _make_fake_py(
+        tmp_path, "fake_freecadcmd_objfail.py", _FAKE_FREECADCMD_OBJECT_BUILD_FAILURE
+    )
+
+    result = run_freecad_curved_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "run_objfail"),
+        executable=str(script),
+        timeout_s=10,
+    )
+
+    assert result["freecad"]["errors"] != []
+    assert result["status"] != "COMPLETED"
+    assert "provenance" not in result
 
 
 def test_run_freecad_curved_geometry_rejects_bad_geometry_before_subprocess(tmp_path: Path):
@@ -776,7 +817,7 @@ def test_run_freecad_fem_mesh_geometry_end_to_end_with_fake_executable(tmp_path:
         timeout_s=10,
     )
 
-    assert result["provenance"] == "SIMULATED"
+    assert "provenance" not in result
     assert result["simulator"] == "FreeCADCmd"
     assert result["status"] == "COMPLETED"
     assert len(result["primitives"]) == 1
@@ -816,7 +857,9 @@ def test_run_freecad_fem_mesh_geometry_missing_status_file_is_honestly_noted(tmp
         timeout_s=10,
     )
 
-    assert result["status"] == "COMPLETED"
+    # No status file means no mesh was ever confirmed built -- mesh_ok is
+    # False, so status must not claim unqualified success (issue #491).
+    assert result["status"] != "COMPLETED"
     assert result["freecad"]["mesh"]["mesh_ok"] is False
     assert result["freecad"]["mesh"]["mesh_file"] is None
     assert "note" in result["freecad"]
@@ -885,9 +928,55 @@ def test_run_freecad_fem_mesh_geometry_internal_meshing_failure_is_reported_not_
         timeout_s=10,
     )
 
-    assert result["status"] == "COMPLETED"
+    # A failed sub-operation (here, meshing) must be reflected in the
+    # top-level status, not papered over with "COMPLETED" (issue #491).
+    assert result["status"] != "COMPLETED"
     assert result["freecad"]["mesh"]["mesh_ok"] is False
     assert "Gmsh binary not found" in result["freecad"]["mesh"]["note"]
+
+
+_FAKE_FREECADCMD_FEM_MESH_OBJECT_BUILD_FAILURE = """
+import sys, json
+status = {
+    "objects_built": [],
+    "errors": [{"name": "patch_0", "error": "Face is not planar"}],
+    "mesh": {
+        "mesh_ok": False,
+        "mesh_file": None,
+        "node_count": 0,
+        "element_counts": {},
+        "gmsh_exit_code": None,
+        "gmsh_stderr": "",
+        "note": "no unit-cell object built successfully -- see errors",
+    },
+    "total_input": 1,
+}
+with open("curved_unit_cell_fem_mesh_status.json", "w") as f:
+    json.dump(status, f)
+sys.exit(0)
+"""
+
+
+def test_run_freecad_fem_mesh_geometry_per_object_build_failure_status_reflects_it(
+    tmp_path: Path,
+):
+    script = _make_fake_py(
+        tmp_path,
+        "fake_freecadcmd_fem_objfail.py",
+        _FAKE_FREECADCMD_FEM_MESH_OBJECT_BUILD_FAILURE,
+    )
+
+    result = run_freecad_fem_mesh_geometry(
+        [_BOX],
+        CYLINDER_Z,
+        workdir=str(tmp_path / "run_fem_objfail"),
+        executable=str(script),
+        timeout_s=10,
+    )
+
+    assert result["freecad"]["errors"] != []
+    assert result["status"] != "COMPLETED"
+    assert "provenance" not in result
 
 
 def test_run_freecad_fem_mesh_geometry_rejects_bad_geometry_before_subprocess(tmp_path: Path):

@@ -2269,7 +2269,9 @@ def test_run_freecad_curved_geometry_calls_through(tmp_path: Path, monkeypatch):
     curvature = {"kind": "cylinder", "radius_m": 0.05, "axis": "z"}
     result = server.generate_freecad_curved_geometry(primitives, curvature, timeout_s=10)
 
-    assert result["provenance"] == "SIMULATED"
+    # A geometry generator, not a Simulator -- must never claim the
+    # "SIMULATED" evidence tier (issue #491).
+    assert "provenance" not in result
     assert result["simulator"] == "FreeCADCmd"
     assert result["status"] == "COMPLETED"
     assert len(result["primitives"]) == 1
@@ -2306,7 +2308,7 @@ def test_generate_freecad_curved_geometry_forwards_executable(tmp_path: Path, mo
         primitives, curvature, timeout_s=10, executable=str(script)
     )
 
-    assert result["provenance"] == "SIMULATED"
+    assert "provenance" not in result
     assert result["simulator"] == "FreeCADCmd"
     assert result["status"] == "COMPLETED"
     assert result["freecad"]["objects_built"] == ["patch_0"]

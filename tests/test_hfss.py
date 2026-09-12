@@ -394,6 +394,25 @@ def test_run_hfss_simulation_end_to_end_against_fake(tmp_path: Path):
     assert result["port_name"] == "feed"
 
 
+def test_run_hfss_simulation_provenance_tracks_simulationresult_field(tmp_path: Path, monkeypatch):
+    """Regression test for issue #502: run_hfss_simulation's "provenance"
+    key must be read off the SimulationResult HfssSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    original_run = HfssSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(HfssSimulator, "run", _run_with_overridden_provenance)
+
+    result, _ = _run_against_fake(tmp_path)
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_geometry_creates_boxes_and_assigns_materials(tmp_path: Path):
     _, fake = _run_against_fake(tmp_path)
     created_names = {c["name"] for c in fake.modeler.created}

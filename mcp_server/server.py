@@ -1044,8 +1044,11 @@ def generate_freecad_curved_geometry(
     approximation an FDTD solver's own rectilinear mesh already makes for any curved
     boundary), NOT the exact tilted plane the FreeCAD-built STEP model represents; each
     returned primitive carries a non-standard, informational `approx_sag_m` field
-    quantifying exactly how much that approximation cost for that cell. Returns
-    "SIMULATED" provenance. FreeCADCmd's headless invocation and every FreeCAD Python
+    quantifying exactly how much that approximation cost for that cell. Carries NO
+    provenance field -- this is a geometry generator, not a Simulator, so it never
+    claims the "SIMULATED" evidence tier (issue #491); `status` is "COMPLETED" or
+    "COMPLETED_WITH_ERRORS" depending on whether a per-object build or the mesh step
+    actually failed. FreeCADCmd's headless invocation and every FreeCAD Python
     API call used were verified directly against FreeCAD's own C++/`.pyi` source on
     GitHub (see geometry/freecad_curved.py's module docstring for the full citation
     list) but NOT against a real FreeCADCmd binary -- none is installed in this
@@ -1351,7 +1354,13 @@ def optimize_patch_length_for_target_frequency(
 
 
 @mcp.tool()
-def start_design_loop(design_key: str, name: str, revision: str, requirements: dict) -> dict:
+def start_design_loop(
+    design_key: str,
+    name: str,
+    revision: str,
+    requirements: dict,
+    assumptions: dict | None = None,
+) -> dict:
     """Start a new controlled design-iteration loop, backed by a real
     `designs` row created in `DRAFT` status (docs/adr/0011). `design_key`/
     `name`/`revision` are exactly `designs.service.create_design`'s own
@@ -1362,13 +1371,15 @@ def start_design_loop(design_key: str, name: str, revision: str, requirements: d
     factor, host-surface curvature, platform); those details can still go
     in each requirement's extra keys or its `requirement` prose. A
     rejected `requirements` shape raises DesignLoopPersistenceError and no
-    loop is started. Returns the new loop's state, positioned at the
-    ARCHITECTURE step and carrying `design_id` -- hold onto this dict and
-    pass it back into advance_design_loop_step for every subsequent call;
-    it is the whole loop's session token (this project has no long-running
-    server process, so the state itself is not persisted server-side --
-    only the loop's history, once flushed at an iteration boundary, is)."""
-    return _start_new_design_loop(design_key, name, revision, requirements)
+    loop is started. `assumptions` (issue #460) is optional and passed
+    straight through -- a plain dict, no shape check, no lifecycle.
+    Returns the new loop's state, positioned at the ARCHITECTURE step and
+    carrying `design_id` -- hold onto this dict and pass it back into
+    advance_design_loop_step for every subsequent call; it is the whole
+    loop's session token (this project has no long-running server
+    process, so the state itself is not persisted server-side -- only the
+    loop's history, once flushed at an iteration boundary, is)."""
+    return _start_new_design_loop(design_key, name, revision, requirements, assumptions=assumptions)
 
 
 @mcp.tool()
@@ -1611,7 +1622,7 @@ def search_literature_for_capability_warning(
 ) -> dict:
     """Search this project's own knowledge base, then arXiv, for a citable measured
     value for material_or_ink_name's capability_property -- the gap named by one
-    Capability-warning entry (issue #327, ADR-0033) -- fires only for a Material-/
+    Capability-warning entry (issue #327, ADR-0035) -- fires only for a Material-/
     Ink-property library miss that already carries a Capability warning (issue
     #324). capability_warning is one entry from a capability_warnings list -- only
     capability_kind/capability_property are read; capability_warning's own "family"
@@ -1619,7 +1630,7 @@ def search_literature_for_capability_warning(
     a material/ink product name, so material_or_ink_name (e.g. "FR4", "MXene ink")
     must be supplied separately -- you already know it from the design's own
     context. Raises if capability_kind is not "material" or "ink" ("fabrication"
-    gaps have no literature-search equivalent -- ADR-0033). Returns candidates
+    gaps have no literature-search equivalent -- ADR-0035). Returns candidates
     (title/identifier/excerpt, local-knowledge matches first, then arXiv) when any
     exist; when nothing citable is found, found=False and message says so plainly
     rather than approximating a number. Never calls ingest_document and never

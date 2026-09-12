@@ -970,7 +970,7 @@ def run_gprmax_simulation(
     )
 
     output: dict[str, Any] = {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "s_parameters": parsed["s_parameters"],
         "impedance": parsed["impedance"],
         "receivers": parsed["receivers"],

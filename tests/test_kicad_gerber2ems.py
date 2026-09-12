@@ -814,6 +814,45 @@ def test_run_kicad_gerber2ems_simulation_end_to_end_with_fakes(tmp_path: Path):
     assert result["warnings"] == []
 
 
+def test_run_kicad_gerber2ems_simulation_provenance_tracks_simulationresult_field(
+    tmp_path: Path, monkeypatch
+):
+    """Regression test for issue #502: run_kicad_gerber2ems_simulation's
+    "provenance" key must be read off the SimulationResult
+    KicadGerber2emsSimulator.run() actually returns, not a hardcoded
+    "SIMULATED" literal -- change what the simulator reports and the
+    top-level dict must follow it."""
+    script = _make_fake_gerber2ems_py(tmp_path)
+    drc_script = _make_fake_kicad_cli_drc(tmp_path, _NO_VIOLATIONS_REPORT, exit_code=0)
+    fake_conn = FakeKicadConnection()
+    fake_board = FakeBoard(stackup_layers=DEFAULT_STACKUP_LAYERS)
+
+    def fake_connect(board_file, kicad_cli_path=None):
+        return fake_conn, fake_board
+
+    original_run = KicadGerber2emsSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(KicadGerber2emsSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_kicad_gerber2ems_simulation(
+        board_file="my_antenna_feed.kicad_pcb",
+        config={"frequency": {"start": 1e8, "stop": 6e9}},
+        workdir=str(tmp_path / "run_provenance"),
+        timeout_s=10,
+        executable=str(script),
+        kicad_cli_path=str(drc_script),
+        connect_fn=fake_connect,
+        kipy_api=_make_fake_api(),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 def test_run_kicad_gerber2ems_simulation_still_computes_when_drc_finds_violations(tmp_path: Path):
     """Per CLAUDE.md's 'warn, never block': a board with reported DRC
     violations still proceeds all the way through export and simulation --

@@ -1221,7 +1221,7 @@ def run_elmer_simulation(
     parsed = parse_elmer_output(result.outputs.get("stdout", ""), workdir=work_dir)
 
     return {
-        "provenance": "SIMULATED",
+        "provenance": result.provenance,
         "simulator": result.simulator,
         "status": result.status,
         "workdir": str(result.workdir),

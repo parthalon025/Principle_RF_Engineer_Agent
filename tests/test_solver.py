@@ -45,6 +45,7 @@ from orchestration.approval import request_loop_step_approval
 from orchestration.design_loop import DesignStep, start_design_loop
 from orchestration.solver import SolverError, run_candidate_search
 from orchestration.tooling import advance_design_loop_step
+from rf_tools.absorber import absorber_band_response
 from rf_tools.calculations import patch_resonant_frequency_hz
 
 REQUIREMENTS = {"R1": {"requirement": "resonant frequency near 2.45 GHz"}}
@@ -58,6 +59,40 @@ _ARCHITECTURE_INPUT = {
 # Base patch parameters (matches tests/test_design_loop.py's own fixture) --
 # individual tests override "l_m" to get a specific ANALYSIS score.
 _BASE_CANDIDATE = {"eps_r": 4.4, "w_m": 0.03, "h_m": 0.0016, "l_m": 0.0286}
+
+# Issue #249's own regression fixture: an absorber-family candidate's real
+# ANALYSIS fields, field-for-field identical to
+# tests/test_design_loop.py's own `_ABSORBER_ANALYSIS_INPUT` -- reused here
+# (duplicated, not imported, matching this file's own per-file convention
+# already stated in its module docstring) so this suite proves the SAME
+# absorber shape that already works at the design_loop layer also survives
+# orchestration/solver.py's own field-stripping.
+_ARCHITECTURE_INPUT_ABSORBER = {
+    "decision": "a ground-backed printed absorber",
+    "rationale": "chosen for this requirement",
+    "design_family": "ABSORBER",
+}
+_ABSORBER_ANALYSIS_INPUT = {
+    "f_low_hz": 8e9,
+    "f_high_hz": 12e9,
+    "eps_r": 2.9,
+    "tan_delta": 0.10,
+    "thickness_m": 2.0e-3,
+    "period_m": 3.0e-3,
+    "gap_m": 0.2e-3,
+    "sheet_resistance_ohm_sq": 500.0,
+    "squares": 0.1,
+}
+
+# REFLECTION_PHASE declares a settled simulation_adapter (PALACE_FLOQUET) but
+# no simulation_scored_field at all (designs/design_families.py) -- the
+# "family declares no scored field" fixture for Group 9's own "not scored"
+# test below.
+_ARCHITECTURE_INPUT_REFLECTION_PHASE = {
+    "decision": "a reflection-phase steering surface",
+    "rationale": "chosen for this requirement",
+    "design_family": "REFLECTION_PHASE",
+}
 
 _DIPOLE_GEOMETRY = {
     "wires": [
@@ -143,6 +178,30 @@ def _state_at_analysis(design_id: int = 1, design_key: str = "SOLVER-TEST") -> d
     state = advance_design_loop_step(
         state,
         _ARCHITECTURE_INPUT,
+        approval=receipt.to_dict(),
+        requirements_document_status="CONFIRMED",
+    )
+    assert state["current_step"] == DesignStep.ANALYSIS.value
+    return state
+
+
+def _state_at_analysis_for(architecture_input: dict, design_id: int, design_key: str) -> dict:
+    """Same shape as `_state_at_analysis` above, generalized to any
+    `architecture_input` (issue #249: the ANALYSIS/SIMULATION scoring tests
+    below need this for the ABSORBER family and for a family that declares
+    no SIMULATION scored field at all, not only for PATCH)."""
+    state = start_design_loop(REQUIREMENTS).to_dict()
+    state["design_id"] = design_id
+    state["design_key"] = design_key
+    state["persisted_decision_count"] = 0
+
+    fields = _fingerprint(state, DesignStep.ARCHITECTURE, architecture_input)
+    receipt = request_loop_step_approval(
+        fields, approved_by="jane.engineer", approval_callback=lambda f: True
+    )
+    state = advance_design_loop_step(
+        state,
+        architecture_input,
         approval=receipt.to_dict(),
         requirements_document_status="CONFIRMED",
     )
@@ -1642,3 +1701,140 @@ def test_mechanism_claim_never_influences_scoring_or_stopping_rules(tmp_path):
         "candidates_evaluated",
     ):
         assert without.get(key) == with_claim.get(key), key
+
+
+# ---------------------------------------------------------------------------
+# Group 9 (issue #249): ANALYSIS's required step_input fields and
+# SIMULATION's scored field come from the design family's own registry
+# declaration (designs/design_families.py), never a single hardcoded
+# patch-antenna shape -- so a non-patch family's real fields survive
+# `_build_step_input`, and a family's own SIMULATION result field is what
+# gets scored, not PATCH's `gain_dbi` by default.
+# ---------------------------------------------------------------------------
+
+
+def test_absorber_candidate_reaches_real_analysis_and_simulation_scores(monkeypatch):
+    """Before this fix, `_REQUIRED_FIELDS[DesignStep.ANALYSIS]` was
+    hardcoded to the patch antenna's own `eps_r`/`w_m`/`h_m`/`l_m` --
+    `_build_step_input` kept only those, stripping every one of this
+    ABSORBER candidate's real fields (`f_low_hz`, `tan_delta`, ...) before
+    ANALYSIS ever ran, so it failed on fields that were never missing, only
+    discarded (`failed_at_step="analysis"`, no score at all). This proves
+    both halves of the fix at once: ANALYSIS now keeps ABSORBER's own
+    fields (from `ABSORBER.analysis_model.required_fields`) and reaches a
+    real score; SIMULATION's default scored field now comes from
+    `ABSORBER.simulation_scored_field` (`worst_absorption`/`fraction`)
+    rather than PATCH's hardcoded `gain_dbi`, which this family's
+    SIMULATION result has no such key for at all.
+
+    OPTIMIZATION is driven too (steps_to_drive from ANALYSIS is the whole
+    ungated span) and fails for this candidate -- ABSORBER declares no
+    `optimizer_class`, so it falls through to the same patch-length
+    OPTIMIZATION handler `_REQUIRED_FIELDS[DesignStep.OPTIMIZATION]` still
+    (deliberately) hardcodes, per this ticket's own "optimizer_class wiring
+    -- do not touch" scope note. That failure is exactly design question
+    4's "a candidate failing partway through keeps its earlier steps'
+    scores" -- proven already, for PATCH, by
+    test_a_candidate_failing_partway_through_keeps_its_earlier_steps_scores
+    above -- and is not what this test is about: what matters here is that
+    ANALYSIS and SIMULATION both score for real before that unrelated,
+    out-of-scope step is ever reached.
+    """
+    state = _state_at_analysis_for(
+        _ARCHITECTURE_INPUT_ABSORBER, design_id=2, design_key="SOLVER-ABSORBER-TEST"
+    )
+
+    def fake_run_meep(geometry, characteristic_length_m, nfreq, workdir):
+        return {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            # Matches tests/test_design_loop.py's own
+            # test_absorber_simulation_runs_meep_with_a_periodic_cell fixture:
+            # reflectance [0.2, 0.01] -> absorption [0.8, 0.99] -> worst 0.8.
+            "s_parameters": {"frequency_hz": [9e9, 10e9], "reflectance": [0.2, 0.01]},
+        }
+
+    import orchestration.design_loop as design_loop_module
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", fake_run_meep)
+
+    expected_worst_absorption = absorber_band_response(**_ABSORBER_ANALYSIS_INPUT)[
+        "worst_absorption"
+    ]
+    analysis_target = propose_target(
+        value=expected_worst_absorption, comparator="EQUALS", unit="fraction", tolerance=0.0
+    )
+    simulation_target = propose_target(
+        value=0.8, comparator="EQUALS", unit="fraction", tolerance=0.0
+    )
+    candidate = {
+        **_ABSORBER_ANALYSIS_INPUT,
+        "geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]},
+        "frequency_hz": 10e9,
+        "reference_impedance_ohms": 50.0,
+    }
+    score_specs = {
+        # ANALYSIS's own default scored field stays this module's generic,
+        # patch-shaped one (resonant_frequency_hz) -- out of this ticket's
+        # scope (see designs/design_families.py's own docstring section on
+        # this field). An explicit override scores ABSORBER's real field
+        # instead, exercising the REQUIRED-FIELDS fix in isolation from
+        # ANALYSIS's default-field lookup.
+        "analysis": {
+            "target": analysis_target,
+            "result_field": "worst_absorption",
+            "unit": "fraction",
+        },
+        # No override here at all -- this is the fix under test: the
+        # DEFAULT scored field for SIMULATION must resolve to ABSORBER's
+        # own declared "worst_absorption", not PATCH's "gain_dbi".
+        "simulation": {"target": simulation_target},
+    }
+
+    result = run_candidate_search(state, [candidate], score_specs)
+
+    entry = result["trail"][0]
+    steps_by_name = {s["step"]: s for s in entry["steps"]}
+    assert "analysis" in steps_by_name
+    assert "simulation" in steps_by_name
+    analysis_score = steps_by_name["analysis"]["score"]
+    simulation_score = steps_by_name["simulation"]["score"]
+    assert analysis_score is not None, "ANALYSIS must not fail on stripped fields"
+    assert simulation_score is not None, "SIMULATION must not fail to find its scored field"
+    assert analysis_score["actual_value"] == pytest.approx(expected_worst_absorption)
+    assert analysis_score["score_percent"] == pytest.approx(100.0)
+    assert simulation_score["actual_value"] == pytest.approx(0.8)
+    assert simulation_score["score_percent"] == pytest.approx(100.0)
+    assert entry["overall_score_percent"] == pytest.approx(100.0)
+
+
+def test_a_family_with_no_declared_simulation_scored_field_is_refused_up_front():
+    """REFLECTION_PHASE declares no `simulation_scored_field`
+    (designs/design_families.py) -- asking to score SIMULATION for it must
+    not silently reuse PATCH's `gain_dbi`, nor read a candidate as
+    `failed_at_step="simulation"` after having actually run something. It
+    is refused as a call-level `SolverError`, before any candidate is
+    evaluated, exactly like this module's existing "result_field override
+    with no explicit unit" refusal above."""
+    state = _state_at_analysis_for(
+        _ARCHITECTURE_INPUT_REFLECTION_PHASE,
+        design_id=3,
+        design_key="SOLVER-REFLECTION-PHASE-TEST",
+    )
+    # Positioned at SIMULATION directly -- REFLECTION_PHASE declares no
+    # ANALYSIS model either (a separate, already-covered fact), and this
+    # test is about the SIMULATION scored-field refusal specifically.
+    state = dict(state)
+    state["current_step"] = DesignStep.SIMULATION.value
+
+    target = propose_target(value=0.5, comparator="AT_LEAST", unit="fraction")
+    with pytest.raises(SolverError) as excinfo:
+        run_candidate_search(
+            state,
+            [{"geometry": {}, "frequency_hz": 10e9}],
+            {"simulation": {"target": target}},
+        )
+    message = str(excinfo.value)
+    assert "REFLECTION_PHASE" in message
+    assert "simulation_scored_field" in message

@@ -739,6 +739,38 @@ def test_run_elmer_simulation_end_to_end_with_fake_executables(tmp_path: Path):
     assert os.path.exists(os.path.join(result["mesh_dir"], "mesh.header"))
 
 
+def test_run_elmer_simulation_provenance_tracks_simulationresult_field(tmp_path: Path, monkeypatch):
+    """Regression test for issue #502: run_elmer_simulation's "provenance"
+    key must be read off the SimulationResult ElmerSimulator.run() actually
+    returns, not a hardcoded "SIMULATED" literal -- change what the
+    simulator reports and the top-level dict must follow it."""
+    gmsh = _make_fake_py(tmp_path, "fake_gmsh.py", _FAKE_GMSH_PY)
+    elmergrid = _make_fake_py(tmp_path, "fake_elmergrid.py", _FAKE_ELMERGRID_PY)
+    elmersolver = _make_fake_py(tmp_path, "fake_elmersolver.py", _FAKE_ELMERSOLVER_PY)
+    original_run = ElmerSimulator.run
+
+    def _run_with_overridden_provenance(self, job):
+        result = original_run(self, job)
+        result.provenance = "MEASURED"
+        return result
+
+    monkeypatch.setattr(ElmerSimulator, "run", _run_with_overridden_provenance)
+
+    result = run_elmer_simulation(
+        geometry=DOMAIN_GEOMETRY,
+        frequency_hz=2.45e9,
+        timeout_s=10,
+        gmsh_timeout_s=10,
+        elmergrid_timeout_s=10,
+        gmsh_executable=str(gmsh),
+        elmergrid_executable=str(elmergrid),
+        elmersolver_executable=str(elmersolver),
+        workdir=str(tmp_path / "run_provenance"),
+    )
+
+    assert result["provenance"] == "MEASURED"
+
+
 _FAKE_ELMERSOLVER_THERMAL_PY = """
 import sys
 sif_path = sys.argv[1]

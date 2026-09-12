@@ -1087,6 +1087,25 @@ def generate_freecad_fem_mesh_macro(
 # ---------------------------------------------------------------------------
 
 
+def _status_for_freecad_result(freecad_result: dict[str, Any]) -> str:
+    """Derive the top-level `status` string honestly from `freecad_result`'s
+    own `errors`/`mesh` fields (issue #491) instead of hardcoding
+    `"COMPLETED"` regardless of what actually happened: a per-object solid
+    build failure (`freecad_result["errors"]` non-empty) or a failed mesh
+    generation (`freecad_result["mesh"]["mesh_ok"]` is `False`, for the FEM-
+    mesh path -- absent entirely for the STEP-export path, which has no
+    `"mesh"` key at all) both mean SOMETHING in this run did not succeed,
+    even though the FreeCADCmd subprocess itself exited cleanly and so no
+    FreecadGeometryError was raised. Returns `"COMPLETED"` only when neither
+    condition holds, `"COMPLETED_WITH_ERRORS"` otherwise."""
+    has_object_errors = bool(freecad_result.get("errors"))
+    mesh = freecad_result.get("mesh")
+    has_mesh_failure = isinstance(mesh, dict) and mesh.get("mesh_ok") is False
+    if has_object_errors or has_mesh_failure:
+        return "COMPLETED_WITH_ERRORS"
+    return "COMPLETED"
+
+
 def _missing_status_note(status_filename: str) -> str:
     """The shared "status file missing after a clean exit" diagnostic --
     extracted so BOTH `run_freecad_curved_geometry()` and `run_freecad_fem_
@@ -1155,9 +1174,8 @@ def run_freecad_curved_geometry(
 
     Returns:
         {
-          "provenance": "SIMULATED",
           "simulator": "FreeCADCmd",
-          "status": "COMPLETED",
+          "status": "COMPLETED" | "COMPLETED_WITH_ERRORS",
           "workdir": str,
           "macro_file": str,
           "primitives": [...the geometry-dict "polygon" primitives...],
@@ -1171,6 +1189,20 @@ def run_freecad_curved_geometry(
           "stdout": str,
         }
 
+    Deliberately carries NO `"provenance"` key: this module is a geometry
+    generator, not a `simulation.base.Simulator` (see module docstring) --
+    it produces no `SimulationResult` and must never claim the `"SIMULATED"`
+    evidence tier that implies (issue #491). CONTEXT.md's Provenance
+    vocabulary is a closed, nine-value set with no entry that fits "geometry
+    mapped and built by an external CAD tool, but not simulated" either, so
+    the field is omitted rather than inventing a tenth value.
+
+    `status` is derived honestly from `freecad["errors"]` (see
+    `_status_for_freecad_result()`): `"COMPLETED_WITH_ERRORS"` when a
+    per-object solid build failed inside FreeCAD, `"COMPLETED"` otherwise --
+    never hardcoded regardless of what `freecad["errors"]` actually says
+    (issue #491).
+
     Raises FreecadGeometryError if the FreeCADCmd subprocess itself fails
     (nonzero exit, timeout, or executable not found) -- matching this
     repo's other subprocess-based adapters (e.g. simulation.elmer.
@@ -1178,8 +1210,9 @@ def run_freecad_curved_geometry(
     silently returning a degraded result. A per-object build failure INSIDE
     a successfully-run FreeCADCmd process (e.g. a self-intersecting polygon
     Part.Face() rejects) is NOT such a failure -- it is reported honestly in
-    `freecad["errors"]` instead, since the process itself still ran to
-    completion and other objects may have built successfully.
+    `freecad["errors"]` (and reflected in the top-level `status` above)
+    instead, since the process itself still ran to completion and other
+    objects may have built successfully.
     """
     curved_primitives = map_unit_cell_layout_to_curved_surface(
         primitives, curvature, name_prefix=name_prefix
@@ -1218,9 +1251,8 @@ def run_freecad_curved_geometry(
         }
 
     return {
-        "provenance": "SIMULATED",
         "simulator": "FreeCADCmd",
-        "status": "COMPLETED",
+        "status": _status_for_freecad_result(freecad_result),
         "workdir": str(work_dir),
         "macro_file": str(macro_file),
         "primitives": curved_primitives,
@@ -1254,9 +1286,8 @@ def run_freecad_fem_mesh_geometry(
 
     Returns:
         {
-          "provenance": "SIMULATED",
           "simulator": "FreeCADCmd",
-          "status": "COMPLETED",
+          "status": "COMPLETED" | "COMPLETED_WITH_ERRORS",
           "workdir": str,
           "macro_file": str,
           "primitives": [...the geometry-dict "polygon" primitives...],
@@ -1277,6 +1308,20 @@ def run_freecad_fem_mesh_geometry(
           "stdout": str,
         }
 
+    Deliberately carries NO `"provenance"` key -- same reasoning as
+    `run_freecad_curved_geometry()`'s own docstring (issue #491): this is a
+    geometry generator, not a `simulation.base.Simulator`, produces no
+    `SimulationResult`, and must never claim the `"SIMULATED"` evidence
+    tier. No entry in CONTEXT.md's closed nine-value Provenance vocabulary
+    fits, so the field is omitted rather than invented.
+
+    `status` is derived honestly (see `_status_for_freecad_result()`):
+    `"COMPLETED_WITH_ERRORS"` when `freecad["errors"]` is non-empty (a
+    per-object solid build failed) OR `freecad["mesh"]["mesh_ok"]` is
+    `False` (meshing failed, or never ran -- see the "status file missing"
+    shape below, whose `mesh_ok` is also `False`); `"COMPLETED"` only when
+    neither holds (issue #491).
+
     NOTE the second `freecad` shape above (status file missing after a
     clean FreeCADCmd exit -- see `_missing_status_note()`): unlike the
     happy-path shape, it has NO `"total_input"` key at all, and carries a
@@ -1292,7 +1337,8 @@ def run_freecad_fem_mesh_geometry(
     FEM-meshing failure INSIDE a successfully-run FreeCADCmd process (e.g.
     gmsh not installed on the machine FreeCADCmd itself runs on) is NOT such
     a failure -- both are reported honestly in `freecad["errors"]`/
-    `freecad["mesh"]` instead, never raised and never silently guessed.
+    `freecad["mesh"]` (and reflected in the top-level `status` above)
+    instead, never raised and never silently guessed.
     """
     curved_primitives = map_unit_cell_layout_to_curved_surface(
         primitives, curvature, name_prefix=name_prefix
@@ -1344,9 +1390,8 @@ def run_freecad_fem_mesh_geometry(
         }
 
     return {
-        "provenance": "SIMULATED",
         "simulator": "FreeCADCmd",
-        "status": "COMPLETED",
+        "status": _status_for_freecad_result(freecad_result),
         "workdir": str(work_dir),
         "macro_file": str(macro_file),
         "primitives": curved_primitives,
