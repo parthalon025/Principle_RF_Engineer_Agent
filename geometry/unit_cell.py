@@ -101,8 +101,9 @@ real, installed gdstk 1.0.1 library (see tests/test_geometry_unit_cell.py)
 against a real binary" gap here for gdstk itself. What has NOT been
 verified end-to-end is the far side of the pipeline: the polygon/box
 primitive dicts this module emits have not been run through a real openEMS
-binary (openEMS itself is not installed in this environment -- see
-simulation/openems.py's own honest caveat), so while the <Polygon> XML
+binary (openEMS is built into this project's own Docker image, absent on a
+bare host -- see simulation/openems.py's own honest caveat, issue #480), so
+while the <Polygon> XML
 shape they feed into is verified against CSXCAD's own source, an actual
 openEMS FDTD run consuming a gdstk-generated unit-cell array has not been
 performed.

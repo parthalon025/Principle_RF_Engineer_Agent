@@ -410,9 +410,12 @@ class OpenemsSimulator(Simulator):
 #     warning), which is the signal actually available from a run's exit
 #     condition.
 #
-# HONEST CAVEAT: the real `openEMS` binary is NOT installed in this
-# environment (confirmed via `which openEMS`, exit 1) and was not available
-# to run against these generated FDTD-XML files. XML generation follows the
+# HONEST CAVEAT (issue #480: three distinct claims, not one). openEMS
+# (v0.37.0-rc2) is built from source and confirmed on PATH in this project's
+# own Docker image (Dockerfile) -- it is NOT genuinely absent everywhere. It
+# IS absent on a bare host outside that image (confirmed via `which openEMS`,
+# exit 1, in this sandbox). And even inside the image, this code has never
+# actually been DRIVEN against the real binary. XML generation follows the
 # element/attribute names verified against CSXCAD/openEMS source as cited
 # above; the console-log parser is exercised in tests only against a fake
 # "openEMS" script (see tests/test_openems.py) whose sample log lines were
@@ -431,10 +434,11 @@ class OpenemsSimulator(Simulator):
 # against this module's FFT output, not against real FDTD physics.
 # The NF2FF far-field/gain extraction added in issue #269 is in the same
 # position again, one level further removed: the real `nf2ff` binary is
-# ALSO not installed in this environment (it ships from the same openEMS
-# source tree but is a separate executable -- confirmed absent the same way
-# as `openEMS` itself), so neither has this module ever driven it against
-# real FDTD near-field dumps. The DumpBox XML shape and the nf2ff tool's own
+# ALSO built from the same openEMS source tree and confirmed on PATH in the
+# Docker image (a separate executable from `openEMS` itself, same
+# absent-on-a-bare-host/present-in-the-image/never-driven-here shape), so
+# neither has this module ever driven it against real FDTD near-field
+# dumps. The DumpBox XML shape and the nf2ff tool's own
 # input-XML/result-HDF5 schemas are each cited to openEMS/CSXCAD source
 # above; tests exercise the XML generation directly and exercise the
 # post-processing call chain (subprocess invocation, HDF5 result parsing,

@@ -18,8 +18,9 @@ The subprocess half (_run_freecadcmd/run_freecad_curved_geometry) is
 exercised only against a small fake "FreeCADCmd" Python-shebang script,
 following this repo's established fake-executable-script pattern used by
 every subprocess-based adapter (see tests/test_elmer.py's module docstring
-for the discipline this mirrors) -- FreeCADCmd is not installed in this
-environment.
+for the discipline this mirrors) -- FreeCADCmd is built into this
+project's own Docker image but absent on this bare-host sandbox (issue
+#480).
 """
 
 import json

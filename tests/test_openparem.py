@@ -1,9 +1,11 @@
 """Tests for the OpenParEM3D adapter: `.proj`/ports-file generation, subprocess
 execution, and S-parameter/far-field result parsing (issue #62).
 
-The real `OpenParEM3D` binary is NOT installed in this environment (confirmed via
-`which OpenParEM3D` during implementation), and OpenParEM is a multi-tool flow (FreeCAD
-+ gmsh + OpenParEM3D itself) rather than a single all-in-one binary, so
+The real `OpenParEM3D` binary is built into this project's own Docker image (Dockerfile)
+but absent on a bare host (confirmed via `which OpenParEM3D` during implementation, run
+outside that image; issue #480), never actually driven by this test suite even inside it,
+and OpenParEM is a multi-tool flow (FreeCAD + gmsh + OpenParEM3D itself, all three
+likewise built into that same image) rather than a single all-in-one binary, so
 `OpenParemSimulator.run()` is exercised here only against small fake "OpenParEM3D"
 scripts checked in below (via `tmp_path`), per the same fake-executable testing pattern
 already used for NEC2++ (tests/test_nec2pp.py) and openEMS (tests/test_openems.py):

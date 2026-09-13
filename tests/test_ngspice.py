@@ -1,10 +1,13 @@
 """Tests for ngspice netlist generation, execution, and result parsing
 (issue #57).
 
-The real `ngspice` binary is NOT installed in this environment (confirmed
-via `which ngspice` during implementation) so `NgspiceSimulator.run()` is
-exercised here only against small fake "ngspice" scripts checked in below
-(via `tmp_path`), the same subprocess-plumbing-only testing approach
+The real `ngspice` binary is apt-installed in this project's own Docker
+image (Dockerfile) but absent on this bare-host sandbox (confirmed via
+`which ngspice` during implementation; issue #480) and never actually
+driven by this test suite even inside the image, so
+`NgspiceSimulator.run()` is exercised here only against small fake
+"ngspice" scripts checked in below (via `tmp_path`), the same
+subprocess-plumbing-only testing approach
 tests/test_nec2pp.py and tests/test_openems.py use for their own
 simulators: argument shape, nonzero exit, and timeout are tested; the
 physics itself is out of scope for automated tests.

@@ -457,9 +457,14 @@ contents/search APIs, same method as the rest of this module):
   also fixing the vertex coordinates, would make the mismatch WORSE (a
   correctly-scaled mesh size next to a wrongly-scaled shape), not better.
 
-HONEST CAVEAT: FreeCAD/FreeCADCmd is almost certainly NOT installed in this
-environment (matching this repo's other manually-installed simulator tools
--- NEC2++, openEMS, Elmer, gprMax, etc.), and this pass could not fetch
+HONEST CAVEAT (issue #480; see #361 for the first correction of this claim,
+elsewhere in this same file): FreeCADCmd IS installed in this project's own
+Docker image (FreeCAD-maintainers PPA, Dockerfile; `/usr/bin/FreeCADCmd`,
+0.21.2) -- it is NOT genuinely absent everywhere, matching this repo's other
+built-from-source-or-PPA simulator tools (NEC2++, openEMS, Elmer, gprMax,
+etc.). It IS absent on a bare host outside that image, which this stale
+sentence used to state as a blanket, unqualified claim. Separately, this
+pass could not fetch
 wiki.freecad.org at all (every request returned an "Anubis" bot-challenge
 "Access Denied" page, including the MediaWiki `action=raw`/`api.php` export
 endpoints) -- every citation above is instead read directly from FreeCAD's

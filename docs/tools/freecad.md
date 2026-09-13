@@ -122,8 +122,9 @@ unchanged by the FEM-mesh prototype below. A SEPARATE, additive entry point,
 `run_freecad_curved_geometry()` is unaffected either way. Only "box" and
 "polygon" flat input
 primitives are accepted (not "cylinder"), matching `geometry/unit_cell.py`'s
-own scope. The module's own header states FreeCAD/FreeCADCmd is almost
-certainly not installed in this environment, and that its subprocess path
+own scope. The module's own header states FreeCADCmd is built into this
+project's own Docker image (FreeCAD-maintainers PPA, per the Dockerfile) but
+absent on a bare host (issue #480), and that its subprocess path
 (`_run_freecadcmd`) has only been exercised against a fake stand-in script in
 `tests/test_freecad_curved.py`, not a real FreeCADCmd binary — the pure
 curvature math is independently tested and needs no FreeCAD install.

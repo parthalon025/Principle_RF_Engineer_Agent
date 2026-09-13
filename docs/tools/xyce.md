@@ -118,10 +118,13 @@ CSV parsing is attempted for that case); any semiconductor-device/`.MODEL`
 generation (structured support is R/L/C/V/I only, same scope note as the
 ngspice adapter); noise, sensitivity, or Multi-Time PDE analyses (only
 `op`/`ac`/`tran`/`hb` are exposed). The module's own docstring additionally
-flags that the real `Xyce` binary was not installed in the dev environment
-(`which Xyce` / `which xyce` both exit 1), so netlist generation and output
-parsing — especially the `.LIN` S-parameter path — are built to the
-documented format but unverified end-to-end against a real run.
+flags that the real `Xyce` binary is built into this project's own Docker
+image (Dockerfile) but absent in the dev environment used to implement it
+(`which Xyce` / `which xyce` both exit 1 outside that image; issue #480),
+and has never actually been driven even inside the image, so netlist
+generation and output parsing — especially the `.LIN` S-parameter path —
+are built to the documented format but unverified end-to-end against a
+real run.
 
 ## Capabilities not yet used here
 

@@ -106,8 +106,10 @@ native multi-port `.SP` (S-parameter) analysis, nothing else.
   `rf_tools/correlation.py`.
 
 The module's own header comment is explicit that the real `qucsator_rf`
-binary was not installed in the implementing environment, so this parsing
-and generation logic is verified against the tool's cited source files and
+binary is built into this project's own Docker image (Dockerfile) but was
+absent in the implementing environment (issue #480), and has never
+actually been driven even inside the image, so this parsing and
+generation logic is verified against the tool's cited source files and
 a real sample netlist fixture, not against an actual run — "treat any
 result as unverified end-to-end until it has been run against the real
 tool at least once."

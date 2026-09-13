@@ -1429,7 +1429,8 @@ def test_compare_touchstone_files_calls_through(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # NEC2++ simulation (issue #38)
 #
-# The real nec2++ binary is not installed in this environment, so this
+# The real nec2++ binary is built into this project's own Docker image but
+# absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.nec2pp via a fake
 # "nec2++" script pointed to by NEC2PP_BIN -- same not-verified-against-a-
 # real-binary caveat as tests/test_nec2pp.py. The section headings and
@@ -1489,7 +1490,8 @@ def test_run_nec2_simulation_calls_through(tmp_path: Path, monkeypatch):
 # ---------------------------------------------------------------------------
 # openEMS simulation (issue #39)
 #
-# The real openEMS binary is not installed in this environment, so this
+# The real openEMS binary is built into this project's own Docker image but
+# absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.openems via a fake
 # "openEMS" script pointed to by OPENEMS_BIN -- same not-verified-against-a-
 # real-binary caveat as tests/test_openems.py. See that file's module
@@ -1842,7 +1844,8 @@ def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
 # ---------------------------------------------------------------------------
 # OpenParEM3D simulation (issue #62)
 #
-# The real OpenParEM3D binary is not installed in this environment, so this
+# The real OpenParEM3D binary is built into this project's own Docker image
+# but absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.openparem via a fake
 # "OpenParEM3D" script pointed to by OPENPAREM3D_BIN, mirroring
 # test_run_nec2_simulation_calls_through/test_run_openems_simulation_calls_
@@ -1883,7 +1886,8 @@ def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
 # ---------------------------------------------------------------------------
 # Palace simulation (issue #61)
 #
-# The real palace binary is not installed in this environment, so this
+# The real palace binary is built into this project's own Docker image but
+# absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.palace via a fake
 # "palace" script pointed to by PALACE_BIN -- same not-verified-against-a-
 # real-binary caveat as tests/test_palace.py. The fake script writes a
@@ -2294,8 +2298,9 @@ def test_run_meep_simulation_calls_through(monkeypatch):
 # ---------------------------------------------------------------------------
 # FreeCAD curved/conformal host-surface geometry generation (issue #66)
 #
-# FreeCADCmd is not installed in this environment (matching this repo's
-# other manually-installed simulator/geometry tools). This exercises the MCP
+# FreeCADCmd is built into this project's own Docker image (matching this
+# repo's other manually-installed simulator/geometry tools) but absent on
+# this bare-host sandbox (issue #480). This exercises the MCP
 # wrapper's call-through to geometry.freecad_curved.run_freecad_curved_
 # geometry against a small fake "FreeCADCmd" Python-shebang script, standing
 # in for the real binary -- same fake-executable pattern as the Elmer

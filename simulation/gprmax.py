@@ -307,11 +307,17 @@ class GprmaxSimulator(Simulator):
 #     `{"computed": False, ...}`, structurally parallel to nec2pp.py's
 #     `pattern`/`gain_dbi` and openems.py's `far_field` keys.
 #
-# HONEST CAVEAT: gprMax is NOT installed in this environment, and (per the
-# "CORRECTION" section above) genuinely CANNOT be installed via a simple
-# pip/uv command here at all -- it requires a conda environment plus a C
-# compiler with OpenMP support to compile its Cython extensions, none of
-# which this environment provides. Deck generation and result parsing
+# HONEST CAVEAT (issue #480: three distinct claims, not one). gprMax is
+# built into a dedicated venv (`/opt/gprmax-venv`, `GPRMAX_PYTHON` env var)
+# in this project's own Docker image (Dockerfile) -- it is NOT genuinely
+# absent everywhere. It IS absent on a bare host outside that image, and (per
+# the "CORRECTION" section above) genuinely CANNOT be installed via a simple
+# pip/uv command on a bare host at all -- it requires a C compiler with
+# OpenMP support to compile its Cython extensions, which a bare host running
+# this code may not have (a venv, not conda specifically, is what the image
+# actually uses, per gprMax's own documented supported install routes). And
+# even inside the image, this code has never actually been DRIVEN against
+# the real tool. Deck generation and result parsing
 # below are built to the letter of the documented/verified .in command
 # syntax and .out HDF5 structure cited above, and exercised in tests only
 # against (a) a small fake "python -m gprMax" script (mirroring nec2pp.py's/

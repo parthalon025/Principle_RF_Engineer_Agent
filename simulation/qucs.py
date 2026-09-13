@@ -238,10 +238,14 @@ class QucsSimulator(Simulator):
 #     Touchstone .sNp file via skrf for any N -- see
 #     _try_write_touchstone() below.
 #
-# HONEST CAVEAT: the real `qucsator_rf` binary is NOT installed in this
-# environment (confirmed via `which qucsator_rf` / `which qucsator`, both
-# exit 1) and was not available to actually run against these generated
-# netlists. Netlist generation and dataset parsing below are built to the
+# HONEST CAVEAT (issue #480: three distinct claims, not one). qucsator_rf
+# (Qucs-S 1.0.7) is built from source and confirmed on PATH in this
+# project's own Docker image (Dockerfile) -- it is NOT genuinely absent
+# everywhere. It IS absent on a bare host outside that image (confirmed via
+# `which qucsator_rf` / `which qucsator`, both exit 1, in this sandbox). And
+# even inside the image, this code has never actually been DRIVEN against
+# the real binary -- run against these generated netlists. Netlist
+# generation and dataset parsing below are built to the
 # letter of the documented/verified format above (real fixture files,
 # grammar source, and result-writing source, all cited per-fact); they are
 # exercised in tests only against a small fake "qucsator_rf" script (see

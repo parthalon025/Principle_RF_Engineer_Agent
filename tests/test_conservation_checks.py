@@ -1,7 +1,10 @@
 """Tests for simulation/conservation_checks.py (issue #221).
 
-The real `palace` binary is not installed in this environment (see
-tests/test_palace.py's own header comment) and issue #210 -- which would
+The real `palace` binary is built into this project's own Docker image
+(Dockerfile) but absent on a bare host (confirmed via `which palace`,
+outside that image; issue #480 -- see tests/test_palace.py's own header
+comment) and never actually driven by this test suite even inside it,
+and issue #210 -- which would
 run it against a real binary and produce a genuine measured S-parameter
 fixture -- is still open as of this writing, so none of this repo has a
 real solver-derived S-parameter dataset to test against yet (confirmed by

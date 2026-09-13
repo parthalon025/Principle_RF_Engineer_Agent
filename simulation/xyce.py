@@ -147,9 +147,12 @@ SCOPE OF THIS IMPLEMENTATION:
     documented `-o`-overrides-`.LIN`-`FILE=` interaction entirely instead
     of having to reason about it at every call site.
 
-HONEST CAVEAT: the real `Xyce` binary is NOT installed in this environment
-(confirmed via `which Xyce` and `which xyce`, both exit 1) and was not
-available to run against these generated netlists. Netlist generation and
+HONEST CAVEAT (issue #480: three distinct claims, not one). Xyce (Release-7.10.0) is
+built from source and confirmed on PATH in this project's own Docker image (Dockerfile)
+-- it is NOT genuinely absent everywhere. It IS absent on a bare host outside that image
+(confirmed via `which Xyce` and `which xyce`, both exit 1, in this sandbox). And even
+inside the image, this code has never actually been DRIVEN against the real binary --
+run against these generated netlists. Netlist generation and
 CSV/Touchstone output parsing are built to the documented format cited
 above; tests exercise them only against a fake "Xyce" script (see
 tests/test_xyce.py), not a real Xyce run. Treat any result -- and
