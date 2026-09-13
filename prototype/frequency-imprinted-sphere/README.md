@@ -37,20 +37,49 @@ Note the contrast with near neighbours that do *not* work here: VO₂ relaxes wh
 it cools, and BST as Example 5 uses it needs sustained bias. Both are volatile;
 neither latches.
 
-## The fork that decides what kind of novelty this is
+## The fork that decides the novelty class — now settled
 
-In the charter's own three-way vocabulary:
+Research against primary sources has answered this
+(**`docs/non-volatile-metasurface-prior-art.md`**). In the charter's three-way
+vocabulary this is **not a new mechanism**. It is a **new arrangement** of two
+demonstrated parts, plus **one new element** — the combined cell — that nobody
+has built. That is a far cheaper claim, and a far cheaper thing to test.
 
-- **The incident field writes the pattern itself** → a genuinely **new
-  mechanism**. Established at optical frequencies (a rewritable optical disc is
-  literally a beam writing a retained phase pattern into a chalcogenide film),
-  but the field strength needed to heat a cell past its switching threshold gets
-  much harder to reach as frequency falls.
-- **Cells written electrically, then holding with no power** → a **new
-  arrangement** of known parts. Less novel, more likely to survive a bench.
+The reason is that the wave cannot write the surface directly, and both routes
+fail for measured reasons rather than engineering difficulty:
 
-Which one this is has not been established. A research pass against primary
-sources is running specifically to settle it.
+- **The field flipping the material directly: excluded by air.** Amorphous
+  chalcogenide needs roughly 5–42.5 MV/m to threshold-switch. Air breaks down
+  near 3 MV/m — *you would ionise the air in front of the surface before you
+  switched a single cell.*
+- **The wave heating the cell until it crystallises: excluded by transparency.**
+  Amorphous GeTe measures 0.63×10⁻² S/m at 10 GHz; a 100 nm film absorbs about
+  2×10⁻⁷ of an incident wave. *The state you need to write from is very nearly
+  invisible to the very thing you wanted to write with.*
+- **The wave rectified into a DC bias that does the writing: already
+  demonstrated at microwave.** A self-biased PIN-diode metasurface flips its own
+  coding state at about 10 dBm per cell — roughly 83 W/m², some **nine orders of
+  magnitude** below the direct-field route.
+
+*In plain terms: the wave can't kick the material hard enough, and can't warm it
+either, but it can charge a tiny rectifier that does the switching for it. "The
+wave writes the surface" survives only in that indirect form.*
+
+## What already exists, in three tiers
+
+- **Components: solved.** GeTe phase-change RF switches are latching and
+  commercial-grade — 0.1–0.24 dB insertion loss over 0–40 GHz, >10⁶ cycles, zero
+  hold power. Magnetic-latching RF MEMS ships at DC–6 GHz.
+- **A whole small surface: demonstrated once.** Xiao et al., *Nature
+  Communications* **15**:10591 (2024) — a fully printed, zero-static-power coded
+  reconfigurable microwave metasurface, 6×6 switches, measured 0.3–12 GHz,
+  <0.7 dB insertion loss, set/reset at +1.75 V / −1.1 V. Closest precedent to
+  this repo's own printed, flexible, low-voltage build route — and notably not a
+  chalcogenide but a printed Ag/MoS₂/Ag memristive switch.
+- **A large, individually-addressed, non-volatile reflectarray: nobody has built
+  one.** The nearest published design is simulation-only; the one measured
+  mm-wave RIS using a phase-transition material is VO₂ and *volatile*, held on by
+  a constant 20 V at ≈17 mW per element.
 
 ## Status of the code in this directory: still the acoustic model
 
@@ -162,10 +191,30 @@ working three cells at a time, the number that decides whether it scales has
 never been published, and such cells are known to un-snap themselves eventually
 with nobody reporting how long "eventually" is.*
 
-**Still unverified:** Chladni and Lamb remain named from memory, and the EM
-claims above — GST non-volatility, VO₂ and BST volatility, optical writing of
-phase-change films, and the cost of a bias network — are stated from background
-knowledge. A second research pass is running on those.
+**The EM claims have now been checked too**
+(`docs/non-volatile-metasurface-prior-art.md`). Phase-change latching, VO₂
+volatility and the commercial maturity of latching RF switches all held up
+against measured sources. Two things that did not survive contact are recorded
+above: direct field self-writing is excluded by air breakdown and by the
+material's own transparency, and the novelty class drops from *new mechanism* to
+*new arrangement plus one new element*.
+
+**The prize is now a measured number rather than an assertion.** A 3600-element
+PIN-diode RIS draws 103.2 W in total, of which **15.73 W is static** — about
+12.56 mW per cell spent purely on holding state. That static share is what a
+latching surface deletes outright. It is also the same quantity
+`docs/seven-example-design-unknowns.md` §6.3 already lists as a per-family human
+input ("available bias supply and per-cell control wiring budget"), so this
+connects to an existing open question rather than a new one.
+
+**The one assumption still unmeasured is the one most likely to kill it:**
+nobody publishes cell-to-cell switching-threshold spread, in either the acoustic
+or the RF literature. The cheapest way to find out is small — *print 32 cells in
+a row and DC-probe every one of their thresholds.* No sphere, no array, no
+field. If that distribution is tight the idea has a path; if it is wide, it does
+not.
+
+Chladni and Lamb remain named from memory.
 
 ## Run
 
