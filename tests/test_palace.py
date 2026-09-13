@@ -1296,6 +1296,71 @@ def test_run_palace_simulation_passes_solver_order_into_the_config(tmp_path: Pat
     assert config["Solver"]["Order"] == 2
 
 
+_FAKE_PALACE_WITH_FIELDS_PY = '''
+import json
+import sys
+from pathlib import Path
+
+CSV = """{csv}"""
+
+args = sys.argv[1:]
+assert args[0] == "-np", args
+config_path = Path(args[2])
+config = json.loads(config_path.read_text())
+output_dir = Path(config["Problem"]["Output"])
+output_dir.mkdir(parents=True, exist_ok=True)
+(output_dir / "port-floquet-S.csv").write_text(CSV)
+if "SaveStep" in config["Solver"]["Driven"]:
+    paraview_dir = output_dir / "paraview"
+    paraview_dir.mkdir(parents=True, exist_ok=True)
+    (paraview_dir / "field.vtu").write_text("<VTKFile>fake field data</VTKFile>")
+sys.exit(0)
+'''
+
+
+def _make_fake_palace_with_fields_py(tmp_path: Path, sample_csv: str) -> Path:
+    body = _FAKE_PALACE_WITH_FIELDS_PY.format(csv=sample_csv)
+    return make_fake_executable(tmp_path, body, name="fake_palace_with_fields")
+
+
+def test_run_palace_simulation_save_fields_leaves_readable_files_in_output_dir(tmp_path: Path):
+    """Issue #349's own acceptance criterion, end to end: a run with
+    fields requested must actually leave readable files behind in the
+    output directory -- not just emit the right config key (that half is
+    covered by test_generate_palace_config_save_fields_emits_save_step).
+    The fake executable here only writes to "paraview/" when it sees the
+    "SaveStep" key this module's config generator now emits, so a readable
+    file appearing there proves the key reached the config Palace acts on."""
+    script = _make_fake_palace_with_fields_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    result = run_palace_simulation(
+        geometry=GRATING_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_fields"),
+        save_fields=True,
+    )
+    field_file = Path(result["output_dir"]) / "paraview" / "field.vtu"
+    assert field_file.is_file()
+    assert field_file.read_text() == "<VTKFile>fake field data</VTKFile>"
+
+
+def test_run_palace_simulation_default_leaves_no_field_files(tmp_path: Path):
+    """The other half of #349's acceptance criteria: the default stays
+    off, so an existing caller sees no new files appear."""
+    script = _make_fake_palace_with_fields_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    result = run_palace_simulation(
+        geometry=GRATING_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_no_fields"),
+    )
+    assert not (Path(result["output_dir"]) / "paraview").exists()
+
+
 def test_run_palace_simulation_lossless_declared_false_with_conductivity_sheet(tmp_path: Path):
     """Issue #289: a geometry with an embedded conductivity sheet is a real,
     absorbing structure by construction (kappa_s_m > 0 is required), so

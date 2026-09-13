@@ -2474,7 +2474,11 @@ def test_absorber_simulation_records_meep_workdir(monkeypatch):
     """#461, the #345 gap for MEEP: `run_meep_simulation` already returns
     its own working directory; a completed ABSORBER/ABSORBER_TRANSMISSIVE
     decision must record it too, or a persisted-and-reloaded decision can
-    no longer be traced back to the solver run that produced it."""
+    no longer be traced back to the solver run that produced it. The fake
+    workdir here ("/tmp/...") is NOT the durable default (#466), so the
+    decision also carries that ticket's non-durability warning -- see
+    test_absorber_simulation_using_default_workdir_is_silent for the
+    silent, durable-default case."""
 
     def fake_run(geometry, characteristic_length_m, nfreq, workdir):
         del geometry, characteristic_length_m, nfreq, workdir
@@ -2497,9 +2501,48 @@ def test_absorber_simulation_records_meep_workdir(monkeypatch):
 
     result = state.decisions[-1].result
     assert result["workdir"] == "/tmp/meep_xyz789"
+    # MEEP's own baseline validity entries (normal_incidence_only etc.)
+    # ride along with every ABSORBER result regardless of durability, so
+    # this checks the flag is present, not that it's the only entry.
+    assert "solver_workdir_not_durable" in [entry["flag"] for entry in result["validity"]]
 
     restored = LoopDecision.from_dict(state.decisions[-1].to_dict())
     assert restored.result["workdir"] == "/tmp/meep_xyz789"
+
+
+def test_absorber_simulation_using_default_workdir_is_silent(monkeypatch):
+    """#466: an ABSORBER decision recorded under the durable default
+    directory (simulation.base.new_solver_workdir) must NOT carry the
+    non-durability warning -- see test_palace_simulation_using_default_
+    workdir_is_silent's identical Palace-side case."""
+    from simulation.base import new_solver_workdir
+
+    durable_workdir = str(new_solver_workdir("meep"))
+
+    def fake_run(geometry, characteristic_length_m, nfreq, workdir):
+        del geometry, characteristic_length_m, nfreq, workdir
+        return {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "workdir": durable_workdir,
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.2]},
+        }
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", fake_run)
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(
+        state, {"geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]}, "frequency_hz": 10e9}
+    )
+
+    result = state.decisions[-1].result
+    assert result["workdir"] == durable_workdir
+    # MEEP's own baseline validity entries still ride along -- only the
+    # non-durability warning must be absent.
+    assert "solver_workdir_not_durable" not in [entry["flag"] for entry in result["validity"]]
 
 
 def test_absorber_simulation_never_silently_falls_back_to_nec2(monkeypatch):
