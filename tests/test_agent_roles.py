@@ -6,15 +6,13 @@ scoped to its stated domain. They deliberately do NOT re-test the tools'
 own logic -- that is already covered by test_calculations.py,
 test_touchstone.py, and the knowledge test suite.
 
-A role's tool list no longer lives in one place for all six roles, so the
-domain-scoping tests below read it through `_role_tool_names`: principal,
-systems and verification run entirely over `agent/mcp_roles.py`'s MCP-routed
-construction and their names live there; microwave, antenna and test still
-hold real `FunctionTool` objects in `agent/main.py`, not because of the
-Windows solver deadlock that originally held them back (fixed -- see
-`mcp_server/server.py`'s `isolate_transport_stdin`) but because their
-migration has not been done. What each role may reach is unchanged either
-way -- only which file says so.
+All six roles now run entirely over `agent/mcp_roles.py`'s MCP-routed
+construction (issue #573, closing out ADR-0059): `agent/main.py`'s own
+`@function_tool` wrapper layer is deleted in full, and every role's tool-name
+list lives in `agent.mcp_roles.MIGRATED_ROLE_TOOL_NAMES` instead. The
+domain-scoping tests below still read it through `_role_tool_names` for a
+uniform call shape, but that helper now has nowhere else to fall back to --
+`ROLE_SPECS[key].tools`/`ROLES[key].tools` are `[]` for every key.
 
 The routing mechanism was originally built on `Agent.as_tool()` (a nested
 Runner.run() call per delegated question, with a deterministic
@@ -61,22 +59,17 @@ from openai.types.responses import (
 
 import agent.main as agent_main
 from agent.main import (
-    _ALL_TOOLS,
     _SPEC_BY_KEY,
     ROLE_SPECS,
     ROLES,
     SPECIALIST_HANDOFFS,
     ProvenanceIntegrityError,
     _assert_calculated_provenance_is_tool_backed,
-    correlate_simulated_and_measured,
     principal,
-    run_meep_simulation,
 )
 from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 from mcp_server.server import mcp as mcp_server
-from orchestration.policy import assert_all_tools_categorized, category_for
-
-_OLD_PATH_KEYS = ("microwave", "antenna", "test")
+from orchestration.policy import category_for
 
 
 def _tool_names(agent) -> set[str]:
@@ -84,14 +77,12 @@ def _tool_names(agent) -> set[str]:
 
 
 def _role_tool_names(role_key: str) -> set[str]:
-    """Every tool name that role can actually reach today, read from whichever
-    file owns its list -- see this module's docstring for why that differs by
-    role. Reading `ROLES[key].tools` unconditionally would report the three
-    migrated roles as holding nothing, which is true of those Agent objects
-    and false of the roles themselves."""
-    if role_key in MIGRATED_ROLE_TOOL_NAMES:
-        return set(MIGRATED_ROLE_TOOL_NAMES[role_key])
-    return _tool_names(ROLES[role_key])
+    """Every tool name that role can actually reach, read from
+    `agent.mcp_roles.MIGRATED_ROLE_TOOL_NAMES` -- the sole owner now that all
+    six roles are migrated (issue #573). `ROLES[role_key].tools` is `[]` for
+    every key; this is what the domain-scoping tests below call instead of
+    reading that empty list directly."""
+    return set(MIGRATED_ROLE_TOOL_NAMES[role_key])
 
 
 def test_all_six_roles_are_constructible():
@@ -106,26 +97,27 @@ def test_every_role_can_still_reach_a_non_empty_tool_list():
         assert _role_tool_names(spec.key), f"role {spec.key!r} can reach no tools at all"
 
 
-def test_only_the_roles_still_on_the_old_path_carry_function_tool_objects():
-    """The deletion's headline invariant, stated from both sides: a migrated
-    role's `RoleSpec`/`Agent` carries nothing (its names live in
-    `agent/mcp_roles.py`), and an old-path role's carries everything it can
-    reach, because a solver tool has no working MCP route on Windows."""
+def test_no_role_carries_a_function_tool_object_anymore():
+    """The migration's headline invariant (issue #573): every role's
+    `RoleSpec`/`Agent` carries nothing directly -- `agent/main.py`'s
+    `@function_tool` wrapper layer is deleted in full, and every tool name a
+    role can reach lives in `agent/mcp_roles.py`'s `MIGRATED_ROLE_TOOL_NAMES`
+    instead. Mirrors #376's identical invariant for the first three roles,
+    now true of all six."""
     for key in MIGRATED_ROLE_TOOL_NAMES:
         assert _SPEC_BY_KEY[key].tools == []
         assert ROLES[key].tools == []
-    for key in _OLD_PATH_KEYS:
-        assert _tool_names(ROLES[key]) == _role_tool_names(key)
 
 
-def test_the_surviving_wrapper_layer_is_exactly_what_the_old_path_roles_need():
-    """Nothing is kept in `agent/main.py` that no old-path role uses -- the
-    test that would fail first if a later deletion pass stopped short, or if a
-    new tool were wrapped here for a role that never needed a wrapper."""
-    old_path_union: set[str] = set()
-    for key in _OLD_PATH_KEYS:
-        old_path_union |= _tool_names(ROLES[key])
-    assert {tool.name for tool in _ALL_TOOLS} == old_path_union
+def test_migrated_role_tool_names_covers_exactly_the_six_roles():
+    assert set(MIGRATED_ROLE_TOOL_NAMES) == {
+        "principal",
+        "systems",
+        "microwave",
+        "antenna",
+        "test",
+        "verification",
+    }
 
 
 def test_no_migrated_role_names_a_tool_the_mcp_server_does_not_register():
@@ -212,13 +204,6 @@ def test_principal_role_is_scoped_not_broad():
 
 def test_principal_module_alias_matches_registry():
     assert principal is ROLES["principal"]
-
-
-def test_every_tool_in_all_tools_is_categorized_in_tool_policy():
-    # Mirrors the import-time assert_all_tools_categorized() call right
-    # after _ALL_TOOLS is built in agent/main.py -- this test makes the
-    # same guarantee explicit and independently re-checkable here.
-    assert_all_tools_categorized([tool.name for tool in _ALL_TOOLS])
 
 
 def test_systems_role_gets_calculations_and_knowledge_authoring():
@@ -748,46 +733,6 @@ def test_antenna_and_test_roles_get_meep_simulation():
     assert "run_meep_simulation" not in _role_tool_names("verification")
 
 
-def test_run_meep_simulation_tool_description_reflects_far_field_support():
-    """agent/main.py's own @function_tool-wrapped run_meep_simulation (the
-    surface an agent driven through this module -- as opposed to the MCP
-    server -- actually sees) carries a FOURTH, independently-maintained copy
-    of this tool's docstring, alongside simulation/meep.py's module
-    docstring, mcp_server/server.py's tool docstring, and docs/tools/meep.md
-    -- issue #270 named the first three as needing to change together and
-    missed this one. `@function_tool`-wrapped functions expose their
-    docstring text to the SDK via the `.description` attribute (see
-    agents.tool.FunctionTool), not `.__doc__` on the wrapped callable, so
-    this reads that attribute -- the same text an agent calling this tool
-    surface is actually shown. Regression guard: an agent told outright "NO
-    far-field/gain" never learns geometry['far_field_monitor'] exists."""
-    description = run_meep_simulation.description
-    assert "NO far-field/gain" not in description
-    assert "far_field_monitor" in description
-    assert "gain_dbi" in description
-
-
-def test_correlate_simulated_and_measured_tool_description_states_single_port_qualifier():
-    """agent/main.py's own @function_tool-wrapped correlate_simulated_and_measured
-    carries an independently-maintained copy of mcp_server/server.py's tool
-    docstring (issue #317, ADR-0032 prefactor audit). Code review of that
-    issue's fix found the corrected text (in both files) still overstated
-    when openEMS's S-parameters are accepted -- it omitted that
-    simulation/openems.py only ever writes a "touchstone_file" for the
-    SINGLE-PORT case (`if len(names) == 1:`); a multi-port computed=True run
-    has no "touchstone_file" and is rejected too, same as computed=False.
-    Regression guard on the agent-facing `.description` text specifically
-    (see test_run_meep_simulation_tool_description_reflects_far_field_support
-    above for why `.description`, not `.__doc__`, is what an agent actually
-    sees)."""
-    description = correlate_simulated_and_measured.description
-    assert "computed=True" in description
-    assert "computed=False" in description
-    assert "both honestly rejected" not in description
-    assert "single-port" in description
-    assert "multi-port" in description
-
-
 def test_antenna_role_gets_patch_length_optimization_tool():
     # issue #41: searching patch length against a target resonant frequency
     # via the generic optimization/ package composes with the Phase 1
@@ -862,12 +807,11 @@ def test_search_knowledge_is_shared_by_every_role():
 
 
 def test_no_role_has_a_tool_outside_all_currently_wired_tools():
-    # The superset is `mcp_server/server.py`'s live registry, not
-    # `_ALL_TOOLS`: since the migrated roles' wrappers were deleted, most of
-    # what principal/systems/verification reach exists on that surface alone.
-    # A role's route_to_<role>_role handoffs live in `.handoffs`, a separate
-    # namespace this check doesn't include (see
-    # test_principal_has_one_handoff_per_specialist_role for that half).
+    # The superset is `mcp_server/server.py`'s live registry -- every role's
+    # own tools exist on that surface alone now that all six roles' wrapper
+    # layer is deleted (issue #573). A role's route_to_<role>_role handoffs
+    # live in `.handoffs`, a separate namespace this check doesn't include
+    # (see test_principal_has_one_handoff_per_specialist_role for that half).
     all_wired = {tool.name for tool in asyncio.run(mcp_server.list_tools())}
     for spec in ROLE_SPECS:
         role_names = _role_tool_names(spec.key)
@@ -1106,7 +1050,14 @@ def test_run_is_an_async_function():
     assert inspect.iscoroutinefunction(agent_main.run)
 
 
-def test_build_live_principal_mixes_new_and_old_style_handoffs(monkeypatch):
+def test_build_live_principal_builds_every_specialist_via_build_role_agent(monkeypatch):
+    """Issue #573: there is no more old-style `SPECIALIST_HANDOFFS[key]`
+    entry mixed into the live principal's handoffs -- microwave/antenna/test
+    are built through `build_role_agent(key, mcp_server=servers[key])`
+    exactly like systems/verification already were, so all five specialist
+    handoffs are now built the SAME way. `SPECIALIST_HANDOFFS` itself still
+    exists (it backs the non-live `ROLES["principal"]` registry Agent), but
+    `_build_live_principal` no longer reads from it at all."""
     import agent.mcp_roles as mcp_roles_module
 
     built_agent_calls = []
@@ -1130,6 +1081,9 @@ def test_build_live_principal_mixes_new_and_old_style_handoffs(monkeypatch):
 
     assert {call["role_key"] for call in built_agent_calls} == {
         "systems",
+        "microwave",
+        "antenna",
+        "test",
         "verification",
         "principal",
     }
@@ -1147,22 +1101,14 @@ def test_build_live_principal_mixes_new_and_old_style_handoffs(monkeypatch):
         "route_to_antenna_role",
         "route_to_test_role",
     }
-    # The three old-style entries must be the SAME Handoff objects
-    # SPECIALIST_HANDOFFS holds, not separately-rebuilt copies.
-    assert handoffs_by_tool_name["route_to_microwave_role"] is SPECIALIST_HANDOFFS["microwave"]
-    assert handoffs_by_tool_name["route_to_antenna_role"] is SPECIALIST_HANDOFFS["antenna"]
-    assert handoffs_by_tool_name["route_to_test_role"] is SPECIALIST_HANDOFFS["test"]
-    new_style_systems_agent = next(c for c in built_agent_calls if c["role_key"] == "systems")[
-        "agent"
-    ]
-    new_style_verification_agent = next(
-        c for c in built_agent_calls if c["role_key"] == "verification"
-    )["agent"]
-    assert handoffs_by_tool_name["route_to_systems_role"].agent_name == new_style_systems_agent.name
-    assert (
-        handoffs_by_tool_name["route_to_verification_role"].agent_name
-        == new_style_verification_agent.name
-    )
+    for key in ("systems", "microwave", "antenna", "test", "verification"):
+        call = next(c for c in built_agent_calls if c["role_key"] == key)
+        assert call["mcp_server"] is servers[key]
+        # None of the five old-style SPECIALIST_HANDOFFS entries leak into
+        # the live principal -- every one here is a freshly built new-style
+        # handoff pointed at the fake agent this test's own stub returned.
+        assert handoffs_by_tool_name[f"route_to_{key}_role"] is not SPECIALIST_HANDOFFS[key]
+        assert handoffs_by_tool_name[f"route_to_{key}_role"].agent_name == call["agent"].name
 
 
 class _FakeManager:
@@ -1171,9 +1117,10 @@ class _FakeManager:
 
     instances: list["_FakeManager"] = []
 
-    def __init__(self, servers, *, strict=False):
+    def __init__(self, servers, *, strict=False, connect_in_parallel=False):
         self.servers = list(servers)
         self.strict = strict
+        self.connect_in_parallel = connect_in_parallel
         self.connect_all_called = False
         self.cleanup_called = False
         _FakeManager.instances.append(self)
@@ -1219,10 +1166,28 @@ def test_run_connects_every_live_role_through_a_strict_manager(monkeypatch, fake
     assert manager.strict is True
     assert manager.connect_all_called is True
     assert {server.role_key for server in manager.servers} == {
-        "systems",
-        "verification",
         "principal",
+        "systems",
+        "microwave",
+        "antenna",
+        "test",
+        "verification",
     }
+
+
+def test_run_connects_the_manager_in_parallel():
+    """Issue #573 step 5: `connect_in_parallel=True` is turned on for the
+    shared `MCPServerManager` in `run()` -- an isolated, one-line change the
+    #479 investigation measured cutting the 6-server eager-connect cost from
+    ~14s to ~3.7s. `agent/main.py`'s own source is checked directly (rather
+    than through `fake_manager`, which would only prove the kwarg reaches
+    ITS OWN constructor, not that `run()` actually passes it) so a future
+    edit that dropped the flag fails here even if some other test's fake
+    manager silently accepted the call either way."""
+    import inspect
+
+    source = inspect.getsource(agent_main.run)
+    assert "connect_in_parallel=True" in source
 
 
 def test_run_passes_a_provenance_tracking_context_and_cleans_up_the_manager(
@@ -1328,7 +1293,7 @@ def test_run_cleans_up_a_real_manager_when_agent_construction_raises(monkeypatch
 
     assert len(managers) == 1
     manager = managers[0]
-    assert len(manager.all_servers) == 3
+    assert len(manager.all_servers) == 6
     # Every server really did connect, and none is still holding a session.
     assert manager._connected_servers == set()
     assert all(server.session is None for server in manager.all_servers)
@@ -1351,12 +1316,27 @@ def test_run_raises_provenance_integrity_error_for_a_mislabeled_result(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# Real Runner.run() conversations over a really-connected MCP server, with
-# only the MODEL scripted. The trap these exist for: a principal built by
-# agent/mcp_roles.build_role_agent carries provenance_integrity_guardrail,
-# but an output guardrail only ever runs for the agent it is attached to --
-# so a claim produced by ROLES["microwave"] after a handoff is seen by
-# agent/main.py's post-hoc RunResult check alone.
+# Real Runner.run() conversations over two really-connected MCP servers (the
+# principal's own, and the migrated specialist's it hands off to), with only
+# the MODEL scripted -- no API key or local backend needed.
+#
+# Before issue #573, this section's trap was that a claim produced by
+# ROLES["microwave"] (the OLD-style Agent, holding no guardrail of its own)
+# after a handoff was seen by `run()`'s post-hoc RunResult check ALONE. Now
+# that microwave/antenna/test are built via `build_role_agent` too, that is
+# no longer true: EVERY specialist carries `provenance_integrity_guardrail`
+# directly, so a mislabeled claim from a specialist's own final answer is
+# caught by the SDK's `OutputGuardrailTripwireTriggered` from inside
+# `Runner.run` -- the SAME path `test_run_surfaces_a_new_style_agents_own_
+# guardrail_tripwire` below already proves for the principal's own answer,
+# now also true one hop downstream of a handoff. Confirmed directly against
+# this repo's installed SDK (not assumed): `agents/run.py`'s own turn loop
+# runs `current_agent.output_guardrails` -- `current_agent` rebinds to the
+# specialist the turn its own final answer is produced, so its guardrail (not
+# the principal's) is what fires. `_assert_calculated_provenance_is_tool_
+# backed`'s post-hoc check is still called by `run()` and still correct, but
+# is now a redundant defense-in-depth backstop for the live path rather than
+# the only thing that would have caught a specialist's own mislabeling.
 # ---------------------------------------------------------------------------
 
 
@@ -1408,19 +1388,26 @@ class _ScriptedTurnModel(Model):
         raise NotImplementedError("not exercised by this test")
 
 
-async def _run_mixed_handoff_scenario(turns: list[list]):
-    """Drive a new-style principal whose only handoff target is the old-style
-    ROLES["microwave"] Agent, and hand back the RunResult."""
+async def _run_mixed_handoff_scenario(microwave_turns: list[list], principal_turns: list[list]):
+    """Drive a real principal, built via `build_role_agent`, whose only
+    handoff target is a real "microwave" Agent -- ALSO built via
+    `build_role_agent`, with its own separately-connected MCP server, the
+    same pairing `_build_live_principal` assembles for a live run (issue
+    #573). Returns the RunResult."""
     from agent.mcp_roles import ProvenanceTrackingContext, build_role_agent
+
+    live_microwave = build_role_agent("microwave")
+    live_microwave.model = _ScriptedTurnModel(microwave_turns)
+    microwave_handoff = agent_main._build_role_handoff("microwave", live_microwave)
 
     live_principal = build_role_agent(
         "principal",
-        handoffs=[SPECIALIST_HANDOFFS["microwave"]],
+        handoffs=[microwave_handoff],
         extra_instructions=agent_main._PRINCIPAL_ROUTING_INSTRUCTIONS,
     )
-    live_principal.model = _ScriptedTurnModel(turns)
+    live_principal.model = _ScriptedTurnModel(principal_turns)
 
-    async with live_principal.mcp_servers[0]:
+    async with live_principal.mcp_servers[0], live_microwave.mcp_servers[0]:
         return await Runner.run(
             live_principal,
             "what is the VSWR for a reflection coefficient of 0.2?",
@@ -1429,28 +1416,19 @@ async def _run_mixed_handoff_scenario(turns: list[list]):
 
 
 @pytest.mark.asyncio
-async def test_calculated_claim_backed_by_a_real_tool_call_through_an_old_style_handoff_is_accepted(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        ROLES["microwave"],
-        "model",
-        _ScriptedTurnModel(
-            [
-                [
-                    _scripted_function_call(
-                        "calculate_vswr",
-                        "call_2",
-                        '{"reflection_coefficient_magnitude": 0.2}',
-                    )
-                ],
-                [_scripted_message("VSWR: 1.50 (CALCULATED).")],
-            ]
-        ),
-    )
-
+async def test_calculated_claim_backed_by_a_real_tool_call_through_a_migrated_handoff_is_accepted():
     result = await _run_mixed_handoff_scenario(
-        [[_scripted_function_call("route_to_microwave_role", "call_1")]]
+        microwave_turns=[
+            [
+                _scripted_function_call(
+                    "calculate_vswr",
+                    "call_2",
+                    '{"reflection_coefficient_magnitude": 0.2}',
+                )
+            ],
+            [_scripted_message("VSWR: 1.50 (CALCULATED).")],
+        ],
+        principal_turns=[[_scripted_function_call("route_to_microwave_role", "call_1")]],
     )
 
     assert result.final_output == "VSWR: 1.50 (CALCULATED)."
@@ -1462,28 +1440,31 @@ async def test_calculated_claim_backed_by_a_real_tool_call_through_an_old_style_
     assert "calculate_vswr" in tool_call_names
     assert category_for("calculate_vswr") == "calculation"
 
+    # Both checks agree the claim is properly backed: the specialist's own
+    # guardrail already let the run complete normally, and the post-hoc
+    # backstop (still called by run()) finds the same real tool call.
     _assert_calculated_provenance_is_tool_backed(result)
 
 
 @pytest.mark.asyncio
-async def test_calculated_claim_mislabeled_through_the_same_old_style_handoff_still_trips(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        ROLES["microwave"],
-        "model",
-        _ScriptedTurnModel([[_scripted_message("VSWR: 1.50 (CALCULATED).")]]),
-    )
+async def test_calculated_claim_mislabeled_through_a_migrated_handoff_trips_its_own_guardrail():
+    """Issue #573's real behavior change, checked directly: since microwave
+    is now built via `build_role_agent`, it carries its OWN `provenance_
+    integrity_guardrail` -- so a mislabeled claim in ITS final answer (after
+    a handoff) raises `OutputGuardrailTripwireTriggered` from inside
+    `Runner.run` itself, not `run()`'s post-hoc `ProvenanceIntegrityError`
+    (which is what the pre-#573 version of this test, against the old-style
+    ROLES["microwave"] with no guardrail of its own, actually exercised)."""
+    with pytest.raises(OutputGuardrailTripwireTriggered) as exc_info:
+        await _run_mixed_handoff_scenario(
+            microwave_turns=[[_scripted_message("VSWR: 1.50 (CALCULATED).")]],
+            principal_turns=[[_scripted_function_call("route_to_microwave_role", "call_1")]],
+        )
 
-    result = await _run_mixed_handoff_scenario(
-        [[_scripted_function_call("route_to_microwave_role", "call_1")]]
-    )
-
-    assert result.final_output == "VSWR: 1.50 (CALCULATED)."
-    assert not any(getattr(item, "type", None) == "tool_call_item" for item in result.new_items)
-
-    with pytest.raises(ProvenanceIntegrityError):
-        _assert_calculated_provenance_is_tool_backed(result)
+    assert exc_info.value.guardrail_result.agent.name == "Microwave Engineer"
+    guardrail_output = exc_info.value.guardrail_result.output
+    assert guardrail_output.tripwire_triggered is True
+    assert guardrail_output.output_info == {"calculation_tool_called": False}
 
 
 def test_run_surfaces_a_new_style_agents_own_guardrail_tripwire(monkeypatch):

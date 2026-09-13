@@ -24,6 +24,7 @@ import urllib.request
 import pytest
 from agents import Runner
 from agents.exceptions import OutputGuardrailTripwireTriggered
+from conftest import DIPOLE_GEOMETRY, make_fake_executable
 
 import agent.main as agent_main
 from agent.main import ProvenanceIntegrityError
@@ -171,3 +172,74 @@ def test_live_run_never_lets_an_unbacked_calculated_claim_through():
     """
     outcomes = [_classify_one_draw() for _ in range(_MISLABEL_DRAWS)]
     assert len(outcomes) == _MISLABEL_DRAWS, outcomes
+
+
+# ---------------------------------------------------------------------------
+# Issue #573 step 7: a live-model verification pass for at least one handoff
+# into a migrated solver-holding role (microwave/antenna/test), matching the
+# bar #377 set for the first three roles above -- a scripted fake model
+# (tests/test_agent_roles.py) already proves the WIRING works; this proves a
+# real model actually drives it, over the antenna role's own separately-
+# connected MCP server, the same construction principal/systems/verification
+# already had to pass this bar for.
+# ---------------------------------------------------------------------------
+
+_NEC2_HANDOFF_PROMPT = (
+    "Hand this question off to the antenna specialist. Tell them to call "
+    "their run_nec2_simulation tool with frequency_hz=300000000.0, "
+    "timeout_s=10, and this exact geometry argument, passed through "
+    f"unchanged: {json.dumps(DIPOLE_GEOMETRY)}"
+)
+
+
+def _write_fake_nec2pp_exit_0(tmp_path):
+    """Mirrors tests/test_mcp_tool_call_parity.py's helper of the same name
+    exactly: NEC2++ is not installed in this environment (simulation/
+    nec2pp.py), so the antenna role's real, separately-connected MCP server
+    subprocess needs a fast, deterministic fake solver to actually complete
+    -- the same convention every solver-adapter test in this suite already
+    uses (tests/conftest.py's make_fake_executable)."""
+    body = "import sys\nsys.exit(0)\n"
+    return make_fake_executable(tmp_path, body, name="live_model_fast_nec2pp")
+
+
+@live_model
+def test_live_run_routes_a_handoff_into_a_migrated_solver_holding_role(tmp_path, monkeypatch):
+    """A real local model, told plainly to hand off to antenna and run a
+    named tool with a given geometry, actually does: the resulting
+    `RunResult.new_items` carries both a real `route_to_antenna_role`
+    handoff AND a real `run_nec2_simulation` tool call, over the antenna
+    role's own MCP server (agent/mcp_roles.build_role_mcp_server, connected
+    by `run()` alongside every other role's -- issue #573's own step 5).
+
+    `NEC2PP_BIN` is monkeypatched BEFORE `agent_main.run()` is called:
+    `build_role_mcp_server` captures `env=dict(os.environ)` fresh on every
+    call (see its own docstring), so this reaches the antenna server's real
+    subprocess even though it is spawned deep inside `run()`, not by this
+    test directly.
+
+    Does not assert on the exact wording of the model's final answer
+    (unlike `_classify_one_draw` above, this prompt gives the model no
+    CALCULATED/INFERRED provenance choice to make -- a SIMULATED-provenance
+    tool result carries no such ambiguity) -- what matters here is that the
+    handoff and the tool call both really happened."""
+    script = _write_fake_nec2pp_exit_0(tmp_path)
+    monkeypatch.setenv("NEC2PP_BIN", str(script))
+
+    captured, offered_tools = _run_recording_items(_NEC2_HANDOFF_PROMPT)
+
+    assert offered_tools, "the model was never asked for a response"
+    new_items = captured["result"].new_items
+    handoff_names = {
+        item.tool_name for item in new_items if getattr(item, "type", None) == "handoff_call_item"
+    }
+    assert "route_to_antenna_role" in handoff_names, (
+        "the model never routed to the antenna role -- new_items types: "
+        f"{[getattr(i, 'type', None) for i in new_items]}"
+    )
+    tool_names = {
+        item.tool_name for item in new_items if getattr(item, "type", None) == "tool_call_item"
+    }
+    assert "run_nec2_simulation" in tool_names, (
+        f"the antenna role never called run_nec2_simulation -- tool calls made: {tool_names}"
+    )

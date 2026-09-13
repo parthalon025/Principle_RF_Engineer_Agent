@@ -163,16 +163,16 @@ and a design's own move to `RELEASED` — simply keeps refusing.
 
 ## The agent surface
 
-Every capability is registered over **MCP** (`mcp_server/server.py`, stdio). A subset is also
-wrapped as directly-attached **agent tools** in `agent/main.py` — the ones the microwave,
-antenna and test roles need, because those three roles have not been moved onto the MCP-routed
-construction yet. The Windows deadlock that used to block that move — a solver call over the
-MCP stdio transport never returning at all ([#372][i372]) — is fixed. Both surfaces are
-governed by `policies/tool_policy.yaml`.
+Every capability is registered over **MCP** (`mcp_server/server.py`, stdio) — the only
+registration surface now that all six roles have moved onto the MCP-routed construction. The
+Windows deadlock that used to block that move for the microwave/antenna/test roles — a solver
+call over the MCP stdio transport never returning at all ([#372][i372]) — is fixed
+(`mcp_server/server.py`'s `isolate_transport_stdin()`), and `agent/main.py`'s own hand-built
+`@function_tool` wrapper layer is deleted in full: every tool now has exactly one registration.
+Every tool is governed by `policies/tool_policy.yaml`.
 
-The work splits across six roles, each scoped to only the tools its discipline needs. The
-principal, systems and verification roles are built in `agent/mcp_roles.py` and reach every
-tool they hold over MCP; the other three are built in `agent/main.py`:
+The work splits across six roles, each scoped to only the tools its discipline needs, all built
+in `agent/mcp_roles.py` and reaching every tool they hold over MCP:
 
 | Role | Focus |
 |---|---|

@@ -1,5 +1,5 @@
 """Tests for agent/mcp_roles.py -- the MCP-native role/tool-filter
-construction (issue #318, ADR-0032).
+construction (issue #318, ADR-0032; fully migrated by issue #573).
 
 See agent/mcp_roles.py's own module docstring for the full rationale.
 `tests/test_agent_roles.py` stays scoped to `agent.main`'s own construction;
@@ -10,11 +10,8 @@ Two kinds of proof are used here, deliberately:
 
 1. Plain, synchronous, no-I/O tests of where each role's per-role
    `create_static_tool_filter` allow-list comes from: `MIGRATED_ROLE_TOOL_
-   NAMES` for principal/systems/verification, whose `@function_tool`
-   wrappers are gone; still DERIVED from (not a second, hand-typed copy of)
-   agent/main.py's `ROLES[key].tools` for microwave/antenna/test, whose
-   wrappers remain -- the literal wording of issue #318's own acceptance
-   criteria, for as long as those two surfaces both exist for a role.
+   NAMES` -- the sole owner for all six roles now that `agent/main.py`'s
+   `@function_tool` wrapper layer is deleted in full (issue #573).
 2. A REAL MCP-protocol round trip (spawning `mcp_server/server.py` as a
    genuine subprocess, exactly like `tests/test_mcp_server_protocol.py`
    already does for the unfiltered server) proving the filter isn't just a
@@ -47,9 +44,6 @@ from agent.mcp_roles import (
 from mcp_server.server import mcp as mcp_server
 
 _SPECIALIST_KEYS = ["systems", "microwave", "antenna", "test", "verification"]
-# The specialists whose tools agent/main.py still wraps, so their filter is
-# still derived from ROLE_SPECS rather than owned here.
-_OLD_PATH_SPECIALIST_KEYS = ["microwave", "antenna", "test"]
 _ROLE_SPECS_BY_KEY = {spec.key: spec for spec in ROLE_SPECS}
 
 
@@ -162,6 +156,100 @@ _EXPECTED_MIGRATED_ROLE_TOOL_NAMES: dict[str, frozenset[str]] = {
     "verification": frozenset(
         {"read_document", "search_knowledge", "search_design_records", "extract_components"}
     ),
+    "microwave": frozenset(
+        {
+            "calculate_vswr",
+            "calculate_return_loss",
+            "calculate_noise_figure",
+            "analyze_touchstone_file",
+            "convert_db_to_linear",
+            "convert_linear_to_db",
+            "convert_s_to_z",
+            "convert_z_to_s",
+            "convert_s_to_y",
+            "convert_y_to_s",
+            "convert_s_to_abcd",
+            "convert_abcd_to_s",
+            "calculate_cascade_output_ip3",
+            "calculate_oip3_from_iip3",
+            "calculate_iip3_from_oip3",
+            "calculate_third_order_intermod_output",
+            "calculate_third_order_intermod_dbc",
+            "calculate_stability_delta",
+            "calculate_rollett_k_factor",
+            "calculate_stability_verdict",
+            "calculate_output_stability_circle",
+            "calculate_input_stability_circle",
+            "calculate_quarter_wave_transformer_impedance",
+            "calculate_l_network_match",
+            "synthesize_filter_prototype",
+            "realize_lowpass_stepped_impedance_microstrip_filter",
+            "run_qucs_simulation",
+            "run_ltspice_simulation",
+            "run_ngspice_simulation",
+            "run_xyce_simulation",
+            "search_knowledge",
+        }
+    ),
+    "antenna": frozenset(
+        {
+            "calculate_wavelength",
+            "calculate_vswr",
+            "calculate_return_loss",
+            "analyze_touchstone_file",
+            "convert_db_to_linear",
+            "convert_linear_to_db",
+            "calculate_patch_effective_permittivity",
+            "calculate_patch_length_extension",
+            "calculate_patch_resonant_frequency",
+            "calculate_fractional_bandwidth_from_q",
+            "calculate_quality_factor_from_fractional_bandwidth",
+            "calculate_curvature_length_correction_factor",
+            "calculate_curvature_shifted_resonant_frequency",
+            "calculate_maxwell_garnett_effective_permeability",
+            "calculate_aperture_gain",
+            "run_nec2_simulation",
+            "run_openems_simulation",
+            "run_gprmax_simulation",
+            "run_hfss_simulation",
+            "run_openparem_simulation",
+            "run_elmer_simulation",
+            "run_kicad_gerber2ems_simulation",
+            "run_palace_simulation",
+            "run_meep_simulation",
+            "generate_freecad_curved_geometry",
+            "optimize_patch_length_for_target_frequency",
+            "search_knowledge",
+        }
+    ),
+    "test": frozenset(
+        {
+            "analyze_touchstone_file",
+            "interpolate_touchstone_file",
+            "deembed_touchstone_file",
+            "cascade_touchstone_files",
+            "compare_touchstone_files",
+            "correlate_simulated_and_measured",
+            "compile_lab_test_plan",
+            "calculate_vswr",
+            "calculate_return_loss",
+            "calculate_cascade_gain",
+            "run_nec2_simulation",
+            "run_openems_simulation",
+            "run_qucs_simulation",
+            "run_gprmax_simulation",
+            "run_hfss_simulation",
+            "run_openparem_simulation",
+            "run_elmer_simulation",
+            "run_ltspice_simulation",
+            "run_kicad_gerber2ems_simulation",
+            "run_ngspice_simulation",
+            "run_xyce_simulation",
+            "run_palace_simulation",
+            "run_meep_simulation",
+            "search_knowledge",
+        }
+    ),
 }
 
 
@@ -186,25 +274,6 @@ def test_migrated_role_filter_is_not_sourced_from_role_specs(role_key):
     assert _ROLE_SPECS_BY_KEY[role_key].tools == []
     assert ROLES[role_key].tools == []
     assert ROLE_MCP_TOOL_FILTERS[role_key]["allowed_tool_names"]
-
-
-@pytest.mark.parametrize("role_key", _OLD_PATH_SPECIALIST_KEYS)
-def test_specialist_filter_matches_role_specs_tools_exactly(role_key):
-    allowed = set(ROLE_MCP_TOOL_FILTERS[role_key]["allowed_tool_names"])
-    expected = {tool.name for tool in _ROLE_SPECS_BY_KEY[role_key].tools}
-    assert allowed == expected
-
-
-@pytest.mark.parametrize("role_key", _OLD_PATH_SPECIALIST_KEYS)
-def test_specialist_filter_matches_the_live_roles_dict_tools(role_key):
-    # Belt-and-suspenders: also compare against agent.main.ROLES[key].tools
-    # directly (the actual constructed Agent's tool list), not only
-    # ROLE_SPECS (the RoleSpec data ROLES is built from) -- these are
-    # expected to always agree, but the acceptance criterion names
-    # ROLES[key].tools specifically.
-    allowed = set(ROLE_MCP_TOOL_FILTERS[role_key]["allowed_tool_names"])
-    expected = {tool.name for tool in ROLES[role_key].tools}
-    assert allowed == expected
 
 
 # ---------------------------------------------------------------------------

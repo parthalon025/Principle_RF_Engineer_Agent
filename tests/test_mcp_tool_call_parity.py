@@ -1,31 +1,29 @@
 """Issue #319 (ADR-0032's own Verify phase, blocked by #318 -- both merged
-before this ticket started): a live behavior-parity check between the OLD
-direct-call path (`agent/main.py`'s hand-built `@function_tool`/`ROLES`
-construction, invoked via `conftest.invoke_agent_tool`) and the NEW
-`mcp_servers=[server]`-routed path (`agent/mcp_roles.py`, issue #318,
-invoked via `conftest.invoke_role_mcp_tool`) -- the two constructions ADR-
-0032 says must be proven equivalent (or have every difference named
-plainly) before a later "contract" ticket is allowed to delete the OLD
-path.
+before this ticket started): originally a live behavior-parity check between
+the OLD direct-call path (`agent/main.py`'s hand-built `@function_tool`/
+`ROLES` construction, invoked via a since-removed `conftest.invoke_agent_tool`
+helper) and the NEW `mcp_servers=[server]`-routed path (`agent/mcp_roles.py`,
+issue #318, invoked via `conftest.invoke_role_mcp_tool`) -- the two
+constructions ADR-0032 said must be proven equivalent (or have every
+difference named plainly) before a later "contract" ticket was allowed to
+delete the OLD path.
 
-`tests/test_advance_design_status_release_approval.py` and
-`tests/test_calculation_tool_recording.py` already compare an "agent" layer
-against an "mcp" layer, but that "mcp" layer calls FastMCP's own
-`mcp_module.mcp.call_tool()` directly, in-process -- it proves the
-`@mcp.tool()`-wrapped function itself is correct, but never exercises the
-real `mcp_servers=[server]` transport (a spawned `python -m mcp_server.
-server` subprocess, talked to over stdio, converted into `FunctionTool`
-objects by the OpenAI Agents SDK's own `MCPUtil`) that #318 actually built
-and that #319 exists to verify. This file is that missing check, built
-against issue #318's own `agent/mcp_roles.py` construction rather than a
-second, hand-rolled approximation of it (see `conftest.invoke_role_mcp_tool`
-for how).
+Issue #573 was that later ticket: `agent/main.py`'s `@function_tool` wrapper
+layer is now deleted in full (all six roles reach every tool over MCP alone),
+so there is no more OLD path left to compare against. The parity checks below
+were rewritten to exercise the NEW path alone -- the comparison they existed
+to make is complete, not lost; see this file's git history for the actual
+OLD-vs-NEW comparisons they replace, and `agent/mcp_roles.py`'s own module
+docstring for the standing summary of what that comparison found. What
+remains here is real regression coverage in its own right: the NEW path's
+returned values, error-surfacing shape, and per-call latency, plus (below)
+the raw-protocol regression guard for finding 3.
 
-THREE FINDINGS CAME OUT OF BUILDING THIS CHECK -- two were fixed here
-(directly in `agent/mcp_roles.py`, since they made the harness this ticket
+THREE FINDINGS CAME OUT OF BUILDING THIS CHECK ORIGINALLY -- two were fixed
+directly in `agent/mcp_roles.py` (since they made the harness this ticket
 needed unusable, not merely a comparison result), one is a genuine,
-documented, NOT-fixed limitation this file's own tests capture on purpose
-rather than silently avoid:
+documented limitation this file's own tests captured on purpose rather than
+silently avoiding, and is now fully fixed (see point 3 below):
 
 1. FIXED -- `build_role_mcp_server` never set `env`, so the spawned
    subprocess got only a small OS-safe env allowlist (confirmed directly
@@ -93,11 +91,11 @@ Every test below is still bounded (`conftest.invoke_role_mcp_tool`'s own
 `harness_timeout_s`, default 30s) rather than left to hang indefinitely if
 this regresses -- matching this repo's own "warn, never block" principle
 applied to its own test suite. The tests that used to branch on platform
-and assert the hang now run the SAME real value-level comparison
-everywhere, and `test_raw_mcp_sdk_completes_a_subprocess_shelling_tool`
-(no Agents SDK import at all, so a failure there points at the server
-process rather than at this repo's `agent/mcp_roles.py` or the SDK's
-conversion layer) is the regression guard for the fix itself.
+and assert the hang now run the SAME real value-level check everywhere, and
+`test_raw_mcp_sdk_completes_a_subprocess_shelling_tool` (no Agents SDK import
+at all, so a failure there points at the server process rather than at this
+repo's `agent/mcp_roles.py` or the SDK's conversion layer) is the regression
+guard for the fix itself.
 """
 
 from __future__ import annotations
@@ -110,14 +108,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 import skrf as rf
-from conftest import (
-    DIPOLE_GEOMETRY,
-    invoke_agent_tool,
-    invoke_role_mcp_tool,
-    make_fake_executable,
-)
+from conftest import DIPOLE_GEOMETRY, invoke_role_mcp_tool, make_fake_executable
 
-import agent.main as agent_main
 from orchestration.design_loop import start_design_loop
 from orchestration.tooling import inspect_design_loop_state as _inspect_design_loop_state
 
@@ -146,9 +138,10 @@ def _decode_mcp_tool_output(raw):
 
 
 # ---------------------------------------------------------------------------
-# AC1 (issue #319): a representative sample spanning a plain-schema tool, a
-# strict_mode=False geometry/circuit-dict tool, and a strict_mode=False
-# design-loop-state tool, through both paths.
+# AC1 (issue #319; the OLD-path comparison itself completed by issue #573):
+# a representative sample spanning a plain-schema tool, a strict_mode=False
+# geometry/circuit-dict tool, and a strict_mode=False design-loop-state tool,
+# now exercised over the NEW path alone.
 # ---------------------------------------------------------------------------
 
 
@@ -156,7 +149,7 @@ def _make_touchstone_file() -> str:
     """Mirrors `tests/test_calculation_tool_recording.py`'s helper of the
     same name/shape exactly -- a real, tiny 2-port .s2p file on disk, not a
     hand-built dict, so `analyze_touchstone_file` exercises its actual
-    skrf.Network file-reading path on both sides of the comparison."""
+    skrf.Network file-reading path."""
     tmp_dir = Path(tempfile.mkdtemp())
     f = rf.Frequency(1, 3, 3, unit="ghz")
     s = np.zeros((3, 2, 2), dtype=complex)
@@ -168,65 +161,49 @@ def _make_touchstone_file() -> str:
     return str(path)
 
 
-def test_plain_schema_simulator_tool_agrees_on_the_analyzed_result():
+def test_plain_schema_simulator_tool_returns_the_analyzed_result():
     """analyze_touchstone_file: AC1's "plain-schema simulator tool" bucket
     -- plain-schema (strict_mode default True; `path`/`design_id` are a
     `str`/`int | None`, no free-form dict), and squarely in the simulator/
     measurement domain (a real .s2p network-parameter file, the kind of
     output NEC2++/openEMS/HFSS/a real bench measurement all produce), on
     the "microwave"/"antenna"/"test" roles. No `design_id` here, so no
-    database write either side needs to agree on -- see the error-surfacing
-    test below for this same tool's failure-path comparison."""
+    database write to check either -- see the error-surfacing test below for
+    this same tool's failure path."""
     path = _make_touchstone_file()
 
-    old_raw = invoke_agent_tool("analyze_touchstone_file", path=path)
     new_raw = invoke_role_mcp_tool("microwave", "analyze_touchstone_file", path=path)
 
-    assert isinstance(old_raw, dict)
     assert isinstance(new_raw, dict) and new_raw.get("type") == "text"
-    assert _decode_mcp_tool_output(new_raw) == old_raw
+    result = _decode_mcp_tool_output(new_raw)
+    assert result["ports"] == 2
+    assert result["provenance"] == "CALCULATED"
 
 
-def test_plain_schema_tool_agrees_on_the_computed_value():
+def test_plain_schema_tool_returns_the_computed_value():
     """calculate_wavelength: a second, minimal plain-schema (strict_mode
-    default True) example, on the "systems" role -- OLD path returns a
-    bare Python float; NEW path returns a JSON-encoded string wrapped in a
-    `{"type": "text", ...}` envelope -- different SHAPE, same decoded
-    VALUE. Kept alongside analyze_touchstone_file above (this file's
-    canonical "plain-schema simulator tool" per AC1) because it shows the
-    bare-scalar shape difference most crisply -- analyze_touchstone_file's
-    dict-shaped result looks the same story as inspect_design_loop_state's
-    below at a glance; a caller returning a plain number sees a more
-    visibly different Python type (`float` vs. `dict`) on each path."""
-    old_raw = invoke_agent_tool("calculate_wavelength", frequency_hz=1e9)
+    default True) example, on the "systems" role. The NEW path returns a
+    JSON-encoded string wrapped in a `{"type": "text", ...}` envelope, not a
+    bare Python float -- kept alongside analyze_touchstone_file above (this
+    file's canonical "plain-schema simulator tool" per AC1) because it shows
+    the wrapped-scalar shape most crisply."""
     new_raw = invoke_role_mcp_tool("systems", "calculate_wavelength", frequency_hz=1e9)
 
-    assert isinstance(old_raw, float)
     assert new_raw == {"type": "text", "text": "0.299792458"}
-
-    assert _decode_mcp_tool_output(old_raw) == pytest.approx(0.299792458)
-    assert _decode_mcp_tool_output(new_raw) == pytest.approx(old_raw)
+    assert _decode_mcp_tool_output(new_raw) == pytest.approx(0.299792458)
 
 
-def test_design_loop_state_tool_has_only_the_new_path_left_and_it_works(tmp_path: Path):
+def test_design_loop_state_tool_works_over_the_new_path(tmp_path: Path):
     """inspect_design_loop_state: a strict_mode=False tool (its `state`
-    param is a free-form dict) on the "principal" role. There is no OLD path
-    left to compare against -- the principal reaches every tool it holds
-    over MCP, so this tool's `agent/main.py` wrapper was deleted and the
-    server's implementation is the only one. What is still worth asserting
-    is that the surviving path returns what the underlying function returns,
-    and that the OLD one really is gone rather than merely unused.
+    param is a free-form dict) on the "principal" role.
 
     Built with no `design_id` (orchestration.design_loop.start_design_loop
     is the pure, no-database constructor `start_new_design_loop`/
     `start_design_loop`'s tool wrapper itself calls after creating a real
-    `designs` row -- calling it directly here keeps this comparison
-    database-free, matching the tool's own documented "without a design_id,
-    this never touches the database" behavior)."""
+    `designs` row -- calling it directly here keeps this check database-free,
+    matching the tool's own documented "without a design_id, this never
+    touches the database" behavior)."""
     state = start_design_loop({"gain_dbi": {"threshold": 5.0, "unit": "dBi"}}).to_dict()
-
-    wrapped = {t.name for role in agent_main.ROLES.values() for t in role.tools}
-    assert "inspect_design_loop_state" not in wrapped
 
     new_raw = invoke_role_mcp_tool("principal", "inspect_design_loop_state", state=state)
 
@@ -239,29 +216,24 @@ def _write_fake_nec2pp_exit_0(tmp_path: Path) -> Path:
     return make_fake_executable(tmp_path, body, name="fast_nec2pp")
 
 
-def test_geometry_dict_tool_agrees_over_the_new_path(tmp_path, monkeypatch):
+def test_geometry_dict_tool_completes_over_the_new_path(tmp_path, monkeypatch):
     """run_nec2_simulation: a strict_mode=False tool (its `geometry` param
     is a free-form dict) on the "antenna" role, which shells out to a real
     subprocess (`simulation.nec2pp.Nec2ppSimulator.run`'s own
-    `subprocess.run()` call against whatever `NEC2PP_BIN` names -- faked
-    out here exactly as `tests/test_nec2pp.py` already does, per this
-    repo's own solver-adapter-test convention).
+    `subprocess.run()` call against whatever `NEC2PP_BIN` names -- faked out
+    here exactly as `tests/test_nec2pp.py` already does, per this repo's own
+    solver-adapter-test convention).
 
-    This is AC1's "strict_mode=False geometry/circuit-dict tool" bucket,
-    and it is also the concrete case behind finding 3 in this file's module
-    docstring: a call that used to deadlock forever on native Windows
-    because the faked "solver" inherited the server's own protocol pipe as
-    its standard input. It completes on both paths now, so what is compared
-    here is what the ticket wanted compared all along -- the returned
-    values."""
+    This is AC1's "strict_mode=False geometry/circuit-dict tool" bucket, and
+    it is also the concrete case behind finding 3 in this file's module
+    docstring: a call that used to deadlock forever on native Windows because
+    the faked "solver" inherited the server's own protocol pipe as its
+    standard input. It completes now, with the value this ticket originally
+    wanted compared against the OLD path -- see
+    `test_raw_mcp_sdk_completes_a_subprocess_shelling_tool` below for the
+    same regression guard with no Agents SDK involved at all."""
     script = _write_fake_nec2pp_exit_0(tmp_path)
     monkeypatch.setenv("NEC2PP_BIN", str(script))
-
-    old_result = invoke_agent_tool(
-        "run_nec2_simulation", geometry=DIPOLE_GEOMETRY, frequency_hz=300e6, timeout_s=10
-    )
-    assert old_result["provenance"] == "SIMULATED"
-    assert old_result["status"] == "COMPLETED"
 
     new_raw = invoke_role_mcp_tool(
         "antenna",
@@ -275,16 +247,6 @@ def test_geometry_dict_tool_agrees_over_the_new_path(tmp_path, monkeypatch):
     new_result = _decode_mcp_tool_output(new_raw)
     assert new_result["provenance"] == "SIMULATED"
     assert new_result["status"] == "COMPLETED"
-    # `workdir`/`input_file` are `tempfile.mkdtemp()`-generated paths --
-    # Nec2ppSimulator.run makes a fresh one on every call, on both paths, so
-    # they are expected to differ between the OLD and NEW invocations above
-    # even when everything else agrees. Excluded from the exact-match
-    # comparison for that reason, not because a real mismatch there would be
-    # acceptable.
-    volatile_keys = {"workdir", "input_file"}
-    assert {k: v for k, v in old_result.items() if k not in volatile_keys} == {
-        k: v for k, v in new_result.items() if k not in volatile_keys
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -292,58 +254,27 @@ def test_geometry_dict_tool_agrees_over_the_new_path(tmp_path, monkeypatch):
 # raise. Split into two cases -- a clean, non-subprocess exception and the
 # subprocess-based SimulatorError case -- because for as long as finding 3's
 # deadlock stood, only the first could answer ADR-0032's "isError=true text
-# result, not a raised Python exception" question at all.
+# result, not a raised Python exception" question at all. Both now run over
+# the NEW path alone (issue #573 deleted the OLD one): a server-side
+# exception becomes an `isError=true` text result -- FastMCP's own "Error
+# executing tool <name>: ..." (`mcp/server/fastmcp/tools/base.py`'s
+# `ToolError` message) wrapped in the same `{"type": "text", "text": ...}`
+# envelope as every other NEW-path result -- not a raised Python exception a
+# caller could catch by type.
 # ---------------------------------------------------------------------------
 
 
 def test_error_surfacing_for_a_clean_non_subprocess_exception():
     """analyze_touchstone_file with a nonexistent path: rf_tools.touchstone.
     analyze_touchstone raises a plain `FileNotFoundError`, no subprocess
-    involved, so this completes on both paths (unlike the geometry/circuit-
-    dict case above) and gives a clean answer to ADR-0032's own question:
-    "a server-side exception becomes an isError=true text result on the new
-    path, not a raised Python exception" -- confirmed EQUIVALENT IN EFFECT,
-    not equivalent in exact wording or shape:
-
-    - Neither path lets the exception propagate out of `on_invoke_tool()`
-      to the caller. `agent/main.py`'s own `@function_tool` wrappers never
-      set `failure_error_function=None` (confirmed by grepping agent/
-      main.py -- no override exists anywhere), so the OpenAI Agents SDK's
-      own default failure handling (`agents.tool.default_tool_error_
-      function`, the SAME machinery a `to_function_tool`-derived MCP tool
-      uses) already catches the exception and returns a formatted string
-      on the OLD path too -- ADR-0032's assumption that today's direct
-      call raises all the way through was not correct for this repo's
-      actual tool construction, not because anything in this ticket
-      changed that, but because agent/main.py never opted out of the SDK's
-      own default handling. This is itself worth recording plainly rather
-      than silently updating the assumption without saying so.
-    - The exact WORDING differs: the OLD path's text carries the Agents
-      SDK's own generic prefix ("An error occurred while running the tool.
-      Please try again. Error: ..."); the NEW path's text is FastMCP's own
-      "Error executing tool <name>: ..." (mcp/server/fastmcp/tools/base.py's
-      `ToolError` message), with no SDK-generic wrapper at all -- a
-      genuinely different string a model or a caller pattern-matching on
-      exact wording would see differently.
-    - The SHAPE differs: the OLD path returns a bare `str`; the NEW path
-      returns the same `{"type": "text", "text": ...}` envelope as every
-      other NEW-path result (see `_decode_mcp_tool_output`)."""
+    involved, so this completes even before finding 3's fix (unlike the
+    geometry/circuit-dict case below)."""
     bad_path = "C:/this/path/does/not/exist/on/purpose.s2p"
 
-    old_raw = invoke_agent_tool("analyze_touchstone_file", path=bad_path)
     new_raw = invoke_role_mcp_tool("microwave", "analyze_touchstone_file", path=bad_path)
-
-    assert isinstance(old_raw, str)
-    assert (
-        old_raw == f"An error occurred while running the tool. Please try again. Error: {bad_path}"
-    )
 
     assert isinstance(new_raw, dict) and new_raw.get("type") == "text"
     assert new_raw["text"] == f"Error executing tool analyze_touchstone_file: {bad_path}"
-
-    # Equivalent IN EFFECT: both are plain text containing the bad path,
-    # neither is a raised exception a Python caller could catch by type.
-    assert bad_path in old_raw
     assert bad_path in new_raw["text"]
 
 
@@ -360,26 +291,15 @@ def test_error_surfacing_for_a_genuine_simulator_error(tmp_path, monkeypatch):
     exactly as `tests/test_nec2pp.py::test_run_nec2_simulation_propagates_
     simulator_error_on_failure` already does for the underlying function.
 
-    On the OLD path, this SimulatorError is caught and formatted by the
-    Agents SDK's own default_tool_error_function, same as the clean
-    non-subprocess case above -- a plain, promptly-returned text string.
-
     ADR-0032's error-surfacing question went unanswered for this whole tool
     category while the deadlock in this file's finding 3 preempted it: the
-    call never returned, error or otherwise. With that fixed, the answer is
-    the same one `test_error_surfacing_for_a_clean_non_subprocess_exception`
-    above records -- a plain text result on both paths carrying the same
-    failure detail, neither path raising a catchable-by-type exception,
-    with the wording/shape differences documented there."""
+    call never returned, error or otherwise. With that fixed (and the OLD
+    path since deleted by issue #573), this is the same answer
+    `test_error_surfacing_for_a_clean_non_subprocess_exception` above gives
+    -- a plain text result carrying the failure detail, not a raised,
+    catchable-by-type exception."""
     script = _write_fake_nec2pp_exit_1(tmp_path)
     monkeypatch.setenv("NEC2PP_BIN", str(script))
-
-    old_raw = invoke_agent_tool(
-        "run_nec2_simulation", geometry=DIPOLE_GEOMETRY, frequency_hz=300e6, timeout_s=10
-    )
-    assert isinstance(old_raw, str)
-    assert "NEC2++ failed (1)" in old_raw
-    assert "boom: bad geometry card" in old_raw
 
     new_raw = invoke_role_mcp_tool(
         "antenna",
@@ -396,12 +316,9 @@ def test_error_surfacing_for_a_genuine_simulator_error(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------
 # AC3 (issue #319): latency class sanity check -- NOT a formal benchmark,
-# just enough to rule out a gross regression from the added MCP transport
-# hop, for tools that do complete (calculate_wavelength and inspect_design_
-# loop_state above, both proven equivalent already -- reused here rather
-# than a third tool, since the finding this check cares about is the
-# transport hop's cost, which is the same regardless of which non-hanging
-# tool is called).
+# just enough to catch a per-call cost that looks like a hang rather than a
+# transport hop. Originally an OLD-vs-NEW ratio bound; issue #573 deleted the
+# OLD path, so this is now an absolute sanity bound on the NEW path alone.
 # ---------------------------------------------------------------------------
 
 
@@ -413,15 +330,14 @@ def test_latency_sanity_new_path_per_call_cost_is_not_a_gross_regression():
     that run (see agent/mcp_roles.py's own docstring), so the one-time
     setup cost is amortized across a whole session, not paid per call --
     asserting a tight bound on it here would be sanity-checking the wrong
-    thing. What actually matters for "is the added transport hop a gross
-    regression" is the cost of each individual call once connected, which
-    this measures directly by re-using ONE connection across N calls,
-    mirroring real usage.
+    thing. What actually matters is the cost of each individual call once
+    connected, which this measures directly by re-using ONE connection
+    across N calls, mirroring real usage.
 
-    Bounds are deliberately generous (sanity, not a formal benchmark, per
-    the ticket's own wording) -- this only needs to catch a hop that got,
-    say, 100x slower than a bare in-process call, not to hold this repo to
-    a strict SLA on a shared, variably-loaded CI/dev machine."""
+    The bound is deliberately generous (sanity, not a formal benchmark, per
+    the ticket's own wording) -- this only needs to catch a call that looks
+    like a hang, not to hold this repo to a strict SLA on a shared,
+    variably-loaded CI/dev machine."""
     import asyncio
 
     from agents import RunContextWrapper
@@ -430,11 +346,6 @@ def test_latency_sanity_new_path_per_call_cost_is_not_a_gross_regression():
     from agent.mcp_roles import build_role_agent
 
     n_calls = 5
-
-    old_start = time.perf_counter()
-    for _ in range(n_calls):
-        invoke_agent_tool("calculate_wavelength", frequency_hz=1e9)
-    old_per_call_s = (time.perf_counter() - old_start) / n_calls
 
     async def _measure_new_path():
         agent = build_role_agent("systems")
@@ -461,22 +372,15 @@ def test_latency_sanity_new_path_per_call_cost_is_not_a_gross_regression():
     connect_s, new_per_call_s = asyncio.run(_measure_new_path())
 
     print(
-        f"\nlatency sanity: OLD per-call={old_per_call_s * 1000:.2f}ms, "
-        f"NEW per-call={new_per_call_s * 1000:.2f}ms, "
+        f"\nlatency sanity: NEW per-call={new_per_call_s * 1000:.2f}ms, "
         f"NEW one-time connect+list_tools={connect_s * 1000:.1f}ms (unasserted, "
         "amortized across a session in real usage)"
     )
 
-    # Sanity thresholds, not a benchmark: catch a gross regression, not a
-    # normal, expected added-hop cost (stdio JSON-RPC round trip vs. a bare
-    # in-process function call).
+    # A sanity threshold, not a benchmark: catch a call that looks like a
+    # hang, not a normal, expected stdio JSON-RPC round trip cost.
     assert new_per_call_s < 2.0, (
         f"NEW path per-call cost {new_per_call_s:.3f}s looks like a hang, not overhead"
-    )
-    assert new_per_call_s < max(old_per_call_s * 200, 0.5), (
-        f"NEW path ({new_per_call_s:.4f}s/call) is more than 200x the OLD path "
-        f"({old_per_call_s:.4f}s/call) -- looks like a gross regression, not the expected "
-        "transport-hop overhead"
     )
 
 

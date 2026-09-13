@@ -802,52 +802,51 @@ def test_correlate_simulated_and_measured_docstring_states_openems_is_sometimes_
     assert "multi-port" in doc
 
 
-def test_every_agent_main_wrapper_is_also_registered_on_the_mcp_server():
-    """Issue #317 (ADR-0032 prefactor audit) exists because agent/main.py's
+def test_run_meep_simulation_docstring_reflects_far_field_support():
+    """Issue #270: `run_meep_simulation`'s docstring must tell an agent that
+    far-field/gain IS available via `geometry['far_field_monitor']`, not
+    leave it believing MEEP never reports one. Previously this same
+    assertion also ran against `agent/main.py`'s own independently-
+    maintained copy of this docstring (see that copy's own now-deleted
+    test) -- issue #573 deleted that copy in full, so `mcp_server/server.py`
+    is now the only place this content lives, and the only one this
+    regression guard needs to cover."""
+    doc = server.run_meep_simulation.__doc__
+    assert "NO far-field/gain" not in doc
+    assert "far_field_monitor" in doc
+    assert "gain_dbi" in doc
+
+
+def test_agent_main_no_longer_wraps_any_tool_object():
+    """Issue #317 (ADR-0032 prefactor audit) found agent/main.py's own
     @function_tool registrations and mcp_server/server.py's @mcp.tool()
-    registrations are two independently hand-maintained copies of the same
-    tool surface (issues #276/#288: a tool added to one file and never to
-    the other). Code review of #317's own fix found the audit it actually
-    performed covered only the two already-known drift instances, not the
-    full pairwise sweep the issue's acceptance criteria asked for. This is
-    the cheap, permanent half of that sweep (ADR-0032's own "Considered and
-    rejected" section calls this exact set-equality check a reasonable
-    stopgap): it doesn't catch docstring wording drift (see the per-tool
-    tests around this one for the specific content drift this issue's
-    review found and fixed), but it does make a repeat of #276/#288 --
-    a tool wrapped in agent/main.py and invisible over MCP -- a loud
-    failure here instead of a silent gap.
-
-    Containment, not set equality: the MCP server is the only surface
-    principal/systems/verification reach, so it legitimately registers tools
-    agent/main.py no longer wraps. The reverse would be the real bug -- a
-    wrapper whose MCP twin never existed, in a file the live entry point no
-    longer reads for those roles. What the extra MCP tools are is pinned by
-    the companion test below, so "extra" can't quietly grow into "unassigned
-    to any role"."""
+    registrations drifting apart as two independently hand-maintained copies
+    of the same tool surface (issues #276/#288: a tool added to one file and
+    never to the other). Issue #573 closed that gap for good rather than
+    continuing to police it: all six roles now reach every tool over MCP
+    alone, and agent/main.py's own wrapper layer is deleted in full -- so
+    every `ROLES[key].tools` list is empty, and there is no second copy left
+    to drift from the MCP server's own registrations at all."""
     import agent.main as agent_main
 
-    agent_tool_names = {t.name for role in agent_main.ROLES.values() for t in role.tools}
-    mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
-    # route_to_*_role handoffs are agent.py-only (Agents-SDK handoff
-    # mechanism, not an MCP tool).
-    agent_only = {n for n in agent_tool_names - mcp_tool_names if not n.startswith("route_to_")}
-    assert agent_only == set(), f"tools on agent/main.py only: {agent_only}"
+    for role in agent_main.ROLES.values():
+        assert role.tools == []
 
 
-def test_every_mcp_only_tool_belongs_to_a_migrated_role():
-    """The other half of the sweep above: every tool the MCP server
-    registers and agent/main.py no longer wraps must be one a migrated role
-    actually asks for. A tool in neither place is registered for nobody."""
-    import agent.main as agent_main
+def test_every_mcp_tool_belongs_to_some_role():
+    """Every tool the MCP server registers must be reachable by at least one
+    role's `MIGRATED_ROLE_TOOL_NAMES` allow-list -- a tool registered on the
+    server and wired onto no role's list is unreachable to every role.
+    Before issue #573, this compared against the union of `agent/main.py`'s
+    remaining wrapped tools AND `MIGRATED_ROLE_TOOL_NAMES`; now that every
+    role is migrated, `MIGRATED_ROLE_TOOL_NAMES` alone is the whole picture,
+    and this is an exact-set check, not a containment one."""
     from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 
-    agent_tool_names = {t.name for role in agent_main.ROLES.values() for t in role.tools}
     mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     migrated_names = {name for names in MIGRATED_ROLE_TOOL_NAMES.values() for name in names}
 
-    assert mcp_tool_names - agent_tool_names <= migrated_names
-    assert migrated_names <= mcp_tool_names
+    assert mcp_tool_names == migrated_names
 
 
 def test_mcp_server_docstrings_carry_the_behavioral_content_agent_main_states():

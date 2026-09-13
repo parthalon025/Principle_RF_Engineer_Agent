@@ -1,14 +1,16 @@
 """Integration tests for ticket #19: the optional `design_id` param every
-`calculate_*`/`analyze_touchstone_file` tool wrapper gains in `agent/main.py`
-and `mcp_server/server.py`.
+`calculate_*`/`analyze_touchstone_file` tool wrapper gains in
+`mcp_server/server.py`.
 
-Both wrapper layers are exercised independently (`agent`/`mcp` `layer`
-parametrization) since they're two separate, hand-duplicated implementations
--- a copy-paste mistake in either one would otherwise go uncaught. Invocation
-goes through each SDK's real tool-call machinery (`FunctionTool.on_invoke_tool`
-for the `agents` SDK, `FastMCP.call_tool` for the MCP server), not a plain
-Python call, since `@function_tool`/`@mcp.tool()` wrap the original function
-into a non-callable Tool object.
+Before issue #573, this same behavior was exercised on two independent,
+hand-duplicated implementations -- `agent/main.py`'s own `@function_tool`
+wrappers (via `FunctionTool.on_invoke_tool`) alongside `mcp_server/server.py`'s
+`@mcp.tool()` wrappers (via `FastMCP.call_tool`) -- since a copy-paste mistake
+in either one could otherwise go uncaught. `agent/main.py`'s wrapper layer is
+now deleted in full (every role reaches every tool over MCP alone), so
+`mcp_server/server.py` is the only surface left to exercise; invocation still
+goes through its real tool-call machinery, not a plain Python call, since
+`@mcp.tool()` wraps the original function into a non-callable Tool object.
 """
 
 from __future__ import annotations
@@ -23,11 +25,9 @@ import numpy as np
 import psycopg
 import pytest
 import skrf as rf
-from agents.tool_context import ToolContext
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
-import agent.main as agent_main
 import mcp_server.server as mcp_module
 from designs.service import create_design
 
@@ -59,21 +59,6 @@ TOOL_KWARGS = {
 TOOL_NAMES = list(TOOL_KWARGS)
 
 
-def _invoke_agent_tool(tool_name: str, **kwargs):
-    # Calculation tools live on the specialist roles now, not the principal
-    # (issue #35's handoffs redesign scoped the principal down to design-record/
-    # search/design-loop tools only) -- search every role's tools, not just
-    # principal's, to find the one FunctionTool object each named tool is
-    # wrapped into (the same object regardless of which role's list holds it).
-    all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
-    tool = next(t for t in all_tools if t.name == tool_name)
-    args_json = json.dumps(kwargs)
-    ctx = ToolContext(
-        context=None, tool_name=tool_name, tool_call_id="test-call", tool_arguments=args_json
-    )
-    return asyncio.run(tool.on_invoke_tool(ctx, args_json))
-
-
 def _invoke_mcp_tool(tool_name: str, **kwargs):
     result = asyncio.run(mcp_module.mcp.call_tool(tool_name, kwargs))
     if isinstance(result, tuple):
@@ -83,7 +68,7 @@ def _invoke_mcp_tool(tool_name: str, **kwargs):
     return json.loads(content[0].text)
 
 
-INVOKERS = {"agent": _invoke_agent_tool, "mcp": _invoke_mcp_tool}
+INVOKERS = {"mcp": _invoke_mcp_tool}
 
 
 @pytest.fixture
@@ -136,7 +121,7 @@ def _fetch_result(design_id: int) -> dict:
 
 
 @pytest.mark.parametrize("tool_name", TOOL_NAMES)
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_wrapper_with_design_id_records_one_row_and_returns_recorded_as(
     layer, tool_name, design_id
 ):
@@ -155,7 +140,7 @@ def test_wrapper_with_design_id_records_one_row_and_returns_recorded_as(
 
 
 @pytest.mark.parametrize("tool_name", TOOL_NAMES)
-@pytest.mark.parametrize("layer", ["agent", "mcp"])
+@pytest.mark.parametrize("layer", list(INVOKERS))
 def test_wrapper_without_design_id_writes_no_row_and_keeps_return_shape(
     layer, tool_name, design_id
 ):
