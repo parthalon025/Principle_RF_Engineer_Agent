@@ -539,8 +539,19 @@ and a glossary that churns with it stops being trustworthy (see
   the family's band), a provenance rung *per quantity* rather than one for
   the whole record, and a validity box. Admission requires all three in
   evidence: printed successfully at the declared process conditions,
-  geometry measured, and response characterised — so any design built from
-  admitted symbols is printable by construction (#130).
+  geometry measured, and response characterised **in every State it can
+  hold** — so any design built from admitted symbols is printable by
+  construction (#130). A switchable symbol characterised in one state only
+  is **not admitted**: a cell whose response after a write is unknown is
+  precisely the part a design cannot be built from. It stays a candidate
+  in the **Considered-and-dropped ledger** until the remaining states are
+  characterised.
+  *Synonyms from the literature*: the coding-metasurface field calls the
+  physical part a **particle**, **unit cell** or **meta-atom** (Cui et al.,
+  *Light Sci. Appl.* **3**, e218, 2014). Read all three as this project's
+  Symbol. That field's own word **element** is narrower than it looks — it
+  names a symbol *in one state*, so it maps to a **Letter** in a single
+  **State**, not to a Symbol.
 - **Symbol alphabet** (design family field, Tier B only): the finite,
   characterised set of symbols a Tier B family assembles designs from by
   choosing and placing them, rather than tuning continuous dimensions.
@@ -572,6 +583,17 @@ and a glossary that churns with it stops being trustworthy (see
   outline printed in carbon and in MXene is two letters, not one letter
   under two conditions"* (#132) applies the same way to a simulated
   version and its later-printed twin.
+  **State does not split a letter the way process does.** A switchable
+  cell characterised in both its states is **one** letter carrying a
+  response *per state*, not two letters — identity includes the process,
+  and every state came out of a single making. The #132 rule and this one
+  are the same rule read in opposite directions: a different making is a
+  different letter; the same making is the same letter however many states
+  it holds. The literature agrees and is explicit about it — Cui et al.
+  propose *"a unique metamaterial particle which has either '0' or '1'
+  response controlled by a biased diode"*, and build the array from
+  *"30×30 identical unit cells"*, so the pattern lives in state rather
+  than in geometry. Two letters would assert two parts where one was made.
   *In plain terms: a letter used to mean only a shape actually printed and
   measured. It now also covers a shape a validated simulator vouched for —
   but the record says which kind it is, and a printed letter still
@@ -581,6 +603,32 @@ and a glossary that churns with it stops being trustworthy (see
   nothing here promotes one into the other automatically. Also avoid using
   "letter" for a shape with no run of its own at all — that is a **Symbol**
   described elsewhere at best, and a candidate at worst.
+- **State**: one of the electromagnetic responses a *switchable* **Symbol**
+  can hold. Synonym, and the term to prefer when citing the literature:
+  **coding state** (Cui et al., *Light Sci. Appl.* **3**, e218, 2014).
+  A state is not a making — it changes what the wave sees, not how the part
+  was produced — which is why states multiply a **Letter**'s characterised
+  responses without multiplying the letter (contrast **Process record**,
+  which does split identity). Each state carries its own response, its own
+  **switching threshold** (the drive level at which the cell enters it),
+  and its own provenance rung; a **hold power** of zero is what makes a
+  state *latched* rather than *volatile*.
+  - **Volatile state**: held only while driven, so it costs power
+    continuously — US12089385B2 Example 5's BST cell under bias, or a
+    measured PIN-diode RIS spending `15.73 W` of its `103.2 W` on static
+    hold alone (`12.56 mW` per cell, `docs/non-volatile-metasurface-prior-art.md`).
+  - **Latched state**: persists with no sustained power once written, so
+    hold power is zero and the control network the volatile case needs
+    disappears with it.
+  *In plain terms: a switchable cell is one printed part that can sit in
+  more than one electrical condition, and the wave sees a different surface
+  in each. "Latched" means it stays there after you stop paying for it.*
+  _Avoid_: **bit** — it assumes two states and implies digital addressing;
+  the axis is neither necessarily binary (a measured tri-state microwave
+  metasurface is already in `knowledge/corpus/`) nor necessarily addressed
+  cell-by-cell. Avoid **programmable** as a synonym for switchable too: in
+  the field's own taxonomy that word is about *addressability*, and says
+  nothing about whether a state persists.
 - **Validity box**: the stated set of conditions a symbol's or alphabet's
   characterised numbers hold under — pitch, substrate, ink, pass count,
   cure schedule, incidence-angle range, and the neighbour set it was
@@ -751,8 +799,21 @@ and a glossary that churns with it stops being trustworthy (see
   characterized symbol-alphabet elements (Tier B design families only, see
   #130) — the same accumulate-once-and-reuse shape as the
   **Material-property library**, holding each symbol's characterized
-  response so it is looked up rather than re-solved by every design that
-  shares its band and substrate. Keyed by `(element family, symbol,
+  response — **one response per State it holds**, not one per entry — so it
+  is looked up rather than re-solved by every design that shares its band
+  and substrate. A switchable symbol is therefore **one entry whose response
+  is a per-state map**, each state carrying its own response, switching
+  threshold, hold power and provenance rung. **State is deliberately not a
+  key field**: keying on it would mint a row per state and assert several
+  parts where one was made, and it would strand the shared **Process
+  record** that is the very thing they have in common. The literature
+  tabulates the same way — curves for one particle indexed by its diode
+  state, against separate curves for genuinely separate patches. Note that
+  this is the project's own schema choice and **not an inherited
+  convention**: the coding-metasurface field supplies naming and
+  tabulation practice but keeps no persistent process-keyed library, so
+  there was nothing here to borrow (`docs/coding-metasurface-state-vocabulary.md`).
+  Keyed by `(element family, symbol,
   band, incidence-angle range, process)`, where **process is present only
   for a printed entry** — a simulated entry has none, since nothing was
   printed, and that absence is part of how the two kinds are told apart.
