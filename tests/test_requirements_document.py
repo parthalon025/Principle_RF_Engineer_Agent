@@ -40,7 +40,12 @@ import psycopg
 import pytest
 from dotenv import load_dotenv
 
-from designs.requirement_targets import mark_unscoreable, propose_intended_effect, propose_target
+from designs.requirement_targets import (
+    mark_intent_none,
+    mark_unscoreable,
+    propose_intended_effect,
+    propose_target,
+)
 from designs.requirements_document import (
     LEGAL_TRANSITIONS,
     TERMINAL_STATUSES,
@@ -495,6 +500,121 @@ def test_extract_requirement_fields_provenance_stays_assumed_across_review_round
 
     assert updated["req-1"]["target"]["provenance"] == "ASSUMED"
     assert updated["req-1"]["intended_effect"]["provenance"] == "ASSUMED"
+
+
+# ---------------------------------------------------------------------------
+# extract_requirement_fields -- issue #228's remaining scope: status/reason/
+# confirmed_by/confirmed_at wired through the document-confirmation path,
+# NOT via a standalone tool call (ADR-0034).
+# ---------------------------------------------------------------------------
+
+
+def test_extract_requirement_fields_confirms_a_proposed_intended_effect_when_confirmed_by_given():
+    """The document's own CONFIRMED transition is what populates
+    confirmed_by/confirmed_at on a PROPOSED intended_effect -- issue #228's
+    "populate via extract_requirement_fields during the document's CONFIRMED
+    transition, not a standalone tool call"."""
+    requirement_targets = {"req-1": _proposed_with_intent(2.4e9, "behave as a magnetic mirror")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="Needs to behave as a magnetic mirror at 2.4 GHz.",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "needs to behave as a magnetic mirror at 2.4 GHz"}}
+    updated = extract_requirement_fields(requirements, confirmed, confirmed_by="j.mcfarland")
+
+    intended_effect = updated["req-1"]["intended_effect"]
+    assert intended_effect["status"] == "CONFIRMED"
+    assert intended_effect["confirmed_by"] == "j.mcfarland"
+    assert intended_effect["confirmed_at"] is not None
+    # confirmation is a trust signal, never a stronger evidence tier --
+    # provenance stays ASSUMED even once confirmed via the document path.
+    assert intended_effect["provenance"] == "ASSUMED"
+    assert intended_effect["effect"] == "behave as a magnetic mirror"
+
+
+def test_extract_requirement_fields_leaves_intended_effect_proposed_without_confirmed_by():
+    """Without a confirmed_by, extraction still writes the intended_effect
+    (issue #323's already-shipped behaviour) but does not silently invent a
+    confirmation -- `confirmed_by` defaults to None and status stays
+    PROPOSED."""
+    requirement_targets = {"req-1": _proposed_with_intent(2.4e9, "behave as a magnetic mirror")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="Needs to behave as a magnetic mirror at 2.4 GHz.",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "needs to behave as a magnetic mirror at 2.4 GHz"}}
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    intended_effect = updated["req-1"]["intended_effect"]
+    assert intended_effect["status"] == "PROPOSED"
+    assert intended_effect["confirmed_by"] is None
+    assert intended_effect["confirmed_at"] is None
+
+
+def test_extract_requirement_fields_leaves_a_none_status_intended_effect_untouched():
+    """ADR-0030's NONE verdict is already a complete, reasoned answer -- a
+    confirmed_by passed to extraction must not try to confirm it (NONE is
+    never confirmed via confirm_intent)."""
+    target = propose_target(value=5.0, comparator="AT_MOST", unit="mm")
+    target["intended_effect"] = mark_intent_none("bend radius asks nothing of the wave")
+    requirement_targets = {"req-1": target}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="bend radius <= 5 mm",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "bend radius <= 5 mm"}}
+    updated = extract_requirement_fields(requirements, confirmed, confirmed_by="j.mcfarland")
+
+    intended_effect = updated["req-1"]["intended_effect"]
+    assert intended_effect["status"] == "NONE"
+    assert intended_effect["effect"] is None
+    assert intended_effect["reason"] == "bend radius asks nothing of the wave"
+    assert intended_effect["confirmed_by"] is None
+    assert intended_effect["confirmed_at"] is None
+
+
+def test_extract_requirement_fields_does_not_touch_target_confirmation():
+    """confirmed_by is scoped to intended_effect only -- extraction must not
+    start confirming the sibling target key too; target_status stays
+    whatever the document proposed (PROPOSED/UNSCOREABLE), unaffected."""
+    requirement_targets = {"req-1": _proposed_with_intent(2.4e9, "behave as a magnetic mirror")}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="Needs to behave as a magnetic mirror at 2.4 GHz.",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "needs to behave as a magnetic mirror at 2.4 GHz"}}
+    updated = extract_requirement_fields(requirements, confirmed, confirmed_by="j.mcfarland")
+
+    assert updated["req-1"]["target"]["target_status"] == "PROPOSED"
+    assert updated["req-1"]["target"].get("confirmed_by") is None
+
+
+def test_mark_intent_none_is_settable_on_a_draft_document_before_confirmation():
+    """issue #228: 'NONE + reason must still be settable while the
+    interviewing agent is drafting the document, before it's ever
+    confirmed' -- a DRAFT document may carry a NONE-status intended_effect
+    entry with no error."""
+    target = propose_target(value=5.0, comparator="AT_MOST", unit="mm")
+    target["intended_effect"] = mark_intent_none("bend radius asks nothing of the wave")
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="bend radius <= 5 mm",
+        requirement_targets={"req-1": target},
+    )
+    assert document["status"] == "DRAFT"
+    assert document["requirement_targets"]["req-1"]["intended_effect"]["status"] == "NONE"
 
 
 def test_extract_requirement_fields_does_not_mutate_its_inputs():
