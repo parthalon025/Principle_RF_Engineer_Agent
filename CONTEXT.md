@@ -304,7 +304,7 @@ and a glossary that churns with it stops being trustworthy (see
   effectively infinite and carries no design information — there is
   nothing left for a design to trade off. `shielded against` is a listed
   **Intended effect** value; a `SHIELD` **Design family** now exists to
-  serve it (ADR-0050), but `designs/intended_effects.py`'s own
+  serve it (ADR-0057), but `designs/intended_effects.py`'s own
   `SHIELDED_AGAINST.families` entry is still an empty tuple, so the two
   modules currently disagree about whether the gap is closed — a wiring
   gap, not a missing mechanism, and not a synonym either way.

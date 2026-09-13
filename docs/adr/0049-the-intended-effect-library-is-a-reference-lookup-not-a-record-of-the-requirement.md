@@ -292,7 +292,7 @@ moment those two families were registered, rather than leaving two families no
 effect could reach — and that failure is what produced the wiring.
 `families_without_effect()` is back to `("PATCH",)`.
 
-`low infrared emissivity` stays gapped **deliberately**. ADR-0050 part 4
+`low infrared emissivity` stays gapped **deliberately**. ADR-0058
 argued for a family and declined: applying ADR-0027 §5's four-plug-in test
 returns *four nothings* rather than four differences, and the registry's own
 #216 invariant refuses it on physics — an infrared layer has no ports, while
@@ -306,7 +306,7 @@ when it was not.
 > **A discrepancy is reported and deliberately not adjudicated.** … Those
 > cannot both be true.
 
-They could, and they were. **ADR-0050 §5** adjudicated it: the doc *quoted* the
+They could, and they were. **ADR-0050's "Gustafsson & Sjöberg marker" section** adjudicated it: the doc *quoted* the
 paper, so the formula is on the record; the marker's own error message sets a
 higher bar for "read" — a primary-source read-through recording derivation,
 assumptions and validity box, of the kind
