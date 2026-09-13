@@ -19,9 +19,17 @@ than the caveat implied — between −1.1% and −3.0% in resonant frequency.**
 
 At #128's cell (period 6.0 mm, spacer 1.50 mm, d/p = 0.25) the correction
 raises the grid capacitance by **+2.2%**, which drags the resonance down by
-**about 0.11 GHz from 10 GHz**. Under a competing published form of the same
-equation — see §3, this is the one genuine unresolved point — it is **+6.3%**
-and **0.30 GHz**.
+**about 0.11 GHz from 10 GHz**.
+
+> **CORRECTED twice — read §10 for the current answer.** This paragraph
+> originally continued *"Under a competing published form of the same equation
+> — see §3, this is the one genuine unresolved point — it is +6.3% and
+> 0.30 GHz."* Both figures were retracted on 2026-09-08 by §7's correction note
+> (the composition double-counted the permittivity; the competing form is
+> **+3.2%** and **0.157 GHz**, not +6.3% and 0.30 GHz), and the "unresolved"
+> framing was retired on 2026-09-13 by **§10**, which settles the prefactor as
+> **`ε₀ε_r`** — so the `+3.2%` / `−1.57%` / `9.843 GHz` row is now *the*
+> answer, not the upper end of a bracket.
 
 *In plain terms: the model has been drawing the cell's resonance about one to
 three percent too high. To land back on 10 GHz the gap between the metal
@@ -29,14 +37,14 @@ plates has to open by 28–85 µm, roughly the width of a human hair. The
 programme's conclusions from #186 survive this; the direction was already
 flagged correctly, and the size turns out to be a trim, not a redesign.*
 
-**Three things this settles and one it does not:**
+**Four things this settles** (the fourth was open until 2026-09-13):
 
 | | Answer |
 |---|---|
 | The equation | Recovered verbatim, §1 |
 | Period or wavelength? | **Cell period**, unambiguously. §4 |
 | Does the inductance need correcting too? | **No formula for it has ever been published.** The claim is repeated in three Costa papers and never once accompanied by an equation. §5 |
-| Which permittivity is in the prefactor — ε₀ or ε₀ε_r? | **Unresolved.** Two papers by the same lead author disagree. §3 |
+| Which permittivity is in the prefactor — ε₀ or ε₀ε_r? | **`ε₀ε_r`**, added to the already-`ε_eff`-loaded capacitance — the Costa & Borgese 2021 form. Settled by deriving eq (10) from the Floquet/image problem, corroborated by the 2013 paper's own Figure 2(b). **§10** (§3 stated this as unresolved and is superseded) |
 
 ---
 
@@ -174,6 +182,13 @@ a change of log base. **`log` means `ln`.**
 ---
 
 ## 3. The unresolved point: ε₀ or ε₀ε_r?
+
+> **SUPERSEDED 2026-09-13 by §10 — this section is kept as the record of the
+> question, not of the answer.** The prefactor is **`ε₀ε_r`**, added to the
+> already-`ε_eff`-loaded capacitance. Everything below is still accurate as a
+> statement of the two published forms and of the physical argument between
+> them; only the closing verdict ("Resolving it needs the original") is
+> retracted. §10 resolves it without the original, by deriving eq (10).
 
 The same equation, attributed to the same paper, is published by the same lead
 author with an extra factor of `ε_r`.
@@ -342,6 +357,13 @@ free copy exists. **It goes to `RUNNING-LISTS.md` §1.**
 ---
 
 ## 6. Figure 2(b) validates the functional form
+
+> **PARTLY SUPERSEDED 2026-09-13 by §10.3.** This section's fit is sound and
+> was independently reproduced, but its conclusion — that the unknown `C₀`
+> normalisation stops the figure settling the prefactor — is wrong: that
+> unknown **cancels** in the ratio of slope to plateau. Read that way the
+> figure does discriminate, and it points at `ε_r`. §10.3 also corrects this
+> section's statement of the figure's geometry.
 
 The paper's Figure 2(b) plots `C^thin/C₀` against `d/D` from 0 to 0.5, for a
 gold patch array with `D = 20 µm`, `L = 15 µm` on Mylar (`ε_r = 2.89`),
@@ -529,3 +551,291 @@ forward as a bounded uncertainty rather than an unknown.
 correction is three lines of arithmetic and needs the spacer thickness plumbed
 into the grid-capacitance function. The `ε₀` form is the conservative choice
 until the original is read.
+
+---
+
+## 10. Resolution of §3 (2026-09-13) — the prefactor is `ε₀ε_r`
+
+**Ticket:** [#234](https://github.com/parthalon025/Principle_RF_Engineer_Agent/issues/234).
+This section closes the one question §3 left open. It **supersedes §3's verdict
+of "unresolved"** and **§6's verdict of "leans but cannot settle"**. Nothing
+else in this document changes; §1–§9 stand as written except where flagged
+below.
+
+> **SUPERSEDES §3.** §3 said *"Which is right is not settled by anything
+> retrievable"* and carried both forms as a bracket. That is no longer the
+> position. Route 2 — the dimensional/physical analysis the ticket flagged as
+> cheap and mandatory — turns out not to be a tie-breaker between two
+> plausible readings but a **derivation of eq (10) from scratch**, and the
+> derivation hands back the prefactor. §3's own physical argument for the 2021
+> form was right, and it is now backed by the calculation rather than by
+> intuition.
+
+### 10.1 Bottom line
+
+**Costa eq (10) carries `ε₀ε_r`, and the correction is added to the
+already-`ε_eff`-loaded capacitance — the Costa & Borgese 2021 form, exactly as
+that paper states it.** The `ε₀` printed in the 2013 paper is an incomplete
+statement of the same result; the 2013 paper's **own Figure 2(b) was plotted
+with `ε_r`**, not with the `ε₀` its text prints.
+
+Three independent lines agree, and none of them is the one route that stayed
+shut (the closed-access original):
+
+| Line of evidence | What it says | Tag |
+|---|---|---|
+| **Derivation from the Floquet/image boundary-value problem** (§10.2) | Reproduces eq (10) *exactly* — the `2D/π`, the `1/n` series, the `4π` in the exponent — and the prefactor that falls out is `ε₀ε_r` | `CALCULATED` |
+| **Costa 2013's own Figure 2(b), re-digitised and read normalisation-free** (§10.3) | Implies a prefactor multiplier of **2.72**, against `ε_r` = 2.89 (−5.7%) and `ε_eff` = 1.945 (+40.1%) | `INFERRED` |
+| **Costa & Borgese 2021 LaTeX source** (§10.4) | `\frac{2D \varepsilon_0\varepsilon_{r}}{\pi}` verbatim, three lines after the same authors write `\varepsilon_0\varepsilon_{eff}` for the gap capacitance — a deliberate distinction, not a slip | `LITERATURE-SUPPORTED` |
+
+*In plain terms: we worked out the physics from first principles instead of
+trying to read the unreadable original, and the answer came out matching the
+newer of the two papers. Then we went back to the older paper's own graph and
+found the graph agrees with the newer paper too — the old paper's picture and
+its printed formula disagree with each other, and the picture is the one that
+matches the physics.*
+
+**Effect on the fast tier.** The bias at #128's design point is the **larger**
+of the two figures this document has been carrying: `+3.22%` on the loaded
+capacitance, a resonance shift of about **−1.57%** (9.843 GHz against a drawn
+10.000 GHz), and a gap that must open by roughly **+42 µm** rather than
++28 µm to hold 10 GHz. §7's table is unchanged — the 2021 row is now the
+answer rather than the ceiling of a bracket.
+
+### 10.2 Route 2, done as a derivation
+
+The ticket asked whether the correction enters before or after eq (6)'s
+`ε_eff = (ε_r+1)/2` loading, and whether applying `ε_r` would double-count.
+Working it through does not just answer that — it produces eq (10).
+
+**Step 1 — what permittivity one Floquet harmonic sees.** Take the grid's
+surface charge as a Fourier series over the lattice, harmonic `n` having
+transverse wavenumber `k_n = 2πn/D`. Solve the quasi-static problem for one
+harmonic: air (`ε₀`) filling `z > 0`, substrate (`ε₀ε_r`) filling `z < 0`, and
+a PEC ground at `z = −d`. The potential below must vanish at the ground, so it
+is `∝ sinh(k_n(z+d))/sinh(k_n d)`. Matching `D_z` across the sheet gives
+
+```
+    σ_n = k_n φ_n [ ε₀ + ε₀ ε_r coth(k_n d) ]
+```
+
+Normalise to `f_n = [1 + ε_r coth(k_n d)] / 2`. With the ground taken away
+(`d → ∞`, `coth → 1`) this is `f_n = (1+ε_r)/2 = ε_eff` for **every** harmonic
+— which is exactly *why* the substrate loading is a single multiplicative
+factor in eq (6), and confirms the formalism is the right one before it is
+used for anything new. `CALCULATED`
+
+**Step 2 — the ground plane's increment is pure substrate.** Subtract the
+no-ground case:
+
+```
+    f_n − ε_eff  =  ε_r · x^n / (1 − x^n),        x = e^(−4πd/D)
+```
+
+verified to 10 decimal places against the boundary-value expression at
+`d/D` = 0.05, 0.25 and 0.5. **The `1` — the air half-space — does not appear.**
+The ground plane sits inside the lower medium, so putting it there changes only
+the lower medium's response, and that response carries `ε_r` alone. This is the
+whole answer to the ticket's double-counting worry: there is no double count,
+because the increment is not a re-loading of the original capacitance, it is a
+separate additive term with its own permittivity.
+
+*In plain terms: the printed pattern's near field splits half into the air above
+and half into the rubber below — that is where the `(ε_r+1)/2` average comes
+from. Putting metal behind the pattern changes nothing about the air half. It
+only changes the rubber half, so the extra capacitance it creates is all-rubber
+and gets rubber's full number.*
+
+**Step 3 — sum over harmonics and eq (10) appears.** The grid capacitance in
+this family of models is a weighted harmonic sum, `C = (2Dε₀/π) Σ_n w_n f_n`.
+The weights are fixed by the known closed form: the identity
+
+```
+    ln[1 / sin(πg/2D)]  =  ln 2  +  Σ_{n≥1} cos(πng/D) / n
+```
+
+was checked numerically (agreement to six decimals at `g/D` = 0.01, 0.083, 0.25
+and 0.5), so `w_n = cos(πng/D)/n`. Therefore
+
+```
+    ΔC  =  (2Dε₀ε_r/π) · Σ_{n≥1} [cos(πng/D)/n] · x^n/(1 − x^n)
+```
+
+Take the narrow-gap limit (`cos → 1`) and keep only the first image
+(`x^n/(1−x^n) → x^n`), and since `Σ_{n≥1} x^n/n = −ln(1 − x)`:
+
+```
+    ΔC  =  −(2 D ε₀ ε_r / π) · ln(1 − e^(−4πd/D))
+```
+
+**That is eq (10), factor for factor** — the `2D/π`, the natural logarithm, and
+the `4π` in the exponent (which is just the round trip, `2 × k_1 d`, of the
+lowest Floquet harmonic `k_1 = 2π/D`). The prefactor the derivation produces is
+`ε₀ε_r`, and the term is additive to the `ε_eff`-loaded capacitance — the 2021
+composition point, not the 2013 one. `CALCULATED`
+
+**Why this is stronger than a plausibility argument.** The derivation was not
+tuned to land on eq (10); the weights came from an independently-verified
+series identity and the permittivity factor from a textbook boundary-value
+problem. It then reproduced a published closed form exactly, including two
+details it had no way to fit — the `4π` and the `1/n`. A calculation that
+recovers the functional form it was not aimed at is entitled to be believed
+about the prefactor it produces at the same time. It also explains something
+the published equation never states: **why eq (10) has no `g` in it** (it is
+the `g → 0` limit of the weights).
+
+**What eq (10)'s two approximations cost**, at #128's `d/p = 0.25` and
+`g/p = 0.083` (`S_corr` is the bracketed sum, `ε_r` = 2.9): `CALCULATED`
+
+| | `S_corr` | vs eq (10) |
+|---|---|---|
+| eq (10) as published (`cos → 1`, first image) | 0.128109 | — |
+| all images, `cos → 1` | 0.133774 | +4.4% |
+| all images **and** the real gap factor | 0.128962 | **+0.67%** |
+
+The two approximations very nearly cancel: dropping the further images
+under-counts by 4.4%, and pretending the gap is infinitesimal over-counts by
+about the same. **eq (10) as published is within 0.7% of the full sum at this
+programme's design point** — so there is no case for replacing it with the
+series. Use it as printed, with `ε₀ε_r`.
+
+### 10.3 Route 4, redone — the figure does settle it
+
+§6 could not use Figure 2(b) because the figure normalises by an unknown `C₀`
+("likely a MoM-retrieved capacitance"). **That unknown cancels**, and §6 missed
+that it does.
+
+Write `ρ = C₀_figure / C₀_analytic`, whatever it is. The figure plots
+`v = C^thin/C₀`, and under either candidate
+
+```
+    intercept  a = ε_eff / ρ                (thick-spacer plateau)
+    slope      b = m / (ρ · S_g)            m = the disputed multiplier
+    ---------------------------------------------------------------
+    b / a  =  m / (S_g · ε_eff)             ρ cancels
+```
+
+where `S_g = ln[1/sin(πg/2D)]`. So the **ratio of slope to plateau** is immune
+to the normalisation, and `m = (b/a) · S_g · ε_eff`.
+
+**Re-digitised independently this session** (900 dpi render of the panel,
+`pymupdf`; blue eq-(10) marker pixels separated from the red MoM curve by hue,
+legend band excluded, regressed on `L = −ln(1−e^(−4πd/D))`): `INFERRED`
+
+| | intercept `a` | slope `b` | source |
+|---|---|---|---|
+| §6 (#190) | 1.7173 | 2.4661 | marker centroids |
+| this session | **1.7154** | **2.5013** | full pixel cloud |
+
+The two digitisations agree to 0.1% on the plateau and 1.4% on the slope, which
+is the main thing worth having: **§6's numbers are independently reproduced.**
+
+With `ε_r` = 2.89 (Mylar — the paper's own value for its `D` = 20 µm,
+`L` = 15 µm examples, stated in the Figure 3 caption and the Figure 4 text) and
+`g/D` = 0.25, so `S_g` = 0.9605:
+
+| | implied `m` | vs `ε_r` = 2.890 | vs `ε_eff` = 1.945 |
+|---|---|---|---|
+| this session's digitisation | **2.724** | **−5.7%** | +40.1% |
+| §6's digitisation | 2.683 | −7.2% | +37.9% |
+
+**The figure lands within 6% of `ε_r` and 40% away from `ε_eff`.** For the
+`ε_eff` reading to be right, the slope-to-plateau ratio would have to be wrong
+by 28% — not credible for a fit two independent digitisations agree on to 1.4%.
+
+*In plain terms: the old paper's graph has an unknown scale factor on its
+vertical axis, which is what stopped the last attempt. But the graph's flat
+part and its steep part are both scaled by that same unknown, so their ratio
+does not depend on it. Read that way, the graph says the authors used rubber's
+full number when they drew it — even though the formula printed two inches
+below the graph does not.*
+
+> **CORRECTION to §6.** §6 states the figure's geometry as *"`D` = 20 µm,
+> `L` = 15 µm"*. That is the **caption's** value and it is the right one to use,
+> but the paper is **internally inconsistent**: the prose introducing Fig. 2
+> says the patches have *"a side length of 14/16 D"*, which is 17.5 µm, not
+> 15 µm. This matters — at `g/D` = 0.125 the same test gives `m` = 4.64, which
+> matches neither candidate. The caption is preferred because Figure 3's
+> caption independently uses the same `D` = 20 µm / `L` = 15 µm patch array on
+> Mylar, and because only that reading makes the figure consistent with any
+> physical hypothesis at all. Recorded because a reader checking this section
+> against the paper will hit the same discrepancy. `LITERATURE-SUPPORTED`
+
+### 10.4 The 2021 source, re-read for intent
+
+The arXiv LaTeX source was pulled again (`arxiv.org/e-print/2102.10666`,
+`paper_arxiv_v2.tex`) and read around the equations rather than at them. The
+correction, verbatim from line 267:
+
+```latex
+C_{patch-ground}= \frac{2D \varepsilon_0\varepsilon_{r}}{\pi} \ln{(1- e^{-4\pi d/D})}
+```
+
+`LITERATURE-SUPPORTED`. §3's transcription is confirmed exactly.
+
+**The new observation is what sits fifteen lines above it** (line 252):
+
+```latex
+C^{TM}_{patch}= \frac{2D_x\varepsilon_0\varepsilon_{eff}}{\pi}\ln{...}
+```
+
+with `\varepsilon_{eff}=(1+\varepsilon_r)/2` defined in the prose between the
+two. **The same authors write `ε_eff` for the gap capacitance and `ε_r` for the
+patch-to-ground correction, three equations apart, in one subsection, having
+just defined the difference between them.** That is not a symbol dropped in
+transcription — it is a distinction drawn on purpose, and the prose names the
+reason: the term *"takes into account the capacitance between the patch and the
+ground plane"*, which is the region that contains no air. The 2021 paper is the
+same lead author restating his own earlier equation with the permittivity made
+explicit, which is what the derivation in §10.2 says it should be.
+
+No prose in either paper *justifies* the placement physically — that was worth
+checking and the answer is no. The justification is §10.2.
+
+### 10.5 Routes that returned nothing (recorded so they are not re-run)
+
+| Route | Outcome |
+|---|---|
+| **A later Costa restatement, 2021–2026** | **None found.** Searches for a follow-up by Costa or collaborators restating or correcting the prefactor returned no third statement of eq (10). The disagreement was never resolved in print by its authors |
+| **Tretyakov & Simovski 2003** (ref [35]) | Unchanged — closed access, no free copy in existence (§5, §8). Still the only thing that would make this `LITERATURE-SUPPORTED` end to end. Stays in `RUNNING-LISTS.md` §1, now as confirmation of a settled answer rather than the only way to settle it |
+| **Web-search summarisation of arXiv:2102.10666** | **Returned the wrong prefactor** — a search summariser reported `C_patch-ground = (2D·ε₀/π)·ln(1−e^(−4πd/D))`, silently dropping the `ε_r`. Caught only by pulling the LaTeX. **Do not take an equation from a search summary in this repo**; fetch the source |
+
+### 10.6 What follows for the code — and what has *not* been changed
+
+This section is research. **No code was changed by it**, deliberately; the
+implementation is a separate piece of work.
+
+The change, when someone makes it, is the one-line default the ticket
+describes — but note the ticket names the wrong file. The implementation lives
+in **`rf_tools/sheet_impedance.py`**, not `rf_tools/calculations.py`:
+
+- **`rf_tools/sheet_impedance.py:165`** — `COSTA_EQ10_FORM = "eps0"` should
+  become `"eps0_epsr"`. The composition point is already handled correctly:
+  `_compose_thin_spacer_capacitance` applies `eps_eff * C0 + dC` for that form,
+  which is the 2021 placement §10.2 derives.
+- **`rf_tools/absorber.py:342`** — the `thin_spacer_prefactor_disputed`
+  validity flag should be removed. Under the charter's "warn, never block", a
+  warning must fire only where the assumption is load-bearing *and* uncertain;
+  this one is no longer uncertain.
+- Tests pinning the old default (`tests/test_sheet_impedance.py:337`,
+  `tests/test_absorber.py:124`) move with it.
+
+The `costa_eq10_form` field on every `absorber_band_response` result should
+**stay**. It is cheap, and it records which form produced a number — worth
+keeping precisely because this document has now revised the answer once.
+
+**Residual uncertainty, stated plainly.** The verdict rests on a derivation
+done here plus a figure read off a rasterised page, not on the original source.
+`ASSUMED` → `CALCULATED` is a real upgrade but it is not `MEASURED`. Two things
+would close it completely, in cost order:
+
+1. **Route 3, a full-wave cross-check** — no longer "unspecified fog": PR #227
+   landed a Meep path with Bloch-periodic boundaries. Sweep `d/D` from 0.05 to
+   0.5 at one `ε_r`, extract the sheet capacitance, fit the slope against
+   `−ln(1−e^(−4πd/D))`. The two candidates differ by 1.487× in that slope,
+   far outside solver noise. This would move the finding to `SIMULATED`.
+2. **Tretyakov & Simovski 2003**, if a human with library access ever gets it.
+
+Neither blocks the default change. The evidence already points one way by a
+wide margin, and continuing to ship the `ε₀` form means knowingly shipping the
+number the physics says is wrong by a third.
