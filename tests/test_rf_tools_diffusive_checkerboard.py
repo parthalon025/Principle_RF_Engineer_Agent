@@ -11,6 +11,7 @@ SIMULATED entry that module cannot yet produce itself -- see
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -88,8 +89,32 @@ class TestPhaseErrorAndReduction:
         # delta -> 0 -> the idealised, unbounded-cancellation limit.
         assert rcs_reduction_db(1e-6) < -90.0
 
-    def test_rcs_reduction_db_exact_zero_delta_is_negative_infinity(self):
-        assert rcs_reduction_db(0.0) == -math.inf
+    def test_rcs_reduction_db_exact_zero_delta_is_floored_not_infinite(self):
+        # A literal -inf is not valid JSON (json.dumps emits "-Infinity",
+        # which Postgres jsonb and any real JSON consumer reject) -- the
+        # perfect-cancellation limit must be a large, finite floor instead.
+        result = rcs_reduction_db(0.0)
+        assert math.isfinite(result)
+        assert result < -250.0
+        json.dumps(result)  # must not raise
+
+    def test_dispersion_is_symmetric_under_swapping_tile_a_and_tile_b(self):
+        # Which symbol a caller happens to pass first is an arbitrary
+        # labelling choice (resolve_checkerboard_tile_symbols picks it
+        # alphabetically) -- the physical pair (180, 0) is identical to
+        # (0, 180), so both orderings must give the same dispersion.
+        forward = phase_error_deg(180.0, 0.0, delta_phi_max_deg=10.0)
+        swapped = phase_error_deg(0.0, 180.0, delta_phi_max_deg=10.0)
+        assert forward == pytest.approx(swapped)
+        assert forward == pytest.approx(10.0)
+
+    def test_a_negative_wrapped_phase_difference_is_handled_correctly(self):
+        # phase_a - phase_b == -150 -- wraps to 210 degrees, 30 degrees
+        # away from the ideal 180, not the 330 degrees a naive unwrapped
+        # |180 - (-150)| would give.
+        delta = phase_error_deg(-150.0, 0.0, delta_phi_max_deg=10.0)
+        assert delta == pytest.approx(40.0)
+        assert rcs_reduction_db(delta) == pytest.approx(-9.32, abs=0.01)
 
     def test_round_trips_against_phase_budget_deg_at_the_10db_point(self):
         # geometry.unit_cell.phase_budget_deg(10.0) is the delta at which

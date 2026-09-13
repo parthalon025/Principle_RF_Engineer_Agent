@@ -4,6 +4,19 @@ metasurface where exactly two characterised tiles alternate by lattice
 parity across the whole aperture, per patent US12089385B2's own Example 7
 embodiment.
 
+IN PLAIN TERMS: a radar signature can be reduced not just by soaking up a
+radio wave (an absorber) but by scattering it away from whoever sent it, the
+way a mirrored disco ball scatters light instead of bouncing it back at one
+spot. A checkerboard of two tile shapes, each reflecting 180 degrees out of
+step with the other, does this: the two halves of the reflected wave
+cancel straight back the way it came and go elsewhere instead. This module
+turns two already-measured (or simulated) tiles' own reflection behaviour
+into two numbers a person can act on: how many decibels of "radar return"
+this checkerboard removes across the frequency band that matters, at the
+worst frequency in that band (never an optimistic average); and, given
+those two tiles' real shapes, a ready-to-print layout of the actual
+checkerboard panel.
+
 WHY THIS IS A SEPARATE MODULE, AND WHY IT IS SCOPED THIS NARROWLY.
 `docs/example7-coding-metasurface-scoring-recipe.md` Step 3 gives a closed
 form for the plain 1:1 case only -- it "assumes equal-area alternating
@@ -67,6 +80,24 @@ itself (#465); printing/measuring tiles (#132); full-wave finite-panel
 validation; any change to `designs/element_alphabet.py` (that module's
 provenance handling is mid-transition per ADR-0053 and this module does not
 assume its current or its future shape -- see `weaker_provenance`).
+
+REFERENCE GEOMETRY AND OBSERVATION GEOMETRY ARE NOT CALLER PARAMETERS HERE,
+UNLIKE THE GENERAL CASE `docs/seven-example-design-unknowns.md` Sec 6.3
+DESCRIBES. That section's "no default, must be stated explicitly" rule
+governs an aperture-level RCS-reduction score in general, where the
+reference surface (what "reduction" is measured against) and the
+observation geometry (monostatic vs bistatic, and which angles count) are
+genuinely free choices a customer could make differently. The plain 1:1
+special-case closed form this module implements has no such freedom: `RCS_
+reduction_dB(f) = 20*log10(sin(delta(f)/2))` (Step 3) is, by its own
+derivation, ALWAYS a monostatic (straight-back) comparison against a
+same-size flat PEC plate -- that comparison is baked into the formula
+itself, not a parameter of it, the same way `rf_tools.physical_bounds.
+rozanov_min_thickness_m` does not take "which absorber am I comparing
+against" as an argument. A caller wanting a different reference or a
+bistatic observation angle needs the general, not-yet-built arrangement-
+search objective this module explicitly does not attempt (see above) --
+this module simply has no lever to turn for either, so it takes none.
 """
 
 from __future__ import annotations
@@ -76,7 +107,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from designs.element_alphabet import lookup_symbol_entries, reduce_response_at_frequency
+from designs.provenance import SIMULATED
 from geometry.unit_cell import boundary_fraction, generate_coded_unit_cell_array
+from knowledge.provenance import MEASURED
 
 # A plain 1:1 alternating checkerboard's own two-term coupling budget uses
 # `boundary_fraction` at the smallest possible block, Nx=Ny=1 -- one cell
@@ -151,7 +184,7 @@ def weaker_provenance(provenance_a: str, provenance_b: str) -> str:
     an unrecognised value would risk understating or overstating the
     combined result's evidence tier.
     """
-    rank = {"SIMULATED": 1, "MEASURED": 2}
+    rank = {SIMULATED: 1, MEASURED: 2}
     try:
         rank_a = rank[provenance_a]
         rank_b = rank[provenance_b]
@@ -175,6 +208,21 @@ def phase_error_deg(
     value, `docs/supercell-sizing-rule.md` Sec 2's `delta_phi_max`, budgeted
     here at the plain-1:1 block via `boundary_fraction(1, 1) == 1.0`).
 
+    The dispersion term is computed on `(phase_a_deg - phase_b_deg) mod
+    360`, wrapped into `[0, 360)`, before comparing to the ideal 180 --
+    NOT on the raw, unwrapped difference. A reflection phase is only
+    meaningful modulo 360 degrees, and which tile a caller happens to pass
+    as `phase_a_deg` versus `phase_b_deg` is an arbitrary labelling choice
+    (`resolve_checkerboard_tile_symbols` picks it by alphabetical symbol
+    id, not by anything physical) -- so this function must return the same
+    dispersion for `(phase_a_deg, phase_b_deg)` as for the swapped
+    `(phase_b_deg, phase_a_deg)`. Comparing the raw, unwrapped difference
+    to 180 breaks exactly that symmetry (e.g. `(180, 0)` and `(0, 180)` are
+    the same physical pair 180 degrees apart, but the raw difference is
+    +180 in one order and -180, i.e. effectively +180 again only once
+    wrapped, in the other) and can silently report near-zero error for a
+    pair that is actually badly mismatched.
+
     `delta_phi_max_deg` is the alphabet-level coupling-error constant for
     this tile pair/process (the same quantity `geometry.unit_cell.
     block_size_from_sizing_rule` takes as its own `delta_phi_max_deg`
@@ -182,9 +230,14 @@ def phase_error_deg(
     number.
     """
     delta_phi_max_deg = _require_nonnegative_finite("delta_phi_max_deg", delta_phi_max_deg)
-    dispersion_deg = abs(180.0 - (phase_a_deg - phase_b_deg))
+    wrapped_diff_deg = (phase_a_deg - phase_b_deg) % 360.0
+    dispersion_deg = abs(wrapped_diff_deg - 180.0)
     coupling_deg = delta_phi_max_deg * boundary_fraction(*_PLAIN_1_1_BLOCK)
     return dispersion_deg + coupling_deg
+
+
+_MIN_SIN_HALF = 1e-15
+_NEAR_PERFECT_CANCELLATION_FLOOR_DB = 20.0 * math.log10(_MIN_SIN_HALF)  # -300.0 dB
 
 
 def rcs_reduction_db(delta_deg: float) -> float:
@@ -197,15 +250,22 @@ def rcs_reduction_db(delta_deg: float) -> float:
     tiles close to the ideal 180 degrees apart) and rises toward 0 dB (no
     cancellation) as delta grows toward 180 degrees (the tiles reflecting
     nearly in phase, like a plain PEC sheet).
+
+    `delta_deg == 0` (mod 360) is the theoretical perfect-cancellation
+    limit -- `sin(0) == 0`, `log10(0)` is undefined. This is floored at
+    `_NEAR_PERFECT_CANCELLATION_FLOOR_DB` (-300 dB, `sin_half` clamped to
+    `_MIN_SIN_HALF`) rather than returned as a literal `-inf`: an idealised
+    closed-form input can land exactly on this limit even though no real
+    measurement ever will, and -300 dB is unreachably better than any real
+    reduction this module will ever be asked to report, but it stays a
+    finite `float` -- a bare Python `-inf` is NOT valid JSON (`json.dumps`
+    emits the non-standard token `-Infinity`, which a real JSON consumer,
+    including this project's own Postgres `jsonb` columns and any MCP
+    client parsing this tool's response, rejects outright) -- so returning
+    it would make the tool intermittently fail to record or serialize its
+    own output depending on how close two tiles happen to be to ideal.
     """
-    sin_half = math.sin(math.radians(delta_deg) / 2.0)
-    if sin_half <= 0.0:
-        # delta_deg == 0 (mod 360) is the theoretical perfect-cancellation
-        # limit -- sin(0) == 0, log10(0) is undefined. Report it as the
-        # true limiting case rather than raising: an idealised closed-form
-        # input can land exactly here even though no real measurement ever
-        # will (a real pair of tiles always carries some finite delta).
-        return -math.inf
+    sin_half = max(math.sin(math.radians(delta_deg) / 2.0), _MIN_SIN_HALF)
     return 20.0 * math.log10(sin_half)
 
 
@@ -216,6 +276,15 @@ def diffracted_order_exists(supercell_period_m: float, wavelength_m: float) -> b
     (docs/example7-coding-metasurface-scoring-recipe.md Sec 3;
     designs/design_families.py's DIFFUSIVE `NO_PHYSICAL_BOUND` reason
     string cites the same 42.4 mm at 10 GHz / 30.3 mm at 14 GHz figures).
+
+    In plain terms: the redirected energy has to go somewhere real, not
+    nowhere. A "propagating diffracted order" is a genuine extra beam the
+    checkerboard's repeating pattern can send off at an angle, the way a
+    diffraction grating splits light into separate beams. If the repeating
+    pattern is too small compared to the wavelength, no such extra beam can
+    physically exist -- there is nowhere for the redirected power to go, so
+    any measured reduction must actually be the surface soaking up energy
+    (absorption), not scattering it elsewhere.
 
     This is a NEW check (issue #550: "does not exist nowhere in code
     today") and a different quantity from `geometry.unit_cell.

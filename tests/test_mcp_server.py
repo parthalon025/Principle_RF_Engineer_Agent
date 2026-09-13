@@ -64,6 +64,27 @@ from rf_tools.patch_synthesis import (
     quality_factor_from_fractional_bandwidth,
 )
 
+
+@pytest.fixture
+def cleanup_designs():
+    """Tracks design ids created by `create_design` (which commits its own
+    connection) and deletes them afterward -- mirrors
+    tests/test_designs_service.py's own fixture of the same name;
+    `verification_items` rows cascade-delete with their design."""
+    ids: list[int] = []
+    yield ids
+    if not ids:
+        return
+    import psycopg
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM designs WHERE id = ANY(%s)", (ids,))
+    finally:
+        conn.close()
+
+
 # A generic, well-behaved two-port S-parameter matrix (unconditionally
 # stable amplifier-like response) reused across every S/Z/Y/ABCD/stability
 # tool test below.
@@ -2429,10 +2450,11 @@ def test_score_and_materialize_diffusive_checkerboard_scores_without_symbol_libr
         incidence_angle_deg=0.0,
         process_id=1,
         delta_phi_max_deg=0.0,
-        rcsr_db=10.0,
+        # rcsr_db/panel_size_m deliberately omitted: they are only needed
+        # for materialization (symbol_library omitted below), and this
+        # call must succeed without them.
         pitch_m=[0.015, 0.015],
         wavelength_m=0.03,
-        panel_size_m=[0.18, 0.18],
     )
 
     assert result["tile_a"] == "0"
@@ -2443,6 +2465,90 @@ def test_score_and_materialize_diffusive_checkerboard_scores_without_symbol_libr
         "NO_PHYSICAL_BOUND",
         "ROZANOV_BOUNDED",
     }
+
+
+def test_score_and_materialize_diffusive_checkerboard_requires_rcsr_db_and_panel_size():
+    """Issue #550: rcsr_db/panel_size_m are only needed to materialize a
+    unit-cell array -- passing symbol_library without them must fail
+    loudly rather than crash deep inside block_size_from_sizing_rule."""
+    from designs.element_alphabet import add_symbol_entry
+
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    with pytest.raises(ValueError, match="rcsr_db and panel_size_m"):
+        server.score_and_materialize_diffusive_checkerboard(
+            symbol_entries,
+            "fam",
+            frequencies_hz,
+            incidence_angle_deg=0.0,
+            process_id=1,
+            delta_phi_max_deg=0.0,
+            pitch_m=[0.015, 0.015],
+            wavelength_m=0.03,
+            symbol_library={"0": geometry, "1": geometry},
+        )
+
+
+def test_score_and_materialize_diffusive_checkerboard_uses_the_smaller_pitch_axis():
+    """Issue #550: an asymmetric pitch's diffracted-order check uses the
+    SMALLER of the two axes -- the more conservative choice -- not
+    silently just the x axis."""
+    from designs.element_alphabet import add_symbol_entry
+
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    frequencies_hz = [10.0e9]
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    # x pitch alone (35 mm) is above the 10 GHz onset threshold (~42.4 mm)
+    # -- wait, use a pair that straddles the threshold: x=45mm (exempt on
+    # its own), y=10mm (well below -- the smaller axis must dominate).
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=0.0,
+        pitch_m=[0.045, 0.010],
+        wavelength_m=0.03,
+    )
+    assert result["diffracted_order_regime"]["bound_regime"] == "ROZANOV_BOUNDED"
 
 
 def test_score_and_materialize_diffusive_checkerboard_materializes_with_symbol_library():
@@ -2492,6 +2598,81 @@ def test_score_and_materialize_diffusive_checkerboard_materializes_with_symbol_l
 
     assert "unit_cell_array" in result
     assert len(result["unit_cell_array"]) > 0
+
+
+def test_score_and_materialize_diffusive_checkerboard_records_against_a_design(
+    cleanup_designs,
+):
+    """Issue #550's own spec: 'optionally records the result against a
+    design (the same design_id -> recorded_as convention every other tool
+    in that file already uses)' -- mirrors tests/test_designs_service.py's
+    own test_record_engineering_result_returns_engineering_result_id."""
+    import uuid
+
+    import psycopg
+
+    from designs.element_alphabet import add_symbol_entry
+    from designs.service import create_design
+
+    design = create_design(
+        design_key=f"MCP-DIFFUSIVE-{uuid.uuid4().hex[:8]}",
+        name="Diffusive Checkerboard Recording Fixture",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    cleanup_designs.append(design["design_id"])
+
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=0.0,
+        rcsr_db=10.0,
+        pitch_m=[0.015, 0.015],
+        wavelength_m=0.03,
+        panel_size_m=[0.18, 0.18],
+        design_id=design["design_id"],
+    )
+
+    assert isinstance(result["recorded_as"], int)
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT design_id, provenance FROM engineering_results WHERE id = %s",
+                (result["recorded_as"],),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    # The recorded provenance is this call's own weakest-of tile provenance
+    # (both entries here are MEASURED), never a fixed per-tool-name constant.
+    assert row == (design["design_id"], result["provenance"])
 
 
 _STDIN_ISOLATION_PROBE = """

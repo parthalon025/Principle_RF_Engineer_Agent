@@ -457,11 +457,10 @@ def boundary_fraction(nx: int, ny: int) -> float:
     reduce to the square-cell `(4N-4)/N**2` when Nx == Ny; reproduced here:
     1 - (N-2)**2/N**2 == (N**2 - (N-2)**2)/N**2 == (4N-4)/N**2.
 
-    Promoted from `_boundary_fraction` (issue #550) so `rf_tools.
+    Promoted from a private `_boundary_fraction` (issue #550) so `rf_tools.
     diffusive_checkerboard` can call it directly for a plain 1:1 alternating
     checkerboard's own coupling-error term, rather than duplicating the
-    formula -- `_boundary_fraction` stays as an alias below for any caller
-    that still names the old private spelling."""
+    formula."""
     if nx < 1 or ny < 1:
         raise ValueError(f"nx and ny must be >= 1, got ({nx!r}, {ny!r})")
     if nx == 1 or ny == 1:
@@ -477,19 +476,11 @@ def phase_budget_deg(rcsr_db: float) -> float:
     criterion from the chessboard RCS-reduction literature the document
     cites as a cross-check.
 
-    Promoted from `_phase_budget_deg` (issue #550) for the same reason as
-    `boundary_fraction` above; `_phase_budget_deg` stays as an alias."""
+    Promoted from a private `_phase_budget_deg` (issue #550) for the same
+    reason as `boundary_fraction` above."""
     ratio = 10.0 ** (-rcsr_db / 20.0)
     ratio = min(ratio, 1.0)  # guard a pathological rcsr_db < 0 from asin(>1)
     return 2.0 * math.degrees(math.asin(ratio))
-
-
-# Old private spellings, kept as aliases: this module's own
-# `block_size_from_sizing_rule` below still calls them by these names, and
-# any external caller that imported the private names before issue #550
-# promoted them keeps working unchanged.
-_boundary_fraction = boundary_fraction
-_phase_budget_deg = phase_budget_deg
 
 
 def _diffraction_sin_theta(
@@ -532,8 +523,8 @@ def block_size_from_sizing_rule(
         redirects nothing and the whole cancellation mechanism this rule
         exists for does not apply.
       - **The floor** (Sec 2): unlike-neighbour coupling error, bounded by
-        `delta_phi_max_deg * _boundary_fraction(Nx, Ny)`, must not exceed
-        the phase budget `_phase_budget_deg(rcsr_db)` the stated RCS-
+        `delta_phi_max_deg * boundary_fraction(Nx, Ny)`, must not exceed
+        the phase budget `phase_budget_deg(rcsr_db)` the stated RCS-
         reduction requirement implies -- a small block whose symbols are too
         different from each other won't cancel down to the target dB.
       - **The ceiling** (Sec 3 and Sec 5.5 Amendment 4): the redirected lobe
@@ -576,7 +567,7 @@ def block_size_from_sizing_rule(
     if not isinstance(max_n, int) or max_n < 2:
         raise ValueError(f"max_n must be an int >= 2, got {max_n!r}")
 
-    delta_budget_deg = _phase_budget_deg(rcsr_db)
+    delta_budget_deg = phase_budget_deg(rcsr_db)
     if theta_min_deg is None:
         theta_min_deg = math.degrees(wavelength_m / (2.0 * min(lx_m, ly_m)))
     else:
@@ -593,7 +584,7 @@ def block_size_from_sizing_rule(
             sin_theta = _diffraction_sin_theta(nx, ny, (px_m, py_m), wavelength_m)
             if sin_theta > 1.0:
                 continue  # evanescent -- this block redirects nothing
-            if delta_phi_max_deg * _boundary_fraction(nx, ny) > delta_budget_deg:
+            if delta_phi_max_deg * boundary_fraction(nx, ny) > delta_budget_deg:
                 continue  # coupling error exceeds what the requirement allows
             theta_deg = math.degrees(math.asin(sin_theta))
             if theta_deg < theta_min_deg:

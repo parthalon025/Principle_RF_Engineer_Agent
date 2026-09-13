@@ -1099,6 +1099,13 @@ def compose_and_export_polygon_element(
     before this tool, that composition capability was reachable only from
     a test.
 
+    In plain terms: most useful RF unit-cell shapes are not simple boxes --
+    a split ring is a ring with a gap cut into it, a Jerusalem cross is a
+    cross with extra tabs on each arm. This tool builds such a shape the
+    way a laser cutter would: start with one shape, then add, subtract,
+    keep-only-the-overlap, or keep-only-the-non-overlap of further shapes,
+    until the final outline is what a fabricator can actually print.
+
     `shapes`: combine_shapes()'s own `shapes` argument -- a non-empty list
     of {"kind": "box" (p1_m/p2_m, 2D local corners) | "polygon" (points_m,
     >=3 2D local vertices), "operation": "add" (default, first shape must
@@ -1143,10 +1150,10 @@ def score_and_materialize_diffusive_checkerboard(
     incidence_angle_deg: float,
     process_id: int,
     delta_phi_max_deg: float,
-    rcsr_db: float,
     pitch_m: list[float],
     wavelength_m: float,
-    panel_size_m: list[float],
+    rcsr_db: float | None = None,
+    panel_size_m: list[float] | None = None,
     symbol_library: dict | None = None,
     threshold_db: float | None = None,
     theta_min_deg: float | None = None,
@@ -1158,6 +1165,15 @@ def score_and_materialize_diffusive_checkerboard(
     the whole aperture (issue #550; patent US12089385B2's own Example 7
     embodiment) -- and, given `symbol_library`, materialize its unit-cell
     array geometry from the winning tile pair, in the same call.
+
+    In plain terms: a checkerboard of two tile shapes that each reflect a
+    radar wave 180 degrees out of step with the other scatters the wave
+    away instead of bouncing it straight back, like a mirrored disco ball
+    versus a flat mirror. This tool answers, in decibels, how much of that
+    "radar return" two already-measured tiles remove across a frequency
+    band -- at the worst frequency in the band, not an optimistic average
+    -- and, given those tiles' real shapes, produces a ready-to-print
+    layout of the actual checkerboard panel.
 
     `symbol_entries`: an already-fetched `designs.element_alphabet.
     fetch_symbol_entries` result (or a hand-built list with the same
@@ -1195,6 +1211,9 @@ def score_and_materialize_diffusive_checkerboard(
     fixed per-tool constant), since a DIFFUSIVE score is only as
     trustworthy as its weaker input tile.
 
+    `rcsr_db`/`panel_size_m` are needed only for materialization -- omit
+    both, along with `symbol_library`, to score without them.
+
     Returns the scoring report (`score_diffusive_checkerboard`'s own
     shape: `tile_a`/`tile_b`, the full per-frequency `curve`, the worst
     frequency and its reduction, `threshold_db`/`threshold_is_default`/
@@ -1202,10 +1221,12 @@ def score_and_materialize_diffusive_checkerboard(
     lookup made) plus `diffracted_order_regime` (whether this tile pitch
     can launch a propagating diffracted order at `wavelength_m`, and so
     which bound regime applies -- `NO_PHYSICAL_BOUND` or
-    `ROZANOV_BOUNDED`), and, when `symbol_library` is given,
+    `ROZANOV_BOUNDED`; evaluated at the SMALLER of `pitch_m`'s two axes,
+    the more conservative of the two for a non-square pitch, since the
+    checkerboard-supercell-period formula this check is built on is
+    inherently one-dimensional), and, when `symbol_library` is given,
     `unit_cell_array`: the materialized primitive list."""
     pitch = (pitch_m[0], pitch_m[1])
-    panel_size = (panel_size_m[0], panel_size_m[1])
     score = _score_diffusive_checkerboard(
         symbol_entries,
         element_family,
@@ -1217,9 +1238,15 @@ def score_and_materialize_diffusive_checkerboard(
     )
     result: dict = {
         **score,
-        "diffracted_order_regime": _diffracted_order_regime(pitch[0], wavelength_m),
+        "diffracted_order_regime": _diffracted_order_regime(min(pitch), wavelength_m),
     }
     if symbol_library is not None:
+        if rcsr_db is None or panel_size_m is None:
+            raise ValueError(
+                "rcsr_db and panel_size_m are both required to materialize a "
+                "unit-cell array (symbol_library was given); omit symbol_library "
+                "too to get a score alone without them"
+            )
         result["unit_cell_array"] = _materialize_checkerboard_unit_cell_array(
             score["tile_a"],
             score["tile_b"],
@@ -1228,7 +1255,7 @@ def score_and_materialize_diffusive_checkerboard(
             delta_phi_max_deg,
             rcsr_db,
             wavelength_m,
-            panel_size,
+            (panel_size_m[0], panel_size_m[1]),
             theta_min_deg=theta_min_deg,
             max_block_n=max_block_n,
         )

@@ -67,102 +67,19 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from simulation.convergence import convergence_report
+
 # The quantities a sweep reports on, per field. Deliberately three, not one:
 # the whole documented finding is that they converge at different rates.
 FIELDS = ("reflectance", "transmittance", "absorptance")
 
-
-# ---------------------------------------------------------------------------
-# THE PURE CORE -- the bit that would lift into real code if this is adopted.
-# No solver, no I/O: a list of (knob, {field: value}) in, a verdict out.
-# ---------------------------------------------------------------------------
-def convergence_report(
-    samples: list[tuple[float, dict[str, float]]],
-    tolerance: float = 0.01,
-) -> dict[str, Any]:
-    """Turn a refinement sweep into a per-field error bar and verdict.
-
-    `samples` is [(knob, {field: value}), ...] in INCREASING refinement
-    order -- knob being whatever was refined (here, pixels across the
-    sheet). At least two samples; three is the useful minimum, because two
-    give you a movement with nothing to say whether it is shrinking.
-
-    THE ERROR BAR IS THE LAST SUCCESSIVE DIFFERENCE, and nothing cleverer.
-    Richardson extrapolation would give a tighter bar, but only by assuming
-    a convergence order -- MEEP is nominally second-order, and a resistive
-    sheet with subpixel smoothing across six pixels is exactly the case
-    where that assumption is worth least. Assuming an order here to buy a
-    smaller error bar would be inventing precision, so this refuses to, and
-    reports the plain movement instead. That is conservative in the right
-    direction: it over-states the uncertainty rather than under-stating it.
-
-    PER FIELD, NEVER ONE SCALAR. A single "converged: yes/no" for the whole
-    solve would have erased the actual finding in
-    docs/meep-absorber-validation.md, where one field converged and two did
-    not, in the same run.
-    """
-    if len(samples) < 2:
-        raise ValueError("need at least two refinement levels to see any movement")
-
-    knobs = [k for k, _ in samples]
-    if knobs != sorted(knobs):
-        raise ValueError(f"samples must be in increasing refinement order, got {knobs}")
-
-    per_field: dict[str, Any] = {}
-    for field in {f for _, values in samples for f in values}:
-        series = [values[field] for _, values in samples if field in values]
-        if len(series) < 2:
-            continue
-        # strict=False is deliberate: series[1:] is one shorter by
-        # construction -- that offset IS the pairwise walk.
-        deltas = [abs(b - a) for a, b in zip(series, series[1:], strict=False)]
-        error_bar = deltas[-1]
-        per_field[field] = {
-            "values": series,
-            "successive_deltas": deltas,
-            # Is the movement itself shrinking? Two samples can't say.
-            "still_shrinking": None if len(deltas) < 2 else deltas[-1] < deltas[-2],
-            "error_bar": error_bar,
-            "converged": error_bar <= tolerance,
-            "finest_value": series[-1],
-        }
-
-    converged = [f for f, r in per_field.items() if r["converged"]]
-    unconverged = [f for f, r in per_field.items() if not r["converged"]]
-    return {
-        "knob": "pixels_across_sheet",
-        "knob_values": knobs,
-        "tolerance": tolerance,
-        "per_field": per_field,
-        "converged_fields": sorted(converged),
-        "unconverged_fields": sorted(unconverged),
-        # The sentence a downstream consumer actually needs.
-        "claim_limit": _claim_limit(per_field, tolerance),
-        "provenance_note": (
-            "This is an estimate of DISCRETISATION error only -- how much "
-            "the answer still moves as the grid is refined. It says nothing "
-            "about whether the model, the materials, or the adapter are "
-            "right. A converged wrong answer is still wrong."
-        ),
-    }
-
-
-def _claim_limit(per_field: dict[str, Any], tolerance: float) -> str:
-    """One plain-English sentence naming what may and may not be claimed."""
-    bad = sorted(f for f, r in per_field.items() if not r["converged"])
-    if not bad:
-        return (
-            f"Every reported field moved by no more than {tolerance} across the "
-            f"last refinement, so each may be quoted to about that precision."
-        )
-    parts = ", ".join(f"{f} (+/-{per_field[f]['error_bar']:.3f})" for f in bad)
-    ok = sorted(f for f, r in per_field.items() if r["converged"])
-    ok_text = f" {', '.join(ok)} did settle." if ok else ""
-    return (
-        f"Still moving at the finest grid run: {parts}. Do not quote these to "
-        f"better than the stated figure, and do not build a downstream claim "
-        f"(a return-loss or shielding number) on one of them alone.{ok_text}"
-    )
+# The pure per-field convergence-analysis core this prototype's own spike
+# was about now lives in simulation/convergence.py (issue #540) -- lifted
+# verbatim from what was, until then, defined only here. Importing it back
+# (rather than keeping a second, drifting copy in this throwaway script)
+# means running this prototype's own `--real` path -- the still-blocking
+# step named in that module's docstring -- validates the SHIPPED module,
+# not a copy of it.
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +159,10 @@ def sweep(
 def render(report: dict[str, Any]) -> str:
     lines = [
         "",
-        f"  refinement knob : {report['knob']}",
+        # simulation.convergence.convergence_report is solver-agnostic and
+        # deliberately does not label the knob itself -- this script is the
+        # one place that knows it swept pixels across the sheet.
+        "  refinement knob : pixels_across_sheet",
         f"  levels run      : {report['knob_values']}",
         f"  tolerance       : {report['tolerance']}",
         "",
