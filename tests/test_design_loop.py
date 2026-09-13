@@ -2470,6 +2470,38 @@ def test_absorber_simulation_runs_meep_with_a_periodic_cell(monkeypatch):
     assert state.decisions[-1].provenance == "SIMULATED"
 
 
+def test_absorber_simulation_records_meep_workdir(monkeypatch):
+    """#461, the #345 gap for MEEP: `run_meep_simulation` already returns
+    its own working directory; a completed ABSORBER/ABSORBER_TRANSMISSIVE
+    decision must record it too, or a persisted-and-reloaded decision can
+    no longer be traced back to the solver run that produced it."""
+
+    def fake_run(geometry, characteristic_length_m, nfreq, workdir):
+        del geometry, characteristic_length_m, nfreq, workdir
+        return {
+            "provenance": "SIMULATED",
+            "simulator": "MEEP",
+            "status": "COMPLETED",
+            "workdir": "/tmp/meep_xyz789",
+            "s_parameters": {"frequency_hz": [10e9], "reflectance": [0.2]},
+        }
+
+    monkeypatch.setattr(design_loop_module, "_run_meep_simulation", fake_run)
+
+    state = start_design_loop(REQUIREMENTS)
+    state = _grant_and_advance(state, DesignStep.ARCHITECTURE, _architecture_input("ABSORBER"))
+    state = advance_loop_step(state, dict(_ABSORBER_ANALYSIS_INPUT))
+    state = advance_loop_step(
+        state, {"geometry": {"cell_size_m": [3e-3, 3e-3, 40e-3]}, "frequency_hz": 10e9}
+    )
+
+    result = state.decisions[-1].result
+    assert result["workdir"] == "/tmp/meep_xyz789"
+
+    restored = LoopDecision.from_dict(state.decisions[-1].to_dict())
+    assert restored.result["workdir"] == "/tmp/meep_xyz789"
+
+
 def test_absorber_simulation_never_silently_falls_back_to_nec2(monkeypatch):
     """The failure this whole dispatch exists to remove: quietly running the
     wire solver on a metamaterial cell and reporting success."""
@@ -2554,6 +2586,11 @@ def _fake_palace_result(**_kwargs):
             "passivity": [],
             "reciprocity": [],
         },
+        "workdir": "/tmp/palace_abc123",
+        "mesh_file": "/tmp/palace_abc123/unit_cell.mesh",
+        "config_file": "/tmp/palace_abc123/config.json",
+        "output_dir": "/tmp/palace_abc123/postpro",
+        "num_mesh_elements": 4096,
     }
 
 
@@ -2593,6 +2630,78 @@ def test_reflection_phase_and_diffusive_route_to_palace_not_nec2(family, monkeyp
     assert result["specular"] == {"S11_TE": [complex(-1.0, 0.0)]}
     assert result["conservation_check"]["all_ok"] is True
     assert state.decisions[-1].provenance == "SIMULATED"
+
+
+@pytest.mark.parametrize("family", ["REFLECTION_PHASE", "DIFFUSIVE"])
+def test_palace_simulation_decision_records_solver_artifact_paths(family, monkeypatch):
+    """#345: a completed Palace SIMULATION decision names the mesh, config
+    and output directory it came from -- `run_palace_simulation` always
+    returns these, and until now the decision this loop records dropped
+    them on the way in, so a persisted-and-reloaded decision could no
+    longer be traced back to the solver artifacts that produced it. The
+    fake workdir here ("/tmp/...") is NOT the durable default
+    (#466), so the decision also carries that ticket's non-durability
+    warning -- see test_palace_simulation_using_default_workdir_is_silent
+    for the silent, durable-default case."""
+
+    def exploding_nec2(*args, **kwargs):
+        raise AssertionError(f"NEC2 must never be reached for {family}")
+
+    monkeypatch.setattr(design_loop_module, "_run_nec2_simulation", exploding_nec2)
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", _fake_palace_result)
+
+    state = _at_simulation(family)
+    state = advance_loop_step(
+        state, {"geometry": dict(_GROUND_BACKED_METASURFACE_GEOMETRY), "frequency_hz": 10e9}
+    )
+
+    result = state.decisions[-1].result
+    assert result["workdir"] == "/tmp/palace_abc123"
+    assert result["mesh_file"] == "/tmp/palace_abc123/unit_cell.mesh"
+    assert result["config_file"] == "/tmp/palace_abc123/config.json"
+    assert result["output_dir"] == "/tmp/palace_abc123/postpro"
+    assert result["num_mesh_elements"] == 4096
+    assert [entry["flag"] for entry in result["validity"]] == ["solver_workdir_not_durable"]
+
+    # A decision round-trips through persistence and still resolves to its
+    # solver artifacts -- `LoopDecision.result` is stored and restored as a
+    # plain dict, so nothing but this handler recording the fields in the
+    # first place stands between a saved loop and losing them.
+    restored = LoopDecision.from_dict(state.decisions[-1].to_dict())
+    assert restored.result["workdir"] == "/tmp/palace_abc123"
+    assert restored.result["mesh_file"] == "/tmp/palace_abc123/unit_cell.mesh"
+    assert restored.result["output_dir"] == "/tmp/palace_abc123/postpro"
+
+
+def test_palace_simulation_using_default_workdir_is_silent(monkeypatch):
+    """#466: a Palace run recorded under the durable default directory
+    (simulation.base.new_solver_workdir) must NOT carry the non-durability
+    warning -- that warning firing on every run regardless of where the
+    artifacts actually live is precisely the blanket-warning defect #466
+    exists to remove (CLAUDE.md: "a warning is only useful if it is rare
+    and specific")."""
+    from simulation.base import new_solver_workdir
+
+    durable_workdir = str(new_solver_workdir("palace"))
+
+    def fake_run(**_kwargs):
+        result = _fake_palace_result()
+        result["workdir"] = durable_workdir
+        result["mesh_file"] = f"{durable_workdir}/unit_cell.mesh"
+        result["config_file"] = f"{durable_workdir}/config.json"
+        result["output_dir"] = f"{durable_workdir}/postpro"
+        return result
+
+    monkeypatch.setattr(design_loop_module, "_run_palace_simulation", fake_run)
+
+    state = _at_simulation("REFLECTION_PHASE")
+    state = advance_loop_step(
+        state, {"geometry": dict(_GROUND_BACKED_METASURFACE_GEOMETRY), "frequency_hz": 10e9}
+    )
+
+    result = state.decisions[-1].result
+    assert result["workdir"] == durable_workdir
+    assert result["validity"] == []
 
 
 @pytest.mark.parametrize("family", ["REFLECTION_PHASE", "DIFFUSIVE"])

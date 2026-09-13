@@ -209,6 +209,10 @@ def test_registered_tool_count_matches_old_plus_new():
     #
     # ticket #276 adds 1 more (lookup_nexar_part_data, Nexar's cross-
     # distributor pricing/availability + parametric specs query): 95 + 1 = 96.
+    #
+    # issue #346 adds 1 more (calculate_in_phase_reflection_band, the
+    # +/-90 degree in-phase reflection band computed from a Palace phase
+    # sweep): 96 + 1 = 97.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -249,6 +253,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #275: lookup_digikey_product_details
         + 1  # issue #280: search_uspto_patents
         + 1  # ticket #276: lookup_nexar_part_data
+        + 1  # issue #346: calculate_in_phase_reflection_band
     )
     assert len(registered_names) == expected
 
@@ -1094,6 +1099,30 @@ def test_calculate_link_budget_margin_calls_through():
     expected = link_budget_margin_db(30.0, 10.0, 100.0, 15.0, -90.0, 2.0)
     assert result["margin_db"] == pytest.approx(expected)
     assert result["provenance"] == "CALCULATED"
+
+
+def test_calculate_in_phase_reflection_band_calls_through():
+    """Issue #346: the tool takes Palace's own per-mode complex "specular"
+    shape directly and returns the +/-90 degree in-phase band per mode,
+    carrying the caller's requested provenance."""
+    import cmath
+
+    frequency_hz = [3e9, 4e9, 5e9, 6e9, 7e9]
+    # Exact complex values for a hand-checkable 120/60/0/-60/-120 degree sweep.
+    specular = {
+        "S11_TE": [
+            complex(0.9 * cmath.cos(cmath.pi * deg / 180), 0.9 * cmath.sin(cmath.pi * deg / 180))
+            for deg in (120.0, 60.0, 0.0, -60.0, -120.0)
+        ]
+    }
+
+    result = server.calculate_in_phase_reflection_band(frequency_hz, specular)
+
+    assert result["provenance"] == "SIMULATED"
+    band = result["bands"]["S11_TE"]
+    assert band["center_frequency_hz"] == pytest.approx(5e9)
+    assert band["low_hz"] == pytest.approx(3.5e9)
+    assert band["high_hz"] == pytest.approx(6.5e9)
 
 
 # ---------------------------------------------------------------------------
@@ -2074,7 +2103,12 @@ def test_run_palace_simulation_calls_through(tmp_path: Path, monkeypatch):
         "materials": [
             {"p1_m": [0.01, 0.0, 0.0375], "p2_m": [0.03, 0.01, 0.0425], "epsilon_r": 7.0}
         ],
-        "mesh": {"nx": 1, "ny": 1, "nz": 1},
+        # Issue #464: "ny": 1 gives exactly 1 element layer along y (the
+        # material's y-range spans the full cell width, so it adds no
+        # feature line there) -- a real Palace binary requires >= 3 along
+        # each periodic axis. See tests/test_palace.py's GRATING_GEOMETRY
+        # for the identical fix and full reasoning.
+        "mesh": {"nx": 1, "ny": 3, "nz": 1},
     }
     result = server.run_palace_simulation(geometry, frequency_hz=10e9, timeout_s=10)
 

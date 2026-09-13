@@ -285,12 +285,11 @@ import math
 import os
 import subprocess
 import sys
-import tempfile
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from .base import SimulationResult, Simulator, SimulatorError
+from .base import SimulationResult, Simulator, SimulatorError, new_solver_workdir
 
 # Exact SI-defined speed of light, m/s -- same constant rf_tools/
 # calculations.py's own wavelength() uses, for consistency across this
@@ -1467,7 +1466,11 @@ class MeepSimulator(Simulator):
         a_m = float(job.get("characteristic_length_m", _DEFAULT_CHARACTERISTIC_LENGTH_M))
         nfreq = int(job.get("nfreq", 1))
 
-        workdir = Path(job.get("workdir") or tempfile.mkdtemp(prefix="meep_"))
+        # Issue #466: default to a durable, programme-owned directory
+        # instead of `tempfile.mkdtemp` -- see simulation/base.py's
+        # new_solver_workdir docstring. An explicit `workdir` is honoured
+        # exactly as before.
+        workdir = Path(job.get("workdir") or new_solver_workdir("meep"))
         workdir.mkdir(parents=True, exist_ok=True)
 
         if self._delegates_to_another_interpreter():

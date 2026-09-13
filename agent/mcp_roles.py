@@ -146,6 +146,7 @@ MIGRATED_ROLE_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "convert_linear_to_db",
         "calculate_free_space_path_loss",
         "calculate_link_budget_margin",
+        "calculate_in_phase_reflection_band",
         "calculate_cascade_output_ip3",
         "calculate_oip3_from_iip3",
         "calculate_iip3_from_oip3",

@@ -102,7 +102,10 @@ RUN ln -s /usr/bin/freecadcmd /usr/bin/FreeCADCmd
 # repo doesn't need (only the CLI binary matters here). CLI confirmed by
 # reading src/nec2cpp.cpp directly: "-i <file> -o -" (space-separated,
 # "-o -" for stdout) matches simulation/nec2pp.py's invocation exactly.
-RUN git clone https://github.com/tmolteno/necpp.git /opt/necpp \
+# Pinned to v2.3.4 (issue #410) -- the newest tag as of this pin, confirmed
+# to exist via `git ls-remote --tags`. Previously unpinned, so two builds
+# on different days could silently produce different binaries.
+RUN git clone --branch v2.3.4 --depth 1 https://github.com/tmolteno/necpp.git /opt/necpp \
     && cmake -B /opt/necpp/build -S /opt/necpp -DCMAKE_BUILD_TYPE=Release -DNECPP_BUILD_TESTS=OFF \
     && cmake --build /opt/necpp/build -j$(nproc) \
     && cmake --install /opt/necpp/build \
@@ -115,6 +118,10 @@ RUN git clone https://github.com/tmolteno/necpp.git /opt/necpp \
 # research for this Dockerfile (ElmerSolver -v / ElmerGrid confirmed
 # working). gmsh is already installed above. GUI (ElmerGUI/Qt/VTK/ParaView)
 # deliberately excluded -- headless ElmerSolver+ElmerGrid only.
+# Pinned to release-26.2.1 (issue #410) -- the newest release tag as of
+# this pin, confirmed to exist via `git ls-remote --tags`. Previously
+# unpinned (`--depth 1` with no branch/tag), so two builds on different
+# days could silently produce different binaries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenmpi-dev \
     libblas-dev \
@@ -122,7 +129,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmumps-dev \
     libparmetis-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && git clone --depth 1 https://github.com/ElmerCSC/elmerfem.git /opt/elmerfem \
+    && git clone --branch release-26.2.1 --depth 1 https://github.com/ElmerCSC/elmerfem.git /opt/elmerfem \
     && cmake -S /opt/elmerfem -B /opt/elmerfem/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
        -DWITH_OpenMP:BOOLEAN=TRUE -DWITH_MPI:BOOLEAN=TRUE -DWITH_Mumps:BOOL=TRUE -DWITH_ELMERGUI:BOOL=FALSE -DWITH_LUA:BOOL=TRUE \
     && cmake --build /opt/elmerfem/build -j$(nproc) \
@@ -152,11 +159,30 @@ RUN git clone --branch 1.0.7 --depth 1 https://github.com/ra3xdh/qucsator_rf.git
 # `import numpy` at parse time, can actually see them. simulation/gprmax.py
 # invokes "<python> -m gprMax <input_file>" -- no standalone binary, point
 # GPRMAX_PYTHON at this venv's interpreter.
+#
+# Pinned to commit 950d0e1976d344e4509251b7ebe385e5cd0836e9 (issue #459),
+# a specific commit SHA rather than the newest tag (v.3.1.7, Jan 2024):
+# that tag's own requirements.txt is a `pip freeze` dump of a Jupyter dev
+# environment -- hundreds of exact-pinned, now-ancient packages, and it
+# even lists "gprMax==3.1.4" as one of its own dependencies, which does
+# not exist on PyPI -- `pip install -r requirements.txt` against it fails
+# outright, confirmed by actually running it. The pinned commit's
+# requirements.txt (floors, not exact pins, explicitly "gprMax supports
+# NumPy 2.x") was confirmed end to end instead: a fresh venv install of
+# that requirements.txt followed by `pip install --no-build-isolation
+# <checkout>` succeeded, producing a working `python -m gprMax --help`.
+# `git fetch --depth 1 origin <sha>` (rather than `git clone --branch`,
+# which only resolves branch/tag names, not arbitrary commits) shallow-
+# fetches this exact commit -- confirmed GitHub serves it, since GitHub
+# advertises recent commits for direct shallow fetch.
 RUN apt-get update && apt-get install -y --no-install-recommends python3-dev python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv /opt/gprmax-venv \
     && /opt/gprmax-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && git clone --depth 1 https://github.com/gprMax/gprMax.git /opt/gprMax \
+    && git init -q /opt/gprMax \
+    && git -C /opt/gprMax remote add origin https://github.com/gprMax/gprMax.git \
+    && git -C /opt/gprMax fetch --depth 1 origin 950d0e1976d344e4509251b7ebe385e5cd0836e9 \
+    && git -C /opt/gprMax checkout FETCH_HEAD \
     && /opt/gprmax-venv/bin/pip install --no-cache-dir -r /opt/gprMax/requirements.txt \
     && /opt/gprmax-venv/bin/pip install --no-cache-dir --no-build-isolation /opt/gprMax \
     && rm -rf /opt/gprMax \
@@ -169,7 +195,13 @@ ENV GPRMAX_PYTHON=/opt/gprmax-venv/bin/python3
 # "meep"/"pymeep" (PyPI's "meep" is an unrelated squatted package). MEEP is
 # imported as a library ("import meep"), never invoked as a CLI --
 # simulation/meep.py's _import_meep() matches this exactly.
-RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O /tmp/miniforge.sh \
+# Pinned to release 26.7.2-0 (issue #410) -- the newest release as of this
+# pin; the asset URL, versioned tag included, was confirmed to resolve
+# (302 to the real download) before pinning. Previously downloaded via
+# `/releases/latest/download/`, which always resolves to whatever is
+# current on build day, so two builds on different days could silently
+# install different conda/Python/pymeep versions.
+RUN wget -q https://github.com/conda-forge/miniforge/releases/download/26.7.2-0/Miniforge3-26.7.2-0-Linux-x86_64.sh -O /tmp/miniforge.sh \
     && bash /tmp/miniforge.sh -b -p /opt/conda \
     && rm /tmp/miniforge.sh \
     && /opt/conda/bin/conda create -y -n mp -c conda-forge pymeep \
@@ -201,13 +233,21 @@ ENV OPENPAREM3D_BIN=OpenParEM3D
 # update_openEMS.sh orchestrator (confirmed non-interactive: no `read`, no
 # `sudo` anywhere in its source) is the only route. MUST be a full,
 # non-shallow `--recursive` clone -- CMake calls `git describe --tags` for
-# versioning and fails on a shallow clone.
+# versioning and fails on a shallow clone (--branch alone, with no
+# --depth, stays non-shallow -- it only narrows which ref is fetched).
+# Pinned to v0.0.36 (issue #410) -- the newest non-release-candidate tag
+# as of this pin (v0.37.0-rc1/rc2 exist but are pre-release); every
+# submodule (AppCSXCAD, CSXCAD, CTB, QCSXCAD, fparser, hyp2mat, openEMS)
+# was confirmed to resolve cleanly at this ref via an actual `git clone
+# --branch v0.0.36 --recursive`. Previously unpinned, so two builds on
+# different days -- and their submodules, each on their own default
+# branch -- could silently produce different binaries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libhdf5-dev libtinyxml-dev libboost-all-dev libcgal-dev libvtk9-dev \
     python3-pip python3-setuptools python3-setuptools-scm cython3 \
     python3-numpy python3-h5py python3-matplotlib \
     && rm -rf /var/lib/apt/lists/* \
-    && git clone --recursive https://github.com/thliebig/openEMS-Project.git /opt/openEMS-Project \
+    && git clone --branch v0.0.36 --recursive https://github.com/thliebig/openEMS-Project.git /opt/openEMS-Project \
     && cd /opt/openEMS-Project && ./update_openEMS.sh /opt/openEMS --python --disable-GUI --python-venv-mode=disable --python-use-network=disable --skip-dep-check \
     && cd / && rm -rf /opt/openEMS-Project
 ENV PATH="/opt/openEMS/bin:${PATH}"
