@@ -1151,6 +1151,7 @@ def score_and_materialize_diffusive_checkerboard(
     threshold_db: float | None = None,
     theta_min_deg: float | None = None,
     max_block_n: int = 32,
+    design_id: int | None = None,
 ) -> dict:
     """Score a plain 1:1 alternating DIFFUSIVE checkerboard -- the special
     case where exactly two already-characterised tiles alternate across
@@ -1185,6 +1186,14 @@ def score_and_materialize_diffusive_checkerboard(
     `symbol_entries`), while materialization additionally needs each
     tile's own GEOMETRY primitives -- pass `None` to get a score alone,
     before spending effort on geometry that has not been drawn yet.
+
+    Pass `design_id` to also record the scoring report as an
+    `engineering_results` row against that design (the same convention
+    `calculate_wavelength` and its siblings use); the return value then
+    gains a `recorded_as` field naming the new row's id. The recorded
+    `provenance` is this call's own weakest-of tile provenance (never a
+    fixed per-tool constant), since a DIFFUSIVE score is only as
+    trustworthy as its weaker input tile.
 
     Returns the scoring report (`score_diffusive_checkerboard`'s own
     shape: `tile_a`/`tile_b`, the full per-frequency `curve`, the worst
@@ -1223,6 +1232,14 @@ def score_and_materialize_diffusive_checkerboard(
             theta_min_deg=theta_min_deg,
             max_block_n=max_block_n,
         )
+    if design_id is not None:
+        recorded = _record_engineering_result(
+            design_id=design_id,
+            tool_name="score_and_materialize_diffusive_checkerboard",
+            value=result,
+            provenance=result["provenance"],
+        )
+        result["recorded_as"] = recorded["engineering_result_id"]
     return result
 
 
