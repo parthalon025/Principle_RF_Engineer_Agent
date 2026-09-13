@@ -59,6 +59,7 @@ from dotenv import load_dotenv
 
 from designs.requirement_targets import (
     GroundPlaneStatus,
+    IntentStatus,
     InvalidHostGroundPlaneAssertionError,
     InvalidRequirementTargetError,
     TargetComparator,
@@ -332,6 +333,44 @@ def test_propose_intended_effect_rejects_whitespace_only_effect():
         propose_intended_effect("   ")
 
 
+# -- issue #228: None is a first-class, distinguishable answer -----------
+
+
+def test_propose_intended_effect_with_a_real_effect_is_proposed():
+    intended_effect = propose_intended_effect("behave as a magnetic mirror")
+    assert intended_effect["intent_status"] == IntentStatus.PROPOSED.value
+    assert intended_effect["reason"] is None
+    assert intended_effect["confirmed_by"] is None
+    assert intended_effect["confirmed_at"] is None
+
+
+def test_propose_intended_effect_none_requires_a_reason():
+    with pytest.raises(InvalidRequirementTargetError, match="reason"):
+        propose_intended_effect(None)
+
+
+def test_propose_intended_effect_none_rejects_empty_reason():
+    with pytest.raises(InvalidRequirementTargetError, match="reason"):
+        propose_intended_effect(None, reason="")
+
+
+def test_propose_intended_effect_none_records_the_reason():
+    intended_effect = propose_intended_effect(
+        None, reason="a bend radius constraint asks nothing of the wave"
+    )
+    assert intended_effect["effect"] is None
+    assert intended_effect["intent_status"] == IntentStatus.NONE.value
+    assert intended_effect["provenance"] == "ASSUMED"
+    assert intended_effect["reason"] == "a bend radius constraint asks nothing of the wave"
+    assert intended_effect["confirmed_by"] is None
+    assert intended_effect["confirmed_at"] is None
+
+
+def test_propose_intended_effect_rejects_reason_alongside_a_real_effect():
+    with pytest.raises(InvalidRequirementTargetError, match="reason"):
+        propose_intended_effect("absorb the wave", reason="should not be given here")
+
+
 def test_attach_intent_preserves_the_original_prose_and_any_target():
     requirements = {
         "req-1": {
@@ -375,6 +414,20 @@ def test_attach_intent_rejects_unknown_requirement_id():
     intended_effect = propose_intended_effect("absorb the wave")
     with pytest.raises(UnknownRequirementError, match="req-does-not-exist"):
         attach_intent(requirements, "req-does-not-exist", intended_effect)
+
+
+def test_attach_intent_carries_a_none_intended_effect_and_its_reason():
+    requirements = {"req-1": {"requirement": "the mount must bend to a 40mm radius"}}
+    intended_effect = propose_intended_effect(
+        None, reason="a bend radius constraint asks nothing of the wave"
+    )
+    updated = attach_intent(requirements, "req-1", intended_effect)
+    assert updated["req-1"]["intended_effect"]["effect"] is None
+    assert updated["req-1"]["intended_effect"]["intent_status"] == IntentStatus.NONE.value
+    assert (
+        updated["req-1"]["intended_effect"]["reason"]
+        == "a bend radius constraint asks nothing of the wave"
+    )
 
 
 # ---------------------------------------------------------------------------
