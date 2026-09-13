@@ -1,3 +1,7 @@
+---
+status: accepted
+---
+
 # Design family keeps both the caller's spelling and the registry's canonical name
 
 `orchestration/design_loop.py`'s ARCHITECTURE step already resolves a stated `design_family` against `designs/design_families.py`'s registry and computes a canonical payload (`recorded["design_family_registry"]`, including `canonical_name`) specifically so two callers who spell the same family differently ("patch_antenna" vs "PATCH") still group together for the not-yet-built #150/#151. The code's own comment gives the reasoning: normalizing the caller's own field in place would mean "a decision record that quietly rewrites what they wrote," which is worse than carrying a second field.

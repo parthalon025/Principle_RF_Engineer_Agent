@@ -302,9 +302,12 @@ and a glossary that churns with it stops being trustworthy (see
   comparison the data doesn't support. For a skin that prints its own
   reflector (ADR-0017), transmission is zero by construction, so SE is
   effectively infinite and carries no design information — there is
-  nothing left for a design to trade off. `shielded against` is already a
-  listed **Intended effect** value with no **Design family** behind it — a
-  gap, not a synonym.
+  nothing left for a design to trade off. `shielded against` is a listed
+  **Intended effect** value; a `SHIELD` **Design family** now exists to
+  serve it (ADR-0050), but `designs/intended_effects.py`'s own
+  `SHIELDED_AGAINST.families` entry is still an empty tuple, so the two
+  modules currently disagree about whether the gap is closed — a wiring
+  gap, not a missing mechanism, and not a synonym either way.
 - **Threshold/Objective**: the two values a Requirement target's numeric
   value may carry, adopted from defence-acquisition practice (JCIDS
   Enclosure B, via #122) to settle #117. **Threshold** is the minimum
@@ -891,7 +894,7 @@ and a glossary that churns with it stops being trustworthy (see
   (ADR-0025's 2026-09-08 correction) and contradicted ADR-0021's own rule
   that an unbuildable candidate is reported, not dropped.
 - **Infeasibility verdict**: a headline the **Run report** carries when a
-  requirement cannot be met, in one of two kinds (ADR-0052). A **`bound`**
+  requirement cannot be met, in one of two kinds (ADR-0054). A **`bound`**
   verdict fires when a published per-family **Physical bound** forbids the
   requirement, computed once `ARCHITECTURE` has named a family — its
   reading is "more search will not help; physics caps this." An
