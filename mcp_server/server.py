@@ -66,6 +66,15 @@ from orchestration.tooling import start_new_design_loop as _start_new_design_loo
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
 )
+from rf_tools.diffusive_checkerboard import (
+    diffracted_order_regime as _diffracted_order_regime,
+)
+from rf_tools.diffusive_checkerboard import (
+    materialize_checkerboard_unit_cell_array as _materialize_checkerboard_unit_cell_array,
+)
+from rf_tools.diffusive_checkerboard import (
+    score_diffusive_checkerboard as _score_diffusive_checkerboard,
+)
 from rf_tools.filter_synthesis import (
     realize_lowpass_stepped_impedance_microstrip,
     synthesize_filter,
@@ -1124,6 +1133,97 @@ def compose_and_export_polygon_element(
         primitives, gds_path, precision_m=precision_m, max_points=max_points
     )
     return {"svg_path": written_svg, "gds_path": written_gds, "num_polygons": len(primitives)}
+
+
+@mcp.tool()
+def score_and_materialize_diffusive_checkerboard(
+    symbol_entries: list[dict],
+    element_family: str,
+    frequency_points_hz: list[float],
+    incidence_angle_deg: float,
+    process_id: int,
+    delta_phi_max_deg: float,
+    rcsr_db: float,
+    pitch_m: list[float],
+    wavelength_m: float,
+    panel_size_m: list[float],
+    symbol_library: dict | None = None,
+    threshold_db: float | None = None,
+    theta_min_deg: float | None = None,
+    max_block_n: int = 32,
+) -> dict:
+    """Score a plain 1:1 alternating DIFFUSIVE checkerboard -- the special
+    case where exactly two already-characterised tiles alternate across
+    the whole aperture (issue #550; patent US12089385B2's own Example 7
+    embodiment) -- and, given `symbol_library`, materialize its unit-cell
+    array geometry from the winning tile pair, in the same call.
+
+    `symbol_entries`: an already-fetched `designs.element_alphabet.
+    fetch_symbol_entries` result (or a hand-built list with the same
+    shape). This tool resolves the two tiles it needs from it directly --
+    see `rf_tools.diffusive_checkerboard.resolve_checkerboard_tile_symbols`
+    -- rather than taking tile ids as separate arguments, so a caller never
+    has to pick which two symbols to compare by hand.
+
+    `frequency_points_hz`/`incidence_angle_deg`/`process_id` are the
+    alphabet-lookup key at each point in the band; `delta_phi_max_deg` is
+    the alphabet-level coupling-error budget
+    (`rf_tools.diffusive_checkerboard.phase_error_deg`'s own argument).
+    `threshold_db` is a positive dB magnitude ("at least this much
+    reduction"); leave it unset to use the field's own 10 dB default
+    (flagged as a filled default in the response, never silently assumed
+    to be a customer requirement -- docs/requirement-derived-thresholds.md).
+
+    `rcsr_db`/`pitch_m`/`wavelength_m`/`panel_size_m`/`theta_min_deg`/
+    `max_block_n` feed `geometry.unit_cell.block_size_from_sizing_rule`
+    (via `rf_tools.diffusive_checkerboard.
+    materialize_checkerboard_unit_cell_array`) and the diffracted-order
+    regime check -- `pitch_m`/`panel_size_m` are `[x, y]` pairs in metres.
+    `symbol_library` (an id -> geometry-primitive-or-list mapping, the same
+    shape `generate_coded_unit_cell_array` takes) is optional: scoring only
+    needs each tile's characterised RESPONSE curve (already inside
+    `symbol_entries`), while materialization additionally needs each
+    tile's own GEOMETRY primitives -- pass `None` to get a score alone,
+    before spending effort on geometry that has not been drawn yet.
+
+    Returns the scoring report (`score_diffusive_checkerboard`'s own
+    shape: `tile_a`/`tile_b`, the full per-frequency `curve`, the worst
+    frequency and its reduction, `threshold_db`/`threshold_is_default`/
+    `meets_threshold`, and the weakest-of `provenance` across every tile
+    lookup made) plus `diffracted_order_regime` (whether this tile pitch
+    can launch a propagating diffracted order at `wavelength_m`, and so
+    which bound regime applies -- `NO_PHYSICAL_BOUND` or
+    `ROZANOV_BOUNDED`), and, when `symbol_library` is given,
+    `unit_cell_array`: the materialized primitive list."""
+    pitch = (pitch_m[0], pitch_m[1])
+    panel_size = (panel_size_m[0], panel_size_m[1])
+    score = _score_diffusive_checkerboard(
+        symbol_entries,
+        element_family,
+        frequency_points_hz,
+        incidence_angle_deg,
+        process_id,
+        delta_phi_max_deg,
+        threshold_db=threshold_db,
+    )
+    result: dict = {
+        **score,
+        "diffracted_order_regime": _diffracted_order_regime(pitch[0], wavelength_m),
+    }
+    if symbol_library is not None:
+        result["unit_cell_array"] = _materialize_checkerboard_unit_cell_array(
+            score["tile_a"],
+            score["tile_b"],
+            symbol_library,
+            pitch,
+            delta_phi_max_deg,
+            rcsr_db,
+            wavelength_m,
+            panel_size,
+            theta_min_deg=theta_min_deg,
+            max_block_n=max_block_n,
+        )
+    return result
 
 
 @mcp.tool()

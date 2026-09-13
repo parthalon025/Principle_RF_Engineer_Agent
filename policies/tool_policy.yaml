@@ -127,6 +127,12 @@ simulation_auto:
   # SVG image, a GDSII file), no network, no credentials, no external
   # binary at all -- gdstk is a pure-Python-callable library.
   - compose_and_export_polygon_element
+  # score_and_materialize_diffusive_checkerboard (issue #550) is pure
+  # Python arithmetic plus, at most, an in-memory geometry-primitive list
+  # -- no file write at all (unlike its two siblings above), no network,
+  # no credentials, no external binary. Sharing this category's
+  # non-destructive/sandboxed threat model, not its file-writing shape.
+  - score_and_materialize_diffusive_checkerboard
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

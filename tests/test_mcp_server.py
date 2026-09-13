@@ -218,6 +218,10 @@ def test_registered_tool_count_matches_old_plus_new():
     # production caller of geometry.unit_cell.combine_shapes -- composes a
     # non-rectilinear metamaterial element and exports it as SVG/GDSII):
     # 97 + 1 = 98.
+    #
+    # issue #550 adds 1 more (score_and_materialize_diffusive_checkerboard,
+    # a plain 1:1 alternating checkerboard's worst-in-band RCS-reduction
+    # score plus its optional unit-cell materialization): 98 + 1 = 99.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -260,6 +264,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # ticket #276: lookup_nexar_part_data
         + 1  # issue #346: calculate_in_phase_reflection_band
         + 1  # issue #348: compose_and_export_polygon_element
+        + 1  # issue #550: score_and_materialize_diffusive_checkerboard
     )
     assert len(registered_names) == expected
 
@@ -2384,6 +2389,109 @@ def test_compose_and_export_polygon_element_calls_through(tmp_path: Path):
     assert result["num_polygons"] == 1
     assert (tmp_path / "srr.svg").is_file()
     assert (tmp_path / "srr.gds").is_file()
+
+
+def test_score_and_materialize_diffusive_checkerboard_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "score_and_materialize_diffusive_checkerboard" in registered_names
+
+
+def test_score_and_materialize_diffusive_checkerboard_scores_without_symbol_library():
+    """Issue #550: scoring alone (symbol_library omitted) must not require
+    or attempt any geometry materialization."""
+    from designs.element_alphabet import add_symbol_entry
+
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=0.0,
+        rcsr_db=10.0,
+        pitch_m=[0.015, 0.015],
+        wavelength_m=0.03,
+        panel_size_m=[0.18, 0.18],
+    )
+
+    assert result["tile_a"] == "0"
+    assert result["tile_b"] == "1"
+    assert result["meets_threshold"] is True
+    assert "unit_cell_array" not in result
+    assert result["diffracted_order_regime"]["bound_regime"] in {
+        "NO_PHYSICAL_BOUND",
+        "ROZANOV_BOUNDED",
+    }
+
+
+def test_score_and_materialize_diffusive_checkerboard_materializes_with_symbol_library():
+    """Issue #550: given symbol_library too, the same call also returns the
+    materialized unit-cell array."""
+    from designs.element_alphabet import add_symbol_entry
+
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+    symbol_a_geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.005, 0.005, 0.001]}
+    symbol_b_geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.006, 0.004, 0.001]}
+
+    def entry(symbol, phase_deg, geometry):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [
+        entry("0", 180.0, symbol_a_geometry),
+        entry("1", 0.0, symbol_b_geometry),
+    ]
+    symbol_library = {"0": symbol_a_geometry, "1": symbol_b_geometry}
+
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=12.0,
+        rcsr_db=10.0,
+        pitch_m=[0.015, 0.015],
+        wavelength_m=0.03,
+        panel_size_m=[0.18, 0.18],
+        symbol_library=symbol_library,
+    )
+
+    assert "unit_cell_array" in result
+    assert len(result["unit_cell_array"]) > 0
 
 
 _STDIN_ISOLATION_PROBE = """

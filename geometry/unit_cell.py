@@ -449,13 +449,19 @@ def _require_positive_finite(field_name: str, value: Any) -> float:
     return numeric
 
 
-def _boundary_fraction(nx: int, ny: int) -> float:
+def boundary_fraction(nx: int, ny: int) -> float:
     """docs/supercell-sizing-rule.md Sec 5.5 Amendment 1: the fraction of an
     Nx x Ny block's cells that touch a foreign (unlike-symbol) block --
     `f(Nx, Ny) = 1 - (Nx-2)(Ny-2)/(Nx*Ny)` for Nx, Ny >= 2, or 1.0 (every
     cell is a boundary cell) if either is 1. Verified in that document to
     reduce to the square-cell `(4N-4)/N**2` when Nx == Ny; reproduced here:
-    1 - (N-2)**2/N**2 == (N**2 - (N-2)**2)/N**2 == (4N-4)/N**2."""
+    1 - (N-2)**2/N**2 == (N**2 - (N-2)**2)/N**2 == (4N-4)/N**2.
+
+    Promoted from `_boundary_fraction` (issue #550) so `rf_tools.
+    diffusive_checkerboard` can call it directly for a plain 1:1 alternating
+    checkerboard's own coupling-error term, rather than duplicating the
+    formula -- `_boundary_fraction` stays as an alias below for any caller
+    that still names the old private spelling."""
     if nx < 1 or ny < 1:
         raise ValueError(f"nx and ny must be >= 1, got ({nx!r}, {ny!r})")
     if nx == 1 or ny == 1:
@@ -463,16 +469,27 @@ def _boundary_fraction(nx: int, ny: int) -> float:
     return 1.0 - (nx - 2) * (ny - 2) / (nx * ny)
 
 
-def _phase_budget_deg(rcsr_db: float) -> float:
+def phase_budget_deg(rcsr_db: float) -> float:
     """docs/supercell-sizing-rule.md Sec 2.2: the unlike-neighbour phase
     error a coding block's two symbols can tolerate and still deliver a
     stated RCS-reduction requirement -- `delta_budget = 2*arcsin(10**(-RCSR_dB
     / 20))`. E.g. RCSR_dB=10 -> 36.9 degrees, the "180 +/- 37 degrees"
     criterion from the chessboard RCS-reduction literature the document
-    cites as a cross-check."""
+    cites as a cross-check.
+
+    Promoted from `_phase_budget_deg` (issue #550) for the same reason as
+    `boundary_fraction` above; `_phase_budget_deg` stays as an alias."""
     ratio = 10.0 ** (-rcsr_db / 20.0)
     ratio = min(ratio, 1.0)  # guard a pathological rcsr_db < 0 from asin(>1)
     return 2.0 * math.degrees(math.asin(ratio))
+
+
+# Old private spellings, kept as aliases: this module's own
+# `block_size_from_sizing_rule` below still calls them by these names, and
+# any external caller that imported the private names before issue #550
+# promoted them keeps working unchanged.
+_boundary_fraction = boundary_fraction
+_phase_budget_deg = phase_budget_deg
 
 
 def _diffraction_sin_theta(
