@@ -182,13 +182,20 @@ def test_release_approval_callback_none_is_still_the_default():
 # ---------------------------------------------------------------------------
 
 
-def test_request_loop_step_approval_not_in_agent_all_tools():
+def test_request_loop_step_approval_not_reachable_by_any_migrated_role():
     """Confirms both approval-minting functions -- the loop-step gate AND
     the release gate ticket 3 wires up a CLI surface for -- are absent from
-    agent/main.py's own tool registry, by name (issue #258 story #16)."""
-    import agent.main as agent_main
+    every role's own reachable tool set, by name (issue #258 story #16).
 
-    names = {tool.name for tool in agent_main._ALL_TOOLS}
+    Before issue #573, this checked `agent/main.py`'s own `_ALL_TOOLS`
+    registry; that registry (and the wrapper layer it was built from) is
+    deleted in full now that every role reaches its tools over MCP alone, so
+    the equivalent check is against `agent.mcp_roles.MIGRATED_ROLE_TOOL_
+    NAMES`'s union -- every tool name ANY role can actually reach, which is
+    the same "is this agent-reachable at all" question the old check asked."""
+    from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
+
+    names = {name for role_names in MIGRATED_ROLE_TOOL_NAMES.values() for name in role_names}
     assert "request_loop_step_approval" not in names
     assert "request_design_release_approval" not in names
 
@@ -243,29 +250,39 @@ def test_neither_tool_registry_contains_any_name_from_approval_cli_public_surfac
     checks above name only the two approval-minting functions themselves
     (`request_loop_step_approval`, `request_design_release_approval`). This
     check is broader on purpose -- it scans the ACTUAL registered tool sets
-    (agent/main.py's `_ALL_TOOLS`, by `.name`; mcp_server/server.py's live MCP
-    registry, by `.name`) against `orchestration.approval_cli.__all__`,
-    this module's own declared public surface (`submit_pending_approval`,
-    `decide_pending_release_approval`, `list_pending_approvals`, etc. -- ten
-    names, not two). A future tool that reached this module's functionality
-    under one of ITS names, rather than under `request_loop_step_approval`'s,
-    would still be caught here even though the two targeted checks above
-    would not name it -- the same structural-guarantee spirit as
-    tests/test_design_loop.py's `test_no_release_or_manufacturing_callable_
-    exists_anywhere_in_the_package`, applied to this module's own surface
-    instead of `orchestration.approval`'s."""
-    import agent.main as agent_main
+    (every role's own `agent.mcp_roles.MIGRATED_ROLE_TOOL_NAMES` allow-list,
+    by name; mcp_server/server.py's live MCP registry, by `.name`) against
+    `orchestration.approval_cli.__all__`, this module's own declared public
+    surface (`submit_pending_approval`, `decide_pending_release_approval`,
+    `list_pending_approvals`, etc. -- ten names, not two). A future tool that
+    reached this module's functionality under one of ITS names, rather than
+    under `request_loop_step_approval`'s, would still be caught here even
+    though the two targeted checks above would not name it -- the same
+    structural-guarantee spirit as tests/test_design_loop.py's
+    `test_no_release_or_manufacturing_callable_exists_anywhere_in_the_
+    package`, applied to this module's own surface instead of
+    `orchestration.approval`'s.
+
+    Before issue #573, the first half of this check was against
+    agent/main.py's own `_ALL_TOOLS` -- that registry (and the wrapper layer
+    it was built from) is deleted in full now that every role reaches its
+    tools over MCP alone, so `MIGRATED_ROLE_TOOL_NAMES`'s per-role union is
+    the equivalent "is this agent-reachable at all" surface today."""
     import mcp_server.server as server
     import orchestration.approval_cli as approval_cli
+    from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 
     cli_public_names = set(approval_cli.__all__)
 
-    agent_tool_names = {tool.name for tool in agent_main._ALL_TOOLS}
-    overlap = cli_public_names & agent_tool_names
+    role_reachable_names = {
+        name for role_names in MIGRATED_ROLE_TOOL_NAMES.values() for name in role_names
+    }
+    overlap = cli_public_names & role_reachable_names
     assert not overlap, (
-        f"agent/main.py registers a tool named after orchestration.approval_cli's "
-        f"public surface: {sorted(overlap)} -- the AI agent must never be able to "
-        "reach this module's approval-minting functionality under any name"
+        f"a role's own allow-list names a tool named after orchestration."
+        f"approval_cli's public surface: {sorted(overlap)} -- the AI agent must "
+        "never be able to reach this module's approval-minting functionality "
+        "under any name"
     )
 
     mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
@@ -288,7 +305,7 @@ def test_no_release_or_manufacturing_named_tool_is_registered_in_either_surface(
     extended to what actually matters for THIS surface -- the registered
     tool NAMES an AI agent can call, in both registries. Deliberately scoped
     to registered tool names only (not every module attribute, the way
-    test_design_loop.py's version is) -- `agent/main.py` and
+    test_design_loop.py's version is) -- `agent/mcp_roles.py` and
     `mcp_server/server.py` both legitimately hold `advance_design_status`'s
     `approval` parameter and similar names that are not themselves a
     release/manufacturing action; scanning every attribute there would
@@ -296,14 +313,16 @@ def test_no_release_or_manufacturing_named_tool_is_registered_in_either_surface(
     registered under a new name (e.g. a hypothetical `trigger_manufacturing_
     run` or `release_design_for_print`) even though nobody thought to add a
     targeted test for it -- structural, not enumerated."""
-    import agent.main as agent_main
     import mcp_server.server as server
+    from agent.mcp_roles import MIGRATED_ROLE_TOOL_NAMES
 
-    agent_tool_names = {tool.name for tool in agent_main._ALL_TOOLS}
+    role_reachable_names = {
+        name for role_names in MIGRATED_ROLE_TOOL_NAMES.values() for name in role_names
+    }
     mcp_tool_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
 
     for surface, names in (
-        ("agent/main.py", agent_tool_names),
+        ("agent.mcp_roles.MIGRATED_ROLE_TOOL_NAMES", role_reachable_names),
         ("mcp_server/server.py", mcp_tool_names),
     ):
         for name in names:

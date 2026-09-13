@@ -14,7 +14,6 @@ from agents import RunContextWrapper
 from agents.tool_context import ToolContext
 from dotenv import load_dotenv
 
-import agent.main as agent_main
 from agent.mcp_roles import build_role_agent
 from knowledge import extraction
 
@@ -24,11 +23,9 @@ load_dotenv()
 # A minimal center-fed half-wave dipole `run_nec2_simulation`/
 # `generate_nec2_deck` geometry dict -- one wire, 7 segments, resonant near
 # 300 MHz. Shared here (issue #319 code review: this was a byte-for-byte
-# copy between tests/test_nec2pp.py and tests/test_mcp_tool_call_parity.py
-# -- the exact pattern this file's own invoke_agent_tool docstring already
-# names as a smell it moved here to avoid, Fowler: Duplicated Code) so a
-# third NEC2-geometry-needing test file reuses this constant instead of
-# retyping it.
+# copy between tests/test_nec2pp.py and tests/test_mcp_tool_call_parity.py --
+# Fowler: Duplicated Code) so a third NEC2-geometry-needing test file reuses
+# this constant instead of retyping it.
 DIPOLE_GEOMETRY = {
     "wires": [
         {
@@ -103,10 +100,10 @@ def write_pdf(path: Path, lines: list[str]) -> None:
     test_ingest.py and tests/test_read.py -- that already existed;
     tests/test_read.py's own copy already carried a comment noting it
     "mirrors tests/test_ingest.py's helper" rather than importing it. Same
-    Fowler: Duplicated Code smell this file's own `invoke_agent_tool`
-    docstring already names for a different helper, fixed the same way:
-    one copy here, imported by every test file that needs a real (not
-    mocked) PDF to ingest."""
+    Fowler: Duplicated Code smell this repo's own `invoke_role_mcp_tool`
+    helper below was built to fix, applied here to a different helper: one
+    copy here, imported by every test file that needs a real (not mocked)
+    PDF to ingest."""
     content = "BT /F1 14 Tf 72 700 Td 16 TL\n"
     for line in lines:
         esc = line.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
@@ -243,55 +240,6 @@ def cleanup_documents():
         conn.close()
 
 
-def invoke_agent_tool(tool_name: str, **kwargs):
-    """Call an `agent/main.py` `@function_tool`-wrapped tool through the real
-    `agents.tool.FunctionTool.on_invoke_tool` machinery, and return its
-    (JSON-decoded) result.
-
-    `@function_tool` wraps the original function into a non-callable `Tool`
-    object -- a plain `agent_main.<tool_name>(...)` call is not available to
-    test at all, and even if it were, a plain Python call would trivially
-    pass even if the SDK's own JSON-schema generation had silently stripped
-    a parameter the wrapper's signature added (exactly the issue #287/#317
-    bug class this exists to catch: a wrapper param present in the source
-    but absent from the schema the agent runtime actually offers).
-
-    Originally three near-identical copies of this helper (differing only in
-    the hardcoded tool name) lived one-per-file in tests/
-    test_ltspice_agent_wiring.py (the pattern's origin, issue #287),
-    tests/test_elmer_agent_wiring.py, and
-    tests/test_freecad_curved_agent_wiring.py (both issue #317). Code review
-    of #317 flagged that duplication (Fowler: Duplicated Code) and it moved
-    here so a fourth wiring-regression test doesn't grow a fourth copy.
-
-    Falls back to the raw string on a JSON decode failure (added for issue
-    #319): a tool that raises is caught by the OpenAI Agents SDK's own
-    default failure handling (no caller here has ever set
-    `failure_error_function=None`) and returned as a plain, human-readable,
-    NOT-JSON error string ("An error occurred while running the tool...")
-    rather than propagated -- `tests/test_mcp_tool_call_parity.py` is the
-    first caller to deliberately exercise that path, and a bare
-    `json.loads` would crash on it instead of handing the caller the
-    message to inspect.
-    """
-    all_tools = (t for role in agent_main.ROLES.values() for t in role.tools)
-    tool = next(t for t in all_tools if t.name == tool_name)
-    args_json = json.dumps(kwargs)
-    ctx = ToolContext(
-        context=None,
-        tool_name=tool_name,
-        tool_call_id="test-call",
-        tool_arguments=args_json,
-    )
-    raw = asyncio.run(tool.on_invoke_tool(ctx, args_json))
-    if not isinstance(raw, str):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        return raw
-
-
 class McpRoutedToolCallTimedOut(TimeoutError):
     """Raised by `invoke_role_mcp_tool` when the NEW `mcp_servers=[server]`-
     routed path (issue #318, `agent/mcp_roles.py`) does not return within
@@ -329,10 +277,13 @@ async def _invoke_role_mcp_tool_async(role_key: str, tool_name: str, **kwargs):
 def invoke_role_mcp_tool(
     role_key: str, tool_name: str, *, harness_timeout_s: float = 30.0, **kwargs
 ):
-    """Call a tool through the NEW `mcp_servers=[server]`-routed path built
-    in issue #318 (`agent/mcp_roles.py`, ADR-0032) -- the live behavior-
-    parity counterpart `invoke_agent_tool` above (the OLD direct-call path)
-    issue #319 exists to compare against.
+    """Call a tool through the `mcp_servers=[server]`-routed path built in
+    issue #318 (`agent/mcp_roles.py`, ADR-0032) -- the sole registration
+    surface for every role since issue #573 deleted `agent/main.py`'s
+    `@function_tool` wrapper layer in full. Originally issue #319's live
+    behavior-parity counterpart to a since-removed `invoke_agent_tool`
+    helper (the OLD direct-call path); see `tests/test_mcp_tool_call_
+    parity.py`'s own module docstring for what that comparison found.
 
     Reuses `agent.mcp_roles.build_role_agent`'s REAL `Agent` object and its
     REAL `Agent.get_mcp_tools()` (the exact method `Runner.run` calls at
@@ -351,15 +302,12 @@ def invoke_role_mcp_tool(
     measures per-call cost separately from one-time connection setup for
     exactly this reason.
 
-    Returns the RAW `on_invoke_tool()` result unchanged -- unlike
-    `invoke_agent_tool` above, this does NOT unwrap/JSON-decode it, because
-    that shape difference (a bare Python value on the OLD path vs. a
-    `{"type": "text", "text": "<json>"}` envelope on the NEW path, or an
-    un-parseable plain-English error string on either path) is itself part
-    of what issue #319 exists to compare -- decoding it away here would
-    hide the finding from every caller. Use `_decode_mcp_tool_output` in
-    `tests/test_mcp_tool_call_parity.py` to normalize both sides for a
-    value-level comparison once the raw shapes have been inspected.
+    Returns the RAW `on_invoke_tool()` result unchanged -- does NOT unwrap/
+    JSON-decode it, since the shape (a `{"type": "text", "text": "<json>"}`
+    envelope, or an un-parseable plain-English error string) is itself part
+    of what a caller may want to inspect. Use `_decode_mcp_tool_output` in
+    `tests/test_mcp_tool_call_parity.py` to normalize it for a value-level
+    comparison once the raw shape has been inspected.
 
     Bounded by `harness_timeout_s` (default 30s, keyword-only and
     harness-prefixed deliberately -- several real tools, `run_nec2_
