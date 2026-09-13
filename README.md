@@ -276,9 +276,9 @@ survey behind these choices.
 - **CSXCAD** — openEMS's own geometry/materials library. No PyPI package: build from
   source or install a platform-specific pre-built wheel, see
   [docs.openems.de/python/install.html](https://docs.openems.de/python/install.html).
-  Separately, `pip install '.[geometry]'` installs **gdstk**, this repo's other
-  geometry-generation dependency, which *is* a regular PyPI package — see
-  `geometry/unit_cell.py` and `pyproject.toml`'s `geometry` extra.
+  Separately, **gdstk** — this repo's other geometry-generation dependency, and *is* a
+  regular PyPI package — installs with the rest of `uv sync`/`pip install .`, no extra
+  needed (issue #348) — see `geometry/unit_cell.py`.
 - **OpenParEM** (OpenParEM2D/3D) — full-wave FEM for antenna far-field gain, directivity
   and efficiency. Source or pre-compiled binary only, not pip-installable.
   `simulation/openparem.py`

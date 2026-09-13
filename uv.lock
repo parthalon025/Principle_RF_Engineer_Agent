@@ -2781,6 +2781,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "docling" },
+    { name = "gdstk" },
     { name = "h5py" },
     { name = "litellm" },
     { name = "matplotlib" },
@@ -2800,9 +2801,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-geometry = [
-    { name = "gdstk" },
-]
 hfss = [
     { name = "pyaedt" },
 ]
@@ -2834,7 +2832,7 @@ dev = [
 requires-dist = [
     { name = "chaospy", marker = "extra == 'uq'" },
     { name = "docling", specifier = ">=2.124.0" },
-    { name = "gdstk", marker = "extra == 'geometry'" },
+    { name = "gdstk" },
     { name = "gmsh", marker = "extra == 'meshing'" },
     { name = "h5py", specifier = ">=3.11" },
     { name = "kicad-python", marker = "extra == 'kicad'" },
@@ -2858,7 +2856,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.14" },
     { name = "spicelib", marker = "extra == 'ltspice'" },
 ]
-provides-extras = ["hfss", "geometry", "ltspice", "kicad", "viz", "meshing", "uq"]
+provides-extras = ["hfss", "ltspice", "kicad", "viz", "meshing", "uq"]
 
 [package.metadata.requires-dev]
 dev = [

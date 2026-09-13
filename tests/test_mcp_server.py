@@ -213,6 +213,11 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #346 adds 1 more (calculate_in_phase_reflection_band, the
     # +/-90 degree in-phase reflection band computed from a Palace phase
     # sweep): 96 + 1 = 97.
+    #
+    # issue #348 adds 1 more (compose_and_export_polygon_element, the one
+    # production caller of geometry.unit_cell.combine_shapes -- composes a
+    # non-rectilinear metamaterial element and exports it as SVG/GDSII):
+    # 97 + 1 = 98.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -254,6 +259,7 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #280: search_uspto_patents
         + 1  # ticket #276: lookup_nexar_part_data
         + 1  # issue #346: calculate_in_phase_reflection_band
+        + 1  # issue #348: compose_and_export_polygon_element
     )
     assert len(registered_names) == expected
 
@@ -2349,6 +2355,35 @@ def test_generate_freecad_curved_geometry_forwards_executable(tmp_path: Path, mo
     assert result["simulator"] == "FreeCADCmd"
     assert result["status"] == "COMPLETED"
     assert result["freecad"]["objects_built"] == ["patch_0"]
+
+
+def test_compose_and_export_polygon_element_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "compose_and_export_polygon_element" in registered_names
+
+
+def test_compose_and_export_polygon_element_calls_through(tmp_path: Path):
+    """Issue #348: the production caller of geometry.unit_cell.
+    combine_shapes -- composes an SRR-shaped element (outer box minus a
+    smaller concentric box) and writes both artwork formats."""
+    shapes = [
+        {"kind": "box", "p1_m": [0.0, 0.0], "p2_m": [0.002, 0.002]},
+        {
+            "kind": "box",
+            "p1_m": [0.0003, 0.0003],
+            "p2_m": [0.0017, 0.0017],
+            "operation": "subtract",
+        },
+    ]
+    result = server.compose_and_export_polygon_element(
+        shapes, str(tmp_path / "srr.svg"), str(tmp_path / "srr.gds")
+    )
+
+    assert result["svg_path"] == str(tmp_path / "srr.svg")
+    assert result["gds_path"] == str(tmp_path / "srr.gds")
+    assert result["num_polygons"] == 1
+    assert (tmp_path / "srr.svg").is_file()
+    assert (tmp_path / "srr.gds").is_file()
 
 
 _STDIN_ISOLATION_PROBE = """

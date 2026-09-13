@@ -112,6 +112,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import gdstk
@@ -723,3 +724,167 @@ def generate_coded_unit_cell_array(
                 )
             )
     return primitives
+
+
+# ---------------------------------------------------------------------------
+# Printable artwork export (issue #348): combine_shapes()/
+# generate_unit_cell_array()/generate_coded_unit_cell_array()'s own "box"/
+# "polygon" primitive-dict output, written as SVG or GDSII -- the two
+# formats this project's printer software accepts (Gerber is already
+# emitted elsewhere, by simulation/kicad_gerber2ems.py's KiCad path; gdstk
+# writes SVG directly, and GDSII is its native format).
+# ---------------------------------------------------------------------------
+
+# GDSII's own official point-per-polygon ceiling (Polygon.fracture's own
+# docstring: "Official GDSII documentation requires that all polygons have
+# at most 199 vertices, but 8190 is usually supported by most software").
+# 199 is the conservative, universally-safe default; a caller whose printer
+# software is confirmed to accept the wider convention can pass 8190
+# explicitly.
+GDSII_STRICT_MAX_POINTS = 199
+
+
+def _primitive_footprint_polygon(prim: Mapping[str, Any], idx: int) -> gdstk.Polygon:
+    """The flat XY footprint of one output primitive dict (combine_shapes/
+    generate_unit_cell_array/generate_coded_unit_cell_array's own "shape":
+    "box"/"polygon" vocabulary) as a gdstk.Polygon -- what the artwork
+    exporters below actually draw. A "box" primitive's z-extent is not
+    printable artwork: the printed pattern is a flat conductor trace (see
+    simulation/openems.py's module docstring on sheet-resistance-only
+    thickness), so only its XY footprint is kept, exactly as
+    generate_unit_cell_array() already treats a box's z coordinate as
+    carried-through-unchanged rather than tiled."""
+    shape = prim.get("shape", "box")
+    if shape == "polygon":
+        if "points_m" not in prim:
+            raise ValueError(f"primitive {idx} (shape='polygon') missing required field 'points_m'")
+        return gdstk.Polygon([(float(x), float(y)) for x, y in prim["points_m"]])
+    if shape == "box":
+        missing = [f for f in ("p1_m", "p2_m") if f not in prim]
+        if missing:
+            raise ValueError(f"primitive {idx} (shape='box') missing required field(s): {missing}")
+        p1, p2 = prim["p1_m"], prim["p2_m"]
+        return gdstk.rectangle((float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1])))
+    raise ValueError(
+        f"primitive {idx} 'shape' must be 'box' or 'polygon' for artwork export, got {shape!r}"
+    )
+
+
+def _build_polygon_cell(
+    primitives: Sequence[Mapping[str, Any]],
+    cell_name: str,
+    precision_m: float,
+    max_points: int,
+) -> gdstk.Cell:
+    """One gdstk.Cell holding every primitive's flat footprint, ready for
+    either exporter below to write out. Shared so SVG and GDSII export of
+    the same element are built from identical geometry, never two
+    independently-drifting code paths.
+
+    FRACTURING IS DONE HERE, EXPLICITLY, NOT LEFT TO `Library.write_gds`'s
+    OWN AUTO-FRACTURE (issue #348's "does not silently fracture on the
+    polygon point limit"). `Library.write_gds` does auto-fracture an
+    oversized polygon, but `Polygon.fracture`'s own default `precision` is
+    `1e-3` -- calibrated for GDSII's conventional micrometer file unit, the
+    exact same trap this module's own docstring already documents for
+    `gdstk.boolean`'s default precision. This module's coordinates are
+    meters; blindly trusting that auto-fracture would silently apply a
+    1-MILLIMETER fracturing tolerance to geometry whose real features can
+    be a few tens of microns -- exactly the "silent" failure mode the
+    acceptance criterion names, and it would only show up as a visibly
+    deformed complex outline, never an error. Fracturing each oversized
+    polygon here first, with this project's own fine `precision_m`, means
+    `write_gds` never has anything left to auto-fracture."""
+    if not primitives:
+        raise ValueError("primitives must be a non-empty list")
+    cell = gdstk.Cell(cell_name)
+    for idx, prim in enumerate(primitives):
+        polygon = _primitive_footprint_polygon(prim, idx)
+        if len(polygon.points) > max_points:
+            cell.add(*polygon.fracture(max_points=max_points, precision=precision_m))
+        else:
+            cell.add(polygon)
+    return cell
+
+
+def export_polygon_gds(
+    primitives: Sequence[Mapping[str, Any]],
+    path: str | Path,
+    *,
+    cell_name: str = "element",
+    unit_m: float = 1.0,
+    precision_m: float = 1e-9,
+    max_points: int = GDSII_STRICT_MAX_POINTS,
+) -> str:
+    """Write `primitives` (combine_shapes()'s own return value, or any
+    other list of this module's "box"/"polygon" primitive dicts) as a
+    GDSII file at `path`.
+
+    UNITS, HANDLED EXPLICITLY (issue #348 acceptance criterion): gdstk's
+    own `Library` defaults to `unit=1e-6` (micrometers) -- silently
+    interpreting this project's meter-valued coordinates as micrometers
+    would misrepresent every dimension by a factor of 1e6. `unit_m`
+    defaults to `1.0` instead: "1 user unit = 1 meter", so a primitive's
+    raw `points_m`/`p1_m`/`p2_m` values are written to the file completely
+    unscaled. `precision_m` (default `1e-9`, matching this module's own
+    `combine_shapes`/`generate_unit_cell_array` default) is the finest
+    representable step, in meters -- also passed explicitly for the
+    identical reason, and reused as the fracturing precision (see
+    `_build_polygon_cell`'s docstring).
+
+    `max_points` (default `GDSII_STRICT_MAX_POINTS` = 199, the official
+    GDSII ceiling) is enforced by fracturing any oversized polygon before
+    it ever reaches `Library.write_gds` -- see `_build_polygon_cell`'s
+    docstring for why that fracturing cannot be left to `write_gds`'s own
+    auto-fracture. Pass `max_points=8190` if the target printer software is
+    confirmed to accept the wider, non-strict convention instead.
+
+    Returns `str(path)`. Raises `ValueError` if `primitives` is empty or
+    any entry is missing its shape-required field(s), the same discipline
+    `combine_shapes`/`generate_unit_cell_array` already apply.
+    """
+    cell = _build_polygon_cell(primitives, cell_name, precision_m, max_points)
+    library = gdstk.Library(name=cell_name, unit=unit_m, precision=precision_m)
+    library.add(cell)
+    library.write_gds(str(path), max_points=max_points)
+    return str(path)
+
+
+def export_polygon_svg(
+    primitives: Sequence[Mapping[str, Any]],
+    path: str | Path,
+    *,
+    cell_name: str = "element",
+    precision_m: float = 1e-9,
+    max_points: int = GDSII_STRICT_MAX_POINTS,
+    scaling: float = 1e4,
+) -> str:
+    """Write `primitives` (combine_shapes()'s own return value, or any
+    other list of this module's "box"/"polygon" primitive dicts) as an SVG
+    image at `path` -- the second of the two artwork formats issue #348
+    names as what this project's printer software accepts.
+
+    SVG has no physical-unit metadata the way a GDSII file does (gdstk's
+    own `Cell.write_svg` takes a plain `scaling` multiplier on raw
+    coordinate values, nothing more) -- so unlike `export_polygon_gds`,
+    there is no unit trap to avoid here, only a sizing one: this project's
+    coordinates are meters, and gdstk's own `scaling` default (10) would
+    draw a millimeter-scale RF element as a sub-pixel dot. `scaling`
+    defaults to `1e4` instead (1 mm -> 10 px, a legible on-screen size for
+    the sub-centimeter unit cells this project actually draws), stated
+    explicitly here rather than left to a default calibrated for a
+    different unit convention -- pass a different value for a much
+    larger/smaller element.
+
+    Still fractures any polygon over `max_points` first (default
+    `GDSII_STRICT_MAX_POINTS`, see `_build_polygon_cell`'s docstring) even
+    though SVG itself has no vertex-count ceiling -- this keeps the SVG and
+    GDSII exports of the same `primitives` drawing IDENTICAL geometry
+    rather than one silently differing from the other.
+
+    Returns `str(path)`. Raises `ValueError` under the same conditions as
+    `export_polygon_gds`.
+    """
+    cell = _build_polygon_cell(primitives, cell_name, precision_m, max_points)
+    cell.write_svg(str(path), scaling=scaling)
+    return str(path)

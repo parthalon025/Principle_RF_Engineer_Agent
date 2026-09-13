@@ -22,6 +22,10 @@ from designs.service import record_engineering_result as _record_engineering_res
 from designs.service import update_design_status as _update_design_status
 from designs.service import verify_requirement as _verify_requirement
 from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
+from geometry.unit_cell import GDSII_STRICT_MAX_POINTS as _GDSII_STRICT_MAX_POINTS
+from geometry.unit_cell import combine_shapes as _combine_shapes
+from geometry.unit_cell import export_polygon_gds as _export_polygon_gds
+from geometry.unit_cell import export_polygon_svg as _export_polygon_svg
 from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
@@ -1065,6 +1069,61 @@ def generate_freecad_curved_geometry(
         timeout_s=timeout_s,
         executable=executable,
     )
+
+
+@mcp.tool()
+def compose_and_export_polygon_element(
+    shapes: list[dict],
+    svg_path: str,
+    gds_path: str,
+    precision_m: float = 1e-9,
+    normal_axis: str = "z",
+    elevation_m: float = 0.0,
+    max_points: int = _GDSII_STRICT_MAX_POINTS,
+) -> dict:
+    """Compose one non-rectilinear metamaterial element -- a split ring, a
+    Jerusalem cross, anything the element literature is actually made of --
+    from simple local box/polygon shapes via boolean union/subtract/
+    intersect/xor, and write it out as both SVG and GDSII: the two artwork
+    formats this project's printer software accepts (issue #348). This is
+    the one production caller of geometry.unit_cell.combine_shapes() --
+    before this tool, that composition capability was reachable only from
+    a test.
+
+    `shapes`: combine_shapes()'s own `shapes` argument -- a non-empty list
+    of {"kind": "box" (p1_m/p2_m, 2D local corners) | "polygon" (points_m,
+    >=3 2D local vertices), "operation": "add" (default, first shape must
+    be this) | "subtract" | "intersect" | "xor"}, boolean-combined in list
+    order. See geometry.unit_cell.combine_shapes's own docstring for the
+    full shape/example (an SRR: an outer box, minus a smaller concentric
+    box, minus a thin gap-notch box).
+
+    `svg_path`/`gds_path`: where the two artwork files are written.
+    `precision_m` (default 1e-9, i.e. nanometer resolution in meters) sets
+    both the boolean-combination snapping tolerance and, if the composed
+    outline exceeds `max_points` (default 199, GDSII's own official vertex
+    ceiling -- pass 8190 if the target printer software is confirmed to
+    accept the wider, non-strict convention), the fracturing tolerance --
+    see geometry.unit_cell's module docstring and export_polygon_gds's own
+    docstring for why this must be explicit rather than left to gdstk's
+    own micrometer-calibrated defaults, which would otherwise silently
+    misrepresent or deform this project's meter-valued geometry.
+
+    Returns {"svg_path": str, "gds_path": str, "num_polygons": int} -- the
+    written file paths (echoing the input, since neither writer changes
+    it) and how many disjoint polygons the composed element produced (a
+    boolean "subtract"/"xor" can legitimately split one shape into
+    several)."""
+    primitives = _combine_shapes(
+        shapes, precision_m=precision_m, normal_axis=normal_axis, elevation_m=elevation_m
+    )
+    written_svg = _export_polygon_svg(
+        primitives, svg_path, precision_m=precision_m, max_points=max_points
+    )
+    written_gds = _export_polygon_gds(
+        primitives, gds_path, precision_m=precision_m, max_points=max_points
+    )
+    return {"svg_path": written_svg, "gds_path": written_gds, "num_polygons": len(primitives)}
 
 
 @mcp.tool()

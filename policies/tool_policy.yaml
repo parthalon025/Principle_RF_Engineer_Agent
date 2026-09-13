@@ -122,6 +122,11 @@ simulation_auto:
   # licensing/workstation-confinement gate of its own -- see geometry/
   # freecad_curved.py.
   - generate_freecad_curved_geometry
+  # compose_and_export_polygon_element (issue #348) is likewise a geometry
+  # generator sharing the same threat model: local file writes only (an
+  # SVG image, a GDSII file), no network, no credentials, no external
+  # binary at all -- gdstk is a pure-Python-callable library.
+  - compose_and_export_polygon_element
 
 approval_self_gated:
   # Real, currently-implemented tools that already refuse to act without

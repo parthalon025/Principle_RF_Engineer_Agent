@@ -3,12 +3,14 @@ array generation (issue #55).
 
 Unlike this repo's simulator adapters (NEC2++/openEMS/HFSS), gdstk is a
 small, freely pip-installable library with prebuilt wheels and no license
-gate -- it is genuinely installed in this environment (see pyproject.toml's
-`geometry` extra) and these tests exercise the REAL gdstk 1.0.1 library
-directly, not a fake/stub. See geometry/unit_cell.py's module docstring for
-the gdstk API citations (Polygon/rectangle/boolean, fetched from
-heitzmann.github.io/gdstk and cross-checked empirically) and the
-precision_m unit-conversion rationale.
+gate -- it is a hard dependency of this project (`pyproject.toml`, issue
+#348 promoted it off the old `geometry` optional extra, since a plain
+`uv sync`/`pip install .` never touched it and the capability it gates was
+effectively unreachable from a real run) and these tests exercise the REAL
+gdstk 1.0.1 library directly, not a fake/stub. See geometry/unit_cell.py's
+module docstring for the gdstk API citations (Polygon/rectangle/boolean,
+fetched from heitzmann.github.io/gdstk and cross-checked empirically) and
+the precision_m unit-conversion rationale.
 
 The output primitive-dict shape (each with "shape": "box"/"polygon" plus
 p1_m/p2_m/points_m/normal_axis/elevation_m) is checked independently of any
@@ -19,28 +21,20 @@ geometry/unit_cell.py's module docstring). A separate cross-check
 confirms that output shape really is consumable by
 simulation.openems.generate_openems_xml, without geometry/unit_cell.py
 itself depending on that module.
-
-gdstk lives behind this project's new `geometry` optional extra (see
-pyproject.toml, matching the existing hfss/measurement extras' pattern of
-"most installs, including a bare `uv sync`, won't touch this by default").
-This whole module is SKIPPED (not failed/errored) via the importorskip
-below when gdstk isn't installed, so a plain `uv sync && uv run pytest`
-does not newly break -- run `uv sync --extra geometry` first to actually
-exercise these tests.
 """
 
 import math
 
+import gdstk
 import pytest
 
-gdstk = pytest.importorskip(
-    "gdstk", reason="gdstk not installed -- run `uv sync --extra geometry` first"
-)
-
-from geometry.unit_cell import (  # noqa: E402 -- must follow the importorskip guard above
+from geometry.unit_cell import (
+    GDSII_STRICT_MAX_POINTS,
     SymbolNotFoundError,
     block_size_from_sizing_rule,
     combine_shapes,
+    export_polygon_gds,
+    export_polygon_svg,
     generate_coded_unit_cell_array,
     generate_metamaterial_array,
     generate_unit_cell_array,
@@ -782,3 +776,141 @@ def test_generate_coded_unit_cell_array_multi_primitive_symbol_gets_indexed_name
     names = {p["name"] for p in result}
     assert "block_0_0_0_0_0" in names
     assert "block_0_0_0_0_1" in names
+
+
+# ---------------------------------------------------------------------------
+# export_polygon_svg / export_polygon_gds -- printable artwork (issue #348)
+# ---------------------------------------------------------------------------
+
+_SPLIT_RING_ELEMENT = combine_shapes(
+    [
+        {"kind": "box", "p1_m": [0.0, 0.0], "p2_m": [0.002, 0.002]},
+        {
+            "kind": "box",
+            "p1_m": [0.0003, 0.0003],
+            "p2_m": [0.0017, 0.0017],
+            "operation": "subtract",
+        },
+    ]
+)
+
+
+def test_export_polygon_gds_writes_a_readable_file(tmp_path):
+    out = export_polygon_gds(_SPLIT_RING_ELEMENT, tmp_path / "element.gds")
+    assert out == str(tmp_path / "element.gds")
+    library = gdstk.read_gds(out)
+    assert len(library.cells) == 1
+    assert library.cells[0].name == "element"
+    assert len(library.cells[0].polygons) >= 1
+
+
+def test_export_polygon_gds_preserves_meter_valued_coordinates(tmp_path):
+    """Issue #348: units handled explicitly. unit_m=1.0 means the written
+    file's raw coordinates ARE this project's own meter values -- reading
+    the file back and looking at a known vertex should recover the exact
+    same meter-scale numbers, not off by gdstk's own default 1e6
+    micrometer-vs-meter factor."""
+    out = export_polygon_gds(_SPLIT_RING_ELEMENT, tmp_path / "element.gds")
+    library = gdstk.read_gds(out)
+    assert library.unit == 1.0
+    all_points = [pt for poly in library.cells[0].polygons for pt in poly.points]
+    xs = [p[0] for p in all_points]
+    ys = [p[1] for p in all_points]
+    # The outer 2mm x 2mm box's own corners must survive, in meters.
+    assert min(xs) == pytest.approx(0.0, abs=1e-9)
+    assert max(xs) == pytest.approx(0.002, abs=1e-9)
+    assert min(ys) == pytest.approx(0.0, abs=1e-9)
+    assert max(ys) == pytest.approx(0.002, abs=1e-9)
+
+
+def test_export_polygon_svg_writes_a_readable_file(tmp_path):
+    out = export_polygon_svg(_SPLIT_RING_ELEMENT, tmp_path / "element.svg")
+    assert out == str(tmp_path / "element.svg")
+    content = (tmp_path / "element.svg").read_text()
+    assert content.startswith("<?xml") or "<svg" in content
+
+
+def test_export_polygon_gds_supports_box_primitives_directly(tmp_path):
+    """Not just combine_shapes()'s polygon output -- a plain "box" primitive
+    (e.g. straight from generate_unit_cell_array) exports too, using its XY
+    footprint."""
+    box_primitives = [{"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.0005, 0.0]}]
+    out = export_polygon_gds(box_primitives, tmp_path / "box.gds")
+    library = gdstk.read_gds(out)
+    points = library.cells[0].polygons[0].points
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    assert max(xs) == pytest.approx(0.001, abs=1e-9)
+    assert max(ys) == pytest.approx(0.0005, abs=1e-9)
+
+
+def test_export_polygon_gds_rejects_empty_primitives(tmp_path):
+    with pytest.raises(ValueError, match="non-empty"):
+        export_polygon_gds([], tmp_path / "empty.gds")
+
+
+def test_export_polygon_gds_rejects_unknown_shape(tmp_path):
+    with pytest.raises(ValueError, match="'box' or 'polygon'"):
+        export_polygon_gds([{"shape": "cylinder"}], tmp_path / "bad.gds")
+
+
+def _many_vertex_polygon_primitive() -> dict:
+    """A polygon primitive with well over GDSII_STRICT_MAX_POINTS vertices
+    -- a fine circle approximation, built via gdstk's own ellipse() so the
+    vertex count is real, not hand-faked."""
+    circle = gdstk.ellipse((0.001, 0.001), 0.001, tolerance=1e-7)
+    assert len(circle.points) > GDSII_STRICT_MAX_POINTS  # sanity: the test premise holds
+    return {"shape": "polygon", "points_m": circle.points.tolist()}
+
+
+def test_export_polygon_gds_fractures_an_oversized_polygon_without_corruption(tmp_path):
+    """Issue #348: 'a complex boolean-composed outline does not silently
+    fracture on the polygon point limit'. Exports a polygon with more than
+    199 vertices and proves the result is neither rejected nor silently
+    deformed: it reads back as multiple polygons, each within the limit,
+    whose combined bounding box still matches the original circle -- not a
+    corrupted or truncated shape."""
+    primitive = _many_vertex_polygon_primitive()
+    out = export_polygon_gds([primitive], tmp_path / "circle.gds")
+
+    library = gdstk.read_gds(out)
+    polygons = library.cells[0].polygons
+    assert len(polygons) > 1  # it really was fractured, not silently dropped
+    for poly in polygons:
+        assert len(poly.points) <= GDSII_STRICT_MAX_POINTS
+
+    all_points = [pt for poly in polygons for pt in poly.points]
+    xs = [p[0] for p in all_points]
+    ys = [p[1] for p in all_points]
+    # A 0.001m-radius circle centered at (0.001, 0.001) spans exactly
+    # [0, 0.002] on both axes -- fracturing must not shrink or distort that.
+    assert min(xs) == pytest.approx(0.0, abs=1e-6)
+    assert max(xs) == pytest.approx(0.002, abs=1e-6)
+    assert min(ys) == pytest.approx(0.0, abs=1e-6)
+    assert max(ys) == pytest.approx(0.002, abs=1e-6)
+
+
+def test_export_polygon_gds_fine_precision_survives_fracturing(tmp_path):
+    """The real risk this ticket names: fracturing with gdstk's own default
+    precision (1e-3, calibrated for micrometer-unit GDSII files) would
+    silently snap this project's meter-valued vertices to a 1-millimeter
+    grid. A sub-millimeter feature -- a gap far smaller than 1e-3 m --
+    must survive fracturing intact."""
+    circle = gdstk.ellipse((0.001, 0.001), 0.001, tolerance=1e-7)
+    primitive = {"shape": "polygon", "points_m": circle.points.tolist()}
+    out = export_polygon_gds([primitive], tmp_path / "circle_precise.gds", precision_m=1e-9)
+
+    library = gdstk.read_gds(out)
+    all_points = [pt for poly in library.cells[0].polygons for pt in poly.points]
+    # A fine circle has vertices at many distinct radii-projected coordinates;
+    # snapping to 1mm would collapse most of them onto a coarse grid. Assert
+    # the actual vertex spacing is far finer than 1e-3 m by checking a
+    # neighbouring pair of original points survived closer together than that.
+    original_pts = circle.points.tolist()
+    p_a, p_b = original_pts[0], original_pts[1]
+    fine_gap = math.hypot(p_b[0] - p_a[0], p_b[1] - p_a[1])
+    assert fine_gap < 1e-3  # the original geometry's own vertex spacing is sub-mm
+    assert any(
+        math.isclose(pt[0], p_a[0], abs_tol=1e-7) and math.isclose(pt[1], p_a[1], abs_tol=1e-7)
+        for pt in all_points
+    )
