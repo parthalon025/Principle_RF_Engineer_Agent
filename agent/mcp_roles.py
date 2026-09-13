@@ -14,15 +14,21 @@ existing one, prove its per-role tool-filter allow-lists exactly match what
 provenance-integrity guardrail a working home in the new shape -- WITHOUT
 touching a single line of `agent/main.py`'s own construction.
 
-`agent/main.py`'s `run()` now drives this construction live for principal,
-systems and verification, and this module owns those three roles' tool-name
-lists outright -- their `@function_tool` wrappers are deleted, so there is no
-second copy left to agree with. microwave, antenna and test stay on
-`agent/main.py`'s own `ROLES` construction, because they hold every
-subprocess-shelling tool, and those hang indefinitely over this transport on
-native Windows (see `tests/test_mcp_tool_call_parity.py`'s module docstring);
-their allow-lists are still derived from `ROLE_SPECS`, not re-typed, since
-both surfaces genuinely still exist for them.
+`agent/main.py`'s `run()` now drives this construction live for all six
+roles (issue #573, closing out ADR-0059): principal, systems, verification,
+microwave, antenna and test. This module owns every role's tool-name list
+outright -- `agent/main.py`'s `@function_tool` wrapper layer is deleted in
+full, so there is no second copy left for any role to agree with (mirroring
+#376's identical cleanup for the first three roles). microwave, antenna and
+test were the last three held back by a genuine blocker, not a scheduling
+choice: every subprocess-shelling solver tool (`run_nec2_simulation` and
+its siblings) hung indefinitely over this transport on native Windows,
+because the spawned solver child inherited the MCP server's own stdin
+handle -- the pipe the protocol itself arrives on. `mcp_server/server.py`'s
+`isolate_transport_stdin()` (issue #475) fixes that at the one place that
+owns it, independently re-verified with true behavioral parity
+(`tests/test_mcp_tool_call_parity.py`: a 150s+ hang collapsing to
+0.06-0.09s, 8/8 parity tests), which is what makes this migration safe now.
 
 What is proven by test: a real MCP-protocol round trip per role showing the
 filter actually restricts `tools/list` to that role's exact set over the
@@ -30,15 +36,6 @@ wire (not just as a config literal) -- which is also what catches a name in
 `MIGRATED_ROLE_TOOL_NAMES` that no longer exists server-side; and the
 provenance guardrail firing under exactly the same condition
 `agent/main.py`'s `_assert_calculated_provenance_is_tool_backed` does today.
-
-WHY A PRINCIPAL CAN MIX OLD-STYLE AND NEW-STYLE HANDOFF TARGETS: read
-directly off `agents/run.py`'s own turn loop, `get_all_tools(execution_agent,
-...)` is called inside the `while True:` loop, rebound to whatever
-`current_agent` is that iteration -- including the turn immediately after a
-handoff. So an old-style target is never asked for MCP tools at all
-(`Agent.get_mcp_tools()` only iterates `self.mcp_servers`, empty for
-`agent/main.py::ROLES[...]`), and a new-style target's server only has to be
-connected by the time ITS OWN turn arrives.
 
 WHY SIX MCPServerStdio INSTANCES, NOT ONE SHARED SERVER WITH A CALLABLE
 FILTER: the Agents SDK also supports a dynamic/callable `tool_filter` keyed
@@ -181,21 +178,111 @@ MIGRATED_ROLE_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "search_design_records",
         "extract_components",
     ),
+    # microwave/antenna/test (issue #573): the last three roles held back by
+    # the Windows stdin-inheritance hang (see this module's own docstring),
+    # not by any remaining design question -- their lists are moved here
+    # verbatim from `agent/main.py`'s now-deleted `RoleSpec.tools` literals,
+    # unchanged in content, only in which file owns them. 31/27/24 tools
+    # respectively, per the #479 investigation and the independently-run
+    # `docs/tool-registration-audit-2026-09-13.md`.
+    "microwave": (
+        "calculate_vswr",
+        "calculate_return_loss",
+        "calculate_noise_figure",
+        "analyze_touchstone_file",
+        "convert_db_to_linear",
+        "convert_linear_to_db",
+        "convert_s_to_z",
+        "convert_z_to_s",
+        "convert_s_to_y",
+        "convert_y_to_s",
+        "convert_s_to_abcd",
+        "convert_abcd_to_s",
+        "calculate_cascade_output_ip3",
+        "calculate_oip3_from_iip3",
+        "calculate_iip3_from_oip3",
+        "calculate_third_order_intermod_output",
+        "calculate_third_order_intermod_dbc",
+        "calculate_stability_delta",
+        "calculate_rollett_k_factor",
+        "calculate_stability_verdict",
+        "calculate_output_stability_circle",
+        "calculate_input_stability_circle",
+        "calculate_quarter_wave_transformer_impedance",
+        "calculate_l_network_match",
+        "synthesize_filter_prototype",
+        "realize_lowpass_stepped_impedance_microstrip_filter",
+        "run_qucs_simulation",
+        "run_ltspice_simulation",
+        "run_ngspice_simulation",
+        "run_xyce_simulation",
+        "search_knowledge",
+    ),
+    "antenna": (
+        "calculate_wavelength",
+        "calculate_vswr",
+        "calculate_return_loss",
+        "analyze_touchstone_file",
+        "convert_db_to_linear",
+        "convert_linear_to_db",
+        "calculate_patch_effective_permittivity",
+        "calculate_patch_length_extension",
+        "calculate_patch_resonant_frequency",
+        "calculate_fractional_bandwidth_from_q",
+        "calculate_quality_factor_from_fractional_bandwidth",
+        "calculate_curvature_length_correction_factor",
+        "calculate_curvature_shifted_resonant_frequency",
+        "calculate_maxwell_garnett_effective_permeability",
+        "calculate_aperture_gain",
+        "run_nec2_simulation",
+        "run_openems_simulation",
+        "run_gprmax_simulation",
+        "run_hfss_simulation",
+        "run_openparem_simulation",
+        "run_elmer_simulation",
+        "run_kicad_gerber2ems_simulation",
+        "run_palace_simulation",
+        "run_meep_simulation",
+        "generate_freecad_curved_geometry",
+        "optimize_patch_length_for_target_frequency",
+        "search_knowledge",
+    ),
+    "test": (
+        "analyze_touchstone_file",
+        "interpolate_touchstone_file",
+        "deembed_touchstone_file",
+        "cascade_touchstone_files",
+        "compare_touchstone_files",
+        "correlate_simulated_and_measured",
+        "compile_lab_test_plan",
+        "calculate_vswr",
+        "calculate_return_loss",
+        "calculate_cascade_gain",
+        "run_nec2_simulation",
+        "run_openems_simulation",
+        "run_qucs_simulation",
+        "run_gprmax_simulation",
+        "run_hfss_simulation",
+        "run_openparem_simulation",
+        "run_elmer_simulation",
+        "run_ltspice_simulation",
+        "run_kicad_gerber2ems_simulation",
+        "run_ngspice_simulation",
+        "run_xyce_simulation",
+        "run_palace_simulation",
+        "run_meep_simulation",
+        "search_knowledge",
+    ),
 }
 
 
 def _allowed_tool_names_for_role(role_key: str) -> list[str]:
-    """The exact tool-name allow-list for one role.
-
-    A migrated role's list comes from `MIGRATED_ROLE_TOOL_NAMES` above,
-    which owns it outright. Every other role's still comes from
-    `ROLE_SPECS[key].tools` (`_SPEC_BY_KEY[key].tools`) -- the same list
-    `agent/main.py`'s own `ROLES[key] = Agent(..., tools=list(...))` builds
-    that specialist Agent from, so the two can't drift while both exist.
-    """
-    if role_key in MIGRATED_ROLE_TOOL_NAMES:
-        return list(MIGRATED_ROLE_TOOL_NAMES[role_key])
-    return [tool.name for tool in _SPEC_BY_KEY[role_key].tools]
+    """The exact tool-name allow-list for one role, read from
+    `MIGRATED_ROLE_TOOL_NAMES` -- the sole owner now that every one of the
+    six roles has migrated off `agent/main.py`'s wrapper-based construction
+    (issue #573). A `KeyError` on an unknown `role_key` is deliberate: there
+    is no more old-path fallback left to silently hand back an empty list."""
+    return list(MIGRATED_ROLE_TOOL_NAMES[role_key])
 
 
 # One `create_static_tool_filter(allowed_tool_names=[...])` per role --
