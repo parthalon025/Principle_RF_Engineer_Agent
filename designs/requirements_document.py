@@ -16,6 +16,25 @@ transition's target status is `CONFIRMED`. Gating ARCHITECTURE on that same
 status, and wiring these functions into `agent/main.py`/`mcp_server/server.py`,
 remain separate, later tickets (issue #321's own scope note).
 
+ISSUE #228'S ADDITION: `propose_intended_effect` now returns a fuller shape
+(`status`/`reason`/`confirmed_by`/`confirmed_at` alongside `effect`/
+`provenance` -- ADR-0030's Shape section). This module needed NO LOGIC
+CHANGE for it: `extract_requirement_fields` already carries an entry's
+`intended_effect` through `attach_intent` unchanged, so those four new
+fields simply pass through with everything else, exactly the same
+pass-through treatment `target`'s own `target_status`/`reason`/
+`confirmed_by`/`confirmed_at` already get here. It does NOT promote a
+`PROPOSED` intended effect to `CONFIRMED` just because the document around
+it reached `CONFIRMED` -- issue #228's own resolution (see the issue's
+resolving comments) is explicit that "the document review IS the
+confirmation, [and] there is no separate agent-facing confirm step to
+build," ruling out a `confirm_intent` that would do that promotion. A
+`status="NONE"` entry (`designs.requirement_targets.IntentStatus.NONE` --
+"asked, and the prose asks nothing of the wave") is built as a literal dict
+by whoever drafts the document, settable at any lifecycle stage including
+`DRAFT`, well before `CONFIRMED` -- distinct from an entry with no
+`intended_effect` key at all ("not yet asked").
+
 WHY A NEW MODULE, NOT `designs/lifecycle.py` OR `designs/requirement_targets.py`.
 `designs/lifecycle.py` walks `DesignStatus` specifically -- a different,
 already-fixed nine-value enum (docs/adr/0007) for a different row
@@ -402,14 +421,34 @@ def extract_requirement_fields(
     For each `document["requirement_targets"][requirement_id]` entry -- a
     `propose_target`/`mark_unscoreable` shape, optionally carrying an
     `intended_effect` key built by
-    `designs.requirement_targets.propose_intended_effect` -- writes the
-    target fields onto `requirements[requirement_id]["target"]` via
+    `designs.requirement_targets.propose_intended_effect` (a `PROPOSED`
+    reading) or as a literal `IntentStatus.NONE` dict (see that class's own
+    docstring) -- writes the target fields onto
+    `requirements[requirement_id]["target"]` via
     `designs.requirement_targets.attach_target`, and, when present, the
     intended effect onto `requirements[requirement_id]["intended_effect"]`
     via `attach_intent`. A requirement whose entry carries no
     `intended_effect` key is left without one -- ADR-0030's "having none is
     a legal answer" (a bend radius, a mass budget or a cure ceiling asks
     nothing of the wave).
+
+    ISSUE #228'S `status`/`reason`/`confirmed_by`/`confirmed_at` FIELDS PASS
+    THROUGH UNCHANGED, LIKE EVERYTHING ELSE ON THE ENTRY. Whatever
+    `intended_effect` sub-dict the document's entry already carries --
+    `PROPOSED` with `reason`/`confirmed_by`/`confirmed_at` all `None` from
+    `propose_intended_effect`, or an explicit `NONE` with a `reason` built
+    directly while the document was drafted -- is attached exactly as-is.
+    This function does NOT promote a `PROPOSED` intended effect to
+    `CONFIRMED` just because the document around it reached `CONFIRMED` --
+    issue #228's own resolution (see the issue's resolving comments) is
+    explicit that "the document review IS the confirmation, [and] there is
+    no separate agent-facing confirm step to build," which is why no
+    `confirm_intent` exists to do that promotion. `target`'s own
+    `target_status` already gets the identical pass-through treatment here
+    (it stays `PROPOSED`/`UNSCOREABLE`, confirming a target being
+    `confirm_target`'s own separate, standalone act) -- `intended_effect`'s
+    four new fields are simply more of the same entry passing through
+    unchanged.
 
     Raises `InvalidRequirementsDocumentError` if `document["status"]` is
     not `CONFIRMED` -- extraction only ever happens from a confirmed
@@ -419,9 +458,9 @@ def extract_requirement_fields(
 
     Provenance is untouched by this function -- every entry it copies over
     already carries `provenance="ASSUMED"` from `propose_target`/
-    `mark_unscoreable`/`propose_intended_effect`, and nothing here upgrades
-    it, regardless of how many review rounds produced this revision
-    (docs/adr/0030, docs/adr/0034).
+    `mark_unscoreable`/`propose_intended_effect` (or the literal `NONE`
+    dict), and nothing here upgrades it, regardless of how many review
+    rounds produced this revision (docs/adr/0030, docs/adr/0034).
 
     Pure and DB-free, exactly like `attach_target`/`attach_intent`
     themselves (never mutates `requirements` or `document`);
@@ -612,7 +651,10 @@ def transition_requirements_document(
     describes") -- via `extract_requirement_fields`, in the same
     transaction as the revision insert, so a caller never observes a
     document that reads `CONFIRMED` without the extraction having already
-    happened.
+    happened. Per issue #228's own resolution, this never confirms an
+    individual `PROPOSED` intended effect on a human's behalf -- the
+    document's own `CONFIRMED` status is the whole confirmation event; there
+    is no separate confirm-intent step to run here.
 
     Returns a structured `status`-tagged result: `"not_found"` (no such
     `design_id`), `"no_document"` (this design has no Requirements document

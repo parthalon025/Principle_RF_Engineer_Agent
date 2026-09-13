@@ -59,6 +59,7 @@ from dotenv import load_dotenv
 
 from designs.requirement_targets import (
     GroundPlaneStatus,
+    IntentStatus,
     InvalidHostGroundPlaneAssertionError,
     InvalidRequirementTargetError,
     TargetComparator,
@@ -375,6 +376,44 @@ def test_attach_intent_rejects_unknown_requirement_id():
     intended_effect = propose_intended_effect("absorb the wave")
     with pytest.raises(UnknownRequirementError, match="req-does-not-exist"):
         attach_intent(requirements, "req-does-not-exist", intended_effect)
+
+
+# ---------------------------------------------------------------------------
+# intended_effect's status/reason/confirmed_by/confirmed_at (issue #228) --
+# mirrors target_status's own shape on propose_target's return, WITHOUT
+# confirm_intent/mark_intent_none counterparts: the issue's own resolution
+# (see the issue's resolving comments) ruled those out as a second,
+# tool-callable path around the same Requirements-document review gate
+# ADR-0034 added for target -- "the document review IS the confirmation,
+# [and] there is no separate agent-facing confirm step to build." A NONE
+# verdict is built as a literal dict by whoever drafts the document (see
+# tests/test_requirements_document.py), not through a dedicated function.
+# ---------------------------------------------------------------------------
+
+
+def test_propose_intended_effect_returns_the_full_lifecycle_shape():
+    intended_effect = propose_intended_effect("behave as a magnetic mirror")
+    assert intended_effect["effect"] == "behave as a magnetic mirror"
+    assert intended_effect["status"] == "PROPOSED"
+    assert intended_effect["provenance"] == "ASSUMED"
+    assert intended_effect["reason"] is None
+    assert intended_effect["confirmed_by"] is None
+    assert intended_effect["confirmed_at"] is None
+
+
+def test_propose_intended_effect_accepts_any_open_vocabulary_string():
+    # ADR-0030: the effect vocabulary is open, not a closed enum, following
+    # Optimizer class -- this must keep accepting a string no current design
+    # family serves (the exact situation ADR-0030's own worked example, "behave
+    # as a magnetic mirror", was in when that ADR was written -- #220) without
+    # validating it against any fixed set of legal effect names.
+    intended_effect = propose_intended_effect("levitate the payload by radiation pressure")
+    assert intended_effect["effect"] == "levitate the payload by radiation pressure"
+    assert intended_effect["status"] == "PROPOSED"
+
+
+def test_intent_status_covers_exactly_three_states():
+    assert {s.value for s in IntentStatus} == {"PROPOSED", "CONFIRMED", "NONE"}
 
 
 # ---------------------------------------------------------------------------
