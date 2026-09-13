@@ -70,22 +70,25 @@ MODULE SHAPE. Two layers, same pure/I-O seam `designs.validation`/
     `confirm_target`, `attach_target`) -- these carry all of the ticket's
     actual validation/tagging logic and are exhaustively unit-tested in
     `tests/test_requirement_targets.py` with no database needed.
-    `propose_intended_effect`/`mark_intent_none`/`confirm_intent`/
-    `attach_intent` (issue #323, issue #228, ADR-0030) join this same pure
-    layer: `attach_intent` is `attach_target`'s direct sibling for the other
-    key ADR-0030 puts "beside `requirement` and `target`" on a requirement
-    entry, called only from `designs.requirements_document.
-    extract_requirement_fields` once a Requirements document reaches
-    `CONFIRMED` (docs/adr/0034) -- never as a standalone tool argument.
-    `propose_intended_effect`/`mark_intent_none`/`confirm_intent` carry the
-    identical `PROPOSED`/`CONFIRMED` lifecycle `propose_target`/
-    `mark_unscoreable`/`confirm_target` carry for `target` (CONTEXT.md's
-    Intended effect entry: "tracked exactly like a Requirement target"),
-    with `mark_intent_none`'s `NONE` status standing in for `target`'s
-    `UNSCOREABLE` -- `IntentStatus` is that lifecycle's own enum, kept
-    distinct from `TargetStatus` because the two vocabularies name
-    different terminal states (`UNSCOREABLE` vs. `NONE`) for the same
-    underlying idea, "no defensible answer, with a reason."
+    `propose_intended_effect`/`attach_intent` (issue #323, issue #228,
+    ADR-0030) join this same pure layer: `attach_intent` is `attach_target`'s
+    direct sibling for the other key ADR-0030 puts "beside `requirement` and
+    `target`" on a requirement entry, called only from `designs.
+    requirements_document.extract_requirement_fields` once a Requirements
+    document reaches `CONFIRMED` (docs/adr/0034) -- never as a standalone
+    tool argument. `propose_intended_effect` carries the `status`/`reason`/
+    `confirmed_by`/`confirmed_at` shape (issue #228) `propose_target` carries
+    for `target` (CONTEXT.md's Intended effect entry: "tracked exactly like a
+    Requirement target"), with `IntentStatus.NONE` standing in for `target`'s
+    `UNSCOREABLE` -- but, UNLIKE `target`, WITHOUT `mark_unscoreable`/
+    `confirm_target` counterparts: issue #228's own resolution ruled out a
+    standalone `mark_intent_none`/`confirm_intent` as a second, tool-callable
+    path around the very document-review gate ADR-0034 added, so a `NONE`
+    entry is built as a literal dict while a document is drafted, and nothing
+    ever promotes a `PROPOSED` entry to `CONFIRMED` on a human's behalf (see
+    `propose_intended_effect`'s and `IntentStatus`'s own docstrings).
+    `IntentStatus` is `target`'s lifecycle vocabulary, mirrored for the
+    sibling key `attach_intent` attaches.
     `propose_host_ground_plane`/`confirm_host_ground_plane`/
     `attach_host_ground_plane` (issue #484, ADR-0017) join the pure layer
     as a third sibling, living at `requirements[requirement_id]
@@ -258,15 +261,28 @@ class IntentStatus(StrEnum):
 
     - `PROPOSED`: `propose_intended_effect`'s output -- an as-yet-unconfirmed
       reading of the customer's prose.
-    - `CONFIRMED`: `confirm_intent`'s output -- a human has vouched that the
-      proposed reading matches what the customer meant.
-    - `NONE`: `mark_intent_none`'s output -- the requirement's prose asks
-      nothing of the wave (a bend radius, a mass budget, a cure ceiling);
-      `effect` is `None` rather than an invented effect, and `reason`
-      explains why. This is `intended_effect`'s analogue of `TargetStatus.
-      UNSCOREABLE` -- it exists specifically so "no effect" is a recorded,
-      reasoned answer, distinguishable from a requirement nobody has asked
-      about yet (which simply has no `intended_effect` key at all).
+    - `CONFIRMED`: legal in this vocabulary, mirroring `TargetStatus.
+      CONFIRMED`, but produced by no function in this module. Issue #228's
+      own resolution ruled out a standalone `confirm_intent` (a second,
+      tool-callable path around the same Requirements-document review gate
+      ADR-0034 added for `target`) -- "the document review IS the
+      confirmation, [and] there is no separate agent-facing confirm step to
+      build." This value exists in the vocabulary for whatever later,
+      document-scoped mechanism might one day thread a human confirmer's
+      identity through, not for a per-field confirm call.
+    - `NONE`: the requirement's prose asks nothing of the wave (a bend
+      radius, a mass budget, a cure ceiling); `effect` is `None` rather
+      than an invented effect, and `reason` explains why. This is
+      `intended_effect`'s analogue of `TargetStatus.UNSCOREABLE` -- it
+      exists specifically so "no effect" is a recorded, reasoned answer,
+      distinguishable from a requirement nobody has asked about yet (which
+      simply has no `intended_effect` key at all). Built directly as a
+      literal dict by whoever drafts a Requirements document's
+      per-requirement entry, not through a dedicated `mark_intent_none`
+      function -- issue #228's resolution ruled that out for the same
+      reason as `confirm_intent`, while still requiring `NONE` to be
+      *settable* while the document is being drafted, well before it is
+      ever confirmed (see `propose_intended_effect`'s own docstring).
     """
 
     PROPOSED = "PROPOSED"
@@ -493,24 +509,45 @@ def propose_intended_effect(effect: str) -> dict[str, Any]:
     CONTEXT.md's Intended effect entry): a Requirements document
     (docs/adr/0034) reaching `CONFIRMED` is a trust signal about the
     reading, never a stronger kind of evidence, so there is no stronger
-    provenance tier to promote to, even once `confirm_intent` below marks
-    it `CONFIRMED` -- the identical "WHY PROVENANCE STAYS ASSUMED"
-    reasoning this module's own docstring already gives for
-    `propose_target`. `reason`/`confirmed_by`/`confirmed_at` are all `None`
-    here, the same shape `propose_target` returns them in -- `reason` is
-    `mark_intent_none`'s field, not this function's, and
-    `confirmed_by`/`confirmed_at` are `confirm_intent`'s.
+    provenance tier to promote to even once the document around it is
+    confirmed -- the identical "WHY PROVENANCE STAYS ASSUMED" reasoning
+    this module's own docstring already gives for `propose_target`.
+    `reason`/`confirmed_by`/`confirmed_at` are all `None` here, the same
+    shape `propose_target` returns them in.
 
-    A requirement that asks nothing of the wave (a bend radius, a mass
-    budget, a cure ceiling) legitimately has no intended effect at all
-    (ADR-0030's "having none is a legal answer") -- call `mark_intent_none`
-    for that requirement instead of this function, or simply never call
-    either (a requirement entry with no `intended_effect` key yet is legal
-    too, the same way a requirement entry with no `target` key yet is legal
-    before `propose_target` is ever called for it). `mark_intent_none`
-    exists specifically so "no effect" can be recorded WITH a stated reason
-    rather than left as silent absence, mirroring why `mark_unscoreable`
-    exists beside `propose_target`.
+    NO `confirm_intent`/`mark_intent_none` COUNTERPARTS TO
+    `confirm_target`/`mark_unscoreable` EXIST, DELIBERATELY -- issue #228's
+    own resolution (see the issue's resolving comments) ruled both out as a
+    second, tool-callable path around the very document-review gate
+    ADR-0034 added: "the document review IS the confirmation -- there is no
+    separate agent-facing confirm step to build," and `NONE` + a reason "is
+    a document-drafting concern, not a new standalone tool." Concretely:
+
+    - A requirement that asks nothing of the wave (a bend radius, a mass
+      budget, a cure ceiling) legitimately has no intended effect at all
+      (ADR-0030's "having none is a legal answer"). Whoever drafts a
+      Requirements document's per-requirement entry records that directly
+      as a literal `{"effect": None, "status": "NONE", "provenance":
+      "ASSUMED", "reason": <why>, "confirmed_by": None, "confirmed_at":
+      None}` dict (see `IntentStatus.NONE`'s own docstring) -- never via a
+      dedicated `mark_intent_none` call. This is exactly what makes `NONE`
+      settable while a document is still being drafted, before it is ever
+      confirmed: no confirmation gate stands between drafting and stating
+      it, because none is needed.
+    - Nothing in this module ever promotes a `PROPOSED` intended effect to
+      `CONFIRMED` on a human's behalf. `designs.requirements_document.
+      extract_requirement_fields` carries whatever `status` (`PROPOSED` or
+      `NONE`) the document's entry already had straight through, unchanged,
+      via `attach_intent` -- the same pass-through treatment `target`'s own
+      `target_status` already gets from that same function. `CONFIRMED`
+      stays a legal value in `IntentStatus`'s vocabulary for a later,
+      document-scoped mechanism to fill in if one is ever built; nothing in
+      this ticket's scope produces it.
+    - A requirement entry with no `intended_effect` key yet is legal too,
+      the same way a requirement entry with no `target` key yet is legal
+      before `propose_target` is ever called for it -- distinct from a
+      `NONE`-status entry, which is a deliberate, reasoned "asked, and the
+      answer is nothing" rather than "not yet asked".
     """
     resolved_effect = _require_nonempty_string("effect", effect)
     return {
@@ -521,110 +558,6 @@ def propose_intended_effect(effect: str) -> dict[str, Any]:
         "confirmed_by": None,
         "confirmed_at": None,
     }
-
-
-def mark_intent_none(reason: str) -> dict[str, Any]:
-    """Record that a requirement's prose asks nothing of the wave -- issue
-    #228's `NONE` status, `intended_effect`'s analogue of `mark_unscoreable`
-    (ADR-0030: "having none is a legal answer"; a bend radius, a mass
-    budget, or a cure ceiling asks nothing of the wave). `reason` must be a
-    non-empty string explaining why (e.g. "prose states only a bend-radius
-    constraint, nothing about wave behaviour"); raises
-    `InvalidRequirementTargetError` if it is missing or blank -- `NONE`
-    must always be explained, never a bare status flag, the identical rule
-    `mark_unscoreable` already enforces for `target`.
-
-    THIS IS WHAT MAKES `NONE` SETTABLE DURING DRAFTING, BEFORE THE DOCUMENT
-    IS EVER CONFIRMED (issue #228's remaining scope). This function is
-    pure, DB-free, and callable by whatever composes a Requirements
-    document's `requirement_targets` payload at any point in its
-    `DRAFT -> UNDER_REVIEW -> REFINED -> CONFIRMED` lifecycle (docs/adr/0034)
-    -- `designs.requirements_document._validate_requirement_targets` only
-    checks a per-requirement entry's own `target_status`, tolerating
-    whatever shape sits under its `intended_effect` extra key, so a `NONE`-
-    status intended effect can be attached to a `DRAFT` document's entry
-    exactly as freely as a `PROPOSED` one. Confirmation is a separate,
-    later act (`confirm_intent`) that only ever applies to a `PROPOSED`
-    effect -- a `NONE` verdict is already a complete, reasoned answer and is
-    never "confirmed" in the same sense a proposed effect is.
-
-    `effect` is `None` in the returned dict, deliberately -- this is the
-    function that exists precisely so nothing downstream ever sees an
-    invented effect standing in for "this requirement asks nothing of the
-    wave." `provenance` is still `ASSUMED`: the *decision* that this
-    requirement has no intended effect is itself a reading of its prose,
-    carrying the same honest evidence tier as a successful proposal would
-    -- the identical reasoning `mark_unscoreable` already gives for
-    `target`. `confirmed_by`/`confirmed_at` are `None`; a `NONE` verdict is
-    never confirmed via `confirm_intent`.
-    """
-    resolved_reason = _require_nonempty_string("reason", reason)
-    return {
-        "effect": None,
-        "status": IntentStatus.NONE.value,
-        "provenance": ASSUMED,
-        "reason": resolved_reason,
-        "confirmed_by": None,
-        "confirmed_at": None,
-    }
-
-
-def confirm_intent(
-    intended_effect: dict[str, Any],
-    confirmed_by: str,
-    confirmed_at: str | None = None,
-) -> dict[str, Any]:
-    """Confirm a proposed intended effect, recording that it was confirmed
-    and by whom -- `confirm_target`'s direct sibling for `intended_effect`
-    (issue #228, ADR-0030), on CONTEXT.md's own "tracked exactly like a
-    Requirement target" description of Intended effect's lifecycle.
-    `intended_effect` must be a dict shaped like `propose_intended_effect`'s
-    own return value with `status == "PROPOSED"` -- confirming a `NONE`
-    verdict (nothing proposed to confirm) or an already-`CONFIRMED` intent
-    (re-propose it first if it needs correcting -- confirming a stale
-    confirmation again would silently discard whoever confirmed it
-    originally) both raise `InvalidRequirementTargetError`, naming what was
-    found instead. `confirmed_by` must be a non-empty string identifying who
-    confirmed it, the same trust boundary `confirm_target` already has.
-
-    `confirmed_at` defaults to the real current UTC time (ISO-8601) and is
-    only ever exposed as an explicit parameter for this function's own
-    tests to get deterministic timestamps -- issue #228's remaining scope
-    calls this from `designs.requirements_document.extract_requirement_fields`
-    during a document's `CONFIRMED` transition, never from a standalone tool
-    argument, so nothing lets an agent fabricate a confirmation timestamp.
-
-    Returns a new dict (the input `intended_effect` is not mutated) with
-    `status="CONFIRMED"`; `effect`/`provenance` are carried over unchanged
-    -- `provenance` stays `ASSUMED` even now: see this module's docstring's
-    "WHY PROVENANCE STAYS ASSUMED" section, which applies to a confirmed
-    intended effect for the identical reason it applies to a confirmed
-    target -- a human vouching for a reading of the customer's words does
-    not make that reading anybody's measurement.
-    """
-    if not isinstance(intended_effect, dict) or intended_effect.get("status") != (
-        IntentStatus.PROPOSED.value
-    ):
-        found = (
-            intended_effect.get("status")
-            if isinstance(intended_effect, dict)
-            else type(intended_effect).__name__
-        )
-        raise InvalidRequirementTargetError(
-            "confirm_intent requires an intended_effect dict with status "
-            f"{IntentStatus.PROPOSED.value!r} (propose_intended_effect's own "
-            f"return shape) -- got status={found!r}. A NONE verdict has no "
-            "effect to confirm; an already-CONFIRMED intent should be "
-            "re-proposed (corrected), not re-confirmed."
-        )
-    resolved_confirmed_by = _require_nonempty_string("confirmed_by", confirmed_by)
-    resolved_confirmed_at = confirmed_at or datetime.datetime.now(datetime.UTC).isoformat()
-
-    confirmed = dict(intended_effect)
-    confirmed["status"] = IntentStatus.CONFIRMED.value
-    confirmed["confirmed_by"] = resolved_confirmed_by
-    confirmed["confirmed_at"] = resolved_confirmed_at
-    return confirmed
 
 
 def attach_target(

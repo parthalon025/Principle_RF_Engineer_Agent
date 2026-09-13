@@ -70,11 +70,9 @@ from designs.requirement_targets import (
     attach_intent,
     attach_target,
     confirm_host_ground_plane,
-    confirm_intent,
     confirm_requirement_host_ground_plane,
     confirm_requirement_target,
     confirm_target,
-    mark_intent_none,
     mark_requirement_unscoreable,
     mark_unscoreable,
     propose_host_ground_plane,
@@ -381,12 +379,15 @@ def test_attach_intent_rejects_unknown_requirement_id():
 
 
 # ---------------------------------------------------------------------------
-# propose_intended_effect / mark_intent_none / confirm_intent -- issue #228's
-# remaining scope: intended_effect tracked exactly like a Requirement target
-# (CONTEXT.md's "Intended effect" entry), a PROPOSED -> CONFIRMED lifecycle
-# plus a NONE status (mark_unscoreable's own analogue -- ADR-0030's "having
-# none is a legal answer" needs a way to say so, with a reason, distinguishable
-# from "not yet asked").
+# intended_effect's status/reason/confirmed_by/confirmed_at (issue #228) --
+# mirrors target_status's own shape on propose_target's return, WITHOUT
+# confirm_intent/mark_intent_none counterparts: the issue's own resolution
+# (see the issue's resolving comments) ruled those out as a second,
+# tool-callable path around the same Requirements-document review gate
+# ADR-0034 added for target -- "the document review IS the confirmation,
+# [and] there is no separate agent-facing confirm step to build." A NONE
+# verdict is built as a literal dict by whoever drafts the document (see
+# tests/test_requirements_document.py), not through a dedicated function.
 # ---------------------------------------------------------------------------
 
 
@@ -409,79 +410,6 @@ def test_propose_intended_effect_accepts_any_open_vocabulary_string():
     intended_effect = propose_intended_effect("levitate the payload by radiation pressure")
     assert intended_effect["effect"] == "levitate the payload by radiation pressure"
     assert intended_effect["status"] == "PROPOSED"
-
-
-def test_mark_intent_none_records_reason_with_no_fabricated_effect():
-    intended_effect = mark_intent_none("bend radius asks nothing of the wave")
-    assert intended_effect["status"] == "NONE"
-    assert intended_effect["provenance"] == "ASSUMED"
-    assert intended_effect["reason"] == "bend radius asks nothing of the wave"
-    assert intended_effect["effect"] is None
-    assert intended_effect["confirmed_by"] is None
-    assert intended_effect["confirmed_at"] is None
-
-
-def test_mark_intent_none_rejects_empty_reason():
-    with pytest.raises(InvalidRequirementTargetError, match="reason"):
-        mark_intent_none("")
-
-
-def test_mark_intent_none_rejects_whitespace_only_reason():
-    with pytest.raises(InvalidRequirementTargetError, match="reason"):
-        mark_intent_none("   ")
-
-
-def test_confirm_intent_records_confirmed_by_and_confirmed_at():
-    proposed = propose_intended_effect("absorb the wave")
-    confirmed = confirm_intent(
-        proposed, confirmed_by="j.mcfarland", confirmed_at="2026-09-03T00:00:00+00:00"
-    )
-    assert confirmed["status"] == "CONFIRMED"
-    assert confirmed["confirmed_by"] == "j.mcfarland"
-    assert confirmed["confirmed_at"] == "2026-09-03T00:00:00+00:00"
-
-
-def test_confirm_intent_preserves_the_effect_and_keeps_provenance_assumed():
-    proposed = propose_intended_effect("reflect in phase")
-    confirmed = confirm_intent(proposed, confirmed_by="j.mcfarland")
-    assert confirmed["effect"] == "reflect in phase"
-    # provenance is deliberately still ASSUMED after confirmation -- a
-    # confirmed reading of someone's words is still nobody's measurement
-    # (ADR-0030; see this module's "WHY PROVENANCE STAYS ASSUMED" section).
-    assert confirmed["provenance"] == "ASSUMED"
-
-
-def test_confirm_intent_does_not_mutate_its_input():
-    proposed = propose_intended_effect("absorb the wave")
-    confirm_intent(proposed, confirmed_by="j.mcfarland")
-    assert proposed["status"] == "PROPOSED"
-    assert proposed["confirmed_by"] is None
-
-
-def test_confirm_intent_fills_in_a_real_timestamp_by_default():
-    proposed = propose_intended_effect("absorb the wave")
-    confirmed = confirm_intent(proposed, confirmed_by="j.mcfarland")
-    assert confirmed["confirmed_at"] is not None
-    assert isinstance(confirmed["confirmed_at"], str)
-
-
-def test_confirm_intent_rejects_a_none_status_intent():
-    none_intent = mark_intent_none("cure ceiling asks nothing of the wave")
-    with pytest.raises(InvalidRequirementTargetError, match="NONE|status"):
-        confirm_intent(none_intent, confirmed_by="j.mcfarland")
-
-
-def test_confirm_intent_rejects_an_already_confirmed_intent():
-    proposed = propose_intended_effect("absorb the wave")
-    confirmed_once = confirm_intent(proposed, confirmed_by="j.mcfarland")
-    with pytest.raises(InvalidRequirementTargetError):
-        confirm_intent(confirmed_once, confirmed_by="someone.else")
-
-
-def test_confirm_intent_rejects_empty_confirmed_by():
-    proposed = propose_intended_effect("absorb the wave")
-    with pytest.raises(InvalidRequirementTargetError, match="confirmed_by"):
-        confirm_intent(proposed, confirmed_by="")
 
 
 def test_intent_status_covers_exactly_three_states():
