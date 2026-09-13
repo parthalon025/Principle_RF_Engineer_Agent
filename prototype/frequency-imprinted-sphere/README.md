@@ -119,15 +119,53 @@ Asserted, illustrative, or assumed — each load-bearing:
   neighbours — thermally in the EM case — and that coupling is not simulated, so
   the frozen pattern shown is the optimistic case.
 
-## Citations
+## Citations, and what the research pass has already corrected
 
-The acoustic sources named on the page (Chladni 1787; Lamb 1882; Liu et al.,
-*Locally Resonant Sonic Materials*, Science 289, 1734, 2000) were **named from
-memory and not fetched**. Treat them as leads, not as checked evidence. The EM
+A directed research pass has now run on the acoustic framing. Its findings are
+in **`docs/acoustic-mode-imprinting-prior-art.md`**, and three of them change
+what this prototype can claim.
+
+**A citation this prototype got wrong.** Liu et al., *Locally Resonant Sonic
+Materials*, Science 289, 1734 (2000) has been fetched and read in full. Its
+measured sub-wavelength band gap is solid — a lattice constant roughly 300×
+smaller than the wavelength. But the phrase "negative effective mass density"
+**does not appear in it**; the paper attributes the effect to negative *elastic
+constants*, and Ping Sheng's own HKUST page says of that paper that "the effect
+was wrongly attributed to negative elastic constant, but this has been corrected
+in the subsequent publications." The correct source for negative effective mass
+is Liu, Chan & Sheng, *Phys. Rev. B* **71**, 014103 (2005). This matters rather
+than being pedantry: the mechanism here is a heavy core on a soft spring moving
+*out of phase* with the drive, which is precisely what negative effective mass
+density names.
+
+**Prior art is partial, and the gap is not where I expected.** Latching a
+pattern remotely from a single boundary drive, and having it persist, is
+demonstrated (Watkins et al., arXiv:2508.20321). Selecting a pattern by
+frequency and then making it permanent is demonstrated in acoustic holography —
+but by *curing the surrounding medium*, not by the structure latching itself.
+What no retrieved source shows is the specific claim here: that the thing
+selecting the pattern is a **standing-wave mode** of the structure. In every
+system found, the selector is the input amplitude at one boundary, a hand press
+on the chosen cell, or a hologram shaping the field. That is a directed-search
+negative, not proof of absence.
+
+**The load-bearing assumption is worse than unverified.** Nobody publishes the
+cell-to-cell switching-threshold distribution for a multistable lattice. The
+largest demonstrated system is **three cells**; the proposal needs thousands.
+Where spread is reported it is of geometry and stiffness (≈5% on truss
+stiffness), not threshold — and thresholds are usually staggered *deliberately*
+so cells snap in a known order, the opposite of what a shared threshold needs.
+Separately, *pseudo-bistability* is a documented failure mode in which a
+viscoelastic snapped-through structure slowly creeps back, and nobody has
+quantified it for lattices. *In plain terms: the machinery has only been shown
+working three cells at a time, the number that decides whether it scales has
+never been published, and such cells are known to un-snap themselves eventually
+with nobody reporting how long "eventually" is.*
+
+**Still unverified:** Chladni and Lamb remain named from memory, and the EM
 claims above — GST non-volatility, VO₂ and BST volatility, optical writing of
-phase-change films — are stated from background knowledge and are **also not yet
-verified against primary sources**. The running research pass is what should
-replace both paragraphs.
+phase-change films, and the cost of a bias network — are stated from background
+knowledge. A second research pass is running on those.
 
 ## Run
 
