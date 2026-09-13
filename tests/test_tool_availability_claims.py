@@ -1,7 +1,8 @@
 """A consistency check between what this repo CLAIMS about tool availability
 (in docstrings, comments, and docs/tools/*.md -- see issue #480's sweep) and
-what is actually on PATH -- so the next drift is caught mechanically rather
-than reasoned about by hand the way issue #480 itself had to be.
+what is actually on PATH inside the built image, so a future drift there
+can be checked mechanically instead of by hand the way issue #480 itself
+had to be.
 
 THE FOUR-CASE FRAMEWORK issue #480 established (its own words): a tool
 adapter's "not installed" caveat can mean any of (1) the binary is genuinely
@@ -11,62 +12,76 @@ on PATH, and one of its code paths is broken. This test covers case 1 vs
 "present in this project's own Docker image, absent on a bare host" only --
 the shape every corrected site in this sweep actually needed. It is NOT a
 functional check that any solver actually runs correctly (that is each
-adapter's own fake-executable test suite); it only checks presence-on-PATH,
-the same fact the corrected docstrings now state.
+adapter's own fake-executable test suite); it only checks presence-on-PATH
+(or, for gprMax, importability from its own dedicated interpreter), the
+same fact the corrected docstrings now state.
 
 WHY A CONTAINER MARKER, NOT A HOSTNAME OR ENV VAR THIS REPO INVENTED. Docker
 creates `/.dockerenv` inside every container by convention (unrelated to
 this repo, so it needs no Dockerfile change to rely on) -- a reliable signal
 that this test is running where the Dockerfile's RUN steps actually
-executed, as opposed to a bare checkout (this sandbox) or CI (also a bare
-checkout, confirmed by every adapter's own test file already skipping the
-same way). `_EXPECTED_ON_PATH_IN_IMAGE`'s assertions run ONLY inside a
-container; everywhere else they skip with a stated reason -- exactly what
-the acceptance criterion asks for ("skipped with a stated reason elsewhere"),
-and it means this test can be shown to skip correctly here even though it
-cannot be shown to pass here (no Docker daemon in this sandbox to build and
-enter the image against).
+executed, as opposed to a bare checkout (this sandbox) or CI.
+
+HONEST GAP THIS TEST DOES NOT CLOSE: `.github/workflows/ci.yml` runs pytest
+directly on the GitHub Actions runner host, not inside this project's own
+Docker image (only Postgres runs as a service container there) -- so
+`TestToolsExpectedOnPathInsideTheImage` skips on every automated CI run
+today, and nothing currently runs it for real. It only executes, and only
+then actually checks anything, when a person runs the test suite by hand
+inside a `docker run`/`docker compose run app pytest` invocation of the
+built image. That is a real, disclosed gap, not a silently-assumed one:
+wiring a container-based CI job that would actually exercise this class is
+future work this ticket does not attempt. Until then, this class documents
+the expected shape and is ready the moment such a job exists; it is not
+"drift caught mechanically" today, only "drift catchable mechanically, by
+hand, right now."
+
+WHY pyaedt/spicelib ARE NOT RE-CHECKED HERE. `tests/test_hfss.py`'s own
+`test_pyaedt_is_genuinely_not_installed_in_this_environment` already asserts
+pyaedt's absence (via `import ansys.aedt.core`, its real importable module
+name) -- duplicating that here would be two assertions of the same fact that
+could silently drift apart, and on the one place pyaedt is EXPECTED to be
+present (a real, licensed HFSS workstation with `uv sync --extra hfss` run,
+per ADR-0012), a second, unconditional "absent" assertion here would be
+actively wrong, not just redundant. `tests/test_ltspice.py` already gates
+its own suite on `pytest.importorskip("spicelib")` rather than asserting
+absence outright, for the same reason (a workstation with `--extra ltspice`
+is a legitimate, supported target). Neither genuinely-absent-by-default
+tool needs a duplicate assertion in this file.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 _RUNNING_IN_A_CONTAINER = Path("/.dockerenv").exists()
 
-# Every one of these is confirmed, in the built image, on PATH -- see issue
-# #480's own verification table (binary name -> where the Dockerfile puts
-# it) and the Dockerfile's own RUN/ENV lines cited in each comment below.
-# This list is deliberately the union of every tool this sweep corrected a
-# false "not installed" claim about -- if a name is missing here, either it
-# was never mis-claimed, or the sweep missed it (worth re-running the sweep
-# if that surfaces later).
+# Every one of these is confirmed, in the built image, on PATH via a direct
+# citation in the Dockerfile itself (not just this sweep's own prose) --
+# see each corrected adapter's own "HONEST CAVEAT" docstring for the
+# specific Dockerfile line. This list is deliberately the union of every
+# tool this sweep corrected a false "not installed" claim about via a
+# `shutil.which`-checkable binary name -- if a name is missing here, either
+# it was never mis-claimed, it needs a different check shape (gprMax,
+# below), or the sweep missed it.
 _EXPECTED_ON_PATH_IN_IMAGE = {
     "nec2++": "git-cloned and built from tmolteno/necpp v2.3.4",
-    "openEMS": "built from source, PATH extended via ENV in the Dockerfile",
-    "nf2ff": "ships from the same openEMS source tree as openEMS itself",
+    "openEMS": "built from source (v0.0.36), PATH extended via ENV in the Dockerfile",
     "OpenParEM3D": "built from source, PATH extended via ENV in the Dockerfile",
-    "gmsh": "apt-installed",
-    "gerbv": "apt-installed",
-    "ngspice": "apt-installed",
-    "Xyce": "built from source, PATH extended via ENV in the Dockerfile",
+    "gmsh": "apt-installed (version unpinned)",
+    "gerbv": "apt-installed (version unpinned)",
+    "ngspice": "apt-installed (version unpinned)",
+    "Xyce": "built from source (Release-7.10.0), PATH extended via ENV in the Dockerfile",
     "qucsator_rf": "git-cloned and built from ra3xdh/qucsator_rf v1.0.7",
     "ElmerSolver": "git-cloned and built from ElmerCSC/elmerfem release-26.2.1",
     "ElmerGrid": "git-cloned and built from ElmerCSC/elmerfem release-26.2.1",
     "palace": "git-cloned and built from awslabs/palace v0.17.0",
-    "FreeCADCmd": "freecad-maintainers PPA, symlinked from lowercase freecadcmd",
-}
-
-# Genuinely absent, even inside the built image -- deliberately, per each
-# tool's own Dockerfile comment or pyproject.toml extras-group comment
-# (ADR-0012 for hfss; LTspice is Windows-only freeware). NOT part of this
-# sweep's corrections, and this test does not expect that to change.
-_EXPECTED_GENUINELY_ABSENT_EVERYWHERE = {
-    "pyaedt": "licence-confined to a real workstation with AEDT installed (ADR-0012)",
-    "LTspice": "Windows-only proprietary freeware, not installable on this Linux image",
+    "FreeCADCmd": "freecad-maintainers PPA (version unpinned), symlinked from lowercase freecadcmd",
 }
 
 
@@ -85,32 +100,45 @@ class TestToolsExpectedOnPathInsideTheImage:
         built_from = _EXPECTED_ON_PATH_IN_IMAGE[tool_name]
         assert shutil.which(tool_name) is not None, (
             f"{tool_name!r} was expected on PATH inside the built image "
-            f"({built_from}), per issue #480's own verification table, but "
-            f"shutil.which found nothing -- either the Dockerfile changed "
-            f"and no longer installs it, or a docstring/doc claim needs to "
-            f"be corrected back the other way"
+            f"({built_from}), but shutil.which found nothing -- either the "
+            f"Dockerfile changed and no longer installs it, or a "
+            f"docstring/doc claim needs to be corrected back the other way"
         )
 
-
-class TestToolsExpectedGenuinelyAbsent:
-    """No skip needed -- these are absent everywhere, container or not, so
-    the assertion holds regardless of where this test runs."""
-
-    def test_pyaedt_is_not_importable(self):
-        try:
-            import pyaedt  # noqa: F401
-        except ImportError:
-            return
-        pytest.fail(
-            "pyaedt imported successfully -- simulation/hfss.py's own "
-            "'NOT installed in this environment' caveat needs re-checking "
-            "against this new fact, not left as a stale claim (issue #480)"
+    def test_nf2ff_is_on_path(self):
+        # A separate executable from `openEMS` itself, living in the same
+        # openEMS submodule source tree the Dockerfile's build targets --
+        # but unlike the entries above, the Dockerfile has no explicit
+        # post-build `nf2ff --help`-style check confirming it specifically
+        # (see simulation/openems.py's own caveat), so this assertion is
+        # this test's own first real confirmation, not a re-statement of
+        # something the Dockerfile already verifies at build time.
+        assert shutil.which("nf2ff") is not None, (
+            "'nf2ff' was expected on PATH inside the built image (same "
+            "openEMS submodule source tree as openEMS itself), but "
+            "shutil.which found nothing -- simulation/openems.py's own "
+            "caveat about this needs re-checking"
         )
 
-    def test_ltspice_binary_is_absent(self):
-        assert shutil.which("LTspice") is None, (
-            "an 'LTspice' binary was found on PATH -- pyproject.toml's ltspice "
-            "extra and its own comment ('LTspice is Windows freeware and is "
-            "not in this image') need re-checking against this new fact "
-            "(issue #480)"
+    def test_gprmax_module_is_importable_from_its_own_interpreter(self):
+        # gprMax is a Python module installed into a dedicated venv
+        # (`/opt/gprmax-venv`, `GPRMAX_PYTHON` env var), not a standalone
+        # binary on PATH -- `shutil.which("gprMax")` would never find it
+        # even inside the image, so this needs its own check shape rather
+        # than folding into _EXPECTED_ON_PATH_IN_IMAGE above.
+        gprmax_python = os.environ.get("GPRMAX_PYTHON")
+        assert gprmax_python, (
+            "GPRMAX_PYTHON is unset even inside the built image -- the "
+            "Dockerfile's own `ENV GPRMAX_PYTHON=...` line needs "
+            "re-checking against this new fact"
+        )
+        result = subprocess.run(
+            [gprmax_python, "-c", "import gprMax"],
+            capture_output=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"'import gprMax' failed under {gprmax_python!r} inside the "
+            f"built image -- simulation/gprmax.py's own caveat about "
+            f"this needs re-checking: {result.stderr.decode(errors='replace')}"
         )

@@ -1,11 +1,12 @@
 """Tests for gprMax .in deck generation, execution, and .out (HDF5) result
 parsing (issue #63: ground-coupled / lossy-half-space EM simulation).
 
-gprMax genuinely cannot be installed in this environment: it is not
-pip-installable at all (confirmed via direct PyPI JSON-API queries during
-implementation, both HTTP 404 -- see simulation/gprmax.py's module
-docstring "CORRECTION" section) and requires a conda environment plus a C
-compiler with OpenMP support to build its Cython extensions. So this file
+gprMax is built into this project's own Docker image (a dedicated venv,
+per the Dockerfile) but genuinely cannot be pip-installed on a bare host at
+all (confirmed via direct PyPI JSON-API queries during implementation, both
+HTTP 404 -- see simulation/gprmax.py's module docstring "CORRECTION"
+section) and requires a C compiler with OpenMP support to build its Cython
+extensions there (issue #480). So this file
 exercises `GprmaxSimulator.run()`'s subprocess-invocation contract against
 small fake "python -m gprMax" scripts (mirroring tests/test_nec2pp.py's/
 tests/test_openems.py's own fake-executable pattern, adjusted for gprMax

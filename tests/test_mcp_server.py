@@ -1608,9 +1608,10 @@ def _write_fake_ngspice(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # gprMax simulation (issue #63)
 #
-# gprMax genuinely cannot be installed in this environment at all (no pip
+# gprMax is built into this project's own Docker image (a dedicated venv)
+# but genuinely cannot be pip-installed on a bare host at all (no pip
 # package exists -- see simulation/gprmax.py's module docstring
-# "CORRECTION" section), so this exercises the MCP wrapper's call-through
+# "CORRECTION" section; issue #480), so this exercises the MCP wrapper's call-through
 # to simulation.gprmax via a fake "python -m gprMax" script (pointed to by
 # GPRMAX_PYTHON) that writes a synthetic .out HDF5 file next to the input
 # file it's given, matching gprMax's own documented output-file naming and

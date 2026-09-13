@@ -348,8 +348,10 @@ def parse_nec2_output(raw_output: str) -> dict[str, Any]:
     Section formats (ANTENNA INPUT PARAMETERS, RADIATION PATTERNS) are taken
     from "Example 1" of the primary source cited in this module's header
     comment. See that comment for the honest caveat: this has been verified
-    against the *documented* output format, not against real nec2++ output,
-    since no real binary was available in this environment.
+    against the *documented* output format, not against real nec2++ output --
+    the real binary is built into this project's own Docker image but was
+    absent in the implementing environment, and has never actually been
+    driven even inside the image (issue #480).
     """
     lines = raw_output.splitlines()
 

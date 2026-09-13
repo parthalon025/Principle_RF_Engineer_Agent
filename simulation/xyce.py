@@ -151,8 +151,8 @@ HONEST CAVEAT (issue #480: three distinct claims, not one). Xyce (Release-7.10.0
 built from source and confirmed on PATH in this project's own Docker image (Dockerfile)
 -- it is NOT genuinely absent everywhere. It IS absent on a bare host outside that image
 (confirmed via `which Xyce` and `which xyce`, both exit 1, in this sandbox). And even
-inside the image, this code has never actually been DRIVEN against the real binary --
-run against these generated netlists. Netlist generation and
+inside the image, this code has never actually been DRIVEN against the real
+binary -- never run against these generated netlists. Netlist generation and
 CSV/Touchstone output parsing are built to the documented format cited
 above; tests exercise them only against a fake "Xyce" script (see
 tests/test_xyce.py), not a real Xyce run. Treat any result -- and

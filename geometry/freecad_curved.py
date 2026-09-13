@@ -425,8 +425,9 @@ contents/search APIs, same method as the rest of this module):
   (this function's STEP-export sibling) IS registered in agent/main.py,
   mcp_server/server.py, and policies/tool_policy.yaml. The reason is NOT
   that the sibling was somehow more verified -- it carries the identical
-  "unverified end-to-end, no FreeCADCmd install in this environment"
-  caveat this module's own "HONEST CAVEAT" section states below, and was
+  "unverified end-to-end, FreeCADCmd absent on a bare host (though present
+  in this project's own Docker image)" caveat this module's own "HONEST
+  CAVEAT" section states below, and was
   wired anyway. The real reason is that the sibling's return value is
   immediately useful even without any FreeCAD install: its geometry-dict
   "primitives" drop straight into run_openems_simulation's/
@@ -460,7 +461,8 @@ contents/search APIs, same method as the rest of this module):
 HONEST CAVEAT (issue #480; see #361 for the first correction of this claim,
 elsewhere in this same file): FreeCADCmd IS installed in this project's own
 Docker image (FreeCAD-maintainers PPA, Dockerfile; `/usr/bin/FreeCADCmd`,
-0.21.2) -- it is NOT genuinely absent everywhere, matching this repo's other
+version unpinned -- whatever the -stable PPA carries at build time) -- it is
+NOT genuinely absent everywhere, matching this repo's other
 built-from-source-or-PPA simulator tools (NEC2++, openEMS, Elmer, gprMax,
 etc.). It IS absent on a bare host outside that image, which this stale
 sentence used to state as a blanket, unqualified claim. Separately, this

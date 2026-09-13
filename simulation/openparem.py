@@ -316,11 +316,13 @@ structured job dict" does not map onto it the same way):
 
 HONEST CAVEAT (issue #480: three distinct claims, not one). `OpenParEM3D` is built from
 source and confirmed on PATH in this project's own Docker image (Dockerfile); `gmsh` is
-apt-installed there too (v4.12.1). Neither is genuinely absent everywhere. Both ARE absent
+apt-installed there too (unpinned -- whatever version Ubuntu 24.04's own repos carry at
+build time). Neither is genuinely absent everywhere. Both ARE absent
 on a bare host outside that image (confirmed via `which OpenParEM3D`/`which gmsh`, exit 1,
 in this sandbox). And even inside the image, this code has never actually been DRIVEN
-against either real binary -- run against these generated `.proj`/ports/materials files,
-or used to verify a generated `.geo` script actually meshes cleanly. `.proj`/ports/materials-file
+against either real binary -- never run against these generated `.proj`/ports/materials
+files, nor used to verify a generated `.geo` script actually meshes cleanly.
+`.proj`/ports/materials-file
 generation and CSV/Touchstone-existence parsing are built to the letter of the
 primary-source citations above (each fact grepped directly out of OpenParEM's own C/C++
 source, or quoted verbatim from its own Installation Manual PDF, Users Manual PDF, and a

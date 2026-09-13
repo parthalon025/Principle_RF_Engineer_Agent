@@ -411,8 +411,10 @@ class OpenemsSimulator(Simulator):
 #     condition.
 #
 # HONEST CAVEAT (issue #480: three distinct claims, not one). openEMS
-# (v0.37.0-rc2) is built from source and confirmed on PATH in this project's
-# own Docker image (Dockerfile) -- it is NOT genuinely absent everywhere. It
+# (v0.0.36 -- the Dockerfile's own comment explains it deliberately pins
+# this over the newer v0.37.0-rc1/rc2, which are pre-release) is built from
+# source and confirmed on PATH in this project's own Docker image
+# (Dockerfile) -- it is NOT genuinely absent everywhere. It
 # IS absent on a bare host outside that image (confirmed via `which openEMS`,
 # exit 1, in this sandbox). And even inside the image, this code has never
 # actually been DRIVEN against the real binary. XML generation follows the
@@ -433,11 +435,15 @@ class OpenemsSimulator(Simulator):
 # frequency-independent reflection/transmission coefficient) checked
 # against this module's FFT output, not against real FDTD physics.
 # The NF2FF far-field/gain extraction added in issue #269 is in the same
-# position again, one level further removed: the real `nf2ff` binary is
-# ALSO built from the same openEMS source tree and confirmed on PATH in the
-# Docker image (a separate executable from `openEMS` itself, same
-# absent-on-a-bare-host/present-in-the-image/never-driven-here shape), so
-# neither has this module ever driven it against real FDTD near-field
+# position again, one level further removed: the real `nf2ff` binary lives
+# in the same openEMS submodule source tree the Dockerfile's build targets
+# (a separate executable from `openEMS` itself, cited above) -- expected on
+# PATH there too, though (unlike `openEMS` itself, `nec2++`, `palace`,
+# `qucsator_rf` and `ElmerSolver`/`ElmerGrid`) the Dockerfile has no
+# explicit post-build `nf2ff --help`-style check confirming it specifically,
+# so this is an inference from its build location, not an independently
+# confirmed fact. Same absent-on-a-bare-host/never-driven-here shape either
+# way, so neither has this module ever driven it against real FDTD near-field
 # dumps. The DumpBox XML shape and the nf2ff tool's own
 # input-XML/result-HDF5 schemas are each cited to openEMS/CSXCAD source
 # above; tests exercise the XML generation directly and exercise the

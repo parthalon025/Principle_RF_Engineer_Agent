@@ -244,7 +244,7 @@ class QucsSimulator(Simulator):
 # everywhere. It IS absent on a bare host outside that image (confirmed via
 # `which qucsator_rf` / `which qucsator`, both exit 1, in this sandbox). And
 # even inside the image, this code has never actually been DRIVEN against
-# the real binary -- run against these generated netlists. Netlist
+# the real binary -- never run against these generated netlists. Netlist
 # generation and dataset parsing below are built to the
 # letter of the documented/verified format above (real fixture files,
 # grammar source, and result-writing source, all cited per-fact); they are

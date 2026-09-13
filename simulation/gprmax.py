@@ -952,9 +952,11 @@ def run_gprmax_simulation(
     See this module's header comment for the format-verification citations
     and the honest caveat: deck generation and result parsing are built to
     the documented/verified gprMax .in/.out formats, not to a real gprMax
-    run in this environment (gprMax genuinely cannot be installed here at
-    all -- no pip package exists, and it needs a conda + C-compiler build,
-    see the "CORRECTION" section of this module's header comment).
+    run -- gprMax is built into this project's own Docker image (a
+    dedicated venv, per the Dockerfile) but genuinely cannot be installed
+    via a simple pip/uv command on a bare host at all -- no pip package
+    exists, and it needs a C-compiler build (see the "CORRECTION" section
+    of this module's header comment, and issue #480).
     """
     work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="gprmax_"))
     work_dir.mkdir(parents=True, exist_ok=True)

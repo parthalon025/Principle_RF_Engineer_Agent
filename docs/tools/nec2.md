@@ -85,7 +85,9 @@ back the "ANTENNA INPUT PARAMETERS" (impedance/admittance/power at the fed
 segment) and "RADIATION PATTERNS" tables into structured dicts (lines 279-359).
 `run_nec2_simulation()` orchestrates deck-write, run, and parse, tagging the
 result `SIMULATED` (lines 362-399). The module's own header comment states
-plainly that no real `nec2++` binary was available in the dev environment, so
+plainly that the real `nec2++` binary is built into this project's own
+Docker image but was absent in the dev environment (issue #480), and has
+never actually been driven even inside the image, so
 this path is verified against the documented output format and a fake test
 binary, not against a real run — "unverified end-to-end until it has been run
 against the real tool at least once" (lines 95-102).
