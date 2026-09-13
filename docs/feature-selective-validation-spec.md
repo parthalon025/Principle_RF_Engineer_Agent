@@ -491,18 +491,24 @@ Concretely, against the code as it stands today:
 ```python
 # designs/requirement_targets.py -- unchanged, no new comparator needed
 target = propose_target(
-    value=0.4, comparator="AT_MOST", unit="FSV GDM",
+    value=0.4,
+    comparator="AT_MOST",
+    unit="FSV GDM",
     reason="Reproduction-fidelity check for Example 3 against Landy et al. "
-           "2008, per ADR-0041 pt 5 / #168. NOT a customer requirement.",
+    "2008, per ADR-0041 pt 5 / #168. NOT a customer requirement.",
 )
 
 # designs/success_score.py -- unchanged, no new formula needed
 result = success_score(
-    step="correlation", target=target,
-    actual_value=gdm_total, actual_unit="FSV GDM",
-    note=None if spread_gdm < 5 else "SPREAD=%d: 85%% of the point-by-point "
-         "verdicts do not fit in fewer than %d of the six bins, so this single "
-         "figure is a poor summary of them -- read the histogram." % (spread_gdm, spread_gdm),
+    step="correlation",
+    target=target,
+    actual_value=gdm_total,
+    actual_unit="FSV GDM",
+    note=None
+    if spread_gdm < 5
+    else "SPREAD=%d: 85%% of the point-by-point "
+    "verdicts do not fit in fewer than %d of the six bins, so this single "
+    "figure is a poor summary of them -- read the histogram." % (spread_gdm, spread_gdm),
 )
 ```
 
