@@ -124,12 +124,13 @@ remains the one place that judgment call is made, and the materials-file
 converter requires an already-decided single value per material, raising
 rather than guessing if handed more than one. The module's own
 docstring states plainly that the real `OpenParEM3D` (and `gmsh`) binaries
-are not installed in this environment (`which OpenParEM3D` exits 1) and that
-generation/parsing has only been exercised against fake stand-in scripts
-in tests, never a real FEM solve or a real mesh — every result from this
-adapter is unverified end-to-end until it is run against the real tools at
-least once, a caution this repo weighs more heavily here given OpenParEM's
-roughly one-year public history.
+are built into this project's own Docker image (Dockerfile) but absent on
+a bare host (`which OpenParEM3D` exits 1 outside that image; issue #480),
+and that even inside the image generation/parsing has only been exercised
+against fake stand-in scripts in tests, never a real FEM solve or a real
+mesh — every result from this adapter is unverified end-to-end until it
+is run against the real tools at least once, a caution this repo weighs
+more heavily here given OpenParEM's roughly one-year public history.
 
 ## Capabilities not yet used here
 

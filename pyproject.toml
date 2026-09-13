@@ -47,6 +47,17 @@ dependencies = [
   # free/OSS, no hardware requirement, so a hard dependency like
   # openai-agents itself rather than an optional extra.
   "litellm>=1.55",
+  # Metamaterial/FSS unit-cell geometry composition and artwork export
+  # (geometry/unit_cell.py, issue #55; SVG/GDSII export, issue #348).
+  # Promoted from the `geometry` optional extra below: issue #348 found the
+  # capability effectively unreachable from a real run because most installs
+  # (including CI) never opted into that extra, and -- unlike hfss/ltspice's
+  # extras just below, each gating an actual hardware/license requirement --
+  # gdstk has neither: a small, freely pip-installable library with
+  # prebuilt wheels for every major platform, so there is no install-time
+  # cost to making it a hard dependency the way there would be for pyaedt
+  # or spicelib.
+  "gdstk",
 ]
 
 [project.optional-dependencies]
@@ -58,32 +69,22 @@ dependencies = [
 hfss = [
   "pyaedt",
 ]
-# Metamaterial/FSS unit-cell geometry generation (issue #55) -- see
-# geometry/unit_cell.py. gdstk is a small, freely pip-installable library
-# with prebuilt wheels for every major platform and no license/hardware
-# requirement, so it would be reasonable to make it a hard dependency; it
-# is kept as an explicit optional extra instead, matching this project's
-# existing hfss pattern for anything most installs (including
-# CI) won't touch by default: install with `uv sync --extra geometry` or
-# `pip install '.[geometry]'`.
-#
-# CSXCAD (the C++/Python library whose own <Polygon> XML element shape
-# simulation/openems.py's polygon primitive was verified against, see that
-# module's docstring citation) is DELIBERATELY NOT listed here even though
-# it is the geometry-format counterpart to gdstk: unlike gdstk, CSXCAD
-# ships no installable package on the PyPI index -- its own install docs
-# (docs.openems.de/python/install.html) require building from source
-# (`python setup.py install`) or downloading a platform-specific pre-built
-# .whl file directly, not `pip install CSXCAD` -- so per this project's own
-# convention (a manual binary/source install, not a `pip install <name>`
-# from the index, belongs in README.md's Optional tools list, not a
-# pyproject extra -- matching how NEC2++/openEMS are already handled
-# there), CSXCAD is documented in README.md instead. Both CSXCAD's and
-# gdstk's licenses are still recorded, as separate rows, in
-# docs/LICENSE_MATRIX.md regardless of which one gets a pyproject extra.
-geometry = [
-  "gdstk",
-]
+# Metamaterial/FSS unit-cell geometry generation (issue #55, geometry/
+# unit_cell.py) no longer has an extra here -- gdstk moved to a hard
+# dependency above (issue #348). CSXCAD (the C++/Python library whose own
+# <Polygon> XML element shape simulation/openems.py's polygon primitive
+# was verified against, see that module's docstring citation) is still
+# DELIBERATELY absent from this file entirely, geometry-format counterpart
+# to gdstk or not: unlike gdstk, CSXCAD ships no installable package on the
+# PyPI index -- its own install docs (docs.openems.de/python/install.html)
+# require building from source (`python setup.py install`) or downloading
+# a platform-specific pre-built .whl file directly, not `pip install
+# CSXCAD` -- so per this project's own convention (a manual binary/source
+# install belongs in README.md's Optional tools list, not a pyproject
+# entry -- matching how NEC2++/openEMS are already handled there), CSXCAD
+# stays documented in README.md instead. Both CSXCAD's and gdstk's
+# licenses are still recorded, as separate rows, in docs/LICENSE_MATRIX.md
+# regardless of which one is a pyproject dependency.
 # LTspice circuit simulation (issue #59) -- see simulation/ltspice.py. spicelib
 # drives LTspice's own documented batch/command-line switches and parses its
 # .raw output; LTspice itself is free-of-charge proprietary freeware (Analog

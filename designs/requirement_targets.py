@@ -173,6 +173,41 @@ class TargetStatus(StrEnum):
     UNSCOREABLE = "UNSCOREABLE"
 
 
+class IntentStatus(StrEnum):
+    """Lifecycle status of one requirement's intended effect, carried as
+    `intended_effect["intent_status"]` -- named `intent_status`, not
+    `status`, for the identical reason `TargetStatus` is carried as
+    `target_status`: so it never collides with a wrapping tool's own
+    top-level `status` key.
+
+    - `PROPOSED`: `propose_intended_effect`'s output when `effect` is
+      given -- an as-yet-unconfirmed reading of what the requirement asks
+      of the wave.
+    - `NONE`: `propose_intended_effect`'s output when `effect` is `None`
+      -- the requirement legitimately asks nothing of the wave (a bend
+      radius, a mass budget, a cure ceiling), and `reason` says why. This
+      is `intended_effect`'s analogue of `TargetStatus.UNSCOREABLE`: a
+      considered "there is none" is not the same fact as "nobody has
+      looked yet", and collapsing the two would let a later reader mistake
+      silence for an unconsidered gap.
+    - `CONFIRMED`: reserved for a future confirmation step (ADR-0030's
+      shape names it, mirroring `TargetStatus.CONFIRMED`) -- nothing in
+      this codebase produces it yet. Issue #228 resolved that
+      `intended_effect` gets no standalone `confirm_intent` tool (ADR-0034:
+      a Requirements document reaching `CONFIRMED` is itself the
+      confirmation signal for every field it extracts, `target` included --
+      see `designs.requirements_document.extract_requirement_fields`, which
+      copies `target_status`/`intent_status` through unchanged rather than
+      promoting either). `confirmed_by`/`confirmed_at` exist on the
+      returned shape for parity with `target` and stay `None` under every
+      path this codebase currently exercises.
+    """
+
+    PROPOSED = "PROPOSED"
+    CONFIRMED = "CONFIRMED"
+    NONE = "NONE"
+
+
 class InvalidRequirementTargetError(ValueError):
     """Raised by `propose_target`/`mark_unscoreable`/`confirm_target` when
     the shape they were handed is wrong -- a non-numeric `value`, a
@@ -416,14 +451,32 @@ def confirm_target(
     return confirmed
 
 
-def propose_intended_effect(effect: str) -> dict[str, Any]:
+def propose_intended_effect(
+    effect: str | None,
+    *,
+    reason: str | None = None,
+) -> dict[str, Any]:
     """Validate and tag one requirement's intended effect -- ADR-0030's
     "another key inside a requirement's own entry, beside `requirement` and
-    `target`" (issue #323). Mirrors `propose_target`'s own validate-then-tag
-    shape for the open-vocabulary effect prose ("behave as a magnetic
-    mirror", "absorb the wave") rather than a numeric value: `effect` must
-    be a non-empty string; `InvalidRequirementTargetError` names the field
-    if it isn't.
+    `target`" (issue #323), extended (issue #228) so `None` is a
+    first-class, distinguishable answer rather than simply never calling
+    this function.
+
+    Two shapes, chosen by whether `effect` is given:
+
+    - `effect` is a non-empty string ("behave as a magnetic mirror",
+      "absorb the wave"): returns `intent_status="PROPOSED"`. `reason`
+      must not be given alongside an `effect` -- it exists for the `None`
+      case below, and passing both is almost certainly a caller mistake,
+      not a considered choice.
+    - `effect` is `None`: the requirement legitimately asks nothing of the
+      wave (a bend radius, a mass budget, a cure ceiling) -- ADR-0030's
+      "having none is a legal answer", and issue #228's own point 2: this
+      status exists "to stop the model inventing an effect to fill a
+      field." `reason` must then be a non-empty string explaining why (the
+      same "`unscoreable` must always be explained, never a bare status
+      flag" discipline `mark_unscoreable` already applies to `target`).
+      Returns `intent_status="NONE"`.
 
     Always returns `provenance="ASSUMED"` -- per ADR-0030's own reasoning
     (restated in CONTEXT.md's Intended effect entry): a Requirements
@@ -431,17 +484,45 @@ def propose_intended_effect(effect: str) -> dict[str, Any]:
     the reading, never a stronger kind of evidence, so there is no
     stronger provenance tier to promote to -- the identical "WHY
     PROVENANCE STAYS ASSUMED" reasoning this module's own docstring
-    already gives for `propose_target`.
+    already gives for `propose_target`. Confirmation rides `intent_status`
+    instead (see `IntentStatus`'s own docstring for why `CONFIRMED` is
+    reachable in the vocabulary but not produced by this function --
+    identical to `target_status` never reaching `CONFIRMED` through this
+    module's own extraction path either).
 
-    A requirement that asks nothing of the wave (a bend radius, a mass
-    budget, a cure ceiling) legitimately has no intended effect at all
-    (ADR-0030's "having none is a legal answer") -- that case is simply
-    never calling this function for that requirement, the same way a
-    requirement entry with no `target` key yet is legal before
-    `propose_target` is ever called for it.
+    `confirmed_by`/`confirmed_at` are always `None` in the returned dict --
+    present for shape parity with `propose_target`'s return value (see
+    `IntentStatus.CONFIRMED`'s docstring), not because anything here sets
+    them.
+
+    Raises `InvalidRequirementTargetError` naming exactly which field is
+    wrong, the same discipline `propose_target`/`mark_unscoreable` already
+    apply.
     """
+    if effect is None:
+        resolved_reason = _require_nonempty_string("reason", reason)
+        return {
+            "effect": None,
+            "intent_status": IntentStatus.NONE.value,
+            "provenance": ASSUMED,
+            "reason": resolved_reason,
+            "confirmed_by": None,
+            "confirmed_at": None,
+        }
+    if reason is not None:
+        raise InvalidRequirementTargetError(
+            "reason is only used when effect is None (explaining why there is no "
+            f"intended effect) -- got both effect={effect!r} and reason={reason!r}"
+        )
     resolved_effect = _require_nonempty_string("effect", effect)
-    return {"effect": resolved_effect, "provenance": ASSUMED}
+    return {
+        "effect": resolved_effect,
+        "intent_status": IntentStatus.PROPOSED.value,
+        "provenance": ASSUMED,
+        "reason": None,
+        "confirmed_by": None,
+        "confirmed_at": None,
+    }
 
 
 def attach_target(

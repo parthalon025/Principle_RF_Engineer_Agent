@@ -15,6 +15,17 @@ one. Read it as six informed opinions that happened to agree, not as a ranked re
 Excerpts are trimmed for length; full agent transcripts are in the session workflow
 directory under run `wf_9322167c-5b0`.
 
+**Kept as a raw transcript, deliberately (issue #420).** "The convergence" section
+right below is the synthesis — the two findings every architect reached
+independently, in the reader's own words, up top. Everything after "Recon" is the
+underlying evidence: six independently-written visions and the corpus counts each
+one drew on. A reader who only wants the verdict stops after "The convergence";
+the rest exists so a later reader can check the synthesis against what the
+architects actually wrote, rather than trusting a second-hand summary of them —
+worth keeping intact rather than compressing into a doc unlike
+`docs/absorber-scoring-decision-confirmation.md`'s shape, whose synthesised
+verdict has no six-way disagreement underneath it to preserve.
+
 ## The convergence
 
 Two things every architect arrived at independently, with no shared context beyond the

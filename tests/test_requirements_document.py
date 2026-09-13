@@ -417,6 +417,34 @@ def test_extract_requirement_fields_writes_target_and_intended_effect():
     assert updated["req-1"]["requirement"] == "needs to behave as a magnetic mirror at 2.4 GHz"
 
 
+def test_extract_requirement_fields_writes_a_none_intended_effect_with_its_reason():
+    """Issue #228: NONE + reason must be settable while drafting, before
+    the document is ever confirmed, and must survive extraction
+    unchanged -- exactly like a PROPOSED effect does, and like
+    target_status already does for `target` (test above)."""
+    target = propose_target(value=40.0, comparator="AT_MOST", unit="mm")
+    target["intended_effect"] = propose_intended_effect(
+        None, reason="a bend radius constraint asks nothing of the wave"
+    )
+    requirement_targets = {"req-1": target}
+    document = draft_requirements_document(
+        requirement_ids={"req-1"},
+        narrative="The mount must bend to a 40mm radius.",
+        requirement_targets=requirement_targets,
+    )
+    confirmed = _confirm(document, document["narrative"], requirement_targets, {"req-1"})
+
+    requirements = {"req-1": {"requirement": "the mount must bend to a 40mm radius"}}
+    updated = extract_requirement_fields(requirements, confirmed)
+
+    assert updated["req-1"]["intended_effect"]["effect"] is None
+    assert updated["req-1"]["intended_effect"]["intent_status"] == "NONE"
+    assert (
+        updated["req-1"]["intended_effect"]["reason"]
+        == "a bend radius constraint asks nothing of the wave"
+    )
+
+
 def test_extract_requirement_fields_handles_the_compound_ask_case():
     """A customer wanting two different things from one design is two
     ordinary Customer requirement rows, each independently extracted with

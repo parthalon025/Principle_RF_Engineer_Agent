@@ -64,6 +64,27 @@ from rf_tools.patch_synthesis import (
     quality_factor_from_fractional_bandwidth,
 )
 
+
+@pytest.fixture
+def cleanup_designs():
+    """Tracks design ids created by `create_design` (which commits its own
+    connection) and deletes them afterward -- mirrors
+    tests/test_designs_service.py's own fixture of the same name;
+    `verification_items` rows cascade-delete with their design."""
+    ids: list[int] = []
+    yield ids
+    if not ids:
+        return
+    import psycopg
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM designs WHERE id = ANY(%s)", (ids,))
+    finally:
+        conn.close()
+
+
 # A generic, well-behaved two-port S-parameter matrix (unconditionally
 # stable amplifier-like response) reused across every S/Z/Y/ABCD/stability
 # tool test below.
@@ -213,6 +234,15 @@ def test_registered_tool_count_matches_old_plus_new():
     # issue #346 adds 1 more (calculate_in_phase_reflection_band, the
     # +/-90 degree in-phase reflection band computed from a Palace phase
     # sweep): 96 + 1 = 97.
+    #
+    # issue #348 adds 1 more (compose_and_export_polygon_element, the one
+    # production caller of geometry.unit_cell.combine_shapes -- composes a
+    # non-rectilinear metamaterial element and exports it as SVG/GDSII):
+    # 97 + 1 = 98.
+    #
+    # issue #550 adds 1 more (score_and_materialize_diffusive_checkerboard,
+    # a plain 1:1 alternating checkerboard's worst-in-band RCS-reduction
+    # score plus its optional unit-cell materialization): 98 + 1 = 99.
     expected = (
         11
         + len(NEW_TOOL_NAMES)
@@ -254,6 +284,8 @@ def test_registered_tool_count_matches_old_plus_new():
         + 1  # issue #280: search_uspto_patents
         + 1  # ticket #276: lookup_nexar_part_data
         + 1  # issue #346: calculate_in_phase_reflection_band
+        + 1  # issue #348: compose_and_export_polygon_element
+        + 1  # issue #550: score_and_materialize_diffusive_checkerboard
     )
     assert len(registered_names) == expected
 
@@ -1397,7 +1429,8 @@ def test_compare_touchstone_files_calls_through(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # NEC2++ simulation (issue #38)
 #
-# The real nec2++ binary is not installed in this environment, so this
+# The real nec2++ binary is built into this project's own Docker image but
+# absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.nec2pp via a fake
 # "nec2++" script pointed to by NEC2PP_BIN -- same not-verified-against-a-
 # real-binary caveat as tests/test_nec2pp.py. The section headings and
@@ -1457,7 +1490,8 @@ def test_run_nec2_simulation_calls_through(tmp_path: Path, monkeypatch):
 # ---------------------------------------------------------------------------
 # openEMS simulation (issue #39)
 #
-# The real openEMS binary is not installed in this environment, so this
+# The real openEMS binary is built into this project's own Docker image but
+# absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.openems via a fake
 # "openEMS" script pointed to by OPENEMS_BIN -- same not-verified-against-a-
 # real-binary caveat as tests/test_openems.py. See that file's module
@@ -1574,9 +1608,10 @@ def _write_fake_ngspice(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # gprMax simulation (issue #63)
 #
-# gprMax genuinely cannot be installed in this environment at all (no pip
+# gprMax is built into this project's own Docker image (a dedicated venv)
+# but genuinely cannot be pip-installed on a bare host at all (no pip
 # package exists -- see simulation/gprmax.py's module docstring
-# "CORRECTION" section), so this exercises the MCP wrapper's call-through
+# "CORRECTION" section; issue #480), so this exercises the MCP wrapper's call-through
 # to simulation.gprmax via a fake "python -m gprMax" script (pointed to by
 # GPRMAX_PYTHON) that writes a synthetic .out HDF5 file next to the input
 # file it's given, matching gprMax's own documented output-file naming and
@@ -1810,7 +1845,8 @@ def test_run_hfss_simulation_calls_through(tmp_path: Path, monkeypatch):
 # ---------------------------------------------------------------------------
 # OpenParEM3D simulation (issue #62)
 #
-# The real OpenParEM3D binary is not installed in this environment, so this
+# The real OpenParEM3D binary is built into this project's own Docker image
+# but absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.openparem via a fake
 # "OpenParEM3D" script pointed to by OPENPAREM3D_BIN, mirroring
 # test_run_nec2_simulation_calls_through/test_run_openems_simulation_calls_
@@ -1851,7 +1887,8 @@ def _write_fake_openparem3d(tmp_path: Path, project_name: str) -> Path:
 # ---------------------------------------------------------------------------
 # Palace simulation (issue #61)
 #
-# The real palace binary is not installed in this environment, so this
+# The real palace binary is built into this project's own Docker image but
+# absent on this bare-host sandbox (issue #480), so this
 # exercises the MCP wrapper's call-through to simulation.palace via a fake
 # "palace" script pointed to by PALACE_BIN -- same not-verified-against-a-
 # real-binary caveat as tests/test_palace.py. The fake script writes a
@@ -2262,8 +2299,9 @@ def test_run_meep_simulation_calls_through(monkeypatch):
 # ---------------------------------------------------------------------------
 # FreeCAD curved/conformal host-surface geometry generation (issue #66)
 #
-# FreeCADCmd is not installed in this environment (matching this repo's
-# other manually-installed simulator/geometry tools). This exercises the MCP
+# FreeCADCmd is built into this project's own Docker image (matching this
+# repo's other manually-installed simulator/geometry tools) but absent on
+# this bare-host sandbox (issue #480). This exercises the MCP
 # wrapper's call-through to geometry.freecad_curved.run_freecad_curved_
 # geometry against a small fake "FreeCADCmd" Python-shebang script, standing
 # in for the real binary -- same fake-executable pattern as the Elmer
@@ -2349,6 +2387,298 @@ def test_generate_freecad_curved_geometry_forwards_executable(tmp_path: Path, mo
     assert result["simulator"] == "FreeCADCmd"
     assert result["status"] == "COMPLETED"
     assert result["freecad"]["objects_built"] == ["patch_0"]
+
+
+def test_compose_and_export_polygon_element_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "compose_and_export_polygon_element" in registered_names
+
+
+def test_compose_and_export_polygon_element_calls_through(tmp_path: Path):
+    """Issue #348: the production caller of geometry.unit_cell.
+    combine_shapes -- composes an SRR-shaped element (outer box minus a
+    smaller concentric box) and writes both artwork formats."""
+    shapes = [
+        {"kind": "box", "p1_m": [0.0, 0.0], "p2_m": [0.002, 0.002]},
+        {
+            "kind": "box",
+            "p1_m": [0.0003, 0.0003],
+            "p2_m": [0.0017, 0.0017],
+            "operation": "subtract",
+        },
+    ]
+    result = server.compose_and_export_polygon_element(
+        shapes, str(tmp_path / "srr.svg"), str(tmp_path / "srr.gds")
+    )
+
+    assert result["svg_path"] == str(tmp_path / "srr.svg")
+    assert result["gds_path"] == str(tmp_path / "srr.gds")
+    assert result["num_polygons"] == 1
+    assert (tmp_path / "srr.svg").is_file()
+    assert (tmp_path / "srr.gds").is_file()
+
+
+def test_score_and_materialize_diffusive_checkerboard_is_registered():
+    registered_names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert "score_and_materialize_diffusive_checkerboard" in registered_names
+
+
+def test_score_and_materialize_diffusive_checkerboard_scores_without_symbol_library():
+    """Issue #550: scoring alone (symbol_library omitted) must not require
+    or attempt any geometry materialization."""
+    from designs.element_alphabet import add_symbol_entry
+
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=0.0,
+        # rcsr_db/panel_size_m deliberately omitted: they are only needed
+        # for materialization (symbol_library omitted below), and this
+        # call must succeed without them.
+        pitch_m=[0.015, 0.015],
+        wavelength_m=0.03,
+    )
+
+    assert result["tile_a"] == "0"
+    assert result["tile_b"] == "1"
+    assert result["meets_threshold"] is True
+    assert "unit_cell_array" not in result
+    assert result["diffracted_order_regime"]["bound_regime"] in {
+        "NO_PHYSICAL_BOUND",
+        "ROZANOV_BOUNDED",
+    }
+
+
+def test_score_and_materialize_diffusive_checkerboard_requires_rcsr_db_and_panel_size():
+    """Issue #550: rcsr_db/panel_size_m are only needed to materialize a
+    unit-cell array -- passing symbol_library without them must fail
+    loudly rather than crash deep inside block_size_from_sizing_rule."""
+    from designs.element_alphabet import add_symbol_entry
+
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    with pytest.raises(ValueError, match="rcsr_db and panel_size_m"):
+        server.score_and_materialize_diffusive_checkerboard(
+            symbol_entries,
+            "fam",
+            frequencies_hz,
+            incidence_angle_deg=0.0,
+            process_id=1,
+            delta_phi_max_deg=0.0,
+            pitch_m=[0.015, 0.015],
+            wavelength_m=0.03,
+            symbol_library={"0": geometry, "1": geometry},
+        )
+
+
+def test_score_and_materialize_diffusive_checkerboard_uses_the_smaller_pitch_axis():
+    """Issue #550: an asymmetric pitch's diffracted-order check uses the
+    SMALLER of the two axes -- the more conservative choice -- not
+    silently just the x axis."""
+    from designs.element_alphabet import add_symbol_entry
+
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+    frequencies_hz = [10.0e9]
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    # x pitch alone (35 mm) is above the 10 GHz onset threshold (~42.4 mm)
+    # -- wait, use a pair that straddles the threshold: x=45mm (exempt on
+    # its own), y=10mm (well below -- the smaller axis must dominate).
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=0.0,
+        pitch_m=[0.045, 0.010],
+        wavelength_m=0.03,
+    )
+    assert result["diffracted_order_regime"]["bound_regime"] == "ROZANOV_BOUNDED"
+
+
+def test_score_and_materialize_diffusive_checkerboard_materializes_with_symbol_library():
+    """Issue #550: given symbol_library too, the same call also returns the
+    materialized unit-cell array."""
+    from designs.element_alphabet import add_symbol_entry
+
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+    symbol_a_geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.005, 0.005, 0.001]}
+    symbol_b_geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.006, 0.004, 0.001]}
+
+    def entry(symbol, phase_deg, geometry):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [
+        entry("0", 180.0, symbol_a_geometry),
+        entry("1", 0.0, symbol_b_geometry),
+    ]
+    symbol_library = {"0": symbol_a_geometry, "1": symbol_b_geometry}
+
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=12.0,
+        rcsr_db=10.0,
+        pitch_m=[0.015, 0.015],
+        wavelength_m=0.03,
+        panel_size_m=[0.18, 0.18],
+        symbol_library=symbol_library,
+    )
+
+    assert "unit_cell_array" in result
+    assert len(result["unit_cell_array"]) > 0
+
+
+def test_score_and_materialize_diffusive_checkerboard_records_against_a_design(
+    cleanup_designs,
+):
+    """Issue #550's own spec: 'optionally records the result against a
+    design (the same design_id -> recorded_as convention every other tool
+    in that file already uses)' -- mirrors tests/test_designs_service.py's
+    own test_record_engineering_result_returns_engineering_result_id."""
+    import uuid
+
+    import psycopg
+
+    from designs.element_alphabet import add_symbol_entry
+    from designs.service import create_design
+
+    design = create_design(
+        design_key=f"MCP-DIFFUSIVE-{uuid.uuid4().hex[:8]}",
+        name="Diffusive Checkerboard Recording Fixture",
+        revision="A",
+        requirements={},
+        architecture={},
+    )
+    cleanup_designs.append(design["design_id"])
+
+    frequencies_hz = [10.0e9, 12.0e9, 14.0e9]
+    geometry = {"shape": "box", "p1_m": [0.0, 0.0, 0.0], "p2_m": [0.001, 0.001, 0.0]}
+
+    def entry(symbol, phase_deg):
+        return add_symbol_entry(
+            element_family="fam",
+            symbol=symbol,
+            frequency_low_hz=9.0e9,
+            frequency_high_hz=15.0e9,
+            incidence_angle_low_deg=0.0,
+            incidence_angle_high_deg=10.0,
+            process_id=1,
+            geometry=geometry,
+            response=[
+                {"frequency_hz": f, "magnitude": 0.99, "phase_deg": phase_deg}
+                for f in frequencies_hz
+            ],
+        )
+
+    symbol_entries = [entry("0", 180.0), entry("1", 0.0)]
+
+    result = server.score_and_materialize_diffusive_checkerboard(
+        symbol_entries,
+        "fam",
+        frequencies_hz,
+        incidence_angle_deg=0.0,
+        process_id=1,
+        delta_phi_max_deg=0.0,
+        rcsr_db=10.0,
+        pitch_m=[0.015, 0.015],
+        wavelength_m=0.03,
+        panel_size_m=[0.18, 0.18],
+        design_id=design["design_id"],
+    )
+
+    assert isinstance(result["recorded_as"], int)
+
+    conn = psycopg.connect(os.environ["DATABASE_URL"], autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT design_id, provenance FROM engineering_results WHERE id = %s",
+                (result["recorded_as"],),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    # The recorded provenance is this call's own weakest-of tile provenance
+    # (both entries here are MEASURED), never a fixed per-tool-name constant.
+    assert row == (design["design_id"], result["provenance"])
 
 
 _STDIN_ISOLATION_PROBE = """

@@ -967,10 +967,12 @@ def run_gprmax_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: i
     gain extraction is NOT computed -- gprMax has no near-field-to-far-field tool at all
     (see simulation/gprmax.py's module docstring). Format verified against primary
     gprMax documentation (see simulation/gprmax.py's module docstring for citations) but
-    NOT against a real gprMax run -- gprMax is not installed in this environment and
-    (unlike NEC2++/openEMS) cannot be installed via pip at all, only via a conda + C-
-    compiler source build (see that module's "CORRECTION" section); treat any result as
-    unverified end-to-end until it has been run against the real tool at least once."""
+    NOT against a real gprMax run -- gprMax is built into this project's own Docker
+    image (Dockerfile), absent on a bare host, and cannot be installed via pip at all
+    on one, only via a C-compiler source build (see that module's "CORRECTION"
+    section); even inside the image this code has never actually been driven against
+    it, so treat any result as unverified end-to-end until it has been run against the
+    real tool at least once."""
     return _run_gprmax_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 

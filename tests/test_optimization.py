@@ -1006,12 +1006,8 @@ def test_combinatorial_symbol_placement_layout_feeds_generate_coded_unit_cell_ar
     """Cross-check: the returned layout is directly usable as
     generate_coded_unit_cell_array's own `layout` argument, per this
     module's whole reason for matching that function's shape (issue #255
-    User Story 16). Skipped (not failed) when gdstk isn't installed --
-    guarded inside this one test, not at module level, so the rest of this
-    file still runs without the optional geometry extra."""
-    pytest.importorskip(
-        "gdstk", reason="gdstk not installed -- run `uv sync --extra geometry` first"
-    )
+    User Story 16). gdstk is a hard dependency (issue #348), so this no
+    longer needs an importorskip guard."""
     from geometry.unit_cell import generate_coded_unit_cell_array
 
     result = combinatorial_symbol_placement(

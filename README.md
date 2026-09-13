@@ -276,9 +276,9 @@ survey behind these choices.
 - **CSXCAD** — openEMS's own geometry/materials library. No PyPI package: build from
   source or install a platform-specific pre-built wheel, see
   [docs.openems.de/python/install.html](https://docs.openems.de/python/install.html).
-  Separately, `pip install '.[geometry]'` installs **gdstk**, this repo's other
-  geometry-generation dependency, which *is* a regular PyPI package — see
-  `geometry/unit_cell.py` and `pyproject.toml`'s `geometry` extra.
+  Separately, **gdstk** — this repo's other geometry-generation dependency, and *is* a
+  regular PyPI package — installs with the rest of `uv sync`/`pip install .`, no extra
+  needed (issue #348) — see `geometry/unit_cell.py`.
 - **OpenParEM** (OpenParEM2D/3D) — full-wave FEM for antenna far-field gain, directivity
   and efficiency. Source or pre-compiled binary only, not pip-installable.
   `simulation/openparem.py`
@@ -509,6 +509,7 @@ prior art, the superposition coupling error bar, and the rest.
 | [`docs/FREE_AND_OPEN_SOURCE_TOOLING.md`](docs/FREE_AND_OPEN_SOURCE_TOOLING.md) | The free/OSS survey behind the solver choices |
 | [`docs/tools/`](docs/tools/README.md) | Per-tool capability research for every external simulator, geometry tool, component-sourcing API, and knowledge-ingestion source this repo wires up — what each can do beyond what its adapter uses today |
 | [`docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md`](docs/KNOWLEDGE_PIPELINE_EXTERNAL_REVIEW.md) | Gap analysis of the knowledge pipeline (embedding-version tracking, chunk dedup, retrieval feedback) |
+| [`docs/em-field-visualization-design-panel.md`](docs/em-field-visualization-design-panel.md) | Design-panel output behind issue #337's EM field viewer — the "hero view" and finite-GPU-solve convergence six independent architects reached, plus the raw panel transcript it was drawn from |
 | [`verification/README.md`](verification/README.md) | The verification matrix, plus the retrieval-quality gate and simulator reference cases |
 | [`docs/literature-validation-cases.md`](docs/literature-validation-cases.md) | Four published metasurfaces reconstructed and scored against their authors' own measurements — one executed (and failing informatively), three blocked on named missing information, and the scope limits that would apply even if all four passed |
 | [`AGENTS.md`](AGENTS.md) / [`docs/agents/`](docs/agents/) | Repo conventions for AI coding agents |

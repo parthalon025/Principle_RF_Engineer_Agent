@@ -22,6 +22,10 @@ from designs.service import record_engineering_result as _record_engineering_res
 from designs.service import update_design_status as _update_design_status
 from designs.service import verify_requirement as _verify_requirement
 from geometry.freecad_curved import run_freecad_curved_geometry as _run_freecad_curved_geometry
+from geometry.unit_cell import GDSII_STRICT_MAX_POINTS as _GDSII_STRICT_MAX_POINTS
+from geometry.unit_cell import combine_shapes as _combine_shapes
+from geometry.unit_cell import export_polygon_gds as _export_polygon_gds
+from geometry.unit_cell import export_polygon_svg as _export_polygon_svg
 from knowledge.component_resolution import (
     reconcile_components_from_matches as _reconcile_components_from_matches,
 )
@@ -61,6 +65,15 @@ from orchestration.tooling import inspect_design_loop_state as _inspect_design_l
 from orchestration.tooling import start_new_design_loop as _start_new_design_loop
 from rf_tools.correlation import (
     correlate_simulation_measurement as _correlate_simulation_measurement,
+)
+from rf_tools.diffusive_checkerboard import (
+    diffracted_order_regime as _diffracted_order_regime,
+)
+from rf_tools.diffusive_checkerboard import (
+    materialize_checkerboard_unit_cell_array as _materialize_checkerboard_unit_cell_array,
+)
+from rf_tools.diffusive_checkerboard import (
+    score_diffusive_checkerboard as _score_diffusive_checkerboard,
 )
 from rf_tools.filter_synthesis import (
     realize_lowpass_stepped_impedance_microstrip,
@@ -872,10 +885,12 @@ def run_gprmax_simulation(geometry: dict, fdtd: dict | None = None, timeout_s: i
     gain extraction is NOT computed -- gprMax has no near-field-to-far-field tool at all
     (see simulation/gprmax.py's module docstring). Format verified against primary
     gprMax documentation (see simulation/gprmax.py's module docstring for citations) but
-    NOT against a real gprMax run -- gprMax is not installed in this environment and
-    (unlike NEC2++/openEMS) cannot be installed via pip at all, only via a conda + C-
-    compiler source build (see that module's "CORRECTION" section); treat any result as
-    unverified end-to-end until it has been run against the real tool at least once."""
+    NOT against a real gprMax run -- gprMax is built into this project's own Docker
+    image (Dockerfile), absent on a bare host, and cannot be installed via pip at all
+    on one, only via a C-compiler source build (see that module's "CORRECTION"
+    section); even inside the image this code has never actually been driven against
+    it, so treat any result as unverified end-to-end until it has been run against the
+    real tool at least once."""
     return _run_gprmax_simulation(geometry=geometry, fdtd=fdtd, timeout_s=timeout_s)
 
 
@@ -1065,6 +1080,196 @@ def generate_freecad_curved_geometry(
         timeout_s=timeout_s,
         executable=executable,
     )
+
+
+@mcp.tool()
+def compose_and_export_polygon_element(
+    shapes: list[dict],
+    svg_path: str,
+    gds_path: str,
+    precision_m: float = 1e-9,
+    normal_axis: str = "z",
+    elevation_m: float = 0.0,
+    max_points: int = _GDSII_STRICT_MAX_POINTS,
+) -> dict:
+    """Compose one non-rectilinear metamaterial element -- a split ring, a
+    Jerusalem cross, anything the element literature is actually made of --
+    from simple local box/polygon shapes via boolean union/subtract/
+    intersect/xor, and write it out as both SVG and GDSII: the two artwork
+    formats this project's printer software accepts (issue #348). This is
+    the one production caller of geometry.unit_cell.combine_shapes() --
+    before this tool, that composition capability was reachable only from
+    a test.
+
+    In plain terms: most useful RF unit-cell shapes are not simple boxes --
+    a split ring is a ring with a gap cut into it, a Jerusalem cross is a
+    cross with extra tabs on each arm. This tool builds such a shape the
+    way a laser cutter would: start with one shape, then add, subtract,
+    keep-only-the-overlap, or keep-only-the-non-overlap of further shapes,
+    until the final outline is what a fabricator can actually print.
+
+    `shapes`: combine_shapes()'s own `shapes` argument -- a non-empty list
+    of {"kind": "box" (p1_m/p2_m, 2D local corners) | "polygon" (points_m,
+    >=3 2D local vertices), "operation": "add" (default, first shape must
+    be this) | "subtract" | "intersect" | "xor"}, boolean-combined in list
+    order. See geometry.unit_cell.combine_shapes's own docstring for the
+    full shape/example (an SRR: an outer box, minus a smaller concentric
+    box, minus a thin gap-notch box).
+
+    `svg_path`/`gds_path`: where the two artwork files are written.
+    `precision_m` (default 1e-9, i.e. nanometer resolution in meters) sets
+    both the boolean-combination snapping tolerance and, if the composed
+    outline exceeds `max_points` (default 199, GDSII's own official vertex
+    ceiling -- pass 8190 if the target printer software is confirmed to
+    accept the wider, non-strict convention), the fracturing tolerance --
+    see geometry.unit_cell's module docstring and export_polygon_gds's own
+    docstring for why this must be explicit rather than left to gdstk's
+    own micrometer-calibrated defaults, which would otherwise silently
+    misrepresent or deform this project's meter-valued geometry.
+
+    Returns {"svg_path": str, "gds_path": str, "num_polygons": int} -- the
+    written file paths (echoing the input, since neither writer changes
+    it) and how many disjoint polygons the composed element produced (a
+    boolean "subtract"/"xor" can legitimately split one shape into
+    several)."""
+    primitives = _combine_shapes(
+        shapes, precision_m=precision_m, normal_axis=normal_axis, elevation_m=elevation_m
+    )
+    written_svg = _export_polygon_svg(
+        primitives, svg_path, precision_m=precision_m, max_points=max_points
+    )
+    written_gds = _export_polygon_gds(
+        primitives, gds_path, precision_m=precision_m, max_points=max_points
+    )
+    return {"svg_path": written_svg, "gds_path": written_gds, "num_polygons": len(primitives)}
+
+
+@mcp.tool()
+def score_and_materialize_diffusive_checkerboard(
+    symbol_entries: list[dict],
+    element_family: str,
+    frequency_points_hz: list[float],
+    incidence_angle_deg: float,
+    process_id: int,
+    delta_phi_max_deg: float,
+    pitch_m: list[float],
+    wavelength_m: float,
+    rcsr_db: float | None = None,
+    panel_size_m: list[float] | None = None,
+    symbol_library: dict | None = None,
+    threshold_db: float | None = None,
+    theta_min_deg: float | None = None,
+    max_block_n: int = 32,
+    design_id: int | None = None,
+) -> dict:
+    """Score a plain 1:1 alternating DIFFUSIVE checkerboard -- the special
+    case where exactly two already-characterised tiles alternate across
+    the whole aperture (issue #550; patent US12089385B2's own Example 7
+    embodiment) -- and, given `symbol_library`, materialize its unit-cell
+    array geometry from the winning tile pair, in the same call.
+
+    In plain terms: a checkerboard of two tile shapes that each reflect a
+    radar wave 180 degrees out of step with the other scatters the wave
+    away instead of bouncing it straight back, like a mirrored disco ball
+    versus a flat mirror. This tool answers, in decibels, how much of that
+    "radar return" two already-measured tiles remove across a frequency
+    band -- at the worst frequency in the band, not an optimistic average
+    -- and, given those tiles' real shapes, produces a ready-to-print
+    layout of the actual checkerboard panel.
+
+    `symbol_entries`: an already-fetched `designs.element_alphabet.
+    fetch_symbol_entries` result (or a hand-built list with the same
+    shape). This tool resolves the two tiles it needs from it directly --
+    see `rf_tools.diffusive_checkerboard.resolve_checkerboard_tile_symbols`
+    -- rather than taking tile ids as separate arguments, so a caller never
+    has to pick which two symbols to compare by hand.
+
+    `frequency_points_hz`/`incidence_angle_deg`/`process_id` are the
+    alphabet-lookup key at each point in the band; `delta_phi_max_deg` is
+    the alphabet-level coupling-error budget
+    (`rf_tools.diffusive_checkerboard.phase_error_deg`'s own argument).
+    `threshold_db` is a positive dB magnitude ("at least this much
+    reduction"); leave it unset to use the field's own 10 dB default
+    (flagged as a filled default in the response, never silently assumed
+    to be a customer requirement -- docs/requirement-derived-thresholds.md).
+
+    `rcsr_db`/`pitch_m`/`wavelength_m`/`panel_size_m`/`theta_min_deg`/
+    `max_block_n` feed `geometry.unit_cell.block_size_from_sizing_rule`
+    (via `rf_tools.diffusive_checkerboard.
+    materialize_checkerboard_unit_cell_array`) and the diffracted-order
+    regime check -- `pitch_m`/`panel_size_m` are `[x, y]` pairs in metres.
+    `symbol_library` (an id -> geometry-primitive-or-list mapping, the same
+    shape `generate_coded_unit_cell_array` takes) is optional: scoring only
+    needs each tile's characterised RESPONSE curve (already inside
+    `symbol_entries`), while materialization additionally needs each
+    tile's own GEOMETRY primitives -- pass `None` to get a score alone,
+    before spending effort on geometry that has not been drawn yet.
+
+    Pass `design_id` to also record the scoring report as an
+    `engineering_results` row against that design (the same convention
+    `calculate_wavelength` and its siblings use); the return value then
+    gains a `recorded_as` field naming the new row's id. The recorded
+    `provenance` is this call's own weakest-of tile provenance (never a
+    fixed per-tool constant), since a DIFFUSIVE score is only as
+    trustworthy as its weaker input tile.
+
+    `rcsr_db`/`panel_size_m` are needed only for materialization -- omit
+    both, along with `symbol_library`, to score without them.
+
+    Returns the scoring report (`score_diffusive_checkerboard`'s own
+    shape: `tile_a`/`tile_b`, the full per-frequency `curve`, the worst
+    frequency and its reduction, `threshold_db`/`threshold_is_default`/
+    `meets_threshold`, and the weakest-of `provenance` across every tile
+    lookup made) plus `diffracted_order_regime` (whether this tile pitch
+    can launch a propagating diffracted order at `wavelength_m`, and so
+    which bound regime applies -- `NO_PHYSICAL_BOUND` or
+    `ROZANOV_BOUNDED`; evaluated at the SMALLER of `pitch_m`'s two axes,
+    the more conservative of the two for a non-square pitch, since the
+    checkerboard-supercell-period formula this check is built on is
+    inherently one-dimensional), and, when `symbol_library` is given,
+    `unit_cell_array`: the materialized primitive list."""
+    pitch = (pitch_m[0], pitch_m[1])
+    score = _score_diffusive_checkerboard(
+        symbol_entries,
+        element_family,
+        frequency_points_hz,
+        incidence_angle_deg,
+        process_id,
+        delta_phi_max_deg,
+        threshold_db=threshold_db,
+    )
+    result: dict = {
+        **score,
+        "diffracted_order_regime": _diffracted_order_regime(min(pitch), wavelength_m),
+    }
+    if symbol_library is not None:
+        if rcsr_db is None or panel_size_m is None:
+            raise ValueError(
+                "rcsr_db and panel_size_m are both required to materialize a "
+                "unit-cell array (symbol_library was given); omit symbol_library "
+                "too to get a score alone without them"
+            )
+        result["unit_cell_array"] = _materialize_checkerboard_unit_cell_array(
+            score["tile_a"],
+            score["tile_b"],
+            symbol_library,
+            pitch,
+            delta_phi_max_deg,
+            rcsr_db,
+            wavelength_m,
+            (panel_size_m[0], panel_size_m[1]),
+            theta_min_deg=theta_min_deg,
+            max_block_n=max_block_n,
+        )
+    if design_id is not None:
+        recorded = _record_engineering_result(
+            design_id=design_id,
+            tool_name="score_and_materialize_diffusive_checkerboard",
+            value=result,
+            provenance=result["provenance"],
+        )
+        result["recorded_as"] = recorded["engineering_result_id"]
+    return result
 
 
 @mcp.tool()

@@ -133,14 +133,15 @@ jobs:
       # LLM credential appearing in this environment later would skip a test
       # with a stated reason, never silently change what is verified.
       #
-      # The pyproject optional extras (hfss, measurement, geometry, ltspice,
-      # kicad) are likewise not installed by `uv sync --frozen --group dev`,
-      # so their tests skip with their own stated reasons -- e.g.
-      # tests/test_pyvisa_sim.py "could not import 'pyvisa'" and
-      # tests/test_geometry_unit_cell.py "gdstk not installed -- run
-      # `uv sync --extra geometry` first". `-rs` on the pytest step below
-      # prints every skip reason in the run log, so a skipped test is always
-      # visible and attributable rather than quietly absent from the count.
+      # The pyproject optional extras (hfss, measurement, ltspice, kicad) are
+      # likewise not installed by `uv sync --frozen --group dev`, so their
+      # tests skip with their own stated reasons -- e.g. tests/test_pyvisa_
+      # sim.py "could not import 'pyvisa'". gdstk (geometry/unit_cell.py) is
+      # no longer one of these -- issue #348 promoted it to a hard
+      # dependency, so tests/test_geometry_unit_cell.py runs for real here
+      # rather than skipping. `-rs` on the pytest step below prints every
+      # skip reason in the run log, so a skipped test is always visible and
+      # attributable rather than quietly absent from the count.
 
     steps:
       # fetch-depth: 0 (full history, not actions/checkout@v4's default

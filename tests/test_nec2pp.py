@@ -4,8 +4,10 @@
 """Tests for NEC2++ deck generation, execution, and result parsing
 (issue #38).
 
-The real `nec2++` binary is NOT installed in this environment (confirmed
-via `which nec2++` during implementation) so `Nec2ppSimulator.run()` is
+The real `nec2++` binary is built into this project's own Docker image
+(Dockerfile) but absent on a bare host (confirmed via `which nec2++` during
+implementation, run outside that image; issue #480) and never actually
+driven by this test suite even inside it, so `Nec2ppSimulator.run()` is
 exercised here only against small fake "nec2++" scripts checked in below
 (via `tmp_path`), per the Phase 6-8 testing decision cited in the ticket:
 subprocess plumbing (argument shape, nonzero exit, timeout) and result

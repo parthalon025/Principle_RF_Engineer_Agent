@@ -4,10 +4,12 @@
 """Tests for Qucs-S/qucsator netlist generation, execution, and S-parameter
 result parsing (issue #58).
 
-The real `qucsator_rf` binary is NOT installed in this environment
-(confirmed via `which qucsator_rf` / `which qucsator` during implementation,
-both exit 1) so `QucsSimulator.run()` is exercised here only against small
-fake "qucsator_rf" scripts checked in below (via `tmp_path`), per the same
+The real `qucsator_rf` binary is built into this project's own Docker
+image (Dockerfile) but absent on a bare host (confirmed via `which
+qucsator_rf` / `which qucsator` during implementation, run outside that
+image, both exit 1; issue #480) and never actually driven by this test
+suite even inside it, so `QucsSimulator.run()` is exercised here only
+against small fake "qucsator_rf" scripts checked in below (via `tmp_path`), per the same
 Phase 6-8 fake-executable testing decision ticket #38/#39 used for
 NEC2++/openEMS: subprocess plumbing (argument shape, nonzero exit, timeout,
 missing-output-file) and result parsing are tested; real RF circuit physics

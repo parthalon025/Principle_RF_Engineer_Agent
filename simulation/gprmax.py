@@ -307,11 +307,17 @@ class GprmaxSimulator(Simulator):
 #     `{"computed": False, ...}`, structurally parallel to nec2pp.py's
 #     `pattern`/`gain_dbi` and openems.py's `far_field` keys.
 #
-# HONEST CAVEAT: gprMax is NOT installed in this environment, and (per the
-# "CORRECTION" section above) genuinely CANNOT be installed via a simple
-# pip/uv command here at all -- it requires a conda environment plus a C
-# compiler with OpenMP support to compile its Cython extensions, none of
-# which this environment provides. Deck generation and result parsing
+# HONEST CAVEAT (issue #480: three distinct claims, not one). gprMax is
+# built into a dedicated venv (`/opt/gprmax-venv`, `GPRMAX_PYTHON` env var)
+# in this project's own Docker image (Dockerfile) -- it is NOT genuinely
+# absent everywhere. It IS absent on a bare host outside that image, and (per
+# the "CORRECTION" section above) genuinely CANNOT be installed via a simple
+# pip/uv command on a bare host at all -- it requires a C compiler with
+# OpenMP support to compile its Cython extensions, which a bare host running
+# this code may not have (a venv, not conda specifically, is what the image
+# actually uses, per gprMax's own documented supported install routes). And
+# even inside the image, this code has never actually been DRIVEN against
+# the real tool. Deck generation and result parsing
 # below are built to the letter of the documented/verified .in command
 # syntax and .out HDF5 structure cited above, and exercised in tests only
 # against (a) a small fake "python -m gprMax" script (mirroring nec2pp.py's/
@@ -946,9 +952,11 @@ def run_gprmax_simulation(
     See this module's header comment for the format-verification citations
     and the honest caveat: deck generation and result parsing are built to
     the documented/verified gprMax .in/.out formats, not to a real gprMax
-    run in this environment (gprMax genuinely cannot be installed here at
-    all -- no pip package exists, and it needs a conda + C-compiler build,
-    see the "CORRECTION" section of this module's header comment).
+    run -- gprMax is built into this project's own Docker image (a
+    dedicated venv, per the Dockerfile) but genuinely cannot be installed
+    via a simple pip/uv command on a bare host at all -- no pip package
+    exists, and it needs a C-compiler build (see the "CORRECTION" section
+    of this module's header comment, and issue #480).
     """
     work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="gprmax_"))
     work_dir.mkdir(parents=True, exist_ok=True)

@@ -1211,36 +1211,133 @@ DATASHEET_SEED_ENTRIES: list[dict[str, Any]] = [
     #    the citation is valid over -- see this module's docstring's "WHY AN
     #    ENTRY'S FREQUENCY IS A BAND" section -- so both shapes are that same
     #    rule applied to two differently-shaped claims.
-    *[
-        add_entry(
-            material="Isola Astra MT77",
-            property_name="eps_r",
-            frequency_low_hz=f,
-            frequency_high_hz=f,
-            value=3.00,
-            unit="unitless",
-            provenance=MANUFACTURER_SPECIFIED,
-            method="datasheet, published test point",
-            note="One of five published points (2/5/10/15/20 GHz) -- the only multi-point "
-            "manufacturer dataset in this batch",
-            citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
-        )
-        for f in (2.0e9, 5.0e9, 1.0e10, 1.5e10, 2.0e10)
-    ],
-    *[
-        add_entry(
-            material="Isola Astra MT77",
-            property_name="tan_delta",
-            frequency_low_hz=f,
-            frequency_high_hz=f,
-            value=0.0017,
-            unit="unitless",
-            provenance=MANUFACTURER_SPECIFIED,
-            method="datasheet, published test point",
-            citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
-        )
-        for f in (2.0e9, 5.0e9, 1.0e10, 1.5e10, 2.0e10)
-    ],
+    #
+    #    Issue #420: written as ten literal add_entry() calls (one per
+    #    published point), not a list-comprehension splat -- every other
+    #    multi-point block in this file (see RO4003C's two tan_delta points
+    #    below) uses one literal call per point, and a splat here made this
+    #    file solve the same "same value at N published frequencies"
+    #    problem two different ways.
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="eps_r",
+        frequency_low_hz=2.0e9,
+        frequency_high_hz=2.0e9,
+        value=3.00,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 2 GHz",
+        note="One of five published points (2/5/10/15/20 GHz) -- the only multi-point "
+        "manufacturer dataset in this batch",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="eps_r",
+        frequency_low_hz=5.0e9,
+        frequency_high_hz=5.0e9,
+        value=3.00,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 5 GHz",
+        note="One of five published points (2/5/10/15/20 GHz) -- the only multi-point "
+        "manufacturer dataset in this batch",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="eps_r",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=3.00,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 10 GHz",
+        note="One of five published points (2/5/10/15/20 GHz) -- the only multi-point "
+        "manufacturer dataset in this batch",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="eps_r",
+        frequency_low_hz=1.5e10,
+        frequency_high_hz=1.5e10,
+        value=3.00,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 15 GHz",
+        note="One of five published points (2/5/10/15/20 GHz) -- the only multi-point "
+        "manufacturer dataset in this batch",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="eps_r",
+        frequency_low_hz=2.0e10,
+        frequency_high_hz=2.0e10,
+        value=3.00,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 20 GHz",
+        note="One of five published points (2/5/10/15/20 GHz) -- the only multi-point "
+        "manufacturer dataset in this batch",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="tan_delta",
+        frequency_low_hz=2.0e9,
+        frequency_high_hz=2.0e9,
+        value=0.0017,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 2 GHz",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="tan_delta",
+        frequency_low_hz=5.0e9,
+        frequency_high_hz=5.0e9,
+        value=0.0017,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 5 GHz",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="tan_delta",
+        frequency_low_hz=1.0e10,
+        frequency_high_hz=1.0e10,
+        value=0.0017,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 10 GHz",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="tan_delta",
+        frequency_low_hz=1.5e10,
+        frequency_high_hz=1.5e10,
+        value=0.0017,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 15 GHz",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
+    add_entry(
+        material="Isola Astra MT77",
+        property_name="tan_delta",
+        frequency_low_hz=2.0e10,
+        frequency_high_hz=2.0e10,
+        value=0.0017,
+        unit="unitless",
+        provenance=MANUFACTURER_SPECIFIED,
+        method="datasheet, published test point, 20 GHz",
+        citation=f"Isola Astra MT77 datasheet, via {_DATASHEET_SWEEP}",
+    ),
     # -- Rogers RO4003C: same Process/Design Dk split as RO4350B above. See
     #    that entry's comment for why both are stored and which one a printed
     #    pattern actually wants.

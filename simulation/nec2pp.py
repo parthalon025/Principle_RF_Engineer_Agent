@@ -102,14 +102,18 @@ class Nec2ppSimulator(Simulator):
 # taken from "Example 1" in the same Part III guide (p.83-86), the only
 # worked example in that document showing full program output text.
 #
-# HONEST CAVEAT: the real nec2++ binary is not installed in this environment
-# (confirmed via `which nec2++`, exit 1) and was not available to actually
-# run against these generated decks. Deck generation and output parsing
-# below are built to the letter of the documented/verified format above, and
-# exercised in tests only against a small fake "nec2++" script that mimics
-# that documented output shape (see tests/test_nec2pp.py) -- NOT against a
-# real nec2++ binary's actual output. Treat this as unverified end-to-end
-# until it has been run against the real tool at least once.
+# HONEST CAVEAT (issue #480: three distinct claims, not one). nec2++ is
+# built from source (tmolteno/necpp v2.3.4) and confirmed on PATH in this
+# project's own Docker image (Dockerfile) -- it is NOT genuinely absent
+# everywhere. It IS absent on a bare host outside that image (confirmed via
+# `which nec2++`, exit 1, in this sandbox). And even inside the image, this
+# code path has never actually been DRIVEN against the real binary: deck
+# generation and output parsing below are built to the letter of the
+# documented/verified format above, and exercised in tests only against a
+# small fake "nec2++" script that mimics that documented output shape (see
+# tests/test_nec2pp.py) -- NOT against a real nec2++ binary's actual output.
+# Treat this as unverified end-to-end until it has actually been run, inside
+# that image, against the real tool at least once.
 # ---------------------------------------------------------------------------
 
 
@@ -344,8 +348,10 @@ def parse_nec2_output(raw_output: str) -> dict[str, Any]:
     Section formats (ANTENNA INPUT PARAMETERS, RADIATION PATTERNS) are taken
     from "Example 1" of the primary source cited in this module's header
     comment. See that comment for the honest caveat: this has been verified
-    against the *documented* output format, not against real nec2++ output,
-    since no real binary was available in this environment.
+    against the *documented* output format, not against real nec2++ output --
+    the real binary is built into this project's own Docker image but was
+    absent in the implementing environment, and has never actually been
+    driven even inside the image (issue #480).
     """
     lines = raw_output.splitlines()
 

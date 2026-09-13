@@ -142,10 +142,12 @@ excitation (only one `#transmission_line` port); and any near-field-to-far-
 field transform or gain/pattern extraction (`far_field` is always
 `{"computed": False, ...}` — gprMax has no such tool at all, unlike openEMS's
 separate nf2ff utility). The module's own header also flags that gprMax is
-not installed in this environment and cannot be via a simple `pip`/`uv`
-command (it needs conda plus a C/OpenMP compiler), so this adapter is
-exercised only against a fake `python -m gprMax` script and hand-built
-synthetic `.out` files, not a real gprMax run.
+built into this project's own Docker image (a dedicated venv, per the
+Dockerfile) but absent on a bare host and cannot be installed there via a
+simple `pip`/`uv` command (it needs a C/OpenMP compiler to build its Cython
+extensions), and even inside the image has never actually been driven, so
+this adapter is exercised only against a fake `python -m gprMax` script and
+hand-built synthetic `.out` files, not a real gprMax run (issue #480).
 
 ## Capabilities not yet used here
 

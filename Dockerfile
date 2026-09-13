@@ -309,19 +309,21 @@ ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-# --extra geometry / --extra kicad: this image installs the EXTERNAL tools
-# (KiCad via apt above; gdstk's consumers in geometry/unit_cell.py) but a bare
-# `uv sync` installs no optional extras at all, so their Python clients were
-# absent and both adapters failed at import inside a container that had
-# everything else they needed. gdstk is geometry/unit_cell.py's only
-# dependency and the sole route to a fabrication file; kicad-python (kipy) is
-# what simulation/kicad_gerber2ems.py imports to drive the KiCad installed
-# above. Deliberately NOT --extra hfss (licence-confined workstation only,
-# ADR-0012) or --extra ltspice (LTspice is Windows freeware and is not in this
-# image), so those two stay absent on purpose rather than by omission.
-RUN uv sync --frozen --no-install-project --extra geometry --extra kicad
+# --extra kicad: this image installs the EXTERNAL KiCad tool (via apt above),
+# but a bare `uv sync` installs no optional extras at all, so kicad-python
+# (kipy) -- what simulation/kicad_gerber2ems.py imports to drive it -- was
+# absent inside a container that had the KiCad binary itself. gdstk (what
+# geometry/unit_cell.py needs) used to need its own `--extra geometry` here
+# too, before issue #348 made it a hard `dependencies` entry instead (it has
+# no license/hardware gate of its own, so a bare `uv sync` now installs it
+# unconditionally) -- `--extra geometry` no longer exists as an extras group
+# and passing it here would fail the build. Deliberately NOT --extra hfss
+# (licence-confined workstation only, ADR-0012) or --extra ltspice (LTspice
+# is Windows freeware and is not in this image), so those two stay absent on
+# purpose rather than by omission.
+RUN uv sync --frozen --no-install-project --extra kicad
 COPY . .
-RUN uv sync --frozen --extra geometry --extra kicad
+RUN uv sync --frozen --extra kicad
 
 # docker-compose.yml's `app` service bind-mounts the live repo over /app
 # AND puts /app/.venv on its own separate named volume (app_venv) -- so the
@@ -335,7 +337,7 @@ RUN uv sync --frozen --extra geometry --extra kicad
 COPY <<'EOF' /entrypoint.sh
 #!/bin/sh
 set -e
-uv sync --frozen --no-progress --extra geometry --extra kicad
+uv sync --frozen --no-progress --extra kicad
 exec "$@"
 EOF
 RUN chmod +x /entrypoint.sh

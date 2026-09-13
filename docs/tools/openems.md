@@ -110,8 +110,10 @@ own `pattern`/`gain_dbi` keys. **`run_openems_simulation()`** orchestrates
 all of the above, tagging results `provenance: "SIMULATED"`.
 
 The module's own header states the real `openEMS` binary (and the
-separate `nf2ff` binary) are **not installed in this environment**, so
-none of this has been exercised end-to-end against a real run — an
+separate `nf2ff` binary) are **built into this project's own Docker image
+(Dockerfile)** but **absent on a bare host**, and even inside the image
+neither has ever actually been driven by this code (issue #480), so none
+of this has been exercised end-to-end against a real run — an
 explicitly-flagged gap, not a silent one.
 
 ## Capabilities not yet used here

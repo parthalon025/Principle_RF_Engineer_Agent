@@ -1,8 +1,10 @@
 """Tests for Xyce netlist generation, execution, and result parsing
 (issue #57).
 
-The real `Xyce` binary is NOT installed in this environment (confirmed via
-`which Xyce`/`which xyce` during implementation) so `XyceSimulator.run()`
+The real `Xyce` binary is built into this project's own Docker image
+(Dockerfile) but absent on a bare host (confirmed via `which Xyce`/`which
+xyce` during implementation, run outside that image; issue #480) and never
+actually driven by this test suite even inside it, so `XyceSimulator.run()`
 is exercised here only against small fake "Xyce" scripts checked in below
 (via `tmp_path`), the same subprocess-plumbing-only testing approach
 tests/test_nec2pp.py and tests/test_openems.py use for their own

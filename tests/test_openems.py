@@ -4,10 +4,13 @@
 """Tests for openEMS FDTD-XML generation, execution, and result parsing
 (issue #39).
 
-The real `openEMS` binary is NOT installed in this environment (confirmed
-via `which openEMS` during implementation) so `OpenemsSimulator.run()` is
-exercised here only against small fake "openEMS" scripts checked in below
-(via `tmp_path`), per the same Phase 6-8 testing decision ticket #38 used
+The real `openEMS` binary is built into this project's own Docker image
+(Dockerfile) but absent on a bare host (confirmed via `which openEMS`
+during implementation, run outside that image; issue #480) and never
+actually driven by this test suite even inside it, so
+`OpenemsSimulator.run()` is exercised here only against small fake
+"openEMS" scripts checked in below (via `tmp_path`), per the same Phase
+6-8 testing decision ticket #38 used
 for NEC2++: subprocess plumbing (argument shape, nonzero exit, timeout) and
 result parsing are tested; the physics itself is out of scope for automated
 tests.
