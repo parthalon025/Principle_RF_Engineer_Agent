@@ -112,3 +112,71 @@ class TestApplySchemaAdvisoryLock:
                 cur.execute("SELECT pg_advisory_unlock(%s)", (SCHEMA_APPLY_LOCK_KEY,))
         finally:
             probe.close()
+
+
+@pytest.mark.skipif(
+    not _DB_REACHABLE,
+    reason=f"no reachable Postgres at {_redacted(_TEST_DATABASE_URL)!r} in this sandbox",
+)
+class TestSchemaIsIdempotent:
+    """Issue #412: `db/schema.sql`'s own header, and `apply_schema`'s
+    docstring, both claim re-running the file against an already-
+    initialized database is safe. Nothing before this proved it -- a
+    future edit that accidentally added a non-idempotent statement (a bare
+    `ALTER TABLE ... ADD COLUMN` with no `IF NOT EXISTS`, say) would first
+    be caught by a real failure against a live database, not by CI. These
+    two tests are that regression test, against a real Postgres (the same
+    one `TestApplySchemaAdvisoryLock` above already requires and skips
+    without)."""
+
+    def test_applying_schema_twice_in_a_row_succeeds(self):
+        """The direct claim: apply, then immediately re-apply, with no
+        error either time. `apply_schema` is already exercised once by
+        every test above that calls it (and by this suite's own CI setup,
+        per README.md), so this DB is never truly "fresh" by the time this
+        test runs -- but that only makes the claim being tested stronger:
+        re-applying against whatever state this shared database is
+        actually in must still succeed."""
+        apply_schema(_TEST_DATABASE_URL)  # first application: must not raise
+        apply_schema(_TEST_DATABASE_URL)  # immediate re-application: must not raise either
+
+    def test_second_apply_does_not_touch_existing_data(self):
+        """The sharper claim AC 2 asks for: re-applying is not just
+        error-free, it is a true no-op for data that already exists. This
+        catches a hypothetical future statement that would error-free but
+        silently truncate or rewrite a column (e.g. a `DROP TABLE` /
+        `CREATE TABLE` pair standing in for an `ALTER`) -- something
+        test_applying_schema_twice_in_a_row_succeeds above could not
+        catch, since a silent data loss would still exit clean."""
+        apply_schema(_TEST_DATABASE_URL)  # the table must already exist before inserting
+
+        conn = psycopg.connect(_TEST_DATABASE_URL, autocommit=True)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO documents (title, source_type, classification) "
+                    "VALUES (%s, %s, %s) RETURNING id, created_at",
+                    ("issue #412 idempotency probe", "test_fixture", "PUBLIC"),
+                )
+                document_id, created_at = cur.fetchone()
+            try:
+                apply_schema(_TEST_DATABASE_URL)  # the re-apply under test
+
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT title, source_type, classification, created_at "
+                        "FROM documents WHERE id = %s",
+                        (document_id,),
+                    )
+                    row = cur.fetchone()
+                assert row == (
+                    "issue #412 idempotency probe",
+                    "test_fixture",
+                    "PUBLIC",
+                    created_at,
+                )
+            finally:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM documents WHERE id = %s", (document_id,))
+        finally:
+            conn.close()

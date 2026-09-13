@@ -96,7 +96,14 @@ GRATING_GEOMETRY = {
             "epsilon_r": 7.0,
         }
     ],
-    "mesh": {"nx": 1, "ny": 1, "nz": 1},
+    # Issue #464: the dielectric bar's y-range (0.0-0.01) spans the FULL
+    # cell width along y, so it contributes no interior y feature line --
+    # "ny": 1 would leave exactly 1 element layer along y, which a real
+    # Palace binary refuses (it requires >= 3 along each periodic axis).
+    # "ny": 3 gives 3 layers along y; "nx": 1 already gives 3 layers along
+    # x on its own, since the bar's x-range (0.01-0.03) IS interior to the
+    # 0.04-wide cell and so contributes two feature lines.
+    "mesh": {"nx": 1, "ny": 3, "nz": 1},
 }
 
 
@@ -136,6 +143,29 @@ def test_generate_palace_mesh_element_and_vertex_counts_match_declared():
     assert int(boundary_count_line) == result["num_boundary_faces"]
     vertices_count_line = lines[lines.index("vertices") + 1]
     assert int(vertices_count_line) == result["num_vertices"]
+
+
+def test_generate_palace_mesh_reports_element_layers_along_periodic_axes():
+    """Issue #464: num_x_layers/num_y_layers count element LAYERS actually
+    written, not the caller's nx/ny -- a feature line from an embedded
+    material can subdivide a cell further than nx/ny alone would. Here the
+    dielectric bar's x-range is interior to the cell (adding 2 feature
+    lines -> 3 x-intervals) while its y-range spans the full cell width
+    (adding none -> 1 y-interval), each then multiplied by nx=1/ny=3."""
+    result = generate_palace_mesh(GRATING_GEOMETRY)
+    assert result["num_x_layers"] == 3
+    assert result["num_y_layers"] == 3
+
+
+def test_generate_palace_mesh_bare_cell_default_mesh_is_two_layers_each_axis():
+    """The adapter's documented mesh default (nx=ny=nz=2) on a bare,
+    featureless cell gives exactly 2 layers along each periodic axis --
+    one short of the 3 a real Palace binary requires (issue #464). This is
+    the exact geometry test_run_palace_simulation_refuses_a_mesh_a_real_
+    binary_would_reject exercises end to end."""
+    result = generate_palace_mesh({"unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01}})
+    assert result["num_x_layers"] == 2
+    assert result["num_y_layers"] == 2
 
 
 def test_generate_palace_mesh_elements_use_cube_geometry_type_5():
@@ -618,6 +648,30 @@ def test_generate_palace_config_driven_sweep_explicit():
     assert samples["NSample"] == 6
 
 
+def test_generate_palace_config_default_omits_save_step():
+    """Issue #349's own acceptance criterion: the default must stay off,
+    so an existing caller's config is unchanged and Palace does not
+    silently start writing field files to disk."""
+    config = generate_palace_config(
+        GRATING_GEOMETRY, mesh_file="m.mesh", output_dir="postpro", frequency_hz=10e9
+    )
+    assert "SaveStep" not in config["Solver"]["Driven"]
+
+
+def test_generate_palace_config_save_fields_emits_save_step():
+    """Issue #349: the field-save key is emitted, and only, when fields
+    are requested -- config["Solver"]["Driven"]["SaveStep"], per Palace's
+    own Configuration File Reference (Solver.Driven section)."""
+    config = generate_palace_config(
+        GRATING_GEOMETRY,
+        mesh_file="m.mesh",
+        output_dir="postpro",
+        frequency_hz=10e9,
+        save_fields=True,
+    )
+    assert config["Solver"]["Driven"]["SaveStep"] == 1
+
+
 def test_generate_palace_config_emits_explicit_finite_element_order():
     """Palace's own default finite-element order is 1, which is too coarse
     to reproduce its own dielectric-grating example at any practical mesh
@@ -1087,6 +1141,34 @@ def test_run_palace_simulation_propagates_simulator_error_on_failure(tmp_path: P
         )
 
 
+def test_run_palace_simulation_refuses_a_mesh_a_real_binary_would_reject(
+    tmp_path: Path, monkeypatch
+):
+    """Issue #464: a bare, featureless cell at the adapter's documented
+    mesh defaults (nx=ny=nz=2, i.e. this geometry with no "mesh" key at
+    all) produces exactly 2 element layers along x and along y -- one
+    short of what a real Palace binary requires (measured: 2/2/2 aborts
+    inside MPI with "Not enough mesh elements in periodic direction!";
+    3/3/3 solves). This must be refused before any subprocess launches,
+    naming the actual layer counts and the three-layer rule -- not left to
+    surface as an MPI abort. The fake executable here would raise
+    AssertionError if ever invoked, proving the refusal happens first."""
+
+    def exploding_run(self, job):
+        raise AssertionError("Palace must never be invoked on a mesh it would reject")
+
+    monkeypatch.setattr(PalaceSimulator, "run", exploding_run)
+    bare_geometry = {"unit_cell": {"lx_m": 0.01, "ly_m": 0.01, "lz_m": 0.01}}
+
+    with pytest.raises(SimulatorError, match="element layer"):
+        run_palace_simulation(
+            geometry=bare_geometry,
+            frequency_hz=10e9,
+            timeout_s=10,
+            workdir=str(tmp_path / "run_rejected_mesh"),
+        )
+
+
 def test_run_palace_simulation_missing_output_csv_is_honestly_computed_false(tmp_path: Path):
     """A run that 'succeeds' (exit 0) but never writes port-floquet-S.csv
     (e.g. no ports actually propagated, or a real-tool behavior this
@@ -1212,6 +1294,71 @@ def test_run_palace_simulation_passes_solver_order_into_the_config(tmp_path: Pat
     )
     config = json.loads(Path(result["config_file"]).read_text())
     assert config["Solver"]["Order"] == 2
+
+
+_FAKE_PALACE_WITH_FIELDS_PY = '''
+import json
+import sys
+from pathlib import Path
+
+CSV = """{csv}"""
+
+args = sys.argv[1:]
+assert args[0] == "-np", args
+config_path = Path(args[2])
+config = json.loads(config_path.read_text())
+output_dir = Path(config["Problem"]["Output"])
+output_dir.mkdir(parents=True, exist_ok=True)
+(output_dir / "port-floquet-S.csv").write_text(CSV)
+if "SaveStep" in config["Solver"]["Driven"]:
+    paraview_dir = output_dir / "paraview"
+    paraview_dir.mkdir(parents=True, exist_ok=True)
+    (paraview_dir / "field.vtu").write_text("<VTKFile>fake field data</VTKFile>")
+sys.exit(0)
+'''
+
+
+def _make_fake_palace_with_fields_py(tmp_path: Path, sample_csv: str) -> Path:
+    body = _FAKE_PALACE_WITH_FIELDS_PY.format(csv=sample_csv)
+    return make_fake_executable(tmp_path, body, name="fake_palace_with_fields")
+
+
+def test_run_palace_simulation_save_fields_leaves_readable_files_in_output_dir(tmp_path: Path):
+    """Issue #349's own acceptance criterion, end to end: a run with
+    fields requested must actually leave readable files behind in the
+    output directory -- not just emit the right config key (that half is
+    covered by test_generate_palace_config_save_fields_emits_save_step).
+    The fake executable here only writes to "paraview/" when it sees the
+    "SaveStep" key this module's config generator now emits, so a readable
+    file appearing there proves the key reached the config Palace acts on."""
+    script = _make_fake_palace_with_fields_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    result = run_palace_simulation(
+        geometry=GRATING_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_fields"),
+        save_fields=True,
+    )
+    field_file = Path(result["output_dir"]) / "paraview" / "field.vtu"
+    assert field_file.is_file()
+    assert field_file.read_text() == "<VTKFile>fake field data</VTKFile>"
+
+
+def test_run_palace_simulation_default_leaves_no_field_files(tmp_path: Path):
+    """The other half of #349's acceptance criteria: the default stays
+    off, so an existing caller sees no new files appear."""
+    script = _make_fake_palace_with_fields_py(tmp_path, SAMPLE_FLOQUET_CSV)
+    result = run_palace_simulation(
+        geometry=GRATING_GEOMETRY,
+        frequency_hz=10e9,
+        sweep={"start_hz": 8e9, "stop_hz": 10e9, "points": 2},
+        timeout_s=10,
+        executable=str(script),
+        workdir=str(tmp_path / "run_no_fields"),
+    )
+    assert not (Path(result["output_dir"]) / "paraview").exists()
 
 
 def test_run_palace_simulation_lossless_declared_false_with_conductivity_sheet(tmp_path: Path):

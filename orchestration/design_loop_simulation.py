@@ -98,6 +98,7 @@ from rf_tools.transmissive_absorber import (
     two_port_absorption as _two_port_absorption,
 )
 from simulation.base import SimulatorError as _SimulatorError
+from simulation.base import solver_workdir_is_durable as _solver_workdir_is_durable
 from simulation.meep import (
     PERIODIC_ABSORBER_VALIDITY as _MEEP_PERIODIC_ABSORBER_VALIDITY,
 )
@@ -334,6 +335,49 @@ def _handle_simulation(
     return handler(family, step_input)
 
 
+def _solver_workdir_durability_validity(workdir: str | None) -> list[dict[str, str]]:
+    """Issue #466: a load-bearing warning, in the same shape as
+    `simulation.meep.PERIODIC_ABSORBER_VALIDITY`, for exactly the case that
+    ticket leaves as the exception rather than the rule -- a solver run
+    whose `workdir` is NOT the durable, programme-owned directory
+    `simulation.base.new_solver_workdir` hands out by default (an explicit
+    `workdir` a caller supplied instead, e.g. still pointing into the OS's
+    own scratch area). A run using the default durable path returns an
+    empty list here, deliberately: firing this on every run regardless
+    (issue #345's original, blanket version of this warning) is what
+    CLAUDE.md's charter rules out -- "a warning is only useful if it is
+    rare and specific" -- and the whole point of #466 is to make the
+    non-durable case the rare one again.
+
+    `workdir` is `None` exactly when the underlying solver call raised or
+    returned nothing usable before recording one; that is a different
+    failure with its own signal (the step itself never completes), not a
+    durability question, so it is treated as durable here rather than
+    manufacturing a second warning about an absent fact."""
+    if workdir is None or _solver_workdir_is_durable(workdir):
+        return []
+    return [
+        {
+            "flag": "solver_workdir_not_durable",
+            "assumed": (
+                f"the solver's working directory ({workdir}) is NOT this programme's "
+                "own durable solver_artifacts root -- it was supplied explicitly "
+                "rather than left to the default"
+            ),
+            "costs": (
+                "whatever governs that directory's lifetime is unknown here; a later "
+                "reader (a Field bundle exporter, a human re-opening this decision) "
+                "may find the mesh, config or output gone"
+            ),
+            "cheapest_test": (
+                "re-run with no explicit workdir so the default durable path is used, "
+                "or copy the directory under solver_artifacts_root() before anything "
+                "might remove it"
+            ),
+        }
+    ]
+
+
 def _simulate_meep_floquet(
     family: Any,
     step_input: dict[str, Any],
@@ -442,7 +486,15 @@ def _simulate_meep_floquet(
         "energy_balance_violations": absorption_reading["energy_balance_violations"],
         "periodic_axes": geometry["periodic_axes"],
         "validity": [dict(entry) for entry in _MEEP_PERIODIC_ABSORBER_VALIDITY]
-        + absorption_reading["validity"],
+        + absorption_reading["validity"]
+        + _solver_workdir_durability_validity(result.get("workdir")),
+        # Where the solved geometry actually lives (issue #461, the #345
+        # gap for MEEP): `run_meep_simulation` already returns its own
+        # working directory; without recording it here a completed
+        # ABSORBER/ABSORBER_TRANSMISSIVE decision names no directory once
+        # persisted and reloaded, and a result can outlive the thing that
+        # produced it -- the same defect #345 fixed for Palace.
+        "workdir": result.get("workdir"),
         "provenance": result.get("provenance", "SIMULATED"),
     }
     return "simulation", recorded, recorded["provenance"]
@@ -661,6 +713,20 @@ def _simulate_palace_floquet(
         # Power-balance/passivity/reciprocity, carried through unmodified
         # (issue #221) -- warned on, never blocked on, per ADR-0028.
         "conservation_check": result.get("conservation_check"),
+        # Where the solved geometry actually lives (issue #345): without
+        # these, a completed decision names no mesh and no output
+        # directory once it is persisted and reloaded, and a result can
+        # outlive the thing that produced it. `run_palace_simulation`
+        # already returns all four; this is the one place they were being
+        # dropped on the way into the decision this loop records.
+        "workdir": result.get("workdir"),
+        "mesh_file": result.get("mesh_file"),
+        "config_file": result.get("config_file"),
+        "output_dir": result.get("output_dir"),
+        "num_mesh_elements": result.get("num_mesh_elements"),
+        # Issue #466: silent unless this run's workdir is NOT the durable
+        # default -- see _solver_workdir_durability_validity's docstring.
+        "validity": _solver_workdir_durability_validity(result.get("workdir")),
         "provenance": result.get("provenance", "SIMULATED"),
     }
     return "simulation", recorded, recorded["provenance"]

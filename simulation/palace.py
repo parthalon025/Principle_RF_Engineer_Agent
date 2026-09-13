@@ -360,11 +360,10 @@ import math
 import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from .base import SimulationResult, Simulator, SimulatorError
+from .base import SimulationResult, Simulator, SimulatorError, new_solver_workdir
 from .conservation_checks import check_palace_result
 
 # ---------------------------------------------------------------------------
@@ -776,7 +775,14 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
           "mesh": {"nx": int, "ny": int, "nz": int},  # optional, each
               default 2 -- elements per feature-interval along that axis;
               see module docstring's SCOPE note on why this is coarse by
-              default.
+              default. Issue #464: a real Palace binary's periodic
+              boundary condition requires at least 3 element LAYERS along
+              x and along y (run_palace_simulation checks this against
+              this function's own returned "num_x_layers"/"num_y_layers"
+              before ever running Palace) -- the nx=ny=2 default is one
+              short of that for a bare, featureless cell, though an
+              embedded material or PEC patch's own feature lines can push
+              the true layer count above nx/ny on their own.
         }
 
     x=0/x=lx and y=0/y=ly are the periodic (donor/receiver) face pairs;
@@ -1056,6 +1062,14 @@ def generate_palace_mesh(geometry: dict[str, Any]) -> dict[str, Any]:
         "num_elements": len(elements),
         "num_boundary_faces": len(boundary),
         "num_vertices": len(vertices),
+        # Element LAYERS actually written along each periodic axis -- issue
+        # #464. `nxv - 1`/`nyv - 1`, not `nx`/`ny`: an embedded material or
+        # PEC-patch feature line subdivides the cell further, so the true
+        # layer count a real Palace binary checks against can exceed the
+        # caller's own "mesh" nx/ny (see run_palace_simulation's docstring
+        # for the periodic-boundary rule this is checked against).
+        "num_x_layers": nxv - 1,
+        "num_y_layers": nyv - 1,
     }
 
 
@@ -1073,6 +1087,7 @@ def generate_palace_config(
     frequency_hz: float,
     sweep: dict[str, Any] | None = None,
     solver_order: int = 1,
+    save_fields: bool = False,
 ) -> dict[str, Any]:
     """Generate a Palace JSON config for a driven Floquet-port unit-cell
     simulation. `geometry` is the same dict passed to generate_palace_mesh
@@ -1149,6 +1164,22 @@ def generate_palace_config(
     accuracy knob, not a formality -- at order 1 the dielectric-grating
     validation of issue #210 was still several dB off the published answer
     on a mesh that order 2 got to within 0.02 dB (docs/palace-validation.md).
+
+    `save_fields` (optional, default False -- issue #349): whether Palace
+    writes the electric/magnetic field it computed to disk, as opposed to
+    computing it internally and discarding it once port-floquet-S.csv is
+    written. When True, this emits config["Solver"]["Driven"]["SaveStep"]
+    = 1 -- "how often, in number of frequency steps, to save computed
+    fields to disk for visualization with ParaView. Files are saved in the
+    paraview/ (and/or gridfunction/) directory under [Problem.Output]"
+    (awslabs.github.io/palace/dev/config/reference/, "Solver.Driven"
+    section) -- so a field is saved at every sampled frequency, not just
+    some. `False` omits the key entirely, which is Palace's own documented
+    default (SaveStep: 0, "disables saving files") -- this module changes
+    nothing about an existing caller's config unless it opts in. A run
+    that saves fields leaves those files inside `output_dir` (this
+    function's own argument), the same directory port-floquet-S.csv is
+    already read back from -- see run_palace_simulation's docstring.
     """
     unit_cell = geometry.get("unit_cell")
     if not unit_cell:
@@ -1281,6 +1312,23 @@ def generate_palace_config(
             )
         boundaries["Conductivity"] = conductivity_json
 
+    driven: dict[str, Any] = {
+        "Samples": [
+            {
+                "Type": "Linear",
+                "MinFreq": start_hz / 1e9,
+                "MaxFreq": stop_hz / 1e9,
+                "NSample": points,
+            }
+        ]
+    }
+    if save_fields:
+        # Issue #349: save a field at every sampled frequency rather than
+        # computing it and discarding it. Omitted (not "SaveStep": 0) when
+        # not requested, matching Palace's own documented default exactly
+        # -- see save_fields' own docstring paragraph above.
+        driven["SaveStep"] = 1
+
     return {
         "Problem": {"Type": "Driven", "Output": str(output_dir)},
         # L0=1.0 is set EXPLICITLY, never omitted -- Palace's own default
@@ -1295,16 +1343,7 @@ def generate_palace_config(
             # own default (1) is a silent accuracy ceiling, not a neutral
             # choice. See the solver_order argument's docstring.
             "Order": solver_order,
-            "Driven": {
-                "Samples": [
-                    {
-                        "Type": "Linear",
-                        "MinFreq": start_hz / 1e9,
-                        "MaxFreq": stop_hz / 1e9,
-                        "NSample": points,
-                    }
-                ]
-            },
+            "Driven": driven,
         },
     }
 
@@ -1495,6 +1534,47 @@ def parse_palace_output(csv_text: str) -> dict[str, Any]:
     return result
 
 
+# Issue #464. Measured directly against a real Palace v0.17.0 binary (same
+# 10mm x 10mm bare vacuum cell, 8-12 GHz): 2/2/2 and 2/3/3 element layers
+# both got "Not enough mesh elements in periodic direction!" from inside
+# MPI; 3/3/3 solved. This matches Palace's own periodic-boundary check
+# algebraically -- a periodic face pair along x contributes 2*Ny*Nz
+# boundary faces against Nx*Ny*Nz elements, so `GetNE() >
+# num_periodic_bc_elems` reduces to `Nx > 2`, and symmetrically `Ny > 2`
+# along y (z is unconstrained: it carries the two Floquet ports, not a
+# periodic pair). "Nx"/"Ny" here means element LAYERS actually written
+# (generate_palace_mesh's "num_x_layers"/"num_y_layers"), not the mesh
+# config's own "nx"/"ny" -- an embedded material or PEC patch can subdivide
+# a cell well past its stated nx/ny (see generate_palace_mesh's docstring).
+_MIN_PERIODIC_ELEMENT_LAYERS = 3
+
+
+def _check_periodic_layer_counts(mesh_result: dict[str, Any]) -> None:
+    """Raise SimulatorError, naming the actual layer counts and the rule
+    above, before a mesh Palace's own periodic-boundary check would reject
+    ever reaches a subprocess. Without this, the failure surfaces as an
+    MPI abort deep inside a real Palace run (see this constant's own
+    comment for the exact message) -- a message about MPI, not meshing,
+    for what is often the simplest possible request: a flat, featureless
+    unit cell."""
+    x_layers = mesh_result["num_x_layers"]
+    y_layers = mesh_result["num_y_layers"]
+    if x_layers >= _MIN_PERIODIC_ELEMENT_LAYERS and y_layers >= _MIN_PERIODIC_ELEMENT_LAYERS:
+        return
+    raise SimulatorError(
+        f"This geometry's mesh has {x_layers} element layer(s) along x and "
+        f"{y_layers} along y, but Palace's periodic boundary condition "
+        f"requires at least {_MIN_PERIODIC_ELEMENT_LAYERS} layers along EACH "
+        "periodic (x and y) direction -- fewer than that and a real Palace "
+        'binary aborts inside MPI with "Not enough mesh elements in '
+        'periodic direction!" rather than a meshing error. Raise '
+        "geometry['mesh']['nx']/['ny'] (each layer count scales with the "
+        "mesh config's nx/ny once feature lines from any embedded material "
+        "or PEC patch are accounted for -- see generate_palace_mesh's "
+        "docstring), or add an embedded feature along the deficient axis."
+    )
+
+
 # ---------------------------------------------------------------------------
 # run_palace_simulation: orchestration, matching run_nec2_simulation/
 # run_openems_simulation/run_hfss_simulation's own shape.
@@ -1510,6 +1590,7 @@ def run_palace_simulation(
     executable: str | None = None,
     workdir: str | None = None,
     solver_order: int = 1,
+    save_fields: bool = False,
 ) -> dict[str, Any]:
     """Generate a Palace mesh + JSON config for a periodic unit cell from
     structured geometry, run it via PalaceSimulator, and parse
@@ -1522,18 +1603,41 @@ def run_palace_simulation(
     with what's assumed, what it costs if wrong, and the cheapest way to
     find out.
 
+    `save_fields` (default False, issue #349): forwarded to
+    generate_palace_config -- see that function's own docstring paragraph.
+    False (the default) reproduces every existing caller's config
+    byte-for-byte; True leaves ParaView field-visualization files inside
+    the returned "output_dir" instead of Palace computing and discarding
+    them.
+
+    RAISES SimulatorError before any subprocess runs (issue #464) if the
+    generated mesh has fewer than 3 element layers along x or y -- Palace's
+    own periodic boundary condition requires at least 3 (see
+    _check_periodic_layer_counts's own comment for the measured proof and
+    the algebraic rule), and a mesh with fewer aborts inside MPI with a
+    message about meshing internals rather than about the geometry. The
+    adapter's own documented mesh defaults (nx=ny=nz=2) are exactly one
+    layer short of this for a bare, featureless cell -- the simplest
+    possible request -- so this is reachable with no unusual input.
+
     See this module's header comment for the format-verification citations
     and the honest caveat: mesh/config generation and CSV parsing are built
     to the documented/verified Palace/MFEM formats cited there, not to a
     real Palace binary run in this environment (none is installed).
     """
-    work_dir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="palace_"))
+    # Issue #466: default to a durable, programme-owned directory instead
+    # of `tempfile.mkdtemp` -- the OS's own scratch area, which may be
+    # swept before the Field bundle exporter (#353/#356) or a human ever
+    # reads what this run left behind. An explicit `workdir` is honoured
+    # exactly as before.
+    work_dir = Path(workdir) if workdir else new_solver_workdir("palace")
     work_dir.mkdir(parents=True, exist_ok=True)
     mesh_file = work_dir / "unit_cell.mesh"
     config_file = work_dir / "config.json"
     output_dir = work_dir / "postpro"
 
     mesh_result = generate_palace_mesh(geometry)
+    _check_periodic_layer_counts(mesh_result)
     mesh_file.write_text(mesh_result["mesh_text"])
 
     config = generate_palace_config(
@@ -1543,6 +1647,7 @@ def run_palace_simulation(
         frequency_hz=frequency_hz,
         sweep=sweep,
         solver_order=solver_order,
+        save_fields=save_fields,
     )
     config_file.write_text(json.dumps(config, indent=2))
 

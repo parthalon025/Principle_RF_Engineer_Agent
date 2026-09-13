@@ -170,6 +170,26 @@ def extraction_error(document_id: int) -> str | None:
         conn.close()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_solver_artifacts_dir(tmp_path, monkeypatch):
+    """Issue #466: `simulation.base.new_solver_workdir`'s default directory
+    lives inside the repository tree ON PURPOSE -- that is what makes it
+    durable across a container restart (the whole repo is bind-mounted in
+    docker-compose.yml's `app` service). That same durability is exactly
+    the hazard in a test run: any test that calls `run_palace_simulation`/
+    `run_meep_simulation` (or `MeepSimulator.run`) without an explicit
+    `workdir` would otherwise leave real, uncommitted directories behind in
+    THIS checkout every time the suite runs. Redirecting
+    `SOLVER_ARTIFACTS_DIR` to pytest's own per-test `tmp_path` keeps the
+    default-path behaviour genuinely exercised (a test can still assert
+    against it) without ever writing into the real repository. Autouse:
+    every test gets this for free, with no per-file import needed, the same
+    way `no_ocr`'s neighbours below opt individual tests INTO a patch --
+    this one is a blanket safety net instead, since forgetting it is a
+    filesystem-pollution bug rather than a test-correctness one."""
+    monkeypatch.setenv("SOLVER_ARTIFACTS_DIR", str(tmp_path / "solver_artifacts"))
+
+
 @pytest.fixture
 def no_ocr(monkeypatch):
     """Forces `ingest_document`'s internal `parse_document` call to run with

@@ -7,3 +7,7 @@ __pycache__/
 .env
 .claude/worktrees/
 .playwright-mcp/
+# Issue #466: default durable working directory for full-wave solver runs
+# (simulation/base.py's solver_artifacts_root) -- real solver output, not
+# source, and not meant to be committed.
+/solver_artifacts/

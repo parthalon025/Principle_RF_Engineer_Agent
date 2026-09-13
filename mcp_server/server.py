@@ -108,6 +108,7 @@ from rf_tools.patch_synthesis import (
     quality_factor_from_fractional_bandwidth,
     wavelength,
 )
+from rf_tools.reflection_phase_band import in_phase_reflection_bands
 from rf_tools.touchstone import (
     analyze_touchstone,
     cascade_touchstone,
@@ -1247,6 +1248,38 @@ def run_palace_simulation(
         timeout_s=timeout_s,
         solver_order=solver_order,
     )
+
+
+@mcp.tool()
+def calculate_in_phase_reflection_band(
+    frequency_hz: list[float],
+    specular: dict[str, list[complex]],
+    provenance: str = "SIMULATED",
+) -> dict:
+    """Compute the +/-90 degree in-phase reflection band -- the bandwidth
+    figure this programme's magnetic-mirror claim (CLAUDE.md's "The
+    problem, physically") actually rests on -- from a REFLECTION_PHASE/
+    DIFFUSIVE candidate's own Palace phase data. Pass `frequency_hz`
+    (Hz, any order) and `specular` exactly as run_palace_simulation
+    returns them (its result's `s_parameters["specular"]`, e.g.
+    `{"S11_TE": [complex, ...]}` -- one complex reflection coefficient per
+    swept frequency, per Floquet mode); this tool derives phase from the
+    complex value itself, so no separate phase-extraction step is needed.
+    A magnetic-mirror surface reflects near 0 degrees where ordinary metal
+    reflects near 180; the returned band is the frequency range around
+    that 0-degree crossing over which the phase stays within +/-90
+    degrees of it -- the standard artificial-magnetic-conductor usable-
+    bandwidth definition. Returns, per mode: `None` if the phase never
+    crosses zero in the swept range (there is no magnetic-mirror behaviour
+    to report a band around, so none is reported, rather than a wrong
+    one), or a dict with `center_frequency_hz`, `low_hz`/`high_hz`,
+    `bandwidth_hz`, `fractional_bandwidth_percent`, and a `validity` list
+    of load-bearing assumptions (e.g. the true edge lying outside the
+    swept range). `provenance` (default SIMULATED, matching a Palace
+    result) rides onto the returned dict unchanged -- this is a
+    deterministic reading of a phase the solver already computed, not a
+    new measurement, so it inherits that phase's own evidence tier."""
+    return in_phase_reflection_bands(frequency_hz, specular, provenance=provenance)
 
 
 @mcp.tool()

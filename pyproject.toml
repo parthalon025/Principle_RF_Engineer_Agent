@@ -173,7 +173,7 @@ package = true
 # without inventing a dependency between two peer packages. db/schema.sql
 # and db/docker-init.sh are data/shell files, not modules, so nothing else
 # in that directory is affected by it becoming an importable package.
-include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "knowledge.sourcing", "optimization", "measurement", "orchestration", "designs", "geometry", "verification", "db"]
+include = ["agent", "rf_tools", "mcp_server", "simulation", "knowledge", "knowledge.sourcing", "optimization", "measurement", "orchestration", "designs", "geometry", "verification", "db", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

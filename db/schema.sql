@@ -6,6 +6,35 @@
 -- does its own equivalent substitution at container-init time (see
 -- docker-compose.yml / db/docker-init.sh) so a fresh container picks up
 -- the same env vars.
+--
+-- IDEMPOTENCY CONVENTION (issue #412), stated once here instead of left
+-- for a future contributor to infer by pattern-matching examples below.
+-- Every statement in this file must be safe to run again against a
+-- database that already has it applied -- CI, a redeployed container, and
+-- a developer running this by hand all re-apply the current file against
+-- a database that may already be fully or partially migrated, and
+-- `db/apply_schema.py` never distinguishes "fresh" from "already
+-- initialized" before running it. Concretely, this means:
+--   - A brand new table is `CREATE TABLE IF NOT EXISTS`.
+--   - Extending an EXISTING table is a SEPARATE, later statement -- never
+--     an edit to the original `CREATE TABLE`'s column list -- using
+--     `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...`.
+--   - A named constraint that isn't a CREATE-TABLE-time PRIMARY KEY/UNIQUE
+--     (a CHECK constraint, say) is re-applied as `ALTER TABLE ... DROP
+--     CONSTRAINT IF EXISTS <name>` immediately followed by `ALTER TABLE
+--     ... ADD CONSTRAINT <name> ...` under the SAME name -- Postgres has
+--     no `ADD CONSTRAINT IF NOT EXISTS`.
+--   - Anything else with no native `IF NOT EXISTS`/`IF EXISTS` form (an
+--     ENUM type, a trigger) is wrapped in `DO $$ BEGIN ... EXCEPTION WHEN
+--     duplicate_object OR duplicate_table THEN NULL; END $$;` (see the
+--     ENUM/trigger definitions below for worked examples of this exact
+--     pattern).
+-- This is not merely a style preference: tests/test_apply_schema.py's
+-- `TestSchemaIsIdempotent` applies this file twice in a row against a
+-- real database and asserts the second application both succeeds and
+-- leaves any already-inserted row completely untouched -- a statement
+-- that violates this convention is exactly the kind of change that test
+-- exists to catch before it reaches a live, already-initialized database.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
